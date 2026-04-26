@@ -62,7 +62,7 @@ final Color kGlow = appConfig.accentColor;
 /// ✅ Mapbox token for REST calls (geocoding + directions).
 /// Set at run/build time:
 /// flutter run --dart-define=MAPBOX_TOKEN=pk.xxx
-const String kMapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
+const String kMapboxToken = String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
 
 
 Map<String, String> _adminHeaders() {
@@ -83,6 +83,8 @@ Future<void> main() async {
   if (kMapboxToken.trim().isEmpty) {
     // ignore: avoid_print
     print('⚠️ MAPBOX_TOKEN not set (using fallback routing).');
+  } else {
+    mb.MapboxOptions.setAccessToken(kMapboxToken);
   }
   runApp(const FluxidiDriverApp());
 }
