@@ -150,6 +150,7 @@ const String kDirectTripWaitStartPath = '/trip/wait-start';
 const String kDirectTripWaitEndPath = '/trip/wait-end';
 const String kStopDirectTripPath = '/trip/stop';
 const String kTripsHistoryPath = '/trips/history';
+const String kTripsArchivePath = '/trips/archive';
 
 /// Optional: Worker route endpoint (recommended, avoids exposing Mapbox token)
 /// Implement later in Worker: POST { from, to } -> { coords:[[lon,lat],...], distance_m, duration_s }
@@ -8316,6 +8317,56 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     );
   }
 
+  Future<void> _archiveTrip(_TripHistoryItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Deze rit verbergen uit de historiek?'),
+        content: const Text('De ritbon blijft bewaard voor administratie.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuleren'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Verbergen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final res = await http
+          .post(
+            Uri.parse('${widget.workerBaseUrl}$kTripsArchivePath'),
+            headers: widget.headers,
+            body: jsonEncode({
+              'tenant_id': widget.tenantId,
+              'driver_id': widget.driverId,
+              'trip_id': item.tripId,
+              'archived': true,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      final decoded = jsonDecode(res.body);
+      if (res.statusCode != 200 || decoded is! Map || decoded['ok'] != true) {
+        throw Exception('archive_failed');
+      }
+      if (!mounted) return;
+      _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Rit verborgen uit historiek.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kon rit niet verbergen. Probeer opnieuw.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -8406,15 +8457,32 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                         ),
                         Align(
                           alignment: Alignment.centerRight,
-                          child: FilledButton.icon(
-                            onPressed: () => _openReceipt(item),
-                            icon: const Icon(Icons.receipt_long, size: 18),
-                            label: Text(_receiptText('receiptTitle')),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFFFFD400),
-                              foregroundColor: const Color(0xFF101010),
-                              visualDensity: VisualDensity.compact,
-                            ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.end,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () => _archiveTrip(item),
+                                icon: const Icon(Icons.archive_outlined, size: 18),
+                                label: const Text('Verberg'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white70,
+                                  side: const BorderSide(color: Colors.white24),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
+                              FilledButton.icon(
+                                onPressed: () => _openReceipt(item),
+                                icon: const Icon(Icons.receipt_long, size: 18),
+                                label: Text(_receiptText('receiptTitle')),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFFD400),
+                                  foregroundColor: const Color(0xFF101010),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
