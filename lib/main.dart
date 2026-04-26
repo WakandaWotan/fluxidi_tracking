@@ -2905,6 +2905,44 @@ Map<String, String> _headers({bool admin = false}) {
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       if (j['ok'] != true) return;
 
+      bool isEmptyHydrationValue(dynamic value) {
+        if (value == null) return true;
+        if (value is String) return value.trim().isEmpty;
+        if (value is Map) return value.isEmpty;
+        if (value is Iterable) return value.isEmpty;
+        return false;
+      }
+
+      Map<String, dynamic> mergeNonEmptyDetails(
+        Map<String, dynamic> existing,
+        Map<String, dynamic> incoming,
+      ) {
+        final next = <String, dynamic>{...existing};
+        for (final entry in incoming.entries) {
+          final incomingValue = entry.value;
+          if (isEmptyHydrationValue(incomingValue)) continue;
+          final existingValue = next[entry.key];
+          if (existingValue is Map && incomingValue is Map) {
+            next[entry.key] = mergeNonEmptyDetails(
+              Map<String, dynamic>.from(existingValue),
+              Map<String, dynamic>.from(incomingValue),
+            );
+          } else {
+            next[entry.key] = incomingValue;
+          }
+        }
+        return next;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        if (_activeBooking != null && _activeBooking!.bookingId == bookingId) {
+          _activeBooking = _activeBooking!.copyWith(
+            details: mergeNonEmptyDetails(_activeBooking!.details, j),
+          );
+        }
+      });
+
       final record = (j['record'] is Map) ? (j['record'] as Map).cast<String, dynamic>() : null;
       final quoteSource = j['quote'] ?? record?['quote'];
       final quote = (quoteSource is Map) ? quoteSource.cast<String, dynamic>() : null;
@@ -2949,10 +2987,6 @@ Map<String, String> _headers({bool admin = false}) {
           _activeBooking = _activeBooking!.copyWith(
             price: resolved,
             currency: 'EUR',
-            details: <String, dynamic>{
-              ..._activeBooking!.details,
-              ...j,
-            },
           );
         }
       });
