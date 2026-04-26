@@ -1,0 +1,1552 @@
+// lib/pages/calculator_page.dart
+//
+// Fluxidi — Calculator page (standalone, compile-safe)
+// - Address autocomplete via Mapbox Geocoding API
+// - "Use my current location" resolves to a REAL address (reverse geocode)
+// - Bags limited to max 3 (Tesla Model 3 rule)
+// - Pax limited to max 3
+//
+// Hook into your existing app by pushing CalculatorPage(...).
+//
+// NOTE: This file is intentionally self-contained and does not depend on your
+// main.dart internals (no private fields). That prevents the kind of breakage
+// you saw where Calculator logic ended up outside the State class.
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:geolocator/geolocator.dart' as geo;
+import 'package:http/http.dart' as http;
+
+const bool showPricingDebug = false;
+
+class CalculatorPage extends StatefulWidget {
+  const CalculatorPage({
+    super.key,
+    required this.bookingBaseUrl,
+    required this.mapboxToken,
+    this.onGoToStartPage,
+  });
+
+  final String bookingBaseUrl; // e.g. https://fluxidi-booking-api.fluxidi.workers.dev
+  final String mapboxToken; // public pk...
+  final VoidCallback? onGoToStartPage;
+
+  @override
+  State<CalculatorPage> createState() => _CalculatorPageState();
+}
+
+class _CalculatorPageState extends State<CalculatorPage> {
+  final _fromCtrl = TextEditingController();
+  final _toCtrl = TextEditingController();
+
+  Timer? _fromDebounce;
+  Timer? _toDebounce;
+
+  List<_PlaceSuggestion> _fromSuggestions = const <_PlaceSuggestion>[];
+  List<_PlaceSuggestion> _toSuggestions = const <_PlaceSuggestion>[];
+
+  // Business rules (Tesla Model 3)
+  int _pax = 1; // max 3
+  int _bags = 0; // max 3
+
+  // Booking payload fields
+  DateTime? _pickupDateTime;
+  DateTime? _returnPickupDateTime;
+  String _tier = 'comfort';
+  String _service = 'airport';
+  String _extraService = 'none';
+  bool _returnTrip = false;
+  int _waitMin = 0;
+
+  // VAT (keep simple; your worker is source of truth anyway)
+  double _vatRate = appConfig.defaultVatRate;
+
+  bool _loading = false;
+  String? _error;
+  Map<String, dynamic>? _lastQuote;
+  final _vatCtrl = TextEditingController(
+    text: appConfig.defaultVatRate.toStringAsFixed(2),
+  );
+
+  int get safeBags => _bags.clamp(0, 3);
+  get _lang => appConfig.currentLanguage;
+  get _s => appConfig.strings;
+  BusinessSettingsState get _business => businessSettingsNotifier.value;
+  bool get _returnFeatureEnabled => _business.pricingReturnEnabled;
+
+  String get _currencySymbol {
+    final configured = appConfig.defaultCurrencySymbol.trim();
+    if (configured.isNotEmpty) return configured;
+    switch (_business.defaultCurrency.toUpperCase()) {
+      case 'EUR':
+        return '€';
+      case 'USD':
+        return '\$';
+      case 'GBP':
+        return '£';
+      default:
+        return _business.defaultCurrency.toUpperCase();
+    }
+  }
+
+  Color get _calcScaffoldColor => appConfig.branding.calculatorScaffoldColor;
+  Color get _calcPanelColor => appConfig.branding.calculatorPanelColor;
+  Color get _calcDropdownColor => appConfig.branding.calculatorDropdownColor;
+  List<AppOption> get _services => appConfig.enabledServices;
+  List<AppOption> get _tiers => appConfig.enabledTiers;
+  List<AppOption> get _extras => appConfig.enabledExtraOptions;
+  bool get _isPremiumTier => _tier == 'premium';
+
+  String _payloadValueFor(
+    List<AppOption> options,
+    String selectedId, {
+    required String fallback,
+  }) {
+    for (final o in options) {
+      if (o.id == selectedId) return o.payloadValue;
+    }
+    return fallback;
+  }
+
+  String _toTitleFromKey(String key) {
+    final parts = key
+        .replaceAll(RegExp(r'[_\-]+'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList(growable: false);
+    if (parts.isEmpty) return key;
+    return parts
+        .map((p) => p[0].toUpperCase() + p.substring(1).toLowerCase())
+        .join(' ');
+  }
+
+  String _breakdownLabelFor(String key) {
+    final label = _s.breakdownLabel(key, _lang);
+    return (label == key) ? _toTitleFromKey(key) : label;
+  }
+
+  String _fmtDateYmd(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+
+  String _fmtTimeHm(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  String _isoLikeLocal(DateTime dt) {
+    final off = dt.timeZoneOffset;
+    final sign = off.isNegative ? '-' : '+';
+    final totalMin = off.inMinutes.abs();
+    final oh = (totalMin ~/ 60).toString().padLeft(2, '0');
+    final om = (totalMin % 60).toString().padLeft(2, '0');
+    return '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00$sign$oh:$om';
+  }
+
+  Map<String, dynamic> _buildQuotePayload(DateTime dt) {
+    final returnEnabled = _returnFeatureEnabled && _returnTrip;
+    final returnDt = _returnPickupDateTime ??
+        dt.add(Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)));
+    return <String, dynamic>{
+      "from": _fromCtrl.text.trim(),
+      "to": _toCtrl.text.trim(),
+      "date": _fmtDateYmd(dt),
+      "time": _fmtTimeHm(dt),
+      "pickup_iso": _isoLikeLocal(dt),
+      "tier": _payloadValueFor(_tiers, _tier, fallback: 'COMFORT'),
+      "service": _payloadValueFor(_services, _service, fallback: 'AIRPORT'),
+      "pax": _pax,
+      "bags": safeBags,
+      "wait_min": _waitMin,
+      "return": returnEnabled,
+      "return_enabled": returnEnabled,
+      "return_from": _toCtrl.text.trim(),
+      "return_to": _fromCtrl.text.trim(),
+      "return_date": returnEnabled ? _fmtDateYmd(returnDt) : '',
+      "return_time": returnEnabled ? _fmtTimeHm(returnDt) : '',
+      "return_pickup_iso": returnEnabled ? _isoLikeLocal(returnDt) : '',
+      "vat_rate": _vatRate,
+      "pricing_profile": <String, dynamic>{
+        "base_fare": _business.pricingBaseFare,
+        "price_per_km": _business.pricingPerKm,
+        "price_per_minute": _business.pricingPerMinute,
+        "minimum_fare": _business.pricingMinimumFare,
+        "wait_per_minute": _business.pricingWaitPerMinute,
+        "return_enabled": _business.pricingReturnEnabled,
+        "return_fee": _business.pricingReturnFee,
+        "fuel_surcharge": _business.pricingFuelSurcharge,
+      },
+      "surcharge_fuel": _business.pricingFuelSurcharge,
+      "return_fee": returnEnabled ? _business.pricingReturnFee : 0,
+      "extra_service": _isPremiumTier
+          ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
+          : 'NONE',
+      "extra_service_key": _isPremiumTier
+          ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
+          : 'NONE',
+    };
+  }
+
+  Map<String, dynamic> _buildQuoteRequestPayload(DateTime dt) {
+    return _buildQuotePayload(dt);
+  }
+
+  void _openBookingConfirmation() {
+    final quote = _lastQuote;
+    if (quote == null) return;
+    final dt = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+    final payload = _buildQuotePayload(dt);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _BookingConfirmationPage(
+          bookingBaseUrl: widget.bookingBaseUrl,
+          language: _lang,
+          strings: _s,
+          quote: quote,
+          payload: payload,
+          currencySymbol: _currencySymbol,
+          distanceUnitLabel: appConfig.distanceUnitLabel,
+          durationUnitLabel: appConfig.durationUnitLabel,
+          taxLabel: appConfig.taxDisplayLabel,
+        ),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    appLanguageNotifier.addListener(_onLanguageChanged);
+    businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
+  }
+
+  void _onLanguageChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _onBusinessSettingsChanged() {
+    if (!mounted) return;
+    if (!_returnFeatureEnabled && _returnTrip) {
+      _returnTrip = false;
+      _returnPickupDateTime = null;
+    }
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    appLanguageNotifier.removeListener(_onLanguageChanged);
+    businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
+    _fromDebounce?.cancel();
+    _toDebounce?.cancel();
+    _fromCtrl.dispose();
+    _toCtrl.dispose();
+    _vatCtrl.dispose();
+    super.dispose();
+  }
+
+  // ---------- Mapbox helpers ----------
+  Future<List<_PlaceSuggestion>> _searchPlaces(String query) async {
+    if (widget.mapboxToken.trim().isEmpty) return const <_PlaceSuggestion>[];
+    final q = query.trim();
+    if (q.isEmpty) return const <_PlaceSuggestion>[];
+
+    // Bias around Belgium by default. You can tweak later.
+    final url = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${Uri.encodeComponent(q)}.json'
+      '?access_token=${Uri.encodeComponent(widget.mapboxToken)}'
+      '&autocomplete=true'
+      '&country=be'
+      '&language=nl'
+      '&limit=6',
+    );
+
+    final res = await http.get(url);
+    if (res.statusCode != 200) return const <_PlaceSuggestion>[];
+
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final features = (data['features'] as List?) ?? const [];
+    return features.map<_PlaceSuggestion>((f) {
+      final m = f as Map<String, dynamic>;
+      final placeName = (m['place_name'] ?? '') as String;
+      final center = (m['center'] as List?) ?? const [];
+      final lon = center.isNotEmpty ? (center[0] as num).toDouble() : null;
+      final lat = center.length > 1 ? (center[1] as num).toDouble() : null;
+      return _PlaceSuggestion(label: placeName, lon: lon, lat: lat);
+    }).toList(growable: false);
+  }
+
+  Future<String?> _reverseGeocode(double lat, double lon) async {
+    if (widget.mapboxToken.trim().isEmpty) return null;
+    final url = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${lon.toStringAsFixed(6)},${lat.toStringAsFixed(6)}.json'
+      '?access_token=${Uri.encodeComponent(widget.mapboxToken)}'
+      '&language=nl'
+      '&country=be'
+      '&limit=1',
+    );
+
+    final res = await http.get(url);
+    if (res.statusCode != 200) return null;
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final features = (data['features'] as List?) ?? const [];
+    if (features.isEmpty) return null;
+    final f = features.first as Map<String, dynamic>;
+    return (f['place_name'] ?? '') as String?;
+  }
+
+  Future<void> _setFromCurrentLocation() async {
+    try {
+      final enabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _toast(_s.calculatorLocationServiceOffError.of(_lang));
+        return;
+      }
+
+      var perm = await geo.Geolocator.checkPermission();
+      if (perm == geo.LocationPermission.denied) {
+        perm = await geo.Geolocator.requestPermission();
+      }
+      if (perm == geo.LocationPermission.denied ||
+          perm == geo.LocationPermission.deniedForever) {
+        _toast(_s.calculatorNoLocationPermissionError.of(_lang));
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      );
+
+      final addr = await _reverseGeocode(pos.latitude, pos.longitude);
+
+      if (!mounted) return;
+      setState(() {
+        _fromCtrl.text = (addr != null && addr.trim().isNotEmpty)
+            ? addr
+            : _s.calculatorCurrentLocationFallbackLabel.of(_lang);
+        _fromSuggestions = const <_PlaceSuggestion>[];
+      });
+    } catch (e) {
+      _toast(_s.calculatorCurrentLocationFailedError.of(_lang));
+    }
+  }
+
+  // ---------- UI helpers ----------
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
+  }
+
+  Widget _suggestionList(List<_PlaceSuggestion> list, void Function(_PlaceSuggestion) onTap) {
+    if (list.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: _calcPanelColor,
+        border: Border.all(color: Colors.white12),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: list.length,
+        separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white12),
+        itemBuilder: (context, i) {
+          final s = list[i];
+          return ListTile(
+            dense: true,
+            title: Text(s.label, style: const TextStyle(color: Colors.white)),
+            subtitle: Text(
+              _s.calculatorSuggestionTapHint.of(_lang),
+              style: const TextStyle(color: Colors.white54),
+            ),
+            onTap: () => onTap(s),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _counterRow({
+    required String label,
+    required String value,
+    required VoidCallback? onMinus,
+    required VoidCallback? onPlus,
+    String? hint,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _calcPanelColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                if (hint != null) ...[
+                  const SizedBox(height: 4),
+                  Text(hint, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onMinus,
+            icon: const Icon(Icons.remove_circle_outline, color: Colors.white70),
+          ),
+          Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          IconButton(
+            onPressed: onPlus,
+            icon: const Icon(Icons.add_circle_outline, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickDateTime() async {
+    final now = DateTime.now();
+    final base = _pickupDateTime ?? now.add(const Duration(minutes: 15));
+
+    final d = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: now.subtract(const Duration(days: 0)),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (d == null) return;
+
+    final t = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+    );
+    if (t == null) return;
+
+    setState(() {
+      _pickupDateTime = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+    });
+  }
+
+  Future<void> _pickReturnDateTime() async {
+    final basePickup = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+    final fallback = basePickup.add(Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)));
+    final base = _returnPickupDateTime ?? fallback;
+
+    final d = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: basePickup,
+      lastDate: basePickup.add(const Duration(days: 365)),
+    );
+    if (d == null) return;
+
+    final t = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+    );
+    if (t == null) return;
+
+    setState(() {
+      _returnPickupDateTime = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+    });
+  }
+
+  // ---------- quote ----------
+  Future<void> _calculate() async {
+    FocusScope.of(context).unfocus();
+
+    if (_fromCtrl.text.trim().isEmpty || _toCtrl.text.trim().isEmpty) {
+      _toast(_s.calculatorFillFromToError.of(_lang));
+      return;
+    }
+
+    final dt = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+
+    // Worker is source of truth; keep payload aligned with your API expectations.
+    final body = _buildQuoteRequestPayload(dt);
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _lastQuote = null;
+    });
+
+    try {
+      final url = Uri.parse('${widget.bookingBaseUrl}/quote');
+      debugPrint('quote_request_body=${jsonEncode(body)}');
+      final res = await http.post(
+        url,
+        headers: const {
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+
+      final txt = res.body;
+      debugPrint('quote_response_raw=$txt');
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('Quote failed: ${res.statusCode} ${txt.isNotEmpty ? txt : ''}');
+      }
+
+      final data = jsonDecode(txt) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() => _lastQuote = data);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  Widget _quoteBox(Map<String, dynamic> q) {
+    double? parseNum(dynamic v) {
+      if (v == null) return null;
+      if (v is num) {
+        final n = v.toDouble();
+        return n.isFinite ? n : null;
+      }
+      var s = v.toString().trim();
+      if (s.isEmpty) return null;
+      s = s.replaceAll(RegExp(r'[^0-9,\.\-]'), '');
+      if (s.contains(',') && !s.contains('.')) s = s.replaceAll(',', '.');
+      if (s.contains(',') && s.contains('.')) s = s.replaceAll(',', '');
+      final n = double.tryParse(s);
+      if (n == null || !n.isFinite) return null;
+      return n;
+    }
+
+    String fmtNum(dynamic v, {int decimals = 2}) {
+      final n = parseNum(v);
+      if (n == null) return '—';
+      return n.toStringAsFixed(decimals);
+    }
+
+    final ret = q['return'] is Map ? Map<String, dynamic>.from(q['return'] as Map) : <String, dynamic>{};
+    final mainEx = parseNum(q['price_ex_vat']) ?? 0.0;
+    final mainVat = parseNum(q['price_vat']) ?? 0.0;
+    final mainIncl = parseNum(q['price_incl_vat']) ?? 0.0;
+    final retEx = parseNum(ret['price_ex_vat']) ?? 0.0;
+    final retVat = parseNum(ret['price_vat']) ?? 0.0;
+    final retIncl = parseNum(ret['price_incl_vat']) ?? 0.0;
+    final priceEx = parseNum(q['total_price_ex_vat']) ?? (mainEx + retEx);
+    final priceVat = parseNum(q['total_price_vat']) ?? (mainVat + retVat);
+    final priceIncl = parseNum(q['total_price_incl_vat']) ?? (mainIncl + retIncl);
+    final distanceKm = q['distance_km'] ??
+        (((q['distance_m'] ?? q['distanceMeters']) is num)
+            ? ((q['distance_m'] ?? q['distanceMeters']) as num) / 1000
+            : null);
+    final durationMin = q['duration_min'] ??
+        (((q['duration_s'] ?? q['durationSec']) is num)
+            ? ((q['duration_s'] ?? q['durationSec']) as num) / 60
+            : null);
+    final breakdown = q['breakdown'] is Map<String, dynamic>
+        ? q['breakdown'] as Map<String, dynamic>
+        : (q['breakdown'] is Map ? Map<String, dynamic>.from(q['breakdown'] as Map) : <String, dynamic>{});
+    final vatRateRaw = parseNum(q['vat_rate']) ??
+        parseNum(breakdown['vat_rate']) ??
+        parseNum((q['pricing_profile'] is Map) ? (q['pricing_profile'] as Map)['vat_rate'] : null) ??
+        _vatRate;
+    final vatPct = (vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw);
+    String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
+    final detailsRows = <MapEntry<String, String>>[
+      MapEntry<String, String>('Starttarief', fmtMoneyVal(breakdown['start_fee_ex'])),
+      MapEntry<String, String>('Afstandskosten', fmtMoneyVal(breakdown['base_drive_ex'])),
+      MapEntry<String, String>('Tijdskosten', fmtMoneyVal(breakdown['per_min_ex'])),
+      MapEntry<String, String>('Wachttijd', fmtMoneyVal(breakdown['waiting_ex'])),
+      MapEntry<String, String>('Extra stops', fmtMoneyVal(breakdown['extra_stops_ex'])),
+      MapEntry<String, String>('Bagagetoeslag', fmtMoneyVal(breakdown['bags_ex'])),
+      MapEntry<String, String>('Voertuigklasse toeslag', fmtMoneyVal(breakdown['tier_fee_ex'])),
+      if ((parseNum(breakdown['surcharge_amount_ex']) ?? 0) > 0)
+        MapEntry<String, String>('Nacht/weekend toeslag', fmtMoneyVal(breakdown['surcharge_amount_ex'])),
+      if ((parseNum(breakdown['return_fee_ex']) ?? 0) > 0)
+        MapEntry<String, String>('Retourtoeslag', fmtMoneyVal(breakdown['return_fee_ex'])),
+      if ((parseNum(breakdown['fuel_surcharge_ex']) ?? 0) > 0)
+        MapEntry<String, String>('Brandstoftoeslag', fmtMoneyVal(breakdown['fuel_surcharge_ex'])),
+      MapEntry<String, String>('Subtotaal excl. BTW', '$_currencySymbol ${fmtNum(priceEx)}'),
+      MapEntry<String, String>('BTW (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)', '$_currencySymbol ${fmtNum(priceVat)}'),
+      MapEntry<String, String>('Totaal incl. BTW', '$_currencySymbol ${fmtNum(priceIncl)}'),
+      if (showPricingDebug)
+        MapEntry<String, String>('BTW-tarief', '${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%'),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _calcPanelColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Jouw ritprijs', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          Text(
+            '$_currencySymbol ${fmtNum(priceIncl)}',
+            style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 2),
+          const Text('Inclusief BTW', style: TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 8),
+          Text('Afstand: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
+              style: const TextStyle(color: Colors.white70)),
+          Text('Duur: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
+              style: const TextStyle(color: Colors.white70)),
+          if (breakdown.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                iconColor: Colors.white70,
+                collapsedIconColor: Colors.white54,
+                title: const Text('Prijsdetails',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
+                children: [
+                  const SizedBox(height: 4),
+                  ...detailsRows.map((e) => _kv(e.key, e.value)),
+                ],
+              ),
+            ),
+          ],
+          if (showPricingDebug) Text(
+            _s.calculatorQuoteTipText.of(_lang),
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kv(String k, String v) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(k, style: const TextStyle(color: Colors.white70))),
+          Text(v, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _calcScaffoldColor,
+      appBar: AppBar(
+        backgroundColor: _calcScaffoldColor,
+        title: Text('${appConfig.companyName} ${_s.calculatorTitle.of(_lang)}', style: const TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (widget.onGoToStartPage != null)
+            TextButton.icon(
+              onPressed: widget.onGoToStartPage,
+              icon: const Icon(Icons.home_outlined, size: 18),
+              label: const Text('Terug naar startpagina'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+          children: [
+            Text(_s.calculatorFromLabel.of(_lang), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _fromCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: _calcPanelColor,
+                hintText: _s.calculatorAddressHint.of(_lang),
+                hintStyle: const TextStyle(color: Colors.white38),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                suffixIcon: IconButton(
+                  onPressed: _setFromCurrentLocation,
+                  icon: const Icon(Icons.my_location, color: Colors.white70),
+                  tooltip: _s.calculatorUseCurrentLocationTooltip.of(_lang),
+                ),
+              ),
+              onChanged: (v) {
+                _fromDebounce?.cancel();
+                if (v.trim().isEmpty) {
+                  setState(() {
+                    _fromSuggestions = const <_PlaceSuggestion>[];
+                  });
+                  return;
+                }
+                _fromDebounce = Timer(const Duration(milliseconds: 220), () async {
+                  final list = await _searchPlaces(v);
+                  if (!mounted) return;
+                  setState(() => _fromSuggestions = list);
+                });
+              },
+            ),
+            _suggestionList(_fromSuggestions, (s) {
+              setState(() {
+                _fromCtrl.text = s.label;
+                _fromSuggestions = const <_PlaceSuggestion>[];
+              });
+            }),
+
+            const SizedBox(height: 14),
+
+            Text(_s.calculatorToLabel.of(_lang), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _toCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: _calcPanelColor,
+                hintText: _s.calculatorAddressHint.of(_lang),
+                hintStyle: const TextStyle(color: Colors.white38),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+              ),
+              onChanged: (v) {
+                _toDebounce?.cancel();
+                if (v.trim().isEmpty) {
+                  setState(() {
+                    _toSuggestions = const <_PlaceSuggestion>[];
+                  });
+                  return;
+                }
+                _toDebounce = Timer(const Duration(milliseconds: 220), () async {
+                  final list = await _searchPlaces(v);
+                  if (!mounted) return;
+                  setState(() => _toSuggestions = list);
+                });
+              },
+            ),
+            _suggestionList(_toSuggestions, (s) {
+              setState(() {
+                _toCtrl.text = s.label;
+                _toSuggestions = const <_PlaceSuggestion>[];
+              });
+            }),
+
+            const SizedBox(height: 14),
+
+            // Bags + Pax
+            _counterRow(
+              label: _s.calculatorBagsLabel.of(_lang),
+              value: '$_bags',
+              hint: _s.calculatorMaxBagsHint.of(_lang),
+              onMinus: _bags > 0 ? () => setState(() => _bags--) : null,
+              onPlus: _bags < 3 ? () => setState(() => _bags++) : null,
+            ),
+            const SizedBox(height: 10),
+            _counterRow(
+              label: _s.calculatorPassengersLabel.of(_lang),
+              value: '$_pax',
+              hint: _s.calculatorMaxPassengersHint.of(_lang),
+              onMinus: _pax > 1 ? () => setState(() => _pax--) : null,
+              onPlus: _pax < 3 ? () => setState(() => _pax++) : null,
+            ),
+
+            const SizedBox(height: 14),
+
+            // Pickup time
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: _calcPanelColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_s.calculatorPickupTimeLabel.of(_lang), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                  ),
+                  Text(
+                    _pickupDateTime == null
+                        ? _s.calculatorChoosePickupTimeLabel.of(_lang)
+                        : '${_pickupDateTime!.day.toString().padLeft(2, '0')}-'
+                          '${_pickupDateTime!.month.toString().padLeft(2, '0')}-'
+                          '${_pickupDateTime!.year} '
+                          '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                          '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _pickDateTime,
+                    icon: const Icon(Icons.schedule, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            // Service & Tier
+            _dropdown(
+              label: _s.calculatorServiceLabel.of(_lang),
+              value: _service,
+              items: _services
+                  .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                  .toList(growable: false),
+              onChanged: (v) => setState(() => _service = v ?? 'airport'),
+            ),
+            const SizedBox(height: 10),
+            _dropdown(
+              label: _s.calculatorTierLabel.of(_lang),
+              value: _tier,
+              items: _tiers
+                  .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                  .toList(growable: false),
+              onChanged: (v) {
+                setState(() {
+                  _tier = v ?? 'comfort';
+                  if (!_isPremiumTier) _extraService = 'none';
+                });
+              },
+            ),
+
+            const SizedBox(height: 10),
+            if (_isPremiumTier)
+              _dropdown(
+                label: _s.calculatorExtraServiceOptionalLabel.of(_lang),
+                value: _extraService,
+                items: _extras
+                    .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                    .toList(growable: false),
+                onChanged: (v) => setState(() => _extraService = v ?? 'none'),
+              ),
+
+            const SizedBox(height: 10),
+
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _returnFeatureEnabled && _returnTrip,
+              onChanged: !_returnFeatureEnabled
+                  ? null
+                  : (v) => setState(() {
+                      _returnTrip = v;
+                      if (!v) _returnPickupDateTime = null;
+                    }),
+              title: const Text('Retourrit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                _returnFeatureEnabled
+                    ? _s.calculatorReturnSubtitle.of(_lang)
+                    : (_lang == AppLanguage.en
+                        ? 'Disabled by company pricing settings.'
+                        : _lang == AppLanguage.fr
+                            ? 'Desactive dans les parametres tarifaires de l entreprise.'
+                            : _lang == AppLanguage.es
+                                ? 'Desactivado en la configuracion de precios de la empresa.'
+                                : 'Uitgeschakeld via bedrijfsprijsinstellingen.'),
+                style: const TextStyle(color: Colors.white54),
+              ),
+              activeColor: Colors.amberAccent,
+            ),
+
+            if (_returnFeatureEnabled && _returnTrip) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _calcPanelColor,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Retourrit ${_s.calculatorPickupTimeLabel.of(_lang)}',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    Text(
+                      _returnPickupDateTime == null
+                          ? _s.calculatorChoosePickupTimeLabel.of(_lang)
+                          : '${_returnPickupDateTime!.day.toString().padLeft(2, '0')}-'
+                              '${_returnPickupDateTime!.month.toString().padLeft(2, '0')}-'
+                              '${_returnPickupDateTime!.year} '
+                              '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                              '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _pickReturnDateTime,
+                      icon: const Icon(Icons.schedule, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 10),
+
+            _counterRow(
+              label: _s.calculatorWaitTimeLabel.of(_lang),
+              value: '$_waitMin',
+              hint: _s.calculatorWaitStepHint.of(_lang),
+              onMinus: _waitMin > 0 ? () => setState(() => _waitMin = (_waitMin - 5).clamp(0, 9999)) : null,
+              onPlus: () => setState(() => _waitMin = (_waitMin + 5).clamp(0, 9999)),
+            ),
+
+            const SizedBox(height: 14),
+
+            // CTA
+            GestureDetector(
+              onTap: _loading ? null : _calculate,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.amberAccent.withOpacity(0.35)),
+                  color: Colors.black,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.amberAccent.withOpacity(0.12),
+                      blurRadius: 18,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  _loading
+                      ? _s.calculatorButtonBusyLabel.of(_lang)
+                      : 'Bereken prijs',
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            if (_error != null)
+              Text('${_s.calculatorErrorPrefix.of(_lang)}: $_error', style: const TextStyle(color: Colors.redAccent)),
+
+            if (_lastQuote != null) ...[
+              const SizedBox(height: 10),
+              _quoteBox(_lastQuote!),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: _openBookingConfirmation,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.amberAccent.withOpacity(0.55)),
+                    color: Colors.black,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _s.calculatorBookNowLabel.of(_lang),
+                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dropdown({
+    required String label,
+    required String value,
+    required List<DropdownMenuItem<String>> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          isExpanded: true,
+          value: value,
+          items: items,
+          onChanged: onChanged,
+          dropdownColor: _calcDropdownColor,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: _calcPanelColor,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+            ),
+          ),
+          style: const TextStyle(color: Colors.white),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlaceSuggestion {
+  const _PlaceSuggestion({required this.label, this.lon, this.lat});
+  final String label;
+  final double? lon;
+  final double? lat;
+}
+
+class _BookingConfirmationPage extends StatefulWidget {
+  const _BookingConfirmationPage({
+    required this.bookingBaseUrl,
+    required this.language,
+    required this.strings,
+    required this.quote,
+    required this.payload,
+    required this.currencySymbol,
+    required this.distanceUnitLabel,
+    required this.durationUnitLabel,
+    required this.taxLabel,
+  });
+
+  final String bookingBaseUrl;
+  final language;
+  final strings;
+  final Map<String, dynamic> quote;
+  final Map<String, dynamic> payload;
+  final String currencySymbol;
+  final String distanceUnitLabel;
+  final String durationUnitLabel;
+  final String taxLabel;
+
+  @override
+  State<_BookingConfirmationPage> createState() => _BookingConfirmationPageState();
+}
+
+class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
+  final TextEditingController _nameCtrl = TextEditingController();
+  final TextEditingController _phoneCtrl = TextEditingController();
+  final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _messageCtrl = TextEditingController();
+  bool _submitting = false;
+  String? _submitState;
+  bool _submitStateIsError = false;
+  Map<String, dynamic>? _finalPricing;
+  String? _finalPricingBookingId;
+
+  double? _toNum(dynamic v) {
+    if (v == null) return null;
+    if (v is num) {
+      final n = v.toDouble();
+      return n.isFinite ? n : null;
+    }
+    var s = v.toString().trim();
+    if (s.isEmpty) return null;
+    s = s.replaceAll(RegExp(r'[^0-9,\.\-]'), '');
+    if (s.contains(',') && !s.contains('.')) s = s.replaceAll(',', '.');
+    if (s.contains(',') && s.contains('.')) s = s.replaceAll(',', '');
+    final n = double.tryParse(s);
+    if (n == null || !n.isFinite) return null;
+    return n;
+  }
+
+  String _fmt(dynamic v, {int decimals = 2}) {
+    final n = _toNum(v);
+    if (n == null) return '—';
+    return n.toStringAsFixed(decimals);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _messageCtrl.dispose();
+    super.dispose();
+  }
+
+  bool _isValidEmail(String value) {
+    return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
+  }
+
+  String _fmtMoney(dynamic v) {
+    final n = _toNum(v);
+    if (n == null) return '—';
+    return '${widget.currencySymbol} ${n.toStringAsFixed(2)}';
+  }
+
+  String _fmtVatPercent(dynamic v) {
+    final n = _toNum(v);
+    if (n == null) return '—';
+    final pct = n <= 1 ? n * 100 : n;
+    final rounded = pct.roundToDouble();
+    return '${(pct == rounded ? rounded.toStringAsFixed(0) : pct.toStringAsFixed(2))}%';
+  }
+
+  String _friendlyBookingError(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s.contains('geen geschikt voertuig beschikbaar') ||
+        s.contains('no suitable vehicle') ||
+        s.contains('vehicle_capacity_exceeded')) {
+      if (widget.language == AppLanguage.en) {
+        return 'No vehicles are available at this time.';
+      }
+      if (widget.language == AppLanguage.fr) {
+        return 'Aucun vehicule disponible a cet horaire.';
+      }
+      if (widget.language == AppLanguage.es) {
+        return 'No hay vehiculos disponibles en este horario.';
+      }
+      return 'Geen voertuig meer beschikbaar op dit tijdstip.';
+    }
+    return raw;
+  }
+
+  bool _isCustomerSafeCheckoutUrl(String value) {
+    final url = value.trim();
+    if (url.isEmpty) return false;
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) return false;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    if (host.contains('workers.dev') || host.contains('localhost') || host.contains('127.0.0.1')) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<Map<String, dynamic>?> _fetchFinalAuthoritativePricing(String bookingId) async {
+    try {
+      final url = Uri.parse('${widget.bookingBaseUrl}/tracking/booking');
+      final res = await http.post(
+        url,
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode(<String, dynamic>{'booking_id': bookingId}),
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map) return null;
+      final body = Map<String, dynamic>.from(decoded);
+      if (body['ok'] != true) return null;
+      final quoteRaw = body['quote'];
+      if (quoteRaw is! Map) return null;
+      final quote = Map<String, dynamic>.from(quoteRaw);
+      final pricingRaw = quote['pricing'];
+      if (pricingRaw is! Map) return null;
+      return <String, dynamic>{
+        'booking_id': bookingId,
+        'price_ex_vat': pricingRaw['price_ex_vat'],
+        'price_vat': pricingRaw['price_vat'],
+        'price_incl_vat': pricingRaw['price_incl_vat'],
+        'distance_km': quote['distance_km'],
+        'duration_min': quote['duration_min'],
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _onConfirmBooking() async {
+    final name = _nameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    if (name.isEmpty || phone.isEmpty || email.isEmpty || !_isValidEmail(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(widget.strings.bookingRequiredFieldsError.of(widget.language)),
+        ),
+      );
+      return;
+    }
+
+    final payload = <String, dynamic>{
+      ...widget.payload, // keep quote payload keys unchanged
+      // Keep website-compatible aliases
+      'return_enabled': (widget.payload['return'] ?? false) == true,
+      'extra_service_key': widget.payload['extra_service'] ?? 'NONE',
+      'customer': <String, dynamic>{
+        'name': name,
+        'full_name': name,
+        'phone': phone,
+        'email': email,
+        'message': _messageCtrl.text.trim(),
+      },
+      'name': name,
+      'phone': phone,
+      'email': email,
+      'customer_name': name,
+      'customer_phone': phone,
+      'customer_email': email,
+      'message': _messageCtrl.text.trim(),
+      // Website contract includes full quote object under "quote"
+      'quote': widget.quote,
+    };
+
+    setState(() {
+      _submitting = true;
+      _submitState = widget.strings.bookingSubmittingLabel.of(widget.language);
+      _submitStateIsError = false;
+      _finalPricing = null;
+      _finalPricingBookingId = null;
+    });
+
+    try {
+      final url = Uri.parse('${widget.bookingBaseUrl}/book');
+      final res = await http.post(
+        url,
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+
+      final rawText = res.body;
+      Map<String, dynamic> body = <String, dynamic>{};
+      if (rawText.trim().isNotEmpty) {
+        final decoded = jsonDecode(rawText);
+        if (decoded is Map<String, dynamic>) {
+          body = decoded;
+        } else if (decoded is Map) {
+          body = Map<String, dynamic>.from(decoded);
+        }
+      }
+
+      final ok = res.statusCode >= 200 &&
+          res.statusCode < 300 &&
+          (body['ok'] == null || body['ok'] == true);
+      if (!ok) {
+        final err = (body['error'] ?? body['message'] ?? 'HTTP ${res.statusCode}').toString();
+        throw Exception(err);
+      }
+
+      final bookingRef = (body['bookingId'] ??
+              body['booking_id'] ??
+              (body['booking'] is Map ? (body['booking']['bookingId'] ?? body['booking']['booking_id']) : null) ??
+              '')
+          .toString();
+      final publicRef = (body['public_reference'] ??
+              body['publicReference'] ??
+              body['customer_reference'] ??
+              body['customerReference'] ??
+              body['receipt_number'] ??
+              body['receiptNumber'] ??
+              (body['booking'] is Map
+                  ? (body['booking']['public_reference'] ??
+                      body['booking']['publicReference'] ??
+                      body['booking']['customer_reference'] ??
+                      body['booking']['customerReference'] ??
+                      body['booking']['receipt_number'] ??
+                      body['booking']['receiptNumber'])
+                  : null) ??
+              '')
+          .toString()
+          .trim();
+      final requiresPayment = (body['requiresPayment'] == true || body['payment_required'] == true);
+      final checkoutUrl = (body['checkoutUrl'] ?? '').toString();
+      final finalPricing =
+          bookingRef.isNotEmpty ? await _fetchFinalAuthoritativePricing(bookingRef) : null;
+
+      final successMessage = [
+        requiresPayment
+            ? widget.strings.bookingSuccessPaymentRequiredMessage.of(widget.language)
+            : widget.strings.bookingSuccessCashMessage.of(widget.language),
+        if (publicRef.isNotEmpty)
+          '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $publicRef',
+        if (requiresPayment && _isCustomerSafeCheckoutUrl(checkoutUrl)) checkoutUrl,
+      ].join('\n');
+
+      if (!mounted) return;
+      setState(() {
+        _submitState = successMessage;
+        _submitStateIsError = false;
+        _finalPricing = finalPricing;
+        _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(successMessage)));
+    } catch (e) {
+      if (!mounted) return;
+      final rawErr = e.toString().replaceFirst('Exception: ', '').trim();
+      final friendlyErr = _friendlyBookingError(rawErr);
+      final msg =
+          '${widget.strings.bookingSubmitFailedPrefix.of(widget.language)}: $friendlyErr';
+      setState(() {
+        _submitState = msg;
+        _submitStateIsError = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+      });
+    }
+  }
+
+  String _optionLabelForPayloadValue(
+    List<AppOption> options,
+    String payloadValue,
+  ) {
+    for (final o in options) {
+      if (o.payloadValue == payloadValue) return o.labelFor(widget.language);
+    }
+    return payloadValue;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveQuote = <String, dynamic>{
+      ...widget.quote,
+      if (_finalPricing != null) ..._finalPricing!,
+    };
+    final totalIncl = effectiveQuote['price_incl_vat'] ??
+        effectiveQuote['total_price_incl_vat'] ??
+        effectiveQuote['price'] ??
+        effectiveQuote['total'] ??
+        effectiveQuote['amount'];
+    final totalEx = effectiveQuote['price_ex_vat'] ?? effectiveQuote['total_price_ex_vat'];
+    final taxAmount = effectiveQuote['price_vat'] ?? effectiveQuote['total_price_vat'];
+    final vatRate = effectiveQuote['vat_rate'] ??
+        (effectiveQuote['breakdown'] is Map ? (effectiveQuote['breakdown'] as Map)['vat_rate'] : null);
+    final distanceKm = effectiveQuote['distance_km'] ??
+        (((effectiveQuote['distance_m'] ?? effectiveQuote['distanceMeters']) is num)
+            ? ((effectiveQuote['distance_m'] ?? effectiveQuote['distanceMeters']) as num) / 1000
+            : null);
+    final durationMin = effectiveQuote['duration_min'] ??
+        (((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec']) is num)
+            ? ((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec']) as num) / 60
+            : null);
+
+    final from = (widget.payload['from'] ?? '').toString();
+    final to = (widget.payload['to'] ?? '').toString();
+    final date = (widget.payload['date'] ?? '').toString();
+    final time = (widget.payload['time'] ?? '').toString();
+    final service = (widget.payload['service'] ?? '').toString();
+    final tier = (widget.payload['tier'] ?? '').toString();
+    final pax = (widget.payload['pax'] ?? '').toString();
+    final bags = (widget.payload['bags'] ?? '').toString();
+    final waitMin = (widget.payload['wait_min'] ?? '').toString();
+    final returnTrip = (widget.payload['return'] ?? false) == true;
+    final extraService = (widget.payload['extra_service'] ?? 'NONE').toString();
+    final serviceLabel = _optionLabelForPayloadValue(appConfig.enabledServices, service);
+    final tierLabel = _optionLabelForPayloadValue(appConfig.enabledTiers, tier);
+    final extraServiceLabel =
+        _optionLabelForPayloadValue(appConfig.enabledExtraOptions, extraService);
+
+    return Scaffold(
+      backgroundColor: appConfig.branding.calculatorScaffoldColor,
+      appBar: AppBar(
+        backgroundColor: appConfig.branding.calculatorScaffoldColor,
+        title: Text(widget.strings.bookingConfirmationTitle.of(widget.language), style: const TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _sectionCard(
+            title: widget.strings.bookingSummaryRouteLabel.of(widget.language),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$from\n→\n$to', style: const TextStyle(color: Colors.white)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _sectionCard(
+            title: widget.strings.bookingSummaryServiceTierLabel.of(widget.language),
+            child: Text('$serviceLabel • $tierLabel', style: const TextStyle(color: Colors.white)),
+          ),
+          const SizedBox(height: 10),
+          _sectionCard(
+            title: widget.strings.bookingSummaryPassengersBagsLabel.of(widget.language),
+            child: Text('PAX: $pax • BAG: $bags', style: const TextStyle(color: Colors.white)),
+          ),
+          const SizedBox(height: 10),
+          _sectionCard(
+            title: widget.strings.bookingSummaryPickupLabel.of(widget.language),
+            child: Text('$date  $time', style: const TextStyle(color: Colors.white)),
+          ),
+          const SizedBox(height: 10),
+          if (returnTrip) ...[
+            _sectionCard(
+              title: widget.strings.bookingSummaryReturnLabel.of(widget.language),
+              child: Text(widget.strings.commonYesLabel.of(widget.language), style: const TextStyle(color: Colors.white)),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (waitMin.trim().isNotEmpty && waitMin.trim() != '0') ...[
+            _sectionCard(
+              title: widget.strings.bookingSummaryWaitTimeLabel.of(widget.language),
+              child: Text('$waitMin min', style: const TextStyle(color: Colors.white)),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (extraServiceLabel.trim().isNotEmpty && extraServiceLabel.trim().toUpperCase() != 'NONE') ...[
+            _sectionCard(
+              title: 'Extra service',
+              child: Text(extraServiceLabel, style: const TextStyle(color: Colors.white)),
+            ),
+            const SizedBox(height: 10),
+          ],
+          _sectionCard(
+            title: widget.strings.bookingSummaryQuoteLabel.of(widget.language),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Prijs incl. BTW: ${widget.currencySymbol} ${_fmt(totalIncl)}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
+                ),
+                const SizedBox(height: 6),
+                Text('Excl. BTW: ${widget.currencySymbol} ${_fmt(totalEx)}', style: const TextStyle(color: Colors.white70)),
+                Text('BTW: ${widget.currencySymbol} ${_fmt(taxAmount)}', style: const TextStyle(color: Colors.white70)),
+                if (_fmtVatPercent(vatRate) != '—')
+                  Text('BTW-tarief: ${_fmtVatPercent(vatRate)}', style: const TextStyle(color: Colors.white70)),
+                Text('${widget.strings.calculatorDistanceLabel.of(widget.language)}: ${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}', style: const TextStyle(color: Colors.white70)),
+                Text('${widget.strings.calculatorDurationLabel.of(widget.language)}: ${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}', style: const TextStyle(color: Colors.white70)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _sectionCard(
+            title: widget.strings.bookingCustomerSectionTitle.of(widget.language),
+            child: Column(
+              children: [
+                _input(_nameCtrl, widget.strings.bookingFullNameLabel.of(widget.language)),
+                const SizedBox(height: 8),
+                _input(_phoneCtrl, widget.strings.bookingPhoneLabel.of(widget.language), keyboardType: TextInputType.phone),
+                const SizedBox(height: 8),
+                _input(_emailCtrl, widget.strings.bookingEmailLabel.of(widget.language), keyboardType: TextInputType.emailAddress),
+                const SizedBox(height: 8),
+                _input(_messageCtrl, widget.strings.bookingMessageOptionalLabel.of(widget.language), maxLines: 3),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          GestureDetector(
+            onTap: _submitting ? null : _onConfirmBooking,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.amberAccent.withOpacity(0.45)),
+                color: Colors.black,
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                _submitting
+                    ? widget.strings.bookingSubmittingLabel.of(widget.language)
+                    : widget.strings.bookingConfirmButtonLabel.of(widget.language),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          if (_submitState != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _submitState!,
+              style: TextStyle(
+                color: _submitStateIsError ? Colors.redAccent : Colors.greenAccent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (_finalPricing != null) ...[
+            const SizedBox(height: 10),
+            _sectionCard(
+              title: '${widget.strings.bookingSummaryQuoteLabel.of(widget.language)} (final)',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if ((_finalPricingBookingId ?? '').isNotEmpty)
+                    Text(
+                      '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $_finalPricingBookingId',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${widget.strings.calculatorPriceInclVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_incl_vat'])}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    '${widget.strings.calculatorPriceExVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_ex_vat'])}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  Text(
+                    '${widget.taxLabel}: ${_fmtMoney(_finalPricing!['price_vat'])}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionCard({required String title, required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: appConfig.branding.calculatorPanelColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _input(
+    TextEditingController ctrl,
+    String label, {
+    TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
+  }) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70),
+        filled: true,
+        fillColor: appConfig.branding.calculatorScaffoldColor,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+        ),
+      ),
+    );
+  }
+}

@@ -20,6 +20,10 @@ dependencies:
 
   # === Mapbox (official) ===
   mapbox_maps_flutter: ^2.5.0
+  image_picker: ^1.1.2
+  path_provider: ^2.1.4
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

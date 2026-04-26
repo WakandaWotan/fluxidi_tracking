@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">fluxidi_tracking</string>
-    <string name="mapbox_access_token">pk.eyJ1IjoiZmx1eGlkaSIsImEiOiJjbWs3NnF1d3Uwc3d1M2ZzY3NzOGw5Mmg5In0.U61dLwSIzaAduZSgeKFHNQ</string>
+    <string name="mapbox_access_token">MAPBOX_TOKEN_NOT_SET</string>
 </resources>
 

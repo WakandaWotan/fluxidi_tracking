@@ -1,367 +1,323 @@
-import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
-
+import 'dart:ui';
 import 'package:flutter/material.dart';
 
-class CockpitWidget extends StatelessWidget {
-  final Animation<double> activePulse;
-  final bool tripActive;
-  final bool isWaiting;
-  final bool isStartingTrip;
-  final bool hasActiveBooking;
-  final String? from;
-  final String? to;
+/// Fluxidi Driver — Cockpit (compact premium)
+class CockpitWidget extends StatefulWidget {
   final String etaText;
-  final String kmRemainingText;
-  final String timeText;
+  final String kmText;
   final String priceText;
-  final String modeText;
-  final VoidCallback onEnterWaitMode;
-  final VoidCallback onExitWaitMode;
-  final VoidCallback onCenterOnMe;
-  final VoidCallback onStopTrip;
-  final VoidCallback onNavigate;
-  final VoidCallback onStartTrip;
+
+  final bool tripStarted;
+  final bool isWaiting;
+  final bool navActive;
+
+  final VoidCallback onNav;
+  final VoidCallback onStart;
+  final VoidCallback onStop;
+  final VoidCallback onWait;
+  final VoidCallback onGo;
 
   const CockpitWidget({
     super.key,
-    required this.activePulse,
-    required this.tripActive,
-    required this.isWaiting,
-    required this.isStartingTrip,
-    required this.hasActiveBooking,
-    required this.from,
-    required this.to,
     required this.etaText,
-    required this.kmRemainingText,
-    required this.timeText,
+    required this.kmText,
     required this.priceText,
-    required this.modeText,
-    required this.onEnterWaitMode,
-    required this.onExitWaitMode,
-    required this.onCenterOnMe,
-    required this.onStopTrip,
-    required this.onNavigate,
-    required this.onStartTrip,
+    required this.tripStarted,
+    required this.isWaiting,
+    required this.navActive,
+    required this.onNav,
+    required this.onStart,
+    required this.onStop,
+    required this.onWait,
+    required this.onGo,
   });
 
   @override
+  State<CockpitWidget> createState() => _CockpitWidgetState();
+}
+
+class _CockpitWidgetState extends State<CockpitWidget>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    if (widget.tripStarted) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant CockpitWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.tripStarted && widget.tripStarted) {
+      _pulse.repeat(reverse: true);
+    } else if (oldWidget.tripStarted && !widget.tripStarted) {
+      _pulse.stop();
+      _pulse.value = 0.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(26),
+    final eta = (widget.etaText.trim().isEmpty) ? '—' : widget.etaText;
+    final km = (widget.kmText.trim().isEmpty) ? '—' : widget.kmText;
+    final price = (widget.priceText.trim().isEmpty) ? '—' : widget.priceText;
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final panel = AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) {
+        final t = widget.tripStarted ? _pulse.value : 0.0;
+        final borderOpacity = widget.tripStarted ? (0.74 + 0.08 * t) : 0.34;
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(14),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF081126).withOpacity(0.80),
-                borderRadius: BorderRadius.circular(26),
+                color: const Color(0xFF08142D).withOpacity(0.92),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: const Color(0xFFFFD36A).withOpacity(0.28),
-                  width: 1.2,
+                  color: const Color(0xFFFFD54F).withOpacity(borderOpacity * 0.72),
+                  width: 1.0,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.35),
-                    blurRadius: 24,
-                    spreadRadius: 2,
+                    color: Colors.black.withOpacity(0.28),
+                    blurRadius: 6,
+                    spreadRadius: 0.2,
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (hasActiveBooking) ...[
-                    Text(
-                      '${_labelOrFallback(from, 'Pickup')} → ${_labelOrFallback(to, 'Dropoff')}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.68),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            priceText,
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          child: Text(
-                            modeText,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.75),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  SizedBox(
-                    height: 96,
-                    child: LayoutBuilder(
-                      builder: (context, c) {
-                        final w = c.maxWidth;
-                        final h = c.maxHeight;
-                        const gap = 12.0;
-                        final dialSize = math.max(
-                          60.0,
-                          math.min(84.0, math.min((w - 2 * gap) / 3, h)),
-                        );
-
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _cockpitDial(
-                              label: 'ETA',
-                              value: etaText,
-                              icon: Icons.schedule,
-                              size: dialSize,
-                              highlight: tripActive,
-                            ),
-                            SizedBox(width: gap),
-                            _cockpitDial(
-                              label: 'TIME',
-                              value: timeText,
-                              icon: Icons.timer_outlined,
-                              size: dialSize,
-                              highlight: tripActive,
-                            ),
-                            SizedBox(width: gap),
-                            _cockpitDial(
-                              label: 'KM',
-                              value: kmRemainingText,
-                              icon: Icons.route,
-                              size: dialSize,
-                              highlight: tripActive,
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Column(
-                    children: [
-                      if (tripActive) ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _cockpitPrimaryButton(
-                                label: isWaiting ? 'RESUME' : 'WAIT',
-                                icon: isWaiting
-                                    ? Icons.play_arrow_rounded
-                                    : Icons.pause_circle_outline,
-                                filled: false,
-                                onTap: isWaiting ? onExitWaitMode : onEnterWaitMode,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _cockpitPrimaryButton(
-                                label: 'CENTER',
-                                icon: Icons.my_location_outlined,
-                                filled: false,
-                                onTap: onCenterOnMe,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          height: 52,
-                          child: _cockpitPrimaryButton(
-                            label: 'STOP',
-                            icon: Icons.stop_circle_outlined,
-                            filled: true,
-                            onTap: onStopTrip,
-                          ),
-                        ),
-                      ] else ...[
-                        SizedBox(
-                          height: 52,
-                          child: (hasActiveBooking
-                              ? _cockpitStartButton()
-                              : _cockpitPrimaryButton(
-                                  label: 'NAVIGATE',
-                                  icon: Icons.navigation_outlined,
-                                  filled: false,
-                                  onTap: onNavigate,
-                                )),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  static String _labelOrFallback(String? raw, String fallback) {
-    final s = (raw ?? '').trim();
-    return s.isNotEmpty ? s : fallback;
-  }
-
-  Widget _cockpitDial({
-    required String label,
-    required String value,
-    required IconData icon,
-    required double size,
-    required bool highlight,
-  }) {
-    return AnimatedBuilder(
-      animation: activePulse,
-      builder: (context, _) {
-        final t = highlight ? (0.55 + 0.45 * activePulse.value) : 0.0;
-
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xFF0B1733).withOpacity(0.55),
-            border: Border.all(
-              color: const Color(0xFFFFD36A).withOpacity(0.22 + 0.18 * t),
-              width: 1.1,
-            ),
-            boxShadow: [
-              if (highlight)
-                BoxShadow(
-                  color: const Color(0x66F5C400).withOpacity(0.18 * t),
-                  blurRadius: 18 * t,
-                  spreadRadius: 1 * t,
-                ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 16,
-                  color: const Color(0xFFFFD36A).withOpacity(0.92),
-                ),
-                const SizedBox(height: 6),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.62),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
+              child: isLandscape ? _buildLandscapeStrip(eta: eta, km: km, price: price) : _buildPortraitPanel(eta: eta, km: km, price: price),
             ),
           ),
         );
       },
     );
+
+    return SafeArea(
+      bottom: true,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+          child: panel,
+        ),
+      ),
+    );
   }
 
-  Widget _cockpitPrimaryButton({
-    required String label,
-    required IconData icon,
-    required bool filled,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedBuilder(
-        animation: activePulse,
-        builder: (context, _) {
-          final t = (0.65 + 0.35 * activePulse.value);
-
-          return Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: filled
-                  ? const Color(0xFF3B2230)
-                  : const Color(0xFF0B1733).withOpacity(0.45),
-              border: Border.all(
-                color: filled
-                    ? const Color(0xFFFFA7C0).withOpacity(0.55 + 0.25 * t)
-                    : const Color(0xFFFFD36A).withOpacity(0.30 + 0.14 * t),
-                width: 1.2,
+  Widget _buildPortraitPanel({required String eta, required String km, required String price}) {
+    const gap = 4.0;
+    const verticalPadding = 3.0;
+    return SizedBox(
+      height: 108,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, verticalPadding, 8, verticalPadding),
+        child: Column(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Row(
+                children: [
+                  _metric('ETA', eta, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                  const SizedBox(width: gap),
+                  _metric('KM', km, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                  const SizedBox(width: gap),
+                  _metric('€', price, verticalPadding: 4, titleSize: 9, valueSize: 15),
+                ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: filled
-                      ? const Color(0x66FFA7C0).withOpacity(0.18 * t)
-                      : const Color(0x66F5C400).withOpacity(0.14 * t),
-                  blurRadius: 18 * t,
-                  spreadRadius: 1 * t,
-                ),
-              ],
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
+            const SizedBox(height: gap),
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  _btn(
+                    keyId: 'nav',
+                    label: widget.navActive ? 'NAV ON' : 'NAV',
+                    icon: widget.navActive ? Icons.navigation : Icons.navigation_outlined,
+                    onTap: widget.onNav,
+                    hot: widget.navActive,
+                    height: 0,
+                    iconSize: 12,
+                    fontSize: 10,
+                  ),
+                  const SizedBox(width: gap),
+                  _btn(
+                    keyId: 'primary',
+                    label: widget.tripStarted ? 'STOP' : 'START',
+                    icon: widget.tripStarted ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+                    onTap: widget.tripStarted ? widget.onStop : widget.onStart,
+                    hot: widget.tripStarted,
+                    height: 0,
+                    iconSize: 12,
+                    fontSize: 10,
+                  ),
+                  const SizedBox(width: gap),
+                  _btn(
+                    keyId: 'wait',
+                    label: widget.isWaiting ? 'GA' : 'WACHT',
+                    icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
+                    onTap: widget.isWaiting ? widget.onGo : widget.onWait,
+                    hot: widget.isWaiting,
+                    height: 0,
+                    iconSize: 12,
+                    fontSize: 10,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeStrip({required String eta, required String km, required String price}) {
+    return SizedBox(
+      height: 84,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            _stripItem('ETA', eta),
+            const SizedBox(width: 6),
+            _stripItem('KM', km),
+            const SizedBox(width: 6),
+            _stripItem('€', price),
+            const SizedBox(width: 6),
+            _btn(
+              keyId: 'nav',
+              label: widget.navActive ? 'NAV ON' : 'NAV',
+              icon: widget.navActive ? Icons.navigation : Icons.navigation_outlined,
+              onTap: widget.onNav,
+              hot: widget.navActive,
+              height: 0,
+              iconSize: 12,
+              fontSize: 10,
+            ),
+            const SizedBox(width: 6),
+            _btn(
+              keyId: 'primary',
+              label: widget.tripStarted ? 'STOP' : 'START',
+              icon: widget.tripStarted ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+              onTap: widget.tripStarted ? widget.onStop : widget.onStart,
+              hot: widget.tripStarted,
+              height: 0,
+              iconSize: 12,
+              fontSize: 10,
+            ),
+            const SizedBox(width: 6),
+            _btn(
+              keyId: 'wait',
+              label: widget.isWaiting ? 'GA' : 'WACHT',
+              icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
+              onTap: widget.isWaiting ? widget.onGo : widget.onWait,
+              hot: widget.isWaiting,
+              height: 0,
+              iconSize: 12,
+              fontSize: 10,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _stripItem(String label, String value) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFF101E3A).withOpacity(0.92),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: Colors.white.withOpacity(0.055)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.75),
+                fontSize: 8.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(
+    String label,
+    String value, {
+    required double verticalPadding,
+    required double titleSize,
+    required double valueSize,
+  }) {
+    return Expanded(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 0.5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF101E3A).withOpacity(0.94),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: Colors.white.withOpacity(0.055)),
+            ),
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  icon,
-                  size: 22,
-                  color: filled
-                      ? const Color(0xFFFFA7C0)
-                      : const Color(0xFFFFD36A),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.75),
+                        fontSize: titleSize.clamp(0, 11),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                      ),
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.6,
+                const SizedBox(height: 2),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: valueSize.clamp(0, 16),
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -372,16 +328,92 @@ class CockpitWidget extends StatelessWidget {
     );
   }
 
-  Widget _cockpitStartButton() {
-    return Opacity(
-      opacity: isStartingTrip ? 0.75 : 1.0,
-      child: IgnorePointer(
-        ignoring: isStartingTrip || !hasActiveBooking,
-        child: _cockpitPrimaryButton(
-          label: isStartingTrip ? 'STARTING…' : 'START',
-          icon: Icons.play_circle_outline,
-          filled: true,
-          onTap: onStartTrip,
+  Widget _btn({
+    required String keyId,
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    required bool hot,
+    required double height,
+    required double iconSize,
+    required double fontSize,
+  }) {
+    final isStop = keyId == 'primary' && label == 'STOP';
+    final isNavActive = keyId == 'nav' && hot;
+    final isWait = keyId == 'wait';
+    final accent = isStop ? const Color(0xFFFF6B5F) : const Color(0xFFFFD54F);
+    final background = isStop
+        ? const Color(0xFF3A1821)
+        : (isNavActive ? const Color(0xFF2B260D) : const Color(0xFF101E3A));
+    final bgOpacity = isStop ? 0.96 : (hot && !isWait ? 0.92 : 0.86);
+    final borderOpacity =
+        isStop ? 0.78 : (isNavActive ? 0.62 : (isWait ? 0.18 : 0.28));
+    final contentColor =
+        hot && !isWait ? accent : Colors.white.withOpacity(isWait ? 0.76 : 0.88);
+
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox.expand(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            height: height > 0 ? height : null,
+            decoration: BoxDecoration(
+              color: background.withOpacity(bgOpacity),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: accent.withOpacity(borderOpacity),
+                width: isStop ? 1.4 : 1.0,
+              ),
+              boxShadow: hot
+                  ? [
+                      BoxShadow(
+                        color: accent.withOpacity(isStop ? 0.22 : 0.12),
+                        blurRadius: isStop ? 8 : 5,
+                        spreadRadius: 0.1,
+                      ),
+                    ]
+                  : [],
+            ),
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, anim) {
+                    return FadeTransition(
+                      opacity: anim,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.97, end: 1.0).animate(anim),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: Row(
+                    key: ValueKey<String>('${keyId}_$label'),
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: iconSize, color: contentColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: fontSize,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.4,
+                          color: contentColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
