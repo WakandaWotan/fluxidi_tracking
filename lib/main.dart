@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier, kIsWeb;
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -268,6 +268,8 @@ String _receiptText(String key) {
       return _tr(nl: 'Boekingsdetails', en: 'Booking details', fr: 'Détails de réservation', es: 'Detalles de reserva');
     case 'customer':
       return _tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente');
+    case 'customerDetails':
+      return _tr(nl: 'Klantgegevens', en: 'Customer details', fr: 'Coordonnées client', es: 'Datos del cliente');
     case 'customerName':
       return _tr(nl: 'Klantnaam', en: 'Customer name', fr: 'Nom du client', es: 'Nombre del cliente');
     case 'customerPhone':
@@ -3444,25 +3446,38 @@ Map<String, String> _headers({bool admin = false}) {
     final tracking = asMap(booking.details['tracking_booking']);
     final payload = recordPayload;
     final customer = asMap(payload['customer']);
+    final bookingCustomer = asMap(bookingMap['customer']);
+    final payloadBooking = asMap(payload['booking']);
+    final payloadBookingCustomer = asMap(payloadBooking['customer']);
     final customerName = text(bookingMap['custName'] ??
         bookingMap['customer_name'] ??
         bookingMap['customerName'] ??
         bookingMap['name'] ??
+        bookingCustomer['name'] ??
+        bookingCustomer['full_name'] ??
         detailMap['customer_name'] ??
         detailMap['customerName'] ??
         detailMap['name'] ??
         payload['name'] ??
         payload['customer_name'] ??
         payload['customerName'] ??
+        payloadBooking['customer_name'] ??
+        payloadBooking['customerName'] ??
+        payloadBooking['name'] ??
+        payloadBookingCustomer['name'] ??
+        payloadBookingCustomer['full_name'] ??
         customer['name'] ??
         customer['full_name'] ??
-        pick([['customer', 'name']]));
+        pick([['customer', 'name'], ['booking', 'customer', 'name'], ['record', 'payload', 'customer', 'name'], ['record', 'payload', 'booking', 'customer', 'name']]));
     final customerPhone = text(bookingMap['custPhone'] ??
         bookingMap['customer_phone'] ??
         bookingMap['customerPhone'] ??
         bookingMap['phone'] ??
         bookingMap['tel'] ??
         bookingMap['mobile'] ??
+        bookingCustomer['phone'] ??
+        bookingCustomer['tel'] ??
+        bookingCustomer['mobile'] ??
         detailMap['customer_phone'] ??
         detailMap['customerPhone'] ??
         detailMap['phone'] ??
@@ -3473,22 +3488,35 @@ Map<String, String> _headers({bool admin = false}) {
         payload['customerPhone'] ??
         payload['tel'] ??
         payload['mobile'] ??
+        payloadBooking['customer_phone'] ??
+        payloadBooking['customerPhone'] ??
+        payloadBooking['phone'] ??
+        payloadBooking['tel'] ??
+        payloadBooking['mobile'] ??
+        payloadBookingCustomer['phone'] ??
+        payloadBookingCustomer['tel'] ??
+        payloadBookingCustomer['mobile'] ??
         customer['phone'] ??
         customer['tel'] ??
         customer['mobile'] ??
-        pick([['customer', 'phone']]));
+        pick([['customer', 'phone'], ['booking', 'customer', 'phone'], ['record', 'payload', 'customer', 'phone'], ['record', 'payload', 'booking', 'customer', 'phone']]));
     final customerEmail = text(bookingMap['custEmail'] ??
         bookingMap['customer_email'] ??
         bookingMap['customerEmail'] ??
         bookingMap['email'] ??
+        bookingCustomer['email'] ??
         detailMap['customer_email'] ??
         detailMap['customerEmail'] ??
         detailMap['email'] ??
         payload['email'] ??
         payload['customer_email'] ??
         payload['customerEmail'] ??
+        payloadBooking['customer_email'] ??
+        payloadBooking['customerEmail'] ??
+        payloadBooking['email'] ??
+        payloadBookingCustomer['email'] ??
         customer['email'] ??
-        pick([['customer', 'email']]));
+        pick([['customer', 'email'], ['booking', 'customer', 'email'], ['record', 'payload', 'customer', 'email'], ['record', 'payload', 'booking', 'customer', 'email']]));
     final customerCountry = text(bookingMap['customer_country'] ??
         bookingMap['customerCountry'] ??
         bookingMap['country'] ??
@@ -3632,6 +3660,12 @@ Map<String, String> _headers({bool admin = false}) {
       if (customerName != null) 'customer_name': customerName,
       if (customerPhone != null) 'customer_phone': customerPhone,
       if (customerEmail != null) 'customer_email': customerEmail,
+      if (customerName != null || customerPhone != null || customerEmail != null)
+        'customer': <String, dynamic>{
+          if (customerName != null) 'name': customerName,
+          if (customerPhone != null) 'phone': customerPhone,
+          if (customerEmail != null) 'email': customerEmail,
+        },
       if (customerCountry != null) 'customer_country': customerCountry,
       if (phoneCountryCode != null) 'phone_country_code': phoneCountryCode,
       if (dialCode != null) 'dial_code': dialCode,
@@ -8571,6 +8605,32 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return text == null || text == 'null' ? null : text;
   }
 
+  String? _cleanContactText(dynamic value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty || text == 'null') return null;
+    return text;
+  }
+
+  dynamic _detailAt(List<String> path) {
+    dynamic current = item.bookingDetails;
+    for (final key in path) {
+      if (current is Map && current.containsKey(key)) {
+        current = current[key];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  String? _firstDetailPathText(List<List<String>> paths) {
+    for (final path in paths) {
+      final text = _cleanContactText(_detailAt(path));
+      if (text != null) return text;
+    }
+    return null;
+  }
+
   String? _firstDetailText(List<String> keys) {
     for (final key in keys) {
       final text = _detailText(key);
@@ -8607,24 +8667,77 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return '${km.toStringAsFixed(2)} km';
   }
 
-  String? get _customerName => _firstDetailText([
-        'customer_name',
-        'customerName',
-        'name',
+  String? get _customerName => _firstDetailPathText([
+        ['customer_name'],
+        ['customerName'],
+        ['name'],
+        ['customer', 'name'],
+        ['booking', 'customer_name'],
+        ['booking', 'customerName'],
+        ['booking', 'name'],
+        ['booking', 'customer', 'name'],
+        ['record', 'payload', 'customer_name'],
+        ['record', 'payload', 'customerName'],
+        ['record', 'payload', 'name'],
+        ['record', 'payload', 'customer', 'name'],
+        ['record', 'payload', 'booking', 'customer_name'],
+        ['record', 'payload', 'booking', 'customerName'],
+        ['record', 'payload', 'booking', 'name'],
+        ['record', 'payload', 'booking', 'customer', 'name'],
       ]);
 
-  String? get _customerPhoneRaw => _firstDetailText([
-        'customer_phone',
-        'customerPhone',
-        'phone',
-        'tel',
-        'mobile',
+  String? get _customerPhoneRaw => _firstDetailPathText([
+        ['customer_phone'],
+        ['customerPhone'],
+        ['phone'],
+        ['tel'],
+        ['mobile'],
+        ['customer', 'phone'],
+        ['customer', 'tel'],
+        ['customer', 'mobile'],
+        ['booking', 'customer_phone'],
+        ['booking', 'customerPhone'],
+        ['booking', 'phone'],
+        ['booking', 'tel'],
+        ['booking', 'mobile'],
+        ['booking', 'customer', 'phone'],
+        ['booking', 'customer', 'tel'],
+        ['booking', 'customer', 'mobile'],
+        ['record', 'payload', 'customer_phone'],
+        ['record', 'payload', 'customerPhone'],
+        ['record', 'payload', 'phone'],
+        ['record', 'payload', 'tel'],
+        ['record', 'payload', 'mobile'],
+        ['record', 'payload', 'customer', 'phone'],
+        ['record', 'payload', 'customer', 'tel'],
+        ['record', 'payload', 'customer', 'mobile'],
+        ['record', 'payload', 'booking', 'customer_phone'],
+        ['record', 'payload', 'booking', 'customerPhone'],
+        ['record', 'payload', 'booking', 'phone'],
+        ['record', 'payload', 'booking', 'tel'],
+        ['record', 'payload', 'booking', 'mobile'],
+        ['record', 'payload', 'booking', 'customer', 'phone'],
+        ['record', 'payload', 'booking', 'customer', 'tel'],
+        ['record', 'payload', 'booking', 'customer', 'mobile'],
       ]);
 
-  String? get _customerEmail => _validEmail(_firstDetailText([
-        'customer_email',
-        'customerEmail',
-        'email',
+  String? get _customerEmail => _validEmail(_firstDetailPathText([
+        ['customer_email'],
+        ['customerEmail'],
+        ['email'],
+        ['customer', 'email'],
+        ['booking', 'customer_email'],
+        ['booking', 'customerEmail'],
+        ['booking', 'email'],
+        ['booking', 'customer', 'email'],
+        ['record', 'payload', 'customer_email'],
+        ['record', 'payload', 'customerEmail'],
+        ['record', 'payload', 'email'],
+        ['record', 'payload', 'customer', 'email'],
+        ['record', 'payload', 'booking', 'customer_email'],
+        ['record', 'payload', 'booking', 'customerEmail'],
+        ['record', 'payload', 'booking', 'email'],
+        ['record', 'payload', 'booking', 'customer', 'email'],
       ]));
 
   String? get _customerCountryContext => _firstDetailText([
@@ -8652,8 +8765,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       _normalizePhoneForWhatsApp(_customerPhoneRaw, countryContext: _customerCountryContext);
 
   bool get _hasAnyRawCustomerContact =>
+      (_customerName?.trim().isNotEmpty ?? false) ||
       (_customerPhoneRaw?.trim().isNotEmpty ?? false) ||
-      (_firstDetailText(['customer_email', 'customerEmail', 'email'])?.trim().isNotEmpty ?? false);
+      (_customerEmail?.trim().isNotEmpty ?? false);
 
   String _maskEmailForLog(String? value) {
     final email = value?.trim();
@@ -8672,12 +8786,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   void _debugReceiptContactState(String label, {String? emailOverride}) {
+    if (!kDebugMode) return;
     debugPrint(
       '[RITBON][CONTACT][$label] '
+      'nameFound=${_customerName != null} '
       'emailFound=${(emailOverride ?? _customerEmail) != null} '
       'phoneFound=${_customerPhoneE164 != null} '
-      'rawPhone=${_maskPhoneForLog(_customerPhoneRaw)} '
-      'email=${_maskEmailForLog(emailOverride ?? _customerEmail)} '
       'keys=${item.bookingDetails.keys.where((key) => key.toLowerCase().contains('customer') || key.toLowerCase().contains('phone') || key.toLowerCase().contains('email')).join(',')}',
     );
   }
@@ -9429,11 +9543,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                   _receiptRow(_receiptText('distance'), _kmText()),
                   _receiptRow(_receiptText('actualWaitingTime'), _formatWait(item.waitSecondsTotal)),
                   _receiptRow(_receiptText('total'), _totalText(), highlight: true),
+                  if (_hasAnyRawCustomerContact) ...[
+                    _sectionTitle(_receiptText('customerDetails')),
+                    _optionalReceiptRow(_receiptText('customerName'), _customerName),
+                    _optionalReceiptRow(_receiptText('customerPhone'), _customerPhoneRaw),
+                    _optionalReceiptRow(_receiptText('customerEmail'), _customerEmail),
+                  ],
                   if (_isPlannedReceipt) ...[
                     _sectionTitle(_receiptText('plannedBookingDetails')),
-                    _optionalReceiptRow(_receiptText('customerName'), _detailText('customer_name')),
-                    _optionalReceiptRow(_receiptText('customerPhone'), _detailText('customer_phone')),
-                    _optionalReceiptRow(_receiptText('customerEmail'), _detailText('customer_email')),
                     _optionalReceiptRow(
                       _receiptText('scheduledPickup'),
                       _detailText('scheduled_pickup_at') == null
