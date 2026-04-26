@@ -16,10 +16,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 const bool showPricingDebug = false;
 
@@ -31,7 +33,8 @@ class CalculatorPage extends StatefulWidget {
     this.onGoToStartPage,
   });
 
-  final String bookingBaseUrl; // e.g. https://fluxidi-booking-api.fluxidi.workers.dev
+  final String
+  bookingBaseUrl; // e.g. https://fluxidi-booking-api.fluxidi.workers.dev
   final String mapboxToken; // public pk...
   final VoidCallback? onGoToStartPage;
 
@@ -147,8 +150,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   Map<String, dynamic> _buildQuotePayload(DateTime dt) {
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
-    final returnDt = _returnPickupDateTime ??
-        dt.add(Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)));
+    final returnDt =
+        _returnPickupDateTime ??
+        dt.add(
+          Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)),
+        );
     return <String, dynamic>{
       "from": _fromCtrl.text.trim(),
       "to": _toCtrl.text.trim(),
@@ -196,7 +202,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
   void _openBookingConfirmation() {
     final quote = _lastQuote;
     if (quote == null) return;
-    final dt = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+    final dt =
+        _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
     final payload = _buildQuotePayload(dt);
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -269,14 +276,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     final features = (data['features'] as List?) ?? const [];
-    return features.map<_PlaceSuggestion>((f) {
-      final m = f as Map<String, dynamic>;
-      final placeName = (m['place_name'] ?? '') as String;
-      final center = (m['center'] as List?) ?? const [];
-      final lon = center.isNotEmpty ? (center[0] as num).toDouble() : null;
-      final lat = center.length > 1 ? (center[1] as num).toDouble() : null;
-      return _PlaceSuggestion(label: placeName, lon: lon, lat: lat);
-    }).toList(growable: false);
+    return features
+        .map<_PlaceSuggestion>((f) {
+          final m = f as Map<String, dynamic>;
+          final placeName = (m['place_name'] ?? '') as String;
+          final center = (m['center'] as List?) ?? const [];
+          final lon = center.isNotEmpty ? (center[0] as num).toDouble() : null;
+          final lat = center.length > 1 ? (center[1] as num).toDouble() : null;
+          return _PlaceSuggestion(label: placeName, lon: lon, lat: lat);
+        })
+        .toList(growable: false);
   }
 
   Future<String?> _reverseGeocode(double lat, double lon) async {
@@ -337,12 +346,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
   // ---------- UI helpers ----------
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  Widget _suggestionList(List<_PlaceSuggestion> list, void Function(_PlaceSuggestion) onTap) {
+  Widget _suggestionList(
+    List<_PlaceSuggestion> list,
+    void Function(_PlaceSuggestion) onTap,
+  ) {
     if (list.isEmpty) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.only(top: 6),
@@ -355,7 +365,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: list.length,
-        separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white12),
+        separatorBuilder: (_, __) =>
+            const Divider(height: 1, color: Colors.white12),
         itemBuilder: (context, i) {
           final s = list[i];
           return ListTile(
@@ -392,19 +403,39 @@ class _CalculatorPageState extends State<CalculatorPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 if (hint != null) ...[
                   const SizedBox(height: 4),
-                  Text(hint, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text(
+                    hint,
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
                 ],
               ],
             ),
           ),
           IconButton(
             onPressed: onMinus,
-            icon: const Icon(Icons.remove_circle_outline, color: Colors.white70),
+            icon: const Icon(
+              Icons.remove_circle_outline,
+              color: Colors.white70,
+            ),
           ),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           IconButton(
             onPressed: onPlus,
             icon: const Icon(Icons.add_circle_outline, color: Colors.white70),
@@ -438,8 +469,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   Future<void> _pickReturnDateTime() async {
-    final basePickup = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
-    final fallback = basePickup.add(Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)));
+    final basePickup =
+        _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+    final fallback = basePickup.add(
+      Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)),
+    );
     final base = _returnPickupDateTime ?? fallback;
 
     final d = await showDatePicker(
@@ -457,7 +491,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (t == null) return;
 
     setState(() {
-      _returnPickupDateTime = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+      _returnPickupDateTime = DateTime(
+        d.year,
+        d.month,
+        d.day,
+        t.hour,
+        t.minute,
+      );
     });
   }
 
@@ -470,7 +510,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       return;
     }
 
-    final dt = _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
+    final dt =
+        _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
 
     // Worker is source of truth; keep payload aligned with your API expectations.
     final body = _buildQuoteRequestPayload(dt);
@@ -486,16 +527,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
       debugPrint('quote_request_body=${jsonEncode(body)}');
       final res = await http.post(
         url,
-        headers: const {
-          'content-type': 'application/json',
-        },
+        headers: const {'content-type': 'application/json'},
         body: jsonEncode(body),
       );
 
       final txt = res.body;
       debugPrint('quote_response_raw=$txt');
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw Exception('Quote failed: ${res.statusCode} ${txt.isNotEmpty ? txt : ''}');
+        throw Exception(
+          'Quote failed: ${res.statusCode} ${txt.isNotEmpty ? txt : ''}',
+        );
       }
 
       final data = jsonDecode(txt) as Map<String, dynamic>;
@@ -533,7 +574,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
       return n.toStringAsFixed(decimals);
     }
 
-    final ret = q['return'] is Map ? Map<String, dynamic>.from(q['return'] as Map) : <String, dynamic>{};
+    final ret = q['return'] is Map
+        ? Map<String, dynamic>.from(q['return'] as Map)
+        : <String, dynamic>{};
     final mainEx = parseNum(q['price_ex_vat']) ?? 0.0;
     final mainVat = parseNum(q['price_vat']) ?? 0.0;
     final mainIncl = parseNum(q['price_incl_vat']) ?? 0.0;
@@ -542,43 +585,95 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final retIncl = parseNum(ret['price_incl_vat']) ?? 0.0;
     final priceEx = parseNum(q['total_price_ex_vat']) ?? (mainEx + retEx);
     final priceVat = parseNum(q['total_price_vat']) ?? (mainVat + retVat);
-    final priceIncl = parseNum(q['total_price_incl_vat']) ?? (mainIncl + retIncl);
-    final distanceKm = q['distance_km'] ??
+    final priceIncl =
+        parseNum(q['total_price_incl_vat']) ?? (mainIncl + retIncl);
+    final distanceKm =
+        q['distance_km'] ??
         (((q['distance_m'] ?? q['distanceMeters']) is num)
             ? ((q['distance_m'] ?? q['distanceMeters']) as num) / 1000
             : null);
-    final durationMin = q['duration_min'] ??
+    final durationMin =
+        q['duration_min'] ??
         (((q['duration_s'] ?? q['durationSec']) is num)
             ? ((q['duration_s'] ?? q['durationSec']) as num) / 60
             : null);
     final breakdown = q['breakdown'] is Map<String, dynamic>
         ? q['breakdown'] as Map<String, dynamic>
-        : (q['breakdown'] is Map ? Map<String, dynamic>.from(q['breakdown'] as Map) : <String, dynamic>{});
-    final vatRateRaw = parseNum(q['vat_rate']) ??
+        : (q['breakdown'] is Map
+              ? Map<String, dynamic>.from(q['breakdown'] as Map)
+              : <String, dynamic>{});
+    final vatRateRaw =
+        parseNum(q['vat_rate']) ??
         parseNum(breakdown['vat_rate']) ??
-        parseNum((q['pricing_profile'] is Map) ? (q['pricing_profile'] as Map)['vat_rate'] : null) ??
+        parseNum(
+          (q['pricing_profile'] is Map)
+              ? (q['pricing_profile'] as Map)['vat_rate']
+              : null,
+        ) ??
         _vatRate;
     final vatPct = (vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw);
     String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
     final detailsRows = <MapEntry<String, String>>[
-      MapEntry<String, String>('Starttarief', fmtMoneyVal(breakdown['start_fee_ex'])),
-      MapEntry<String, String>('Afstandskosten', fmtMoneyVal(breakdown['base_drive_ex'])),
-      MapEntry<String, String>('Tijdskosten', fmtMoneyVal(breakdown['per_min_ex'])),
-      MapEntry<String, String>('Wachttijd', fmtMoneyVal(breakdown['waiting_ex'])),
-      MapEntry<String, String>('Extra stops', fmtMoneyVal(breakdown['extra_stops_ex'])),
-      MapEntry<String, String>('Bagagetoeslag', fmtMoneyVal(breakdown['bags_ex'])),
-      MapEntry<String, String>('Voertuigklasse toeslag', fmtMoneyVal(breakdown['tier_fee_ex'])),
+      MapEntry<String, String>(
+        'Starttarief',
+        fmtMoneyVal(breakdown['start_fee_ex']),
+      ),
+      MapEntry<String, String>(
+        'Afstandskosten',
+        fmtMoneyVal(breakdown['base_drive_ex']),
+      ),
+      MapEntry<String, String>(
+        'Tijdskosten',
+        fmtMoneyVal(breakdown['per_min_ex']),
+      ),
+      MapEntry<String, String>(
+        'Wachttijd',
+        fmtMoneyVal(breakdown['waiting_ex']),
+      ),
+      MapEntry<String, String>(
+        'Extra stops',
+        fmtMoneyVal(breakdown['extra_stops_ex']),
+      ),
+      MapEntry<String, String>(
+        'Bagagetoeslag',
+        fmtMoneyVal(breakdown['bags_ex']),
+      ),
+      MapEntry<String, String>(
+        'Voertuigklasse toeslag',
+        fmtMoneyVal(breakdown['tier_fee_ex']),
+      ),
       if ((parseNum(breakdown['surcharge_amount_ex']) ?? 0) > 0)
-        MapEntry<String, String>('Nacht/weekend toeslag', fmtMoneyVal(breakdown['surcharge_amount_ex'])),
+        MapEntry<String, String>(
+          'Nacht/weekend toeslag',
+          fmtMoneyVal(breakdown['surcharge_amount_ex']),
+        ),
       if ((parseNum(breakdown['return_fee_ex']) ?? 0) > 0)
-        MapEntry<String, String>('Retourtoeslag', fmtMoneyVal(breakdown['return_fee_ex'])),
+        MapEntry<String, String>(
+          'Retourtoeslag',
+          fmtMoneyVal(breakdown['return_fee_ex']),
+        ),
       if ((parseNum(breakdown['fuel_surcharge_ex']) ?? 0) > 0)
-        MapEntry<String, String>('Brandstoftoeslag', fmtMoneyVal(breakdown['fuel_surcharge_ex'])),
-      MapEntry<String, String>('Subtotaal excl. BTW', '$_currencySymbol ${fmtNum(priceEx)}'),
-      MapEntry<String, String>('BTW (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)', '$_currencySymbol ${fmtNum(priceVat)}'),
-      MapEntry<String, String>('Totaal incl. BTW', '$_currencySymbol ${fmtNum(priceIncl)}'),
+        MapEntry<String, String>(
+          'Brandstoftoeslag',
+          fmtMoneyVal(breakdown['fuel_surcharge_ex']),
+        ),
+      MapEntry<String, String>(
+        'Subtotaal excl. BTW',
+        '$_currencySymbol ${fmtNum(priceEx)}',
+      ),
+      MapEntry<String, String>(
+        'BTW (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)',
+        '$_currencySymbol ${fmtNum(priceVat)}',
+      ),
+      MapEntry<String, String>(
+        'Totaal incl. BTW',
+        '$_currencySymbol ${fmtNum(priceIncl)}',
+      ),
       if (showPricingDebug)
-        MapEntry<String, String>('BTW-tarief', '${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%'),
+        MapEntry<String, String>(
+          'BTW-tarief',
+          '${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%',
+        ),
     ];
 
     return Container(
@@ -591,30 +686,56 @@ class _CalculatorPageState extends State<CalculatorPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Jouw ritprijs', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+          const Text(
+            'Jouw ritprijs',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 10),
           Text(
             '$_currencySymbol ${fmtNum(priceIncl)}',
-            style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 30,
+              fontWeight: FontWeight.w900,
+            ),
           ),
           const SizedBox(height: 2),
-          const Text('Inclusief BTW', style: TextStyle(color: Colors.white70, fontSize: 12)),
+          const Text(
+            'Inclusief BTW',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
           const SizedBox(height: 8),
-          Text('Afstand: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
-              style: const TextStyle(color: Colors.white70)),
-          Text('Duur: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
-              style: const TextStyle(color: Colors.white70)),
+          Text(
+            'Afstand: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          Text(
+            'Duur: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
+            style: const TextStyle(color: Colors.white70),
+          ),
           if (breakdown.isNotEmpty) ...[
             const SizedBox(height: 8),
             Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              data: Theme.of(
+                context,
+              ).copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
                 childrenPadding: EdgeInsets.zero,
                 iconColor: Colors.white70,
                 collapsedIconColor: Colors.white54,
-                title: const Text('Prijsdetails',
-                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
+                title: const Text(
+                  'Prijsdetails',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 children: [
                   const SizedBox(height: 4),
                   ...detailsRows.map((e) => _kv(e.key, e.value)),
@@ -622,10 +743,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
               ),
             ),
           ],
-          if (showPricingDebug) Text(
-            _s.calculatorQuoteTipText.of(_lang),
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
-          ),
+          if (showPricingDebug)
+            Text(
+              _s.calculatorQuoteTipText.of(_lang),
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
         ],
       ),
     );
@@ -636,8 +758,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
-          Expanded(child: Text(k, style: const TextStyle(color: Colors.white70))),
-          Text(v, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          Expanded(
+            child: Text(k, style: const TextStyle(color: Colors.white70)),
+          ),
+          Text(
+            v,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
@@ -649,7 +779,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
       backgroundColor: _calcScaffoldColor,
       appBar: AppBar(
         backgroundColor: _calcScaffoldColor,
-        title: Text('${appConfig.companyName} ${_s.calculatorTitle.of(_lang)}', style: const TextStyle(color: Colors.white)),
+        title: Text(
+          '${appConfig.companyName} ${_s.calculatorTitle.of(_lang)}',
+          style: const TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           if (widget.onGoToStartPage != null)
@@ -665,7 +798,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
           children: [
-            Text(_s.calculatorFromLabel.of(_lang), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            Text(
+              _s.calculatorFromLabel.of(_lang),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
             const SizedBox(height: 6),
             TextField(
               controller: _fromCtrl,
@@ -675,7 +811,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 fillColor: _calcPanelColor,
                 hintText: _s.calculatorAddressHint.of(_lang),
                 hintStyle: const TextStyle(color: Colors.white38),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
                 suffixIcon: IconButton(
                   onPressed: _setFromCurrentLocation,
                   icon: const Icon(Icons.my_location, color: Colors.white70),
@@ -690,11 +829,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   });
                   return;
                 }
-                _fromDebounce = Timer(const Duration(milliseconds: 220), () async {
-                  final list = await _searchPlaces(v);
-                  if (!mounted) return;
-                  setState(() => _fromSuggestions = list);
-                });
+                _fromDebounce = Timer(
+                  const Duration(milliseconds: 220),
+                  () async {
+                    final list = await _searchPlaces(v);
+                    if (!mounted) return;
+                    setState(() => _fromSuggestions = list);
+                  },
+                );
               },
             ),
             _suggestionList(_fromSuggestions, (s) {
@@ -706,7 +848,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
             const SizedBox(height: 14),
 
-            Text(_s.calculatorToLabel.of(_lang), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            Text(
+              _s.calculatorToLabel.of(_lang),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
             const SizedBox(height: 6),
             TextField(
               controller: _toCtrl,
@@ -716,7 +861,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 fillColor: _calcPanelColor,
                 hintText: _s.calculatorAddressHint.of(_lang),
                 hintStyle: const TextStyle(color: Colors.white38),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
               ),
               onChanged: (v) {
                 _toDebounce?.cancel();
@@ -726,11 +874,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   });
                   return;
                 }
-                _toDebounce = Timer(const Duration(milliseconds: 220), () async {
-                  final list = await _searchPlaces(v);
-                  if (!mounted) return;
-                  setState(() => _toSuggestions = list);
-                });
+                _toDebounce = Timer(
+                  const Duration(milliseconds: 220),
+                  () async {
+                    final list = await _searchPlaces(v);
+                    if (!mounted) return;
+                    setState(() => _toSuggestions = list);
+                  },
+                );
               },
             ),
             _suggestionList(_toSuggestions, (s) {
@@ -772,16 +923,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(_s.calculatorPickupTimeLabel.of(_lang), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    child: Text(
+                      _s.calculatorPickupTimeLabel.of(_lang),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                   Text(
                     _pickupDateTime == null
                         ? _s.calculatorChoosePickupTimeLabel.of(_lang)
                         : '${_pickupDateTime!.day.toString().padLeft(2, '0')}-'
-                          '${_pickupDateTime!.month.toString().padLeft(2, '0')}-'
-                          '${_pickupDateTime!.year} '
-                          '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
-                          '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
+                              '${_pickupDateTime!.month.toString().padLeft(2, '0')}-'
+                              '${_pickupDateTime!.year} '
+                              '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                              '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
                     style: const TextStyle(color: Colors.white70),
                   ),
                   const SizedBox(width: 8),
@@ -800,7 +957,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
               label: _s.calculatorServiceLabel.of(_lang),
               value: _service,
               items: _services
-                  .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                  .map(
+                    (o) => DropdownMenuItem(
+                      value: o.id,
+                      child: Text(o.labelFor(_lang)),
+                    ),
+                  )
                   .toList(growable: false),
               onChanged: (v) => setState(() => _service = v ?? 'airport'),
             ),
@@ -809,7 +971,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
               label: _s.calculatorTierLabel.of(_lang),
               value: _tier,
               items: _tiers
-                  .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                  .map(
+                    (o) => DropdownMenuItem(
+                      value: o.id,
+                      child: Text(o.labelFor(_lang)),
+                    ),
+                  )
                   .toList(growable: false),
               onChanged: (v) {
                 setState(() {
@@ -825,7 +992,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 label: _s.calculatorExtraServiceOptionalLabel.of(_lang),
                 value: _extraService,
                 items: _extras
-                    .map((o) => DropdownMenuItem(value: o.id, child: Text(o.labelFor(_lang))))
+                    .map(
+                      (o) => DropdownMenuItem(
+                        value: o.id,
+                        child: Text(o.labelFor(_lang)),
+                      ),
+                    )
                     .toList(growable: false),
                 onChanged: (v) => setState(() => _extraService = v ?? 'none'),
               ),
@@ -841,17 +1013,23 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       _returnTrip = v;
                       if (!v) _returnPickupDateTime = null;
                     }),
-              title: const Text('Retourrit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              title: const Text(
+                'Retourrit',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               subtitle: Text(
                 _returnFeatureEnabled
                     ? _s.calculatorReturnSubtitle.of(_lang)
                     : (_lang == AppLanguage.en
-                        ? 'Disabled by company pricing settings.'
-                        : _lang == AppLanguage.fr
-                            ? 'Desactive dans les parametres tarifaires de l entreprise.'
-                            : _lang == AppLanguage.es
-                                ? 'Desactivado en la configuracion de precios de la empresa.'
-                                : 'Uitgeschakeld via bedrijfsprijsinstellingen.'),
+                          ? 'Disabled by company pricing settings.'
+                          : _lang == AppLanguage.fr
+                          ? 'Desactive dans les parametres tarifaires de l entreprise.'
+                          : _lang == AppLanguage.es
+                          ? 'Desactivado en la configuracion de precios de la empresa.'
+                          : 'Uitgeschakeld via bedrijfsprijsinstellingen.'),
                 style: const TextStyle(color: Colors.white54),
               ),
               activeColor: Colors.amberAccent,
@@ -860,7 +1038,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
             if (_returnFeatureEnabled && _returnTrip) ...[
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: _calcPanelColor,
                   borderRadius: BorderRadius.circular(16),
@@ -871,17 +1052,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     Expanded(
                       child: Text(
                         'Retourrit ${_s.calculatorPickupTimeLabel.of(_lang)}',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                     Text(
                       _returnPickupDateTime == null
                           ? _s.calculatorChoosePickupTimeLabel.of(_lang)
                           : '${_returnPickupDateTime!.day.toString().padLeft(2, '0')}-'
-                              '${_returnPickupDateTime!.month.toString().padLeft(2, '0')}-'
-                              '${_returnPickupDateTime!.year} '
-                              '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
-                              '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
+                                '${_returnPickupDateTime!.month.toString().padLeft(2, '0')}-'
+                                '${_returnPickupDateTime!.year} '
+                                '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                                '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
                       style: const TextStyle(color: Colors.white70),
                     ),
                     const SizedBox(width: 8),
@@ -900,8 +1084,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
               label: _s.calculatorWaitTimeLabel.of(_lang),
               value: '$_waitMin',
               hint: _s.calculatorWaitStepHint.of(_lang),
-              onMinus: _waitMin > 0 ? () => setState(() => _waitMin = (_waitMin - 5).clamp(0, 9999)) : null,
-              onPlus: () => setState(() => _waitMin = (_waitMin + 5).clamp(0, 9999)),
+              onMinus: _waitMin > 0
+                  ? () =>
+                        setState(() => _waitMin = (_waitMin - 5).clamp(0, 9999))
+                  : null,
+              onPlus: () =>
+                  setState(() => _waitMin = (_waitMin + 5).clamp(0, 9999)),
             ),
 
             const SizedBox(height: 14),
@@ -913,7 +1101,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.amberAccent.withOpacity(0.35)),
+                  border: Border.all(
+                    color: Colors.amberAccent.withOpacity(0.35),
+                  ),
                   color: Colors.black,
                   boxShadow: [
                     BoxShadow(
@@ -928,7 +1118,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   _loading
                       ? _s.calculatorButtonBusyLabel.of(_lang)
                       : 'Bereken prijs',
-                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -936,7 +1130,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
             const SizedBox(height: 12),
 
             if (_error != null)
-              Text('${_s.calculatorErrorPrefix.of(_lang)}: $_error', style: const TextStyle(color: Colors.redAccent)),
+              Text(
+                '${_s.calculatorErrorPrefix.of(_lang)}: $_error',
+                style: const TextStyle(color: Colors.redAccent),
+              ),
 
             if (_lastQuote != null) ...[
               const SizedBox(height: 10),
@@ -948,13 +1145,19 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.amberAccent.withOpacity(0.55)),
+                    border: Border.all(
+                      color: Colors.amberAccent.withOpacity(0.55),
+                    ),
                     color: Colors.black,
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     _s.calculatorBookNowLabel.of(_lang),
-                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ),
@@ -991,7 +1194,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
           decoration: InputDecoration(
             filled: true,
             fillColor: _calcPanelColor,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: const BorderSide(color: Color(0x22FFFFFF)),
@@ -1029,8 +1235,8 @@ class _BookingConfirmationPage extends StatefulWidget {
   });
 
   final String bookingBaseUrl;
-  final language;
-  final strings;
+  final AppLanguage language;
+  final AppStrings strings;
   final Map<String, dynamic> quote;
   final Map<String, dynamic> payload;
   final String currencySymbol;
@@ -1039,7 +1245,8 @@ class _BookingConfirmationPage extends StatefulWidget {
   final String taxLabel;
 
   @override
-  State<_BookingConfirmationPage> createState() => _BookingConfirmationPageState();
+  State<_BookingConfirmationPage> createState() =>
+      _BookingConfirmationPageState();
 }
 
 class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
@@ -1133,13 +1340,116 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final scheme = uri.scheme.toLowerCase();
     if (scheme != 'https') return false;
     final host = uri.host.toLowerCase();
-    if (host.contains('workers.dev') || host.contains('localhost') || host.contains('127.0.0.1')) {
+    if (host.contains('workers.dev') ||
+        host.contains('localhost') ||
+        host.contains('127.0.0.1')) {
       return false;
     }
     return true;
   }
 
-  Future<Map<String, dynamic>?> _fetchFinalAuthoritativePricing(String bookingId) async {
+  Future<void> _copyPaymentLink(String paymentUrl, {String? message}) async {
+    await Clipboard.setData(ClipboardData(text: paymentUrl));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message ??
+              widget.strings.bookingPaymentLinkCopiedMessage.of(
+                widget.language,
+              ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPaymentUrl(String paymentUrl) async {
+    final uri = Uri.tryParse(paymentUrl);
+    final opened =
+        uri != null &&
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      await _copyPaymentLink(
+        paymentUrl,
+        message: widget.strings.bookingPaymentOpenFailedCopiedMessage.of(
+          widget.language,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showBookingSuccessDialog({
+    required bool requiresPayment,
+    required String paymentUrl,
+    required String? publicRef,
+  }) async {
+    final safePaymentUrl = _isCustomerSafeCheckoutUrl(paymentUrl)
+        ? paymentUrl.trim()
+        : '';
+    final hasPaymentUrl = safePaymentUrl.isNotEmpty;
+    final title = requiresPayment
+        ? widget.strings.bookingPaymentSuccessTitle.of(widget.language)
+        : widget.strings.bookingSuccessCashMessage.of(widget.language);
+    final message = requiresPayment
+        ? widget.strings.bookingPaymentRequiredMessage.of(widget.language)
+        : widget.strings.bookingSuccessCashMessage.of(widget.language);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF141B2F),
+          title: Text(title, style: const TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message, style: const TextStyle(color: Colors.white70)),
+              if ((publicRef ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: ${publicRef!.trim()}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            if (hasPaymentUrl)
+              TextButton(
+                onPressed: () => _copyPaymentLink(safePaymentUrl),
+                child: Text(
+                  widget.strings.bookingCopyPaymentLinkLabel.of(
+                    widget.language,
+                  ),
+                ),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(widget.strings.bookingCloseLabel.of(widget.language)),
+            ),
+            if (hasPaymentUrl)
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  _openPaymentUrl(safePaymentUrl);
+                },
+                child: Text(
+                  widget.strings.bookingPayNowLabel.of(widget.language),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchFinalAuthoritativePricing(
+    String bookingId,
+  ) async {
     try {
       final url = Uri.parse('${widget.bookingBaseUrl}/tracking/booking');
       final res = await http.post(
@@ -1152,16 +1462,19 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       if (decoded is! Map) return null;
       final body = Map<String, dynamic>.from(decoded);
       if (body['ok'] != true) return null;
-      final quoteRaw = body['quote'];
-      if (quoteRaw is! Map) return null;
-      final quote = Map<String, dynamic>.from(quoteRaw);
-      final pricingRaw = quote['pricing'];
-      if (pricingRaw is! Map) return null;
+      final Object? quoteRaw = body['quote'];
+      if (quoteRaw is! Map<dynamic, dynamic>) return null;
+      final Map<String, dynamic> quote = Map<String, dynamic>.from(quoteRaw);
+      final Object? pricingRaw = quote['pricing'];
+      if (pricingRaw is! Map<dynamic, dynamic>) return null;
+      final Map<String, dynamic> pricing = Map<String, dynamic>.from(
+        pricingRaw,
+      );
       return <String, dynamic>{
         'booking_id': bookingId,
-        'price_ex_vat': pricingRaw['price_ex_vat'],
-        'price_vat': pricingRaw['price_vat'],
-        'price_incl_vat': pricingRaw['price_incl_vat'],
+        'price_ex_vat': pricing['price_ex_vat'],
+        'price_vat': pricing['price_vat'],
+        'price_incl_vat': pricing['price_incl_vat'],
         'distance_km': quote['distance_km'],
         'duration_min': quote['duration_min'],
       };
@@ -1171,15 +1484,21 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   }
 
   Future<void> _onConfirmBooking() async {
+    FocusScope.of(context).unfocus();
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
     final companyName = _companyNameCtrl.text.trim();
     final vatNumber = _vatNumberCtrl.text.trim();
-    if (name.isEmpty || phone.isEmpty || email.isEmpty || !_isValidEmail(email)) {
+    if (name.isEmpty ||
+        phone.isEmpty ||
+        email.isEmpty ||
+        !_isValidEmail(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(widget.strings.bookingRequiredFieldsError.of(widget.language)),
+          content: Text(
+            widget.strings.bookingRequiredFieldsError.of(widget.language),
+          ),
         ),
       );
       return;
@@ -1247,48 +1566,69 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         }
       }
 
-      final ok = res.statusCode >= 200 &&
+      final ok =
+          res.statusCode >= 200 &&
           res.statusCode < 300 &&
           (body['ok'] == null || body['ok'] == true);
       if (!ok) {
-        final err = (body['error'] ?? body['message'] ?? 'HTTP ${res.statusCode}').toString();
+        final err =
+            (body['error'] ?? body['message'] ?? 'HTTP ${res.statusCode}')
+                .toString();
         throw Exception(err);
       }
 
-      final bookingRef = (body['bookingId'] ??
-              body['booking_id'] ??
-              (body['booking'] is Map ? (body['booking']['bookingId'] ?? body['booking']['booking_id']) : null) ??
-              '')
-          .toString();
-      final publicRef = (body['public_reference'] ??
-              body['publicReference'] ??
-              body['customer_reference'] ??
-              body['customerReference'] ??
-              body['receipt_number'] ??
-              body['receiptNumber'] ??
-              (body['booking'] is Map
-                  ? (body['booking']['public_reference'] ??
-                      body['booking']['publicReference'] ??
-                      body['booking']['customer_reference'] ??
-                      body['booking']['customerReference'] ??
-                      body['booking']['receipt_number'] ??
-                      body['booking']['receiptNumber'])
-                  : null) ??
-              '')
-          .toString()
-          .trim();
-      final requiresPayment = (body['requiresPayment'] == true || body['payment_required'] == true);
-      final checkoutUrl = (body['checkoutUrl'] ?? '').toString();
-      final finalPricing =
-          bookingRef.isNotEmpty ? await _fetchFinalAuthoritativePricing(bookingRef) : null;
+      final bookingRef =
+          (body['bookingId'] ??
+                  body['booking_id'] ??
+                  (body['booking'] is Map
+                      ? (body['booking']['bookingId'] ??
+                            body['booking']['booking_id'])
+                      : null) ??
+                  '')
+              .toString();
+      final publicRef =
+          (body['public_reference'] ??
+                  body['publicReference'] ??
+                  body['customer_reference'] ??
+                  body['customerReference'] ??
+                  body['receipt_number'] ??
+                  body['receiptNumber'] ??
+                  (body['booking'] is Map
+                      ? (body['booking']['public_reference'] ??
+                            body['booking']['publicReference'] ??
+                            body['booking']['customer_reference'] ??
+                            body['booking']['customerReference'] ??
+                            body['booking']['receipt_number'] ??
+                            body['booking']['receiptNumber'])
+                      : null) ??
+                  '')
+              .toString()
+              .trim();
+      final requiresPayment =
+          (body['requiresPayment'] == true || body['payment_required'] == true);
+      final checkoutUrl =
+          (body['checkoutUrl'] ??
+                  body['paymentUrl'] ??
+                  body['payment_url'] ??
+                  '')
+              .toString()
+              .trim();
+      final safeCheckoutUrl = _isCustomerSafeCheckoutUrl(checkoutUrl)
+          ? checkoutUrl
+          : '';
+      final paymentFlow = requiresPayment || safeCheckoutUrl.isNotEmpty;
+      final finalPricing = bookingRef.isNotEmpty
+          ? await _fetchFinalAuthoritativePricing(bookingRef)
+          : null;
 
       final successMessage = [
-        requiresPayment
-            ? widget.strings.bookingSuccessPaymentRequiredMessage.of(widget.language)
+        paymentFlow
+            ? widget.strings.bookingSuccessPaymentRequiredMessage.of(
+                widget.language,
+              )
             : widget.strings.bookingSuccessCashMessage.of(widget.language),
         if (publicRef.isNotEmpty)
           '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $publicRef',
-        if (requiresPayment && _isCustomerSafeCheckoutUrl(checkoutUrl)) checkoutUrl,
       ].join('\n');
 
       if (!mounted) return;
@@ -1298,7 +1638,17 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         _finalPricing = finalPricing;
         _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(successMessage)));
+      if (safeCheckoutUrl.isNotEmpty) {
+        await _showBookingSuccessDialog(
+          requiresPayment: true,
+          paymentUrl: safeCheckoutUrl,
+          publicRef: publicRef,
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(successMessage)));
+      }
     } catch (e) {
       if (!mounted) return;
       final rawErr = e.toString().replaceFirst('Exception: ', '').trim();
@@ -1334,22 +1684,37 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ...widget.quote,
       if (_finalPricing != null) ..._finalPricing!,
     };
-    final totalIncl = effectiveQuote['price_incl_vat'] ??
+    final totalIncl =
+        effectiveQuote['price_incl_vat'] ??
         effectiveQuote['total_price_incl_vat'] ??
         effectiveQuote['price'] ??
         effectiveQuote['total'] ??
         effectiveQuote['amount'];
-    final totalEx = effectiveQuote['price_ex_vat'] ?? effectiveQuote['total_price_ex_vat'];
-    final taxAmount = effectiveQuote['price_vat'] ?? effectiveQuote['total_price_vat'];
-    final vatRate = effectiveQuote['vat_rate'] ??
-        (effectiveQuote['breakdown'] is Map ? (effectiveQuote['breakdown'] as Map)['vat_rate'] : null);
-    final distanceKm = effectiveQuote['distance_km'] ??
-        (((effectiveQuote['distance_m'] ?? effectiveQuote['distanceMeters']) is num)
-            ? ((effectiveQuote['distance_m'] ?? effectiveQuote['distanceMeters']) as num) / 1000
+    final totalEx =
+        effectiveQuote['price_ex_vat'] ?? effectiveQuote['total_price_ex_vat'];
+    final taxAmount =
+        effectiveQuote['price_vat'] ?? effectiveQuote['total_price_vat'];
+    final vatRate =
+        effectiveQuote['vat_rate'] ??
+        (effectiveQuote['breakdown'] is Map
+            ? (effectiveQuote['breakdown'] as Map)['vat_rate']
             : null);
-    final durationMin = effectiveQuote['duration_min'] ??
-        (((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec']) is num)
-            ? ((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec']) as num) / 60
+    final distanceKm =
+        effectiveQuote['distance_km'] ??
+        (((effectiveQuote['distance_m'] ?? effectiveQuote['distanceMeters'])
+                is num)
+            ? ((effectiveQuote['distance_m'] ??
+                          effectiveQuote['distanceMeters'])
+                      as num) /
+                  1000
+            : null);
+    final durationMin =
+        effectiveQuote['duration_min'] ??
+        (((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec'])
+                is num)
+            ? ((effectiveQuote['duration_s'] ?? effectiveQuote['durationSec'])
+                      as num) /
+                  60
             : null);
 
     final from = (widget.payload['from'] ?? '').toString();
@@ -1363,16 +1728,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final waitMin = (widget.payload['wait_min'] ?? '').toString();
     final returnTrip = (widget.payload['return'] ?? false) == true;
     final extraService = (widget.payload['extra_service'] ?? 'NONE').toString();
-    final serviceLabel = _optionLabelForPayloadValue(appConfig.enabledServices, service);
+    final serviceLabel = _optionLabelForPayloadValue(
+      appConfig.enabledServices,
+      service,
+    );
     final tierLabel = _optionLabelForPayloadValue(appConfig.enabledTiers, tier);
-    final extraServiceLabel =
-        _optionLabelForPayloadValue(appConfig.enabledExtraOptions, extraService);
+    final extraServiceLabel = _optionLabelForPayloadValue(
+      appConfig.enabledExtraOptions,
+      extraService,
+    );
 
     return Scaffold(
       backgroundColor: appConfig.branding.calculatorScaffoldColor,
       appBar: AppBar(
         backgroundColor: appConfig.branding.calculatorScaffoldColor,
-        title: Text(widget.strings.bookingConfirmationTitle.of(widget.language), style: const TextStyle(color: Colors.white)),
+        title: Text(
+          widget.strings.bookingConfirmationTitle.of(widget.language),
+          style: const TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: ListView(
@@ -1383,44 +1756,74 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$from\n→\n$to', style: const TextStyle(color: Colors.white)),
+                Text(
+                  '$from\n→\n$to',
+                  style: const TextStyle(color: Colors.white),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 10),
           _sectionCard(
-            title: widget.strings.bookingSummaryServiceTierLabel.of(widget.language),
-            child: Text('$serviceLabel • $tierLabel', style: const TextStyle(color: Colors.white)),
+            title: widget.strings.bookingSummaryServiceTierLabel.of(
+              widget.language,
+            ),
+            child: Text(
+              '$serviceLabel • $tierLabel',
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
           const SizedBox(height: 10),
           _sectionCard(
-            title: widget.strings.bookingSummaryPassengersBagsLabel.of(widget.language),
-            child: Text('PAX: $pax • BAG: $bags', style: const TextStyle(color: Colors.white)),
+            title: widget.strings.bookingSummaryPassengersBagsLabel.of(
+              widget.language,
+            ),
+            child: Text(
+              'PAX: $pax • BAG: $bags',
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
           const SizedBox(height: 10),
           _sectionCard(
             title: widget.strings.bookingSummaryPickupLabel.of(widget.language),
-            child: Text('$date  $time', style: const TextStyle(color: Colors.white)),
+            child: Text(
+              '$date  $time',
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
           const SizedBox(height: 10),
           if (returnTrip) ...[
             _sectionCard(
-              title: widget.strings.bookingSummaryReturnLabel.of(widget.language),
-              child: Text(widget.strings.commonYesLabel.of(widget.language), style: const TextStyle(color: Colors.white)),
+              title: widget.strings.bookingSummaryReturnLabel.of(
+                widget.language,
+              ),
+              child: Text(
+                widget.strings.commonYesLabel.of(widget.language),
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const SizedBox(height: 10),
           ],
           if (waitMin.trim().isNotEmpty && waitMin.trim() != '0') ...[
             _sectionCard(
-              title: widget.strings.bookingSummaryWaitTimeLabel.of(widget.language),
-              child: Text('$waitMin min', style: const TextStyle(color: Colors.white)),
+              title: widget.strings.bookingSummaryWaitTimeLabel.of(
+                widget.language,
+              ),
+              child: Text(
+                '$waitMin min',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const SizedBox(height: 10),
           ],
-          if (extraServiceLabel.trim().isNotEmpty && extraServiceLabel.trim().toUpperCase() != 'NONE') ...[
+          if (extraServiceLabel.trim().isNotEmpty &&
+              extraServiceLabel.trim().toUpperCase() != 'NONE') ...[
             _sectionCard(
               title: 'Extra service',
-              child: Text(extraServiceLabel, style: const TextStyle(color: Colors.white)),
+              child: Text(
+                extraServiceLabel,
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const SizedBox(height: 10),
           ],
@@ -1431,32 +1834,74 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               children: [
                 Text(
                   'Prijs incl. BTW: ${widget.currencySymbol} ${_fmt(totalIncl)}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
                 ),
                 const SizedBox(height: 6),
-                Text('Excl. BTW: ${widget.currencySymbol} ${_fmt(totalEx)}', style: const TextStyle(color: Colors.white70)),
-                Text('BTW: ${widget.currencySymbol} ${_fmt(taxAmount)}', style: const TextStyle(color: Colors.white70)),
+                Text(
+                  'Excl. BTW: ${widget.currencySymbol} ${_fmt(totalEx)}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                Text(
+                  'BTW: ${widget.currencySymbol} ${_fmt(taxAmount)}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
                 if (_fmtVatPercent(vatRate) != '—')
-                  Text('BTW-tarief: ${_fmtVatPercent(vatRate)}', style: const TextStyle(color: Colors.white70)),
-                Text('${widget.strings.calculatorDistanceLabel.of(widget.language)}: ${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}', style: const TextStyle(color: Colors.white70)),
-                Text('${widget.strings.calculatorDurationLabel.of(widget.language)}: ${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}', style: const TextStyle(color: Colors.white70)),
+                  Text(
+                    'BTW-tarief: ${_fmtVatPercent(vatRate)}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                Text(
+                  '${widget.strings.calculatorDistanceLabel.of(widget.language)}: ${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                Text(
+                  '${widget.strings.calculatorDurationLabel.of(widget.language)}: ${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 10),
           _sectionCard(
-            title: widget.strings.bookingCustomerSectionTitle.of(widget.language),
+            title: widget.strings.bookingCustomerSectionTitle.of(
+              widget.language,
+            ),
             child: Column(
               children: [
-                _input(_nameCtrl, widget.strings.bookingFullNameLabel.of(widget.language)),
+                _input(
+                  _nameCtrl,
+                  widget.strings.bookingFullNameLabel.of(widget.language),
+                ),
                 const SizedBox(height: 8),
-                _input(_phoneCtrl, widget.strings.bookingPhoneLabel.of(widget.language), keyboardType: TextInputType.phone),
+                _input(
+                  _phoneCtrl,
+                  widget.strings.bookingPhoneLabel.of(widget.language),
+                  keyboardType: TextInputType.phone,
+                ),
                 const SizedBox(height: 8),
-                _input(_emailCtrl, widget.strings.bookingEmailLabel.of(widget.language), keyboardType: TextInputType.emailAddress),
+                _input(
+                  _emailCtrl,
+                  widget.strings.bookingEmailLabel.of(widget.language),
+                  keyboardType: TextInputType.emailAddress,
+                ),
                 const SizedBox(height: 8),
-                _input(_companyNameCtrl, widget.strings.bookingCompanyNameOptionalLabel.of(widget.language)),
+                _input(
+                  _companyNameCtrl,
+                  widget.strings.bookingCompanyNameOptionalLabel.of(
+                    widget.language,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                _input(_vatNumberCtrl, widget.strings.bookingVatNumberOptionalLabel.of(widget.language)),
+                _input(
+                  _vatNumberCtrl,
+                  widget.strings.bookingVatNumberOptionalLabel.of(
+                    widget.language,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -1466,7 +1911,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _input(_messageCtrl, widget.strings.bookingMessageOptionalLabel.of(widget.language), maxLines: 3),
+                _input(
+                  _messageCtrl,
+                  widget.strings.bookingMessageOptionalLabel.of(
+                    widget.language,
+                  ),
+                  maxLines: 3,
+                ),
               ],
             ),
           ),
@@ -1484,8 +1935,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               child: Text(
                 _submitting
                     ? widget.strings.bookingSubmittingLabel.of(widget.language)
-                    : widget.strings.bookingConfirmButtonLabel.of(widget.language),
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                    : widget.strings.bookingConfirmButtonLabel.of(
+                        widget.language,
+                      ),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ),
@@ -1494,7 +1950,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             Text(
               _submitState!,
               style: TextStyle(
-                color: _submitStateIsError ? Colors.redAccent : Colors.greenAccent,
+                color: _submitStateIsError
+                    ? Colors.redAccent
+                    : Colors.greenAccent,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1502,7 +1960,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           if (_finalPricing != null) ...[
             const SizedBox(height: 10),
             _sectionCard(
-              title: '${widget.strings.bookingSummaryQuoteLabel.of(widget.language)} (final)',
+              title:
+                  '${widget.strings.bookingSummaryQuoteLabel.of(widget.language)} (final)',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1514,7 +1973,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   const SizedBox(height: 6),
                   Text(
                     '${widget.strings.calculatorPriceInclVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_incl_vat'])}',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   Text(
                     '${widget.strings.calculatorPriceExVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_ex_vat'])}',
@@ -1544,7 +2006,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 8),
           child,
         ],
