@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -12,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
@@ -20,60 +22,90 @@ import 'package:fluxidi_tracking/app_strings.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/route_marquee.dart';
+
 final bool kIsWindows = !kIsWeb && Platform.isWindows;
 
 /// White-label config aliases (keeps existing code paths stable).
 final String kAppTitle = appConfig.appTitle;
 final String kCompanyName = appConfig.companyName;
-String get kBookingsTitle => appConfig.strings.bookingsTitle.of(appConfig.currentLanguage);
-String get kLiveRideTitle => appConfig.strings.liveRideTitle.of(appConfig.currentLanguage);
-String get kActiveRideTitle => appConfig.strings.activeRideTitle.of(appConfig.currentLanguage);
-String get kRefreshBookingsLabel => appConfig.strings.refreshBookingsLabel.of(appConfig.currentLanguage);
-String get kCenterOnMeLabel => appConfig.strings.centerOnMeLabel.of(appConfig.currentLanguage);
-String get kDrawerDriverIdLabel => appConfig.strings.drawerDriverIdLabel.of(appConfig.currentLanguage);
-String get kDrawerWorkerLabel => appConfig.strings.drawerWorkerLabel.of(appConfig.currentLanguage);
-String get kDrawerMapboxTokenLabel => appConfig.strings.drawerMapboxTokenLabel.of(appConfig.currentLanguage);
-String get kDrawerLanguageLabel => appConfig.strings.drawerLanguageLabel.of(appConfig.currentLanguage);
-String get kDrawerBusinessSettingsLabel => appConfig.strings.drawerBusinessSettingsLabel.of(appConfig.currentLanguage);
-String get kDrawerBusinessSettingsSubtitle => appConfig.strings.drawerBusinessSettingsSubtitle.of(appConfig.currentLanguage);
-String get kDrawerVehiclesLabel => appConfig.strings.drawerVehiclesLabel.of(appConfig.currentLanguage);
-String get kDrawerVehiclesSubtitle => appConfig.strings.drawerVehiclesSubtitle.of(appConfig.currentLanguage);
-String get kFollowCarLabel => appConfig.strings.followCarLabel.of(appConfig.currentLanguage);
-String get kFollowCarSubtitle => appConfig.strings.followCarSubtitle.of(appConfig.currentLanguage);
-String get kBookingsMenuSubtitle => appConfig.strings.bookingsMenuSubtitle.of(appConfig.currentLanguage);
-String get kLiveRideMenuSubtitle => appConfig.strings.liveRideMenuSubtitle.of(appConfig.currentLanguage);
-String get kCalculatorMenuSubtitle => appConfig.strings.calculatorMenuSubtitle.of(appConfig.currentLanguage);
-String get kActiveRideMenuSubtitle => appConfig.strings.activeRideMenuSubtitle.of(appConfig.currentLanguage);
-String get kAvailableBookingsTitle => appConfig.strings.availableBookingsTitle.of(appConfig.currentLanguage);
-String get kRefreshShortLabel => appConfig.strings.refreshShortLabel.of(appConfig.currentLanguage);
-String get kBookingsEmptyLabel => appConfig.strings.bookingsEmptyLabel.of(appConfig.currentLanguage);
-String get kStopShortLabel => appConfig.strings.stopShortLabel.of(appConfig.currentLanguage);
-String get kRideActionCompletedLabel => appConfig.strings.rideActionCompletedLabel.of(appConfig.currentLanguage);
-String get kRideActionCancelledLabel => appConfig.strings.rideActionCancelledLabel.of(appConfig.currentLanguage);
-String get kRideGoToRideLabel => appConfig.strings.rideGoToRideLabel.of(appConfig.currentLanguage);
-String get kRideDeleteLabel => appConfig.strings.rideDeleteLabel.of(appConfig.currentLanguage);
-String get kRideStatusPendingLabel => appConfig.strings.rideStatusPendingLabel.of(appConfig.currentLanguage);
-String get kPickupLabel => appConfig.strings.pickupLabel.of(appConfig.currentLanguage);
-String get kDropoffLabel => appConfig.strings.dropoffLabel.of(appConfig.currentLanguage);
+String get kBookingsTitle =>
+    appConfig.strings.bookingsTitle.of(appConfig.currentLanguage);
+String get kLiveRideTitle =>
+    appConfig.strings.liveRideTitle.of(appConfig.currentLanguage);
+String get kActiveRideTitle =>
+    appConfig.strings.activeRideTitle.of(appConfig.currentLanguage);
+String get kRefreshBookingsLabel =>
+    appConfig.strings.refreshBookingsLabel.of(appConfig.currentLanguage);
+String get kCenterOnMeLabel =>
+    appConfig.strings.centerOnMeLabel.of(appConfig.currentLanguage);
+String get kDrawerDriverIdLabel =>
+    appConfig.strings.drawerDriverIdLabel.of(appConfig.currentLanguage);
+String get kDrawerWorkerLabel =>
+    appConfig.strings.drawerWorkerLabel.of(appConfig.currentLanguage);
+String get kDrawerMapboxTokenLabel =>
+    appConfig.strings.drawerMapboxTokenLabel.of(appConfig.currentLanguage);
+String get kDrawerLanguageLabel =>
+    appConfig.strings.drawerLanguageLabel.of(appConfig.currentLanguage);
+String get kDrawerBusinessSettingsLabel =>
+    appConfig.strings.drawerBusinessSettingsLabel.of(appConfig.currentLanguage);
+String get kDrawerBusinessSettingsSubtitle => appConfig
+    .strings
+    .drawerBusinessSettingsSubtitle
+    .of(appConfig.currentLanguage);
+String get kDrawerVehiclesLabel =>
+    appConfig.strings.drawerVehiclesLabel.of(appConfig.currentLanguage);
+String get kDrawerVehiclesSubtitle =>
+    appConfig.strings.drawerVehiclesSubtitle.of(appConfig.currentLanguage);
+String get kFollowCarLabel =>
+    appConfig.strings.followCarLabel.of(appConfig.currentLanguage);
+String get kFollowCarSubtitle =>
+    appConfig.strings.followCarSubtitle.of(appConfig.currentLanguage);
+String get kBookingsMenuSubtitle =>
+    appConfig.strings.bookingsMenuSubtitle.of(appConfig.currentLanguage);
+String get kLiveRideMenuSubtitle =>
+    appConfig.strings.liveRideMenuSubtitle.of(appConfig.currentLanguage);
+String get kCalculatorMenuSubtitle =>
+    appConfig.strings.calculatorMenuSubtitle.of(appConfig.currentLanguage);
+String get kActiveRideMenuSubtitle =>
+    appConfig.strings.activeRideMenuSubtitle.of(appConfig.currentLanguage);
+String get kAvailableBookingsTitle =>
+    appConfig.strings.availableBookingsTitle.of(appConfig.currentLanguage);
+String get kRefreshShortLabel =>
+    appConfig.strings.refreshShortLabel.of(appConfig.currentLanguage);
+String get kBookingsEmptyLabel =>
+    appConfig.strings.bookingsEmptyLabel.of(appConfig.currentLanguage);
+String get kStopShortLabel =>
+    appConfig.strings.stopShortLabel.of(appConfig.currentLanguage);
+String get kRideActionCompletedLabel =>
+    appConfig.strings.rideActionCompletedLabel.of(appConfig.currentLanguage);
+String get kRideActionCancelledLabel =>
+    appConfig.strings.rideActionCancelledLabel.of(appConfig.currentLanguage);
+String get kRideGoToRideLabel =>
+    appConfig.strings.rideGoToRideLabel.of(appConfig.currentLanguage);
+String get kRideDeleteLabel =>
+    appConfig.strings.rideDeleteLabel.of(appConfig.currentLanguage);
+String get kRideStatusPendingLabel =>
+    appConfig.strings.rideStatusPendingLabel.of(appConfig.currentLanguage);
+String get kPickupLabel =>
+    appConfig.strings.pickupLabel.of(appConfig.currentLanguage);
+String get kDropoffLabel =>
+    appConfig.strings.dropoffLabel.of(appConfig.currentLanguage);
 final String kDefaultCurrency = appConfig.defaultCurrency;
 final Color kGlow = appConfig.accentColor;
-
 
 /// ✅ Mapbox token for REST calls (geocoding + directions).
 /// Set at run/build time:
 /// flutter run --dart-define=MAPBOX_TOKEN=pk.xxx
-const String kMapboxToken = String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
-
+const String kMapboxToken = String.fromEnvironment(
+  'MAPBOX_TOKEN',
+  defaultValue: '',
+);
 
 Map<String, String> _adminHeaders() {
   final t = kAdminToken.trim();
   if (t.isEmpty) return <String, String>{};
-  return <String, String>{
-    'Authorization': 'Bearer $t',
-    'x-admin-token': t,
-  };
+  return <String, String>{'Authorization': 'Bearer $t', 'x-admin-token': t};
 }
-
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,8 +134,10 @@ final String kBookingBaseUrlDefault = appConfig.bookingBaseUrl;
 
 /// Optional override via dart-define (handy for staging)
 /// flutter run ... --dart-define=BOOKING_BASE_URL=https://...workers.dev
-const String kBookingBaseUrlOverride =
-    String.fromEnvironment('BOOKING_BASE_URL', defaultValue: '');
+const String kBookingBaseUrlOverride = String.fromEnvironment(
+  'BOOKING_BASE_URL',
+  defaultValue: '',
+);
 
 String get kBookingBaseUrl {
   final v = kBookingBaseUrlOverride.trim();
@@ -111,11 +145,12 @@ String get kBookingBaseUrl {
   return kBookingBaseUrlDefault;
 }
 
-
 /// Optional override via dart-define (handig voor staging)
 /// flutter run ... --dart-define=WORKER_BASE_URL=https://...workers.dev
-const String kWorkerBaseUrlOverride =
-    String.fromEnvironment('WORKER_BASE_URL', defaultValue: '');
+const String kWorkerBaseUrlOverride = String.fromEnvironment(
+  'WORKER_BASE_URL',
+  defaultValue: '',
+);
 
 String get kWorkerBaseUrl {
   final v = kWorkerBaseUrlOverride.trim();
@@ -129,16 +164,21 @@ const String kDriverId = 'fluxidi_driver_01';
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
-const String kAdminToken =
-    String.fromEnvironment('ADMIN_TOKEN', defaultValue: '');
+const String kAdminToken = String.fromEnvironment(
+  'ADMIN_TOKEN',
+  defaultValue: '',
+);
 
 /// Endpoints (adjust if your Worker uses different paths)
 const String kListBookingsPath = '/bookings';
-const String kGetBookingPath = '/track/booking'; // returns booking + quote/pricing
-const String kTrackingBookingPath = '/tracking/booking'; // booking Worker detail endpoint
+const String kGetBookingPath =
+    '/track/booking'; // returns booking + quote/pricing
+const String kTrackingBookingPath =
+    '/tracking/booking'; // booking Worker detail endpoint
 
 // Admin endpoints (require x-admin-token if enabled in Worker)
-const String kUpdateBookingStatusPath = '/bookings'; // POST /bookings/:id/status
+const String kUpdateBookingStatusPath =
+    '/bookings'; // POST /bookings/:id/status
 const String kDeleteBookingPath = '/bookings'; // POST /bookings/:id/delete
 
 const String kStartTripPath = '/track/session/start';
@@ -191,133 +231,363 @@ String _receiptText(String key) {
     case 'receiptTitle':
       return _tr(nl: 'Ritbon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
     case 'rideReceipt':
-      return _tr(nl: 'Bewijs van rit', en: 'Ride receipt', fr: 'Justificatif de course', es: 'Comprobante del viaje');
+      return _tr(
+        nl: 'Bewijs van rit',
+        en: 'Ride receipt',
+        fr: 'Justificatif de course',
+        es: 'Comprobante del viaje',
+      );
     case 'receiptUnavailable':
-      return _tr(nl: 'Ritbon is beschikbaar na afronden van de rit.', en: 'Receipt is available after completing the ride.', fr: 'Le reçu est disponible après la fin de la course.', es: 'El recibo esta disponible despues de finalizar el viaje.');
+      return _tr(
+        nl: 'Ritbon is beschikbaar na afronden van de rit.',
+        en: 'Receipt is available after completing the ride.',
+        fr: 'Le reçu est disponible après la fin de la course.',
+        es: 'El recibo esta disponible despues de finalizar el viaje.',
+      );
     case 'tripHistoryTitle':
-      return _tr(nl: 'Ritten historiek', en: 'Ride history', fr: 'Historique des courses', es: 'Historial de viajes');
+      return _tr(
+        nl: 'Ritten historiek',
+        en: 'Ride history',
+        fr: 'Historique des courses',
+        es: 'Historial de viajes',
+      );
     case 'refresh':
-      return _tr(nl: 'Vernieuw', en: 'Refresh', fr: 'Actualiser', es: 'Actualizar');
+      return _tr(
+        nl: 'Vernieuw',
+        en: 'Refresh',
+        fr: 'Actualiser',
+        es: 'Actualizar',
+      );
     case 'historyLoadFailed':
-      return _tr(nl: 'Kon ritten historiek niet laden.', en: 'Could not load ride history.', fr: "Impossible de charger l'historique.", es: 'No se pudo cargar el historial.');
+      return _tr(
+        nl: 'Kon ritten historiek niet laden.',
+        en: 'Could not load ride history.',
+        fr: "Impossible de charger l'historique.",
+        es: 'No se pudo cargar el historial.',
+      );
     case 'historyEmpty':
-      return _tr(nl: 'Nog geen ritten gevonden.', en: 'No rides found yet.', fr: 'Aucune course trouvée.', es: 'Aun no hay viajes.');
+      return _tr(
+        nl: 'Nog geen ritten gevonden.',
+        en: 'No rides found yet.',
+        fr: 'Aucune course trouvée.',
+        es: 'Aun no hay viajes.',
+      );
     case 'archiveTripLabel':
       return _tr(nl: 'Verberg', en: 'Hide', fr: 'Masquer', es: 'Ocultar');
     case 'archiveTripTitle':
-      return _tr(nl: 'Deze rit verbergen uit de historiek?', en: 'Hide this ride from history?', fr: 'Masquer cette course de l’historique ?', es: '¿Ocultar este viaje del historial?');
+      return _tr(
+        nl: 'Deze rit verbergen uit de historiek?',
+        en: 'Hide this ride from history?',
+        fr: 'Masquer cette course de l’historique ?',
+        es: '¿Ocultar este viaje del historial?',
+      );
     case 'archiveTripBody':
-      return _tr(nl: 'De ritbon blijft bewaard voor administratie.', en: 'The receipt will remain stored for administration.', fr: 'Le reçu reste conservé pour l’administration.', es: 'El recibo seguirá guardado para la administración.');
+      return _tr(
+        nl: 'De ritbon blijft bewaard voor administratie.',
+        en: 'The receipt will remain stored for administration.',
+        fr: 'Le reçu reste conservé pour l’administration.',
+        es: 'El recibo seguirá guardado para la administración.',
+      );
     case 'archiveTripCancel':
       return _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar');
     case 'archiveTripConfirm':
       return _tr(nl: 'Verbergen', en: 'Hide', fr: 'Masquer', es: 'Ocultar');
     case 'archiveTripSuccess':
-      return _tr(nl: 'Rit verborgen uit historiek.', en: 'Ride hidden from history.', fr: 'Course masquée de l’historique.', es: 'Viaje ocultado del historial.');
+      return _tr(
+        nl: 'Rit verborgen uit historiek.',
+        en: 'Ride hidden from history.',
+        fr: 'Course masquée de l’historique.',
+        es: 'Viaje ocultado del historial.',
+      );
     case 'archiveTripFailed':
-      return _tr(nl: 'Kon rit niet verbergen.', en: 'Could not hide ride.', fr: 'Impossible de masquer la course.', es: 'No se pudo ocultar el viaje.');
+      return _tr(
+        nl: 'Kon rit niet verbergen.',
+        en: 'Could not hide ride.',
+        fr: 'Impossible de masquer la course.',
+        es: 'No se pudo ocultar el viaje.',
+      );
     case 'waitingCompact':
       return _tr(nl: 'wachten', en: 'waiting', fr: 'attente', es: 'espera');
     case 'type':
       return _tr(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo');
     case 'streetRide':
-      return _tr(nl: 'Straatrit', en: 'Street ride', fr: 'Course directe', es: 'Viaje directo');
+      return _tr(
+        nl: 'Straatrit',
+        en: 'Street ride',
+        fr: 'Course directe',
+        es: 'Viaje directo',
+      );
     case 'plannedRide':
-      return _tr(nl: 'Geplande rit', en: 'Planned ride', fr: 'Course planifiée', es: 'Viaje planificado');
+      return _tr(
+        nl: 'Geplande rit',
+        en: 'Planned ride',
+        fr: 'Course planifiée',
+        es: 'Viaje planificado',
+      );
     case 'outboundRide':
-      return _tr(nl: 'Heenrit', en: 'Outbound ride', fr: 'Trajet aller', es: 'Viaje de ida');
+      return _tr(
+        nl: 'Heenrit',
+        en: 'Outbound ride',
+        fr: 'Trajet aller',
+        es: 'Viaje de ida',
+      );
     case 'returnRide':
-      return _tr(nl: 'Retourrit', en: 'Return ride', fr: 'Trajet retour', es: 'Viaje de vuelta');
+      return _tr(
+        nl: 'Retourrit',
+        en: 'Return ride',
+        fr: 'Trajet retour',
+        es: 'Viaje de vuelta',
+      );
     case 'subtype':
       return _tr(nl: 'Subtype', en: 'Subtype', fr: 'Sous-type', es: 'Subtipo');
     case 'receiptNumber':
-      return _tr(nl: 'Bonnummer', en: 'Receipt no.', fr: 'Numéro de reçu', es: 'Número de recibo');
+      return _tr(
+        nl: 'Bonnummer',
+        en: 'Receipt no.',
+        fr: 'Numéro de reçu',
+        es: 'Número de recibo',
+      );
     case 'tripId':
       return _tr(nl: 'Trip ID', en: 'Trip ID', fr: 'ID course', es: 'ID viaje');
     case 'bookingId':
-      return _tr(nl: 'Booking ID', en: 'Booking ID', fr: 'ID réservation', es: 'ID reserva');
+      return _tr(
+        nl: 'Booking ID',
+        en: 'Booking ID',
+        fr: 'ID réservation',
+        es: 'ID reserva',
+      );
     case 'date':
       return _tr(nl: 'Datum', en: 'Date', fr: 'Date', es: 'Fecha');
     case 'startTime':
-      return _tr(nl: 'Starttijd', en: 'Start time', fr: 'Heure de début', es: 'Hora de inicio');
+      return _tr(
+        nl: 'Starttijd',
+        en: 'Start time',
+        fr: 'Heure de début',
+        es: 'Hora de inicio',
+      );
     case 'endTime':
-      return _tr(nl: 'Stoptijd', en: 'End time', fr: 'Heure de fin', es: 'Hora de fin');
+      return _tr(
+        nl: 'Stoptijd',
+        en: 'End time',
+        fr: 'Heure de fin',
+        es: 'Hora de fin',
+      );
     case 'duration':
       return _tr(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duracion');
     case 'pickup':
-      return _tr(nl: 'Ophaaladres', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida');
+      return _tr(
+        nl: 'Ophaaladres',
+        en: 'Pickup',
+        fr: 'Prise en charge',
+        es: 'Recogida',
+      );
     case 'destination':
-      return _tr(nl: 'Bestemming', en: 'Destination', fr: 'Destination', es: 'Destino');
+      return _tr(
+        nl: 'Bestemming',
+        en: 'Destination',
+        fr: 'Destination',
+        es: 'Destino',
+      );
     case 'from':
       return _tr(nl: 'Van', en: 'From', fr: 'De', es: 'Desde');
     case 'to':
       return _tr(nl: 'Naar', en: 'To', fr: 'À', es: 'A');
     case 'distance':
-      return _tr(nl: 'Afstand', en: 'Distance', fr: 'Distance', es: 'Distancia');
+      return _tr(
+        nl: 'Afstand',
+        en: 'Distance',
+        fr: 'Distance',
+        es: 'Distancia',
+      );
     case 'actualDistance':
-      return _tr(nl: 'Werkelijke afstand', en: 'Actual distance', fr: 'Distance réelle', es: 'Distancia real');
+      return _tr(
+        nl: 'Werkelijke afstand',
+        en: 'Actual distance',
+        fr: 'Distance réelle',
+        es: 'Distancia real',
+      );
     case 'waitingTime':
-      return _tr(nl: 'Wachttijd', en: 'Waiting time', fr: "Temps d'attente", es: 'Tiempo de espera');
+      return _tr(
+        nl: 'Wachttijd',
+        en: 'Waiting time',
+        fr: "Temps d'attente",
+        es: 'Tiempo de espera',
+      );
     case 'bookedWaitingTime':
-      return _tr(nl: 'Geboekte wachttijd', en: 'Booked waiting time', fr: "Attente réservée", es: 'Espera reservada');
+      return _tr(
+        nl: 'Geboekte wachttijd',
+        en: 'Booked waiting time',
+        fr: "Attente réservée",
+        es: 'Espera reservada',
+      );
     case 'actualWaitingTime':
-      return _tr(nl: 'Werkelijke wachttijd', en: 'Actual waiting time', fr: "Attente réelle", es: 'Espera real');
+      return _tr(
+        nl: 'Werkelijke wachttijd',
+        en: 'Actual waiting time',
+        fr: "Attente réelle",
+        es: 'Espera real',
+      );
     case 'plannedBookingDetails':
-      return _tr(nl: 'Geplande boeking', en: 'Planned booking details', fr: 'Détails de réservation', es: 'Detalles de reserva');
+      return _tr(
+        nl: 'Geplande boeking',
+        en: 'Planned booking details',
+        fr: 'Détails de réservation',
+        es: 'Detalles de reserva',
+      );
     case 'bookingDetails':
-      return _tr(nl: 'Boekingsdetails', en: 'Booking details', fr: 'Détails de réservation', es: 'Detalles de reserva');
+      return _tr(
+        nl: 'Boekingsdetails',
+        en: 'Booking details',
+        fr: 'Détails de réservation',
+        es: 'Detalles de reserva',
+      );
     case 'customer':
       return _tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente');
     case 'customerDetails':
-      return _tr(nl: 'Klantgegevens', en: 'Customer details', fr: 'Coordonnées client', es: 'Datos del cliente');
+      return _tr(
+        nl: 'Klantgegevens',
+        en: 'Customer details',
+        fr: 'Coordonnées client',
+        es: 'Datos del cliente',
+      );
     case 'customerName':
-      return _tr(nl: 'Klantnaam', en: 'Customer name', fr: 'Nom du client', es: 'Nombre del cliente');
+      return _tr(
+        nl: 'Klantnaam',
+        en: 'Customer name',
+        fr: 'Nom du client',
+        es: 'Nombre del cliente',
+      );
     case 'customerPhone':
-      return _tr(nl: 'Telefoon', en: 'Customer phone', fr: 'Téléphone client', es: 'Telefono del cliente');
+      return _tr(
+        nl: 'Telefoon',
+        en: 'Customer phone',
+        fr: 'Téléphone client',
+        es: 'Telefono del cliente',
+      );
     case 'customerEmail':
-      return _tr(nl: 'E-mail', en: 'Customer email', fr: 'E-mail client', es: 'Email del cliente');
+      return _tr(
+        nl: 'E-mail',
+        en: 'Customer email',
+        fr: 'E-mail client',
+        es: 'Email del cliente',
+      );
     case 'scheduledPickup':
-      return _tr(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada');
+      return _tr(
+        nl: 'Geplande ophaal',
+        en: 'Scheduled pickup',
+        fr: 'Prise en charge prévue',
+        es: 'Recogida programada',
+      );
     case 'service':
       return _tr(nl: 'Service', en: 'Service', fr: 'Service', es: 'Servicio');
     case 'tier':
       return _tr(nl: 'Tier', en: 'Tier', fr: 'Catégorie', es: 'Categoría');
     case 'passengers':
-      return _tr(nl: 'Passagiers / Pax', en: 'Passengers / Pax', fr: 'Passagers / Pax', es: 'Pasajeros / Pax');
+      return _tr(
+        nl: 'Passagiers / Pax',
+        en: 'Passengers / Pax',
+        fr: 'Passagers / Pax',
+        es: 'Pasajeros / Pax',
+      );
     case 'bags':
       return _tr(nl: 'Bagage', en: 'Bags', fr: 'Bagages', es: 'Equipaje');
     case 'extraStops':
-      return _tr(nl: 'Extra stops', en: 'Extra stops', fr: 'Arrêts supplémentaires', es: 'Paradas extra');
+      return _tr(
+        nl: 'Extra stops',
+        en: 'Extra stops',
+        fr: 'Arrêts supplémentaires',
+        es: 'Paradas extra',
+      );
     case 'extras':
       return _tr(nl: 'Extras', en: 'Extras', fr: 'Extras', es: 'Extras');
     case 'notes':
       return _tr(nl: 'Notities', en: 'Notes', fr: 'Notes', es: 'Notas');
     case 'routeAndPrices':
-      return _tr(nl: 'Route en prijzen', en: 'Route and prices', fr: 'Itinéraire et prix', es: 'Ruta y precios');
+      return _tr(
+        nl: 'Route en prijzen',
+        en: 'Route and prices',
+        fr: 'Itinéraire et prix',
+        es: 'Ruta y precios',
+      );
     case 'route':
       return _tr(nl: 'Route', en: 'Route', fr: 'Itinéraire', es: 'Ruta');
     case 'routeDetails':
-      return _tr(nl: 'Route details', en: 'Route details', fr: "Détails de l'itinéraire", es: 'Detalles de ruta');
+      return _tr(
+        nl: 'Route details',
+        en: 'Route details',
+        fr: "Détails de l'itinéraire",
+        es: 'Detalles de ruta',
+      );
     case 'outboundRoute':
-      return _tr(nl: 'Heenroute', en: 'Outbound route', fr: 'Itinéraire aller', es: 'Ruta de ida');
+      return _tr(
+        nl: 'Heenroute',
+        en: 'Outbound route',
+        fr: 'Itinéraire aller',
+        es: 'Ruta de ida',
+      );
     case 'returnRoute':
-      return _tr(nl: 'Retour route', en: 'Return route', fr: 'Itinéraire retour', es: 'Ruta de vuelta');
+      return _tr(
+        nl: 'Retour route',
+        en: 'Return route',
+        fr: 'Itinéraire retour',
+        es: 'Ruta de vuelta',
+      );
     case 'returnTrip':
-      return _tr(nl: 'Retourrit', en: 'Return trip', fr: 'Trajet retour', es: 'Viaje de vuelta');
+      return _tr(
+        nl: 'Retourrit',
+        en: 'Return trip',
+        fr: 'Trajet retour',
+        es: 'Viaje de vuelta',
+      );
     case 'returnPlanned':
-      return _tr(nl: 'Retour gepland', en: 'Return planned', fr: 'Retour prevu', es: 'Vuelta programada');
+      return _tr(
+        nl: 'Retour gepland',
+        en: 'Return planned',
+        fr: 'Retour prevu',
+        es: 'Vuelta programada',
+      );
     case 'fixedPrice':
-      return _tr(nl: 'Vaste prijs', en: 'Fixed price', fr: 'Prix fixe', es: 'Precio fijo');
+      return _tr(
+        nl: 'Vaste prijs',
+        en: 'Fixed price',
+        fr: 'Prix fixe',
+        es: 'Precio fijo',
+      );
     case 'fixedQuotePrice':
-      return _tr(nl: 'Vaste offerteprijs', en: 'Fixed quote price', fr: 'Prix devis fixe', es: 'Precio fijo cotizado');
+      return _tr(
+        nl: 'Vaste offerteprijs',
+        en: 'Fixed quote price',
+        fr: 'Prix devis fixe',
+        es: 'Precio fijo cotizado',
+      );
     case 'packagePrice':
-      return _tr(nl: 'Pakketprijs incl. btw', en: 'Package price incl. VAT', fr: 'Prix forfaitaire TVA incl.', es: 'Precio paquete IVA incl.');
+      return _tr(
+        nl: 'Pakketprijs incl. btw',
+        en: 'Package price incl. VAT',
+        fr: 'Prix forfaitaire TVA incl.',
+        es: 'Precio paquete IVA incl.',
+      );
     case 'ridePrice':
-      return _tr(nl: 'Ritprijs incl. btw', en: 'Ride price incl. VAT', fr: 'Prix course TVA incl.', es: 'Precio viaje IVA incl.');
+      return _tr(
+        nl: 'Ritprijs incl. btw',
+        en: 'Ride price incl. VAT',
+        fr: 'Prix course TVA incl.',
+        es: 'Precio viaje IVA incl.',
+      );
     case 'outboundPrice':
-      return _tr(nl: 'Prijs heen incl. btw', en: 'Outbound price incl. VAT', fr: 'Prix aller TVA incl.', es: 'Precio ida IVA incl.');
+      return _tr(
+        nl: 'Prijs heen incl. btw',
+        en: 'Outbound price incl. VAT',
+        fr: 'Prix aller TVA incl.',
+        es: 'Precio ida IVA incl.',
+      );
     case 'returnPrice':
-      return _tr(nl: 'Prijs retour incl. btw', en: 'Return price incl. VAT', fr: 'Prix retour TVA incl.', es: 'Precio vuelta IVA incl.');
+      return _tr(
+        nl: 'Prijs retour incl. btw',
+        en: 'Return price incl. VAT',
+        fr: 'Prix retour TVA incl.',
+        es: 'Precio vuelta IVA incl.',
+      );
     case 'total':
       return _tr(nl: 'Totaal', en: 'Total', fr: 'Total', es: 'Total');
     case 'amount':
@@ -327,117 +597,352 @@ String _receiptText(String key) {
     case 'receiptActions':
       return _tr(nl: 'Bon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
     case 'statusPaymentSection':
-      return _tr(nl: 'Status en betaling', en: 'Status and payment', fr: 'Statut et paiement', es: 'Estado y pago');
+      return _tr(
+        nl: 'Status en betaling',
+        en: 'Status and payment',
+        fr: 'Statut et paiement',
+        es: 'Estado y pago',
+      );
     case 'paymentActions':
       return _tr(nl: 'Betaalzone', en: 'Payment', fr: 'Paiement', es: 'Pago');
     case 'moreOptions':
-      return _tr(nl: 'Meer opties', en: 'More options', fr: 'Plus d’options', es: 'Más opciones');
+      return _tr(
+        nl: 'Meer opties',
+        en: 'More options',
+        fr: 'Plus d’options',
+        es: 'Más opciones',
+      );
     case 'payByQr':
-      return _tr(nl: 'Betaal via QR', en: 'Pay by QR', fr: 'Payer par QR', es: 'Pagar con QR');
+      return _tr(
+        nl: 'Betaal via QR',
+        en: 'Pay by QR',
+        fr: 'Payer par QR',
+        es: 'Pagar con QR',
+      );
     case 'cashReceived':
-      return _tr(nl: 'Cash ontvangen', en: 'Cash received', fr: 'Espèces reçues', es: 'Efectivo recibido');
+      return _tr(
+        nl: 'Cash ontvangen',
+        en: 'Cash received',
+        fr: 'Espèces reçues',
+        es: 'Efectivo recibido',
+      );
     case 'paidByCardTerminal':
-      return _tr(nl: 'Betaald via Bancontact', en: 'Paid by card terminal', fr: 'Payé par terminal bancaire', es: 'Pagado con terminal de tarjeta');
+      return _tr(
+        nl: 'Betaald via Bancontact',
+        en: 'Paid by card terminal',
+        fr: 'Payé par terminal bancaire',
+        es: 'Pagado con terminal de tarjeta',
+      );
     case 'paymentStatus':
-      return _tr(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut du paiement', es: 'Estado del pago');
+      return _tr(
+        nl: 'Betaalstatus',
+        en: 'Payment status',
+        fr: 'Statut du paiement',
+        es: 'Estado del pago',
+      );
     case 'rideStatus':
-      return _tr(nl: 'Ritstatus', en: 'Ride status', fr: 'Statut de la course', es: 'Estado del viaje');
+      return _tr(
+        nl: 'Ritstatus',
+        en: 'Ride status',
+        fr: 'Statut de la course',
+        es: 'Estado del viaje',
+      );
     case 'paid':
       return _tr(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
     case 'unpaid':
-      return _tr(nl: 'Onbetaald', en: 'Unpaid', fr: 'Non payé', es: 'No pagado');
+      return _tr(
+        nl: 'Onbetaald',
+        en: 'Unpaid',
+        fr: 'Non payé',
+        es: 'No pagado',
+      );
     case 'paymentSent':
-      return _tr(nl: 'Betaalverzoek verstuurd', en: 'Payment request sent', fr: 'Demande de paiement envoyée', es: 'Solicitud de pago enviada');
+      return _tr(
+        nl: 'Betaalverzoek verstuurd',
+        en: 'Payment request sent',
+        fr: 'Demande de paiement envoyée',
+        es: 'Solicitud de pago enviada',
+      );
     case 'demoPayment':
-      return _tr(nl: 'Markeer betaald (demo)', en: 'Mark paid (demo)', fr: 'Marquer comme payé (demo)', es: 'Marcar pagado (demo)');
+      return _tr(
+        nl: 'Markeer betaald (demo)',
+        en: 'Mark paid (demo)',
+        fr: 'Marquer comme payé (demo)',
+        es: 'Marcar pagado (demo)',
+      );
     case 'qrPayment':
-      return _tr(nl: 'QR betaling', en: 'QR payment', fr: 'Paiement QR', es: 'Pago QR');
+      return _tr(
+        nl: 'QR betaling',
+        en: 'QR payment',
+        fr: 'Paiement QR',
+        es: 'Pago QR',
+      );
     case 'showPaymentLink':
-      return _tr(nl: 'Toon betaallink', en: 'Show payment link', fr: 'Voir le lien de paiement', es: 'Mostrar enlace de pago');
+      return _tr(
+        nl: 'Toon betaallink',
+        en: 'Show payment link',
+        fr: 'Voir le lien de paiement',
+        es: 'Mostrar enlace de pago',
+      );
     case 'showQrPayment':
-      return _tr(nl: 'Toon QR betaling', en: 'Show QR payment', fr: 'Voir le QR de paiement', es: 'Mostrar pago QR');
+      return _tr(
+        nl: 'Toon QR betaling',
+        en: 'Show QR payment',
+        fr: 'Voir le QR de paiement',
+        es: 'Mostrar pago QR',
+      );
     case 'copyPaymentLink':
-      return _tr(nl: 'Kopieer betaallink', en: 'Copy payment link', fr: 'Copier le lien de paiement', es: 'Copiar enlace de pago');
+      return _tr(
+        nl: 'Kopieer betaallink',
+        en: 'Copy payment link',
+        fr: 'Copier le lien de paiement',
+        es: 'Copiar enlace de pago',
+      );
     case 'sharePaymentRequest':
-      return _tr(nl: 'Deel betaalverzoek', en: 'Share payment request', fr: 'Partager la demande de paiement', es: 'Compartir solicitud de pago');
+      return _tr(
+        nl: 'Deel betaalverzoek',
+        en: 'Share payment request',
+        fr: 'Partager la demande de paiement',
+        es: 'Compartir solicitud de pago',
+      );
     case 'paymentPlaceholder':
-      return _tr(nl: 'MVP: deze link is een interne demolink en verwerkt nog geen echte betalingen.', en: 'MVP: this is an internal demo link and does not process real payments yet.', fr: 'MVP : ce lien est un lien interne de démonstration et ne traite pas encore de paiements réels.', es: 'MVP: este enlace es un enlace interno de demostración y aún no procesa pagos reales.');
+      return _tr(
+        nl: 'MVP: deze link is een interne demolink en verwerkt nog geen echte betalingen.',
+        en: 'MVP: this is an internal demo link and does not process real payments yet.',
+        fr: 'MVP : ce lien est un lien interne de démonstration et ne traite pas encore de paiements réels.',
+        es: 'MVP: este enlace es un enlace interno de demostración y aún no procesa pagos reales.',
+      );
     case 'driver':
-      return _tr(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor');
+      return _tr(
+        nl: 'Chauffeur',
+        en: 'Driver',
+        fr: 'Chauffeur',
+        es: 'Conductor',
+      );
     case 'vehicle':
       return _tr(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo');
     case 'licensePlate':
-      return _tr(nl: 'Nummerplaat', en: 'License plate', fr: "Plaque d'immatriculation", es: 'Matricula');
+      return _tr(
+        nl: 'Nummerplaat',
+        en: 'License plate',
+        fr: "Plaque d'immatriculation",
+        es: 'Matricula',
+      );
     case 'status':
       return _tr(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado');
     case 'notAvailable':
-      return _tr(nl: 'Niet beschikbaar', en: 'Not available', fr: 'Non disponible', es: 'No disponible');
+      return _tr(
+        nl: 'Niet beschikbaar',
+        en: 'Not available',
+        fr: 'Non disponible',
+        es: 'No disponible',
+      );
     case 'unknown':
-      return _tr(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+      return _tr(
+        nl: 'Onbekend',
+        en: 'Unknown',
+        fr: 'Inconnu',
+        es: 'Desconocido',
+      );
     case 'close':
       return _tr(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar');
     case 'copy':
       return _tr(nl: 'Kopieer', en: 'Copy', fr: 'Copier', es: 'Copiar');
     case 'copyLink':
-      return _tr(nl: 'Kopieer link', en: 'Copy link', fr: 'Copier le lien', es: 'Copiar enlace');
+      return _tr(
+        nl: 'Kopieer link',
+        en: 'Copy link',
+        fr: 'Copier le lien',
+        es: 'Copiar enlace',
+      );
     case 'share':
       return _tr(nl: 'Delen', en: 'Share', fr: 'Partager', es: 'Compartir');
     case 'shareReceipt':
-      return _tr(nl: 'Deel bon', en: 'Share receipt', fr: 'Partager le reçu', es: 'Compartir recibo');
+      return _tr(
+        nl: 'Deel bon',
+        en: 'Share receipt',
+        fr: 'Partager le reçu',
+        es: 'Compartir recibo',
+      );
     case 'send':
       return _tr(nl: 'Verstuur', en: 'Send', fr: 'Envoyer', es: 'Enviar');
     case 'emailReceipt':
-      return _tr(nl: 'Mail bon', en: 'Email receipt', fr: 'Envoyer le reçu', es: 'Enviar recibo');
+      return _tr(
+        nl: 'Mail bon',
+        en: 'Email receipt',
+        fr: 'Envoyer le reçu',
+        es: 'Enviar recibo',
+      );
     case 'printReceipt':
-      return _tr(nl: 'Print bon', en: 'Print receipt', fr: 'Imprimer le reçu', es: 'Imprimir recibo');
+      return _tr(
+        nl: 'Print bon',
+        en: 'Print receipt',
+        fr: 'Imprimer le reçu',
+        es: 'Imprimir recibo',
+      );
     case 'printLater':
-      return _tr(nl: 'Printfunctie wordt later gekoppeld aan printer.', en: 'Printing will be connected to a printer later.', fr: 'L’impression sera connectée à une imprimante ultérieurement.', es: 'La impresión se conectará a una impresora más adelante.');
+      return _tr(
+        nl: 'Printfunctie wordt later gekoppeld aan printer.',
+        en: 'Printing will be connected to a printer later.',
+        fr: 'L’impression sera connectée à une imprimante ultérieurement.',
+        es: 'La impresión se conectará a una impresora más adelante.',
+      );
     case 'whatsappReceipt':
-      return _tr(nl: 'Stuur bon via WhatsApp', en: 'Send receipt via WhatsApp', fr: 'Envoyer le reçu via WhatsApp', es: 'Enviar recibo por WhatsApp');
+      return _tr(
+        nl: 'Stuur bon via WhatsApp',
+        en: 'Send receipt via WhatsApp',
+        fr: 'Envoyer le reçu via WhatsApp',
+        es: 'Enviar recibo por WhatsApp',
+      );
     case 'emailReceiptToCustomer':
-      return _tr(nl: 'Mail bon naar klant', en: 'Email receipt to customer', fr: 'Envoyer le reçu au client', es: 'Enviar recibo al cliente');
+      return _tr(
+        nl: 'Mail bon naar klant',
+        en: 'Email receipt to customer',
+        fr: 'Envoyer le reçu au client',
+        es: 'Enviar recibo al cliente',
+      );
     case 'whatsappPaymentRequest':
-      return _tr(nl: 'Stuur betaallink via WhatsApp', en: 'Send payment link via WhatsApp', fr: 'Envoyer le lien de paiement via WhatsApp', es: 'Enviar enlace de pago por WhatsApp');
+      return _tr(
+        nl: 'Stuur betaallink via WhatsApp',
+        en: 'Send payment link via WhatsApp',
+        fr: 'Envoyer le lien de paiement via WhatsApp',
+        es: 'Enviar enlace de pago por WhatsApp',
+      );
     case 'emailPaymentRequest':
-      return _tr(nl: 'Mail betaallink naar klant', en: 'Email payment link to customer', fr: 'Envoyer le lien de paiement au client', es: 'Enviar enlace de pago al cliente');
+      return _tr(
+        nl: 'Mail betaallink naar klant',
+        en: 'Email payment link to customer',
+        fr: 'Envoyer le lien de paiement au client',
+        es: 'Enviar enlace de pago al cliente',
+      );
     case 'noCustomerContact':
-      return _tr(nl: 'Geen klantcontactgegevens beschikbaar voor gerichte verzending.', en: 'No customer contact details available for targeted sending.', fr: 'Aucune coordonnée client disponible pour un envoi ciblé.', es: 'No hay datos de contacto del cliente disponibles para el envío directo.');
+      return _tr(
+        nl: 'Geen klantcontactgegevens beschikbaar voor gerichte verzending.',
+        en: 'No customer contact details available for targeted sending.',
+        fr: 'Aucune coordonnée client disponible pour un envoi ciblé.',
+        es: 'No hay datos de contacto del cliente disponibles para el envío directo.',
+      );
     case 'phoneNeedsCountryCode':
-      return _tr(nl: 'Gebruik een telefoonnummer met landcode, bijvoorbeeld +32.', en: 'Use a phone number with country code, for example +32.', fr: 'Utilisez un numéro avec indicatif pays, par exemple +32.', es: 'Usa un número con prefijo internacional, por ejemplo +32.');
+      return _tr(
+        nl: 'Gebruik een telefoonnummer met landcode, bijvoorbeeld +32.',
+        en: 'Use a phone number with country code, for example +32.',
+        fr: 'Utilisez un numéro avec indicatif pays, par exemple +32.',
+        es: 'Usa un número con prefijo internacional, por ejemplo +32.',
+      );
     case 'noValidWhatsappPhone':
-      return _tr(nl: 'Geen geldig telefoonnummer beschikbaar voor WhatsApp.', en: 'No valid phone number available for WhatsApp.', fr: 'Aucun numéro de téléphone valide disponible pour WhatsApp.', es: 'No hay un número de teléfono válido disponible para WhatsApp.');
+      return _tr(
+        nl: 'Geen geldig telefoonnummer beschikbaar voor WhatsApp.',
+        en: 'No valid phone number available for WhatsApp.',
+        fr: 'Aucun numéro de téléphone valide disponible pour WhatsApp.',
+        es: 'No hay un número de teléfono válido disponible para WhatsApp.',
+      );
     case 'whatsappOpenFailed':
-      return _tr(nl: 'WhatsApp kon niet worden geopend.', en: 'Could not open WhatsApp.', fr: 'Impossible d’ouvrir WhatsApp.', es: 'No se pudo abrir WhatsApp.');
+      return _tr(
+        nl: 'WhatsApp kon niet worden geopend.',
+        en: 'Could not open WhatsApp.',
+        fr: 'Impossible d’ouvrir WhatsApp.',
+        es: 'No se pudo abrir WhatsApp.',
+      );
     case 'emailOpenFailed':
-      return _tr(nl: 'E-mailapp kon niet worden geopend.', en: 'Could not open email app.', fr: 'Impossible d’ouvrir l’application e-mail.', es: 'No se pudo abrir la app de correo.');
+      return _tr(
+        nl: 'E-mailapp kon niet worden geopend.',
+        en: 'Could not open email app.',
+        fr: 'Impossible d’ouvrir l’application e-mail.',
+        es: 'No se pudo abrir la app de correo.',
+      );
     case 'receiptEmailSubject':
-      return _tr(nl: 'Uw ritbon', en: 'Your ride receipt', fr: 'Votre reçu de course', es: 'Su recibo de viaje');
+      return _tr(
+        nl: 'Uw ritbon',
+        en: 'Your ride receipt',
+        fr: 'Votre reçu de course',
+        es: 'Su recibo de viaje',
+      );
     case 'paymentEmailSubject':
-      return _tr(nl: 'Betaalverzoek / demolink', en: 'Payment request / demo link', fr: 'Demande de paiement / lien de démonstration', es: 'Solicitud de pago / enlace de demostración');
+      return _tr(
+        nl: 'Betaalverzoek / demolink',
+        en: 'Payment request / demo link',
+        fr: 'Demande de paiement / lien de démonstration',
+        es: 'Solicitud de pago / enlace de demostración',
+      );
     case 'paymentRequestDemoTitle':
-      return _tr(nl: 'Betaalverzoek / demolink', en: 'Payment request / demo link', fr: 'Demande de paiement / lien de démonstration', es: 'Solicitud de pago / enlace de demostración');
+      return _tr(
+        nl: 'Betaalverzoek / demolink',
+        en: 'Payment request / demo link',
+        fr: 'Demande de paiement / lien de démonstration',
+        es: 'Solicitud de pago / enlace de demostración',
+      );
     case 'reference':
-      return _tr(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia');
+      return _tr(
+        nl: 'Referentie',
+        en: 'Reference',
+        fr: 'Référence',
+        es: 'Referencia',
+      );
     case 'ride':
       return _tr(nl: 'Rit', en: 'Ride', fr: 'Course', es: 'Viaje');
     case 'thanksRide':
-      return _tr(nl: 'Bedankt voor uw rit.', en: 'Thank you for your ride.', fr: 'Merci pour votre course.', es: 'Gracias por su viaje.');
+      return _tr(
+        nl: 'Bedankt voor uw rit.',
+        en: 'Thank you for your ride.',
+        fr: 'Merci pour votre course.',
+        es: 'Gracias por su viaje.',
+      );
     case 'receiptFrom':
-      return _tr(nl: 'Bon van', en: 'Receipt from', fr: 'Reçu de', es: 'Recibo de');
+      return _tr(
+        nl: 'Bon van',
+        en: 'Receipt from',
+        fr: 'Reçu de',
+        es: 'Recibo de',
+      );
     case 'paymentRequestFrom':
-      return _tr(nl: 'Betaalverzoek van', en: 'Payment request from', fr: 'Demande de paiement de', es: 'Solicitud de pago de');
+      return _tr(
+        nl: 'Betaalverzoek van',
+        en: 'Payment request from',
+        fr: 'Demande de paiement de',
+        es: 'Solicitud de pago de',
+      );
     case 'downloadSave':
-      return _tr(nl: 'Download / opslaan', en: 'Download / save', fr: 'Télécharger / enregistrer', es: 'Descargar / guardar');
+      return _tr(
+        nl: 'Download / opslaan',
+        en: 'Download / save',
+        fr: 'Télécharger / enregistrer',
+        es: 'Descargar / guardar',
+      );
     case 'comingSoon':
-      return _tr(nl: 'komt later.', en: 'coming later.', fr: 'arrive plus tard.', es: 'llegara mas tarde.');
+      return _tr(
+        nl: 'komt later.',
+        en: 'coming later.',
+        fr: 'arrive plus tard.',
+        es: 'llegara mas tarde.',
+      );
     case 'paymentLink':
-      return _tr(nl: 'Betaallink', en: 'Payment link', fr: 'Lien de paiement', es: 'Enlace de pago');
+      return _tr(
+        nl: 'Betaallink',
+        en: 'Payment link',
+        fr: 'Lien de paiement',
+        es: 'Enlace de pago',
+      );
     case 'paymentLinkCopied':
-      return _tr(nl: 'Betaallink gekopieerd.', en: 'Payment link copied.', fr: 'Lien de paiement copié.', es: 'Enlace de pago copiado.');
+      return _tr(
+        nl: 'Betaallink gekopieerd.',
+        en: 'Payment link copied.',
+        fr: 'Lien de paiement copié.',
+        es: 'Enlace de pago copiado.',
+      );
     case 'paymentRequestCopied':
-      return _tr(nl: 'Betaalverzoek gekopieerd om te delen.', en: 'Payment request copied for sharing.', fr: 'Demande de paiement copiée pour partage.', es: 'Solicitud de pago copiada para compartir.');
+      return _tr(
+        nl: 'Betaalverzoek gekopieerd om te delen.',
+        en: 'Payment request copied for sharing.',
+        fr: 'Demande de paiement copiée pour partage.',
+        es: 'Solicitud de pago copiada para compartir.',
+      );
     case 'receiptCopied':
-      return _tr(nl: 'Bontekst gekopieerd om te delen.', en: 'Receipt text copied for sharing.', fr: 'Texte du reçu copié pour partage.', es: 'Texto del recibo copiado para compartir.');
+      return _tr(
+        nl: 'Bontekst gekopieerd om te delen.',
+        en: 'Receipt text copied for sharing.',
+        fr: 'Texte du reçu copié pour partage.',
+        es: 'Texto del recibo copiado para compartir.',
+      );
   }
   return key;
 }
@@ -466,16 +971,31 @@ String _localizedRideStatus(String? raw) {
     case 'completed':
     case 'complete':
     case 'done':
-      return _tr(nl: 'Afgerond', en: 'Completed', fr: 'Terminée', es: 'Finalizada');
+      return _tr(
+        nl: 'Afgerond',
+        en: 'Completed',
+        fr: 'Terminée',
+        es: 'Finalizada',
+      );
     case 'active':
     case 'running':
       return _tr(nl: 'Actief', en: 'Active', fr: 'Active', es: 'Activa');
     case 'waiting':
     case 'wait':
-      return _tr(nl: 'Wachten', en: 'Waiting', fr: 'En attente', es: 'En espera');
+      return _tr(
+        nl: 'Wachten',
+        en: 'Waiting',
+        fr: 'En attente',
+        es: 'En espera',
+      );
     case 'cancelled':
     case 'canceled':
-      return _tr(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annulée', es: 'Cancelada');
+      return _tr(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annulée',
+        es: 'Cancelada',
+      );
   }
   return raw?.trim().isNotEmpty == true ? raw!.trim() : _receiptText('unknown');
 }
@@ -506,7 +1026,9 @@ class FluxidiDriverApp extends StatelessWidget {
         style: FilledButton.styleFrom(
           backgroundColor: kFluxidiYellow,
           foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
           textStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -514,7 +1036,9 @@ class FluxidiDriverApp extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.white,
           side: BorderSide(color: kFluxidiYellow, width: 1.2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
           textStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -561,7 +1085,9 @@ class RoleEntryPage extends StatelessWidget {
         style: FilledButton.styleFrom(
           backgroundColor: const Color(0xFFE5B641),
           foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
         child: Row(
@@ -618,9 +1144,7 @@ class RoleEntryPage extends StatelessWidget {
     final nav = Navigator.of(context);
     setAppRole(AppRole.customer);
     nav.pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => const CustomerHomePage(),
-      ),
+      MaterialPageRoute(builder: (_) => const CustomerHomePage()),
     );
   }
 
@@ -660,7 +1184,10 @@ class RoleEntryPage extends StatelessWidget {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 28,
+                  ),
                   child: Column(
                     children: [
                       const Spacer(flex: 4),
@@ -679,52 +1206,52 @@ class RoleEntryPage extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 6),
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _languageChip(
-                                code: 'en',
-                                flag: '🇬🇧',
-                                label: 'EN',
-                                selected: currentLanguageCode == 'en',
+                      Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _languageChip(
+                                  code: 'en',
+                                  flag: '🇬🇧',
+                                  label: 'EN',
+                                  selected: currentLanguageCode == 'en',
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _languageChip(
-                                code: 'nl',
-                                flag: '🇳🇱',
-                                label: 'NL',
-                                selected: currentLanguageCode == 'nl',
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _languageChip(
+                                  code: 'nl',
+                                  flag: '🇳🇱',
+                                  label: 'NL',
+                                  selected: currentLanguageCode == 'nl',
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _languageChip(
-                                code: 'fr',
-                                flag: '🇫🇷',
-                                label: 'FR',
-                                selected: currentLanguageCode == 'fr',
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _languageChip(
+                                  code: 'fr',
+                                  flag: '🇫🇷',
+                                  label: 'FR',
+                                  selected: currentLanguageCode == 'fr',
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _languageChip(
-                                code: 'es',
-                                flag: '🇪🇸',
-                                label: 'ES',
-                                selected: currentLanguageCode == 'es',
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _languageChip(
+                                  code: 'es',
+                                  flag: '🇪🇸',
+                                  label: 'ES',
+                                  selected: currentLanguageCode == 'es',
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       Text(
@@ -822,7 +1349,10 @@ class BusinessHomePage extends StatelessWidget {
                   fr: 'Entreprise',
                   es: 'Empresa',
                 ),
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const SizedBox(height: 6),
               Text(
@@ -834,79 +1364,89 @@ class BusinessHomePage extends StatelessWidget {
                 ),
                 style: TextStyle(color: Colors.white.withOpacity(0.72)),
               ),
-            const SizedBox(height: 16),
-            Card(
-              color: const Color(0xFF141B2F),
-              child: ListTile(
-                leading: const Icon(Icons.calculate_outlined),
-                title: Text(appConfig.strings.calculatorTitle.of(appConfig.currentLanguage)),
-                subtitle: Text(kCalculatorMenuSubtitle),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => CalculatorPage(
-                        bookingBaseUrl: kBookingBaseUrl,
-                        mapboxToken: kMapboxToken,
-                      ),
+              const SizedBox(height: 16),
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
+                  leading: const Icon(Icons.calculate_outlined),
+                  title: Text(
+                    appConfig.strings.calculatorTitle.of(
+                      appConfig.currentLanguage,
                     ),
-                  );
-                },
+                  ),
+                  subtitle: Text(kCalculatorMenuSubtitle),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => CalculatorPage(
+                          bookingBaseUrl: kBookingBaseUrl,
+                          mapboxToken: kMapboxToken,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-            Card(
-              color: const Color(0xFF141B2F),
-              child: ListTile(
-                leading: const Icon(Icons.business_center_outlined),
-                title: Text(kDrawerBusinessSettingsLabel),
-                subtitle: Text(kDrawerBusinessSettingsSubtitle),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const BusinessSettingsPage()),
-                  );
-                },
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
+                  leading: const Icon(Icons.business_center_outlined),
+                  title: Text(kDrawerBusinessSettingsLabel),
+                  subtitle: Text(kDrawerBusinessSettingsSubtitle),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const BusinessSettingsPage(),
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-            Card(
-              color: const Color(0xFF141B2F),
-              child: ListTile(
-                leading: const Icon(Icons.directions_car_filled_outlined),
-                title: Text(kDrawerVehiclesLabel),
-                subtitle: Text(kDrawerVehiclesSubtitle),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const VehicleManagementPage()),
-                  );
-                },
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
+                  leading: const Icon(Icons.directions_car_filled_outlined),
+                  title: Text(kDrawerVehiclesLabel),
+                  subtitle: Text(kDrawerVehiclesSubtitle),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const VehicleManagementPage(),
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-            Card(
-              color: const Color(0xFF141B2F),
-              child: ListTile(
-                leading: const Icon(Icons.local_taxi_outlined),
-                title: Text(_t(
-                  nl: 'Open chauffeurweergave',
-                  en: 'Open driver view',
-                  fr: 'Ouvrir la vue chauffeur',
-                  es: 'Abrir vista de conductor',
-                )),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () async {
-                  final previousRole = appRoleNotifier.value;
-                  setAppRole(AppRole.driver);
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const DriverHomePage()),
-                  );
-                  if (context.mounted) {
-                    setAppRole(previousRole);
-                  }
-                },
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
+                  leading: const Icon(Icons.local_taxi_outlined),
+                  title: Text(
+                    _t(
+                      nl: 'Open chauffeurweergave',
+                      en: 'Open driver view',
+                      fr: 'Ouvrir la vue chauffeur',
+                      es: 'Abrir vista de conductor',
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    final previousRole = appRoleNotifier.value;
+                    setAppRole(AppRole.driver);
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+                    );
+                    if (context.mounted) {
+                      setAppRole(previousRole);
+                    }
+                  },
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            const FluxidiBackToStartButton(),
+              const SizedBox(height: 12),
+              const FluxidiBackToStartButton(),
             ],
           ),
         ),
@@ -930,12 +1470,14 @@ class FluxidiBackToStartButton extends StatelessWidget {
           );
         },
         icon: const Icon(Icons.home_outlined),
-        label: Text(_tr(
-          nl: 'Terug naar startpagina',
-          en: 'Back to start page',
-          fr: 'Retour à la page de départ',
-          es: 'Volver a la página de inicio',
-        )),
+        label: Text(
+          _tr(
+            nl: 'Terug naar startpagina',
+            en: 'Back to start page',
+            fr: 'Retour à la page de départ',
+            es: 'Volver a la página de inicio',
+          ),
+        ),
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFFE5B641),
           backgroundColor: const Color(0xFF10182C),
@@ -978,18 +1520,24 @@ class CustomerHomePage extends StatelessWidget {
     if (scheduledIntent) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_t(
-            nl: 'Plan rit opent nu de boekingsflow (scheduled intent volgt).',
-            en: 'Scheduled ride currently opens the booking flow (scheduled intent pending).',
-            fr: 'La course planifiee ouvre actuellement le flux de reservation (option planifiee a venir).',
-            es: 'El viaje programado abre actualmente el flujo de reserva (intencion programada pendiente).',
-          )),
+          content: Text(
+            _t(
+              nl: 'Plan rit opent nu de boekingsflow (scheduled intent volgt).',
+              en: 'Scheduled ride currently opens the booking flow (scheduled intent pending).',
+              fr: 'La course planifiee ouvre actuellement le flux de reservation (option planifiee a venir).',
+              es: 'El viaje programado abre actualmente el flujo de reserva (intencion programada pendiente).',
+            ),
+          ),
         ),
       );
     }
   }
 
-  void _openPlaceholder(BuildContext context, String title, String description) {
+  void _openPlaceholder(
+    BuildContext context,
+    String title,
+    String description,
+  ) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => Scaffold(
@@ -1004,7 +1552,10 @@ class CustomerHomePage extends StatelessWidget {
               child: Text(
                 description,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withOpacity(0.82), fontSize: 15),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.82),
+                  fontSize: 15,
+                ),
               ),
             ),
           ),
@@ -1026,7 +1577,10 @@ class CustomerHomePage extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: Icon(icon, color: const Color(0xFFE5B641)),
         title: Text(title),
-        subtitle: Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.74))),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: Colors.white.withOpacity(0.74)),
+        ),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
@@ -1049,76 +1603,81 @@ class CustomerHomePage extends StatelessWidget {
             children: [
               Text(
                 _t(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente'),
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            const SizedBox(height: 6),
-            Text(
-              _t(
-                nl: 'Kies hoe je jouw rit wil starten.',
-                en: 'Choose how you want to start your ride.',
-                fr: 'Choisissez comment demarrer votre course.',
-                es: 'Elige como quieres iniciar tu viaje.',
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Kies hoe je jouw rit wil starten.',
+                  en: 'Choose how you want to start your ride.',
+                  fr: 'Choisissez comment demarrer votre course.',
+                  es: 'Elige como quieres iniciar tu viaje.',
+                ),
+                style: TextStyle(color: Colors.white.withOpacity(0.76)),
               ),
-              style: TextStyle(color: Colors.white.withOpacity(0.76)),
-            ),
-            const SizedBox(height: 14),
-            _entryCard(
-              context: context,
-              icon: Icons.flash_on_outlined,
-              title: _t(
-                nl: 'Bereken hier en boek direct',
-                en: 'Calculate and book directly',
-                fr: 'Calculer et reserver directement',
-                es: 'Calcula y reserva directamente',
+              const SizedBox(height: 14),
+              _entryCard(
+                context: context,
+                icon: Icons.flash_on_outlined,
+                title: _t(
+                  nl: 'Bereken hier en boek direct',
+                  en: 'Calculate and book directly',
+                  fr: 'Calculer et reserver directement',
+                  es: 'Calcula y reserva directamente',
+                ),
+                subtitle: _t(
+                  nl: 'Bereken je rit en plaats direct je boeking',
+                  en: 'Calculate your ride and place your booking right away',
+                  fr: 'Calculez votre trajet et effectuez votre reservation immediatement',
+                  es: 'Calcula tu viaje y realiza tu reserva de inmediato',
+                ),
+                onTap: () => _openCalculator(context, scheduledIntent: false),
               ),
-              subtitle: _t(
-                nl: 'Bereken je rit en plaats direct je boeking',
-                en: 'Calculate your ride and place your booking right away',
-                fr: 'Calculez votre trajet et effectuez votre reservation immediatement',
-                es: 'Calcula tu viaje y realiza tu reserva de inmediato',
+              _entryCard(
+                context: context,
+                icon: Icons.local_taxi_outlined,
+                title: _t(
+                  nl: "Taxi's in de buurt",
+                  en: 'Taxis nearby',
+                  fr: 'Taxis a proximite',
+                  es: 'Taxis cercanos',
+                ),
+                subtitle: _t(
+                  nl: 'Binnenkort zie je hier actieve partners in jouw regio.',
+                  en: 'You will soon see active partners in your region here.',
+                  fr: 'Vous verrez bientot ici les partenaires actifs de votre region.',
+                  es: 'Pronto veras aqui socios activos en tu region.',
+                ),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
+                ),
               ),
-              onTap: () => _openCalculator(context, scheduledIntent: false),
-            ),
-            _entryCard(
-              context: context,
-              icon: Icons.local_taxi_outlined,
-              title: _t(
-                nl: "Taxi's in de buurt",
-                en: 'Taxis nearby',
-                fr: 'Taxis a proximite',
-                es: 'Taxis cercanos',
+              _entryCard(
+                context: context,
+                icon: Icons.app_registration_outlined,
+                title: _t(
+                  nl: 'Registreer je regio',
+                  en: 'Register your region',
+                  fr: 'Enregistrez votre region',
+                  es: 'Registra tu region',
+                ),
+                subtitle: _t(
+                  nl: 'Geef je regio door en help taxi bedrijven naar jouw omgeving te brengen',
+                  en: 'Register your region for future coverage',
+                  fr: 'Enregistrez votre region pour une couverture future',
+                  es: 'Registra tu region para cobertura futura',
+                ),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const CustomerRegionRegistrationPage(),
+                  ),
+                ),
               ),
-              subtitle: _t(
-                nl: 'Binnenkort zie je hier actieve partners in jouw regio.',
-                en: 'You will soon see active partners in your region here.',
-                fr: 'Vous verrez bientot ici les partenaires actifs de votre region.',
-                es: 'Pronto veras aqui socios activos en tu region.',
-              ),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
-              ),
-            ),
-            _entryCard(
-              context: context,
-              icon: Icons.app_registration_outlined,
-              title: _t(
-                nl: 'Registreer je regio',
-                en: 'Register your region',
-                fr: 'Enregistrez votre region',
-                es: 'Registra tu region',
-              ),
-              subtitle: _t(
-                nl: 'Geef je regio door en help taxi bedrijven naar jouw omgeving te brengen',
-                en: 'Register your region for future coverage',
-                fr: 'Enregistrez votre region pour une couverture future',
-                es: 'Registra tu region para cobertura futura',
-              ),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const CustomerRegionRegistrationPage()),
-              ),
-            ),
-            const SizedBox(height: 14),
-            const FluxidiBackToStartButton(),
+              const SizedBox(height: 14),
+              const FluxidiBackToStartButton(),
             ],
           ),
         ),
@@ -1127,16 +1686,19 @@ class CustomerHomePage extends StatelessWidget {
   }
 }
 
-final List<Map<String, dynamic>> _customerRegionLeadInbox = <Map<String, dynamic>>[];
+final List<Map<String, dynamic>> _customerRegionLeadInbox =
+    <Map<String, dynamic>>[];
 
 class CustomerRegionRegistrationPage extends StatefulWidget {
   const CustomerRegionRegistrationPage({super.key});
 
   @override
-  State<CustomerRegionRegistrationPage> createState() => _CustomerRegionRegistrationPageState();
+  State<CustomerRegionRegistrationPage> createState() =>
+      _CustomerRegionRegistrationPageState();
 }
 
-class _CustomerRegionRegistrationPageState extends State<CustomerRegionRegistrationPage> {
+class _CustomerRegionRegistrationPageState
+    extends State<CustomerRegionRegistrationPage> {
   final _formKey = GlobalKey<FormState>();
   final _firstNameCtrl = TextEditingController();
   final _lastNameCtrl = TextEditingController();
@@ -1211,12 +1773,14 @@ class _CustomerRegionRegistrationPageState extends State<CustomerRegionRegistrat
     setState(() => _submitting = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_t(
-          nl: 'Bedankt! We hebben je regio geregistreerd.',
-          en: 'Thank you! We have registered your region.',
-          fr: 'Merci ! Nous avons enregistre votre region.',
-          es: 'Gracias. Hemos registrado tu region.',
-        )),
+        content: Text(
+          _t(
+            nl: 'Bedankt! We hebben je regio geregistreerd.',
+            en: 'Thank you! We have registered your region.',
+            fr: 'Merci ! Nous avons enregistre votre region.',
+            es: 'Gracias. Hemos registrado tu region.',
+          ),
+        ),
       ),
     );
     Navigator.pop(context);
@@ -1232,7 +1796,10 @@ class _CustomerRegionRegistrationPageState extends State<CustomerRegionRegistrat
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,
@@ -1262,12 +1829,14 @@ class _CustomerRegionRegistrationPageState extends State<CustomerRegionRegistrat
         backgroundColor: const Color(0xFF0B1020),
         appBar: AppBar(
           backgroundColor: const Color(0xFF0B1020),
-          title: Text(_t(
-            nl: 'Registreer je regio',
-            en: 'Register your region',
-            fr: 'Enregistrez votre region',
-            es: 'Registra tu region',
-          )),
+          title: Text(
+            _t(
+              nl: 'Registreer je regio',
+              en: 'Register your region',
+              fr: 'Enregistrez votre region',
+              es: 'Registra tu region',
+            ),
+          ),
         ),
         body: SafeArea(
           child: Form(
@@ -1284,77 +1853,113 @@ class _CustomerRegionRegistrationPageState extends State<CustomerRegionRegistrat
                   ),
                   style: TextStyle(color: Colors.white.withOpacity(0.78)),
                 ),
-              const SizedBox(height: 14),
-              _field(
-                label: _t(nl: 'Voornaam', en: 'First name', fr: 'Prenom', es: 'Nombre'),
-                controller: _firstNameCtrl,
-                validator: _required,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                label: _t(nl: 'Naam', en: 'Last name', fr: 'Nom', es: 'Apellido'),
-                controller: _lastNameCtrl,
-                validator: _required,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                label: _t(nl: 'Postcode', en: 'Postal code', fr: 'Code postal', es: 'Codigo postal'),
-                controller: _postalCodeCtrl,
-                validator: _required,
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                label: _t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Correo electronico'),
-                controller: _emailCtrl,
-                validator: _emailValidator,
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 12),
-              _field(
-                label: _t(
-                  nl: 'Telefoon (optioneel)',
-                  en: 'Phone (optional)',
-                  fr: 'Telephone (optionnel)',
-                  es: 'Telefono (opcional)',
+                const SizedBox(height: 14),
+                _field(
+                  label: _t(
+                    nl: 'Voornaam',
+                    en: 'First name',
+                    fr: 'Prenom',
+                    es: 'Nombre',
+                  ),
+                  controller: _firstNameCtrl,
+                  validator: _required,
                 ),
-                controller: _phoneCtrl,
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                value: _wantsUpdates,
-                onChanged: (v) => setState(() => _wantsUpdates = v ?? false),
-                contentPadding: EdgeInsets.zero,
-                activeColor: const Color(0xFFE5B641),
-                title: Text(_t(
-                  nl: 'Hou me op de hoogte wanneer Fluxidi beschikbaar is in mijn regio',
-                  en: 'Keep me updated when Fluxidi is available in my region',
-                  fr: 'Tenez-moi informe lorsque Fluxidi est disponible dans ma region',
-                  es: 'Mantenme informado cuando Fluxidi este disponible en mi region',
-                )),
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-              const SizedBox(height: 10),
-              FilledButton(
-                onPressed: _submitting ? null : _submit,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(_submitting
-                      ? _t(nl: 'Bezig...', en: 'Sending...', fr: 'Envoi...', es: 'Enviando...')
-                      : _t(nl: 'Verzenden', en: 'Send', fr: 'Envoyer', es: 'Enviar')),
+                const SizedBox(height: 12),
+                _field(
+                  label: _t(
+                    nl: 'Naam',
+                    en: 'Last name',
+                    fr: 'Nom',
+                    es: 'Apellido',
+                  ),
+                  controller: _lastNameCtrl,
+                  validator: _required,
                 ),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(_t(
-                  nl: 'Terug naar klantenpagina',
-                  en: 'Back to customer page',
-                  fr: 'Retour a la page client',
-                  es: 'Volver a la pagina de cliente',
-                )),
-              ),
+                const SizedBox(height: 12),
+                _field(
+                  label: _t(
+                    nl: 'Postcode',
+                    en: 'Postal code',
+                    fr: 'Code postal',
+                    es: 'Codigo postal',
+                  ),
+                  controller: _postalCodeCtrl,
+                  validator: _required,
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 12),
+                _field(
+                  label: _t(
+                    nl: 'E-mail',
+                    en: 'Email',
+                    fr: 'E-mail',
+                    es: 'Correo electronico',
+                  ),
+                  controller: _emailCtrl,
+                  validator: _emailValidator,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 12),
+                _field(
+                  label: _t(
+                    nl: 'Telefoon (optioneel)',
+                    en: 'Phone (optional)',
+                    fr: 'Telephone (optionnel)',
+                    es: 'Telefono (opcional)',
+                  ),
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _wantsUpdates,
+                  onChanged: (v) => setState(() => _wantsUpdates = v ?? false),
+                  contentPadding: EdgeInsets.zero,
+                  activeColor: const Color(0xFFE5B641),
+                  title: Text(
+                    _t(
+                      nl: 'Hou me op de hoogte wanneer Fluxidi beschikbaar is in mijn regio',
+                      en: 'Keep me updated when Fluxidi is available in my region',
+                      fr: 'Tenez-moi informe lorsque Fluxidi est disponible dans ma region',
+                      es: 'Mantenme informado cuando Fluxidi este disponible en mi region',
+                    ),
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+                const SizedBox(height: 10),
+                FilledButton(
+                  onPressed: _submitting ? null : _submit,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      _submitting
+                          ? _t(
+                              nl: 'Bezig...',
+                              en: 'Sending...',
+                              fr: 'Envoi...',
+                              es: 'Enviando...',
+                            )
+                          : _t(
+                              nl: 'Verzenden',
+                              en: 'Send',
+                              fr: 'Envoyer',
+                              es: 'Enviar',
+                            ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    _t(
+                      nl: 'Terug naar klantenpagina',
+                      en: 'Back to customer page',
+                      fr: 'Retour a la page client',
+                      es: 'Volver a la pagina de cliente',
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1396,12 +2001,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     if (raw.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_t(
-            nl: 'Vul eerst een postcode in.',
-            en: 'Enter a postal code first.',
-            fr: 'Entrez d abord un code postal.',
-            es: 'Introduce primero un codigo postal.',
-          )),
+          content: Text(
+            _t(
+              nl: 'Vul eerst een postcode in.',
+              en: 'Enter a postal code first.',
+              fr: 'Entrez d abord un code postal.',
+              es: 'Introduce primero un codigo postal.',
+            ),
+          ),
         ),
       );
       return;
@@ -1422,8 +2029,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         throw Exception('HTTP ${res.statusCode}');
       }
       final decoded = jsonDecode(res.body);
-      final partnersRaw = decoded is Map<String, dynamic> && decoded['partners'] is List
-          ? (decoded['partners'] as List).whereType<Map<String, dynamic>>().toList()
+      final partnersRaw =
+          decoded is Map<String, dynamic> && decoded['partners'] is List
+          ? (decoded['partners'] as List)
+                .whereType<Map<String, dynamic>>()
+                .toList()
           : <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
@@ -1440,12 +2050,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_t(
-            nl: 'Zoeken van partners is momenteel niet beschikbaar.',
-            en: 'Partner search is currently unavailable.',
-            fr: 'La recherche de partenaires est actuellement indisponible.',
-            es: 'La busqueda de socios no esta disponible actualmente.',
-          )),
+          content: Text(
+            _t(
+              nl: 'Zoeken van partners is momenteel niet beschikbaar.',
+              en: 'Partner search is currently unavailable.',
+              fr: 'La recherche de partenaires est actuellement indisponible.',
+              es: 'La busqueda de socios no esta disponible actualmente.',
+            ),
+          ),
         ),
       );
     }
@@ -1459,12 +2071,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         backgroundColor: const Color(0xFF0B1020),
         appBar: AppBar(
           backgroundColor: const Color(0xFF0B1020),
-          title: Text(_t(
-            nl: "Taxi's in de buurt",
-            en: 'Taxis nearby',
-            fr: 'Taxis a proximite',
-            es: 'Taxis cercanos',
-          )),
+          title: Text(
+            _t(
+              nl: "Taxi's in de buurt",
+              en: 'Taxis nearby',
+              fr: 'Taxis a proximite',
+              es: 'Taxis cercanos',
+            ),
+          ),
         ),
         body: SafeArea(
           child: ListView(
@@ -1479,149 +2093,179 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 ),
                 style: TextStyle(color: Colors.white.withOpacity(0.78)),
               ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _postalCodeCtrl,
-              style: const TextStyle(color: Colors.white),
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _searchPartners(),
-              decoration: InputDecoration(
-                labelText: _t(nl: 'Postcode', en: 'Postal code', fr: 'Code postal', es: 'Codigo postal'),
-                labelStyle: const TextStyle(color: Colors.white70),
-                hintText: _t(nl: 'Bijv. 2000', en: 'e.g. 2000', fr: 'ex. 2000', es: 'ej. 2000'),
-                hintStyle: const TextStyle(color: Colors.white38),
-                filled: true,
-                fillColor: const Color(0xFF141B2F),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
+              const SizedBox(height: 12),
+              TextField(
+                controller: _postalCodeCtrl,
+                style: const TextStyle(color: Colors.white),
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _searchPartners(),
+                decoration: InputDecoration(
+                  labelText: _t(
+                    nl: 'Postcode',
+                    en: 'Postal code',
+                    fr: 'Code postal',
+                    es: 'Codigo postal',
+                  ),
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  hintText: _t(
+                    nl: 'Bijv. 2000',
+                    en: 'e.g. 2000',
+                    fr: 'ex. 2000',
+                    es: 'ej. 2000',
+                  ),
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  filled: true,
+                  fillColor: const Color(0xFF141B2F),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            FilledButton(
-              onPressed: _searching ? null : _searchPartners,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(_searching
-                    ? _t(nl: 'Zoeken...', en: 'Searching...', fr: 'Recherche...', es: 'Buscando...')
-                    : _t(
-                        nl: 'Zoek actieve partners',
-                        en: 'Search active partners',
-                        fr: 'Rechercher des partenaires actifs',
-                        es: 'Buscar socios activos',
-                      )),
+              const SizedBox(height: 10),
+              FilledButton(
+                onPressed: _searching ? null : _searchPartners,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    _searching
+                        ? _t(
+                            nl: 'Zoeken...',
+                            en: 'Searching...',
+                            fr: 'Recherche...',
+                            es: 'Buscando...',
+                          )
+                        : _t(
+                            nl: 'Zoek actieve partners',
+                            en: 'Search active partners',
+                            fr: 'Rechercher des partenaires actifs',
+                            es: 'Buscar socios activos',
+                          ),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF141B2F),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: !_searched
-                  ? Text(
-                      _t(
-                        nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
-                        en: 'Enter your postal code to check which partners are active.',
-                        fr: 'Saisissez votre code postal pour verifier quels partenaires sont actifs.',
-                        es: 'Ingresa tu codigo postal para verificar que socios estan activos.',
-                      ),
-                      style: TextStyle(color: Colors.white.withOpacity(0.75)),
-                    )
-                  : _partners.isNotEmpty
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _t(
-                                nl: 'Actieve partners in $_normalizedPostcode',
-                                en: 'Active partners in $_normalizedPostcode',
-                                fr: 'Partenaires actifs dans $_normalizedPostcode',
-                                es: 'Socios activos en $_normalizedPostcode',
-                              ),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF141B2F),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: !_searched
+                    ? Text(
+                        _t(
+                          nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
+                          en: 'Enter your postal code to check which partners are active.',
+                          fr: 'Saisissez votre code postal pour verifier quels partenaires sont actifs.',
+                          es: 'Ingresa tu codigo postal para verificar que socios estan activos.',
+                        ),
+                        style: TextStyle(color: Colors.white.withOpacity(0.75)),
+                      )
+                    : _partners.isNotEmpty
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(
+                              nl: 'Actieve partners in $_normalizedPostcode',
+                              en: 'Active partners in $_normalizedPostcode',
+                              fr: 'Partenaires actifs dans $_normalizedPostcode',
+                              es: 'Socios activos en $_normalizedPostcode',
                             ),
-                            const SizedBox(height: 10),
-                            ..._partners.map((p) {
-                              final company = (p['company_name'] ?? '').toString().trim();
-                              final partnerId = (p['partner_id'] ?? '').toString().trim();
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF0F1628),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.white12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.business_outlined, color: Color(0xFFE5B641)),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          ..._partners.map((p) {
+                            final company = (p['company_name'] ?? '')
+                                .toString()
+                                .trim();
+                            final partnerId = (p['partner_id'] ?? '')
+                                .toString()
+                                .trim();
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0F1628),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.business_outlined,
+                                    color: Color(0xFFE5B641),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          company.isEmpty ? partnerId : company,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        if (partnerId.isNotEmpty)
                                           Text(
-                                            company.isEmpty ? partnerId : company,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w700,
+                                            partnerId,
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.58,
+                                              ),
+                                              fontSize: 12,
                                             ),
                                           ),
-                                          if (partnerId.isNotEmpty)
-                                            Text(
-                                              partnerId,
-                                              style: TextStyle(
-                                                color: Colors.white.withOpacity(0.58),
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
+                                      ],
                                     ),
-                                  ],
-                                ),
-                              );
-                            }),
-                          ],
-                        )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _t(
-                            nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
-                            en: 'No active partners found yet for postal code $_normalizedPostcode.',
-                            fr: 'Aucun partenaire actif trouve pour le code postal $_normalizedPostcode.',
-                            es: 'Aun no se encontraron socios activos para el codigo postal $_normalizedPostcode.',
-                          ),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        const SizedBox(height: 10),
-                        OutlinedButton(
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const CustomerRegionRegistrationPage(),
+                                  ),
+                                ],
                               ),
                             );
-                          },
-                          child: Text(_t(
-                            nl: 'Registreer je regio',
-                            en: 'Register your region',
-                            fr: 'Enregistrez votre region',
-                            es: 'Registra tu region',
-                          )),
-                        ),
-                      ],
-                    ),
-            ),
+                          }),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(
+                              nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
+                              en: 'No active partners found yet for postal code $_normalizedPostcode.',
+                              fr: 'Aucun partenaire actif trouve pour le code postal $_normalizedPostcode.',
+                              es: 'Aun no se encontraron socios activos para el codigo postal $_normalizedPostcode.',
+                            ),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          const SizedBox(height: 10),
+                          OutlinedButton(
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const CustomerRegionRegistrationPage(),
+                                ),
+                              );
+                            },
+                            child: Text(
+                              _t(
+                                nl: 'Registreer je regio',
+                                en: 'Register your region',
+                                fr: 'Enregistrez votre region',
+                                es: 'Registra tu region',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
             ],
           ),
         ),
@@ -1629,7 +2273,6 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     );
   }
 }
-
 
 class FluxidiFrame extends StatelessWidget {
   final Widget child;
@@ -1650,7 +2293,10 @@ class FluxidiFrame extends StatelessWidget {
             decoration: BoxDecoration(
               color: kFluxidiBlack,
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.98), width: 3.0),
+              border: Border.all(
+                color: kFluxidiYellow.withOpacity(0.98),
+                width: 3.0,
+              ),
               boxShadow: const [
                 BoxShadow(
                   color: Color(0x33000000),
@@ -1732,7 +2378,6 @@ class BookingItem {
     return '${bookingId.substring(0, 4)}…${bookingId.substring(bookingId.length - 4)}';
   }
 
-
   static String? _extractPlaceLabel(dynamic v) {
     if (v == null) return null;
     if (v is String) {
@@ -1771,7 +2416,6 @@ class BookingItem {
     return null;
   }
 
-  
   BookingItem copyWith({
     String? bookingId,
     String? pickupIso,
@@ -1814,7 +2458,7 @@ class BookingItem {
     );
   }
 
-factory BookingItem.fromJson(Map<String, dynamic> j) {
+  factory BookingItem.fromJson(Map<String, dynamic> j) {
     // Support both booking-api payloads and tracking-api payloads.
     final lastPing = (j['last_ping'] is Map<String, dynamic>)
         ? (j['last_ping'] as Map<String, dynamic>)
@@ -1824,8 +2468,12 @@ factory BookingItem.fromJson(Map<String, dynamic> j) {
     String? dropLabel = _extractPlaceLabel(j['dropoff'] ?? j['to']);
 
     // Extra common field names across versions/backends
-    pickLabel ??= _extractPlaceLabel(j['pickup_address'] ?? j['pickup_label'] ?? j['from_address']);
-    dropLabel ??= _extractPlaceLabel(j['dropoff_address'] ?? j['dropoff_label'] ?? j['to_address']);
+    pickLabel ??= _extractPlaceLabel(
+      j['pickup_address'] ?? j['pickup_label'] ?? j['from_address'],
+    );
+    dropLabel ??= _extractPlaceLabel(
+      j['dropoff_address'] ?? j['dropoff_label'] ?? j['to_address'],
+    );
 
     // If backend already provides plain strings, prefer those
     final fromStr = (j['from'] is String) ? (j['from'] as String) : null;
@@ -1834,13 +2482,54 @@ factory BookingItem.fromJson(Map<String, dynamic> j) {
     return BookingItem(
       bookingId: (j['booking_id'] ?? j['id'] ?? '').toString(),
       pickupIso: j['pickup_iso']?.toString(),
-      from: (fromStr?.trim().isNotEmpty ?? false) ? fromStr!.trim() : (pickLabel?.trim().isNotEmpty ?? false ? pickLabel!.trim() : null),
-      to: (toStr?.trim().isNotEmpty ?? false) ? toStr!.trim() : (dropLabel?.trim().isNotEmpty ?? false ? dropLabel!.trim() : null),
+      from: (fromStr?.trim().isNotEmpty ?? false)
+          ? fromStr!.trim()
+          : (pickLabel?.trim().isNotEmpty ?? false ? pickLabel!.trim() : null),
+      to: (toStr?.trim().isNotEmpty ?? false)
+          ? toStr!.trim()
+          : (dropLabel?.trim().isNotEmpty ?? false ? dropLabel!.trim() : null),
       tier: j['tier']?.toString(),
-      pax: _toIntOrNull(j['pax'] ?? j['passengers'] ?? j['persons'] ?? j['pax_count'] ?? j['paxCount']),
-      bags: _toIntOrNull(j['bags'] ?? j['luggage'] ?? j['bags_count'] ?? j['bagsCount']),
+      pax: _toIntOrNull(
+        j['pax'] ??
+            j['passengers'] ??
+            j['persons'] ??
+            j['pax_count'] ??
+            j['paxCount'],
+      ),
+      bags: _toIntOrNull(
+        j['bags'] ?? j['luggage'] ?? j['bags_count'] ?? j['bagsCount'],
+      ),
       status: (j['status'] ?? j['stage'])?.toString(),
-      price: _toNumOrNull(j['price'] ?? j['total_price'] ?? j['total'] ?? j['amount'] ?? j['eur'] ?? ((j['quote'] is Map) ? (j['quote'] as Map)['price'] : null) ?? ((j['quote'] is Map) ? (j['quote'] as Map)['total_price'] : null) ?? ((j['quote'] is Map) ? (j['quote'] as Map)['total'] : null) ?? ((j['quote'] is Map) ? (j['quote'] as Map)['amount'] : null) ?? ((j['quote'] is Map) ? (j['quote'] as Map)['eur'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['price_incl_vat'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['total_price'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['total'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['price'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['amount'] : null) ?? (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map)) ? ((j['quote'] as Map)['pricing'] as Map)['eur'] : null)),
+      price: _toNumOrNull(
+        j['price'] ??
+            j['total_price'] ??
+            j['total'] ??
+            j['amount'] ??
+            j['eur'] ??
+            ((j['quote'] is Map) ? (j['quote'] as Map)['price'] : null) ??
+            ((j['quote'] is Map) ? (j['quote'] as Map)['total_price'] : null) ??
+            ((j['quote'] is Map) ? (j['quote'] as Map)['total'] : null) ??
+            ((j['quote'] is Map) ? (j['quote'] as Map)['amount'] : null) ??
+            ((j['quote'] is Map) ? (j['quote'] as Map)['eur'] : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['price_incl_vat']
+                : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['total_price']
+                : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['total']
+                : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['price']
+                : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['amount']
+                : null) ??
+            (((j['quote'] is Map) && ((j['quote'] as Map)['pricing'] is Map))
+                ? ((j['quote'] as Map)['pricing'] as Map)['eur']
+                : null),
+      ),
       currency: (j['currency'] ?? 'EUR')?.toString(),
       details: Map<String, dynamic>.from(j),
       sessionId: j['session_id']?.toString(),
@@ -1852,7 +2541,6 @@ factory BookingItem.fromJson(Map<String, dynamic> j) {
       lastHeading: _toNumOrNull(lastPing?['heading']),
     );
   }
-
 
   static int? _toIntOrNull(dynamic v) {
     if (v == null) return null;
@@ -1875,9 +2563,10 @@ factory BookingItem.fromJson(Map<String, dynamic> j) {
 }
 
 enum _CameraMode { overview, follow }
-enum _RideRoutePhase { toPickup, trip }
-enum MapThemeMode { light, dark }
 
+enum _RideRoutePhase { toPickup, trip }
+
+enum MapThemeMode { light, dark }
 
 class _PlaceSuggestion {
   final String label;
@@ -1891,11 +2580,7 @@ class _DirectRideDestinationResult {
   final double? lon;
   final double? lat;
 
-  const _DirectRideDestinationResult({
-    required this.label,
-    this.lon,
-    this.lat,
-  });
+  const _DirectRideDestinationResult({required this.label, this.lon, this.lat});
 }
 
 class _TripHistoryItem {
@@ -2093,12 +2778,14 @@ class _DirectRideDestinationDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(_tr(
-        nl: 'Straatrit',
-        en: 'Direct ride',
-        fr: 'Course directe',
-        es: 'Viaje directo',
-      )),
+      title: Text(
+        _tr(
+          nl: 'Straatrit',
+          en: 'Direct ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
+        ),
+      ),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -2188,21 +2875,20 @@ class _DirectRideDestinationDialogState
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(_tr(
-            nl: 'Annuleren',
-            en: 'Cancel',
-            fr: 'Annuler',
-            es: 'Cancelar',
-          )),
+          child: Text(
+            _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+          ),
         ),
         FilledButton(
           onPressed: _submit,
-          child: Text(_tr(
-            nl: 'Doorgaan',
-            en: 'Continue',
-            fr: 'Continuer',
-            es: 'Continuar',
-          )),
+          child: Text(
+            _tr(
+              nl: 'Doorgaan',
+              en: 'Continue',
+              fr: 'Continuer',
+              es: 'Continuar',
+            ),
+          ),
         ),
       ],
     );
@@ -2270,7 +2956,8 @@ class DriverHomePage extends StatefulWidget {
   State<DriverHomePage> createState() => _DriverHomePageState();
 }
 
-class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStateMixin {
+class _DriverHomePageState extends State<DriverHomePage>
+    with TickerProviderStateMixin {
   DateTime? _trackingStartedAt; // tracking start timestamp
   bool _isStartingTrip = false; // UX: start button state
   Timer? _meterTicker;
@@ -2289,7 +2976,6 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   mb.Point? _manualFromPoint;
   mb.Point? _manualToPoint;
 
-
   // Ride mode (driving vs waiting)
   bool _isWaiting = false;
   DateTime? _waitStartedAt;
@@ -2297,9 +2983,10 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
 
   // Pricing (UI-only fallback; worker remains source of truth)
   static const double _fallbackStartFee = 3.0;
-  static const double _fallbackPerKm = 1.50; // placeholder until worker streams live rates
-  static const double _fallbackWaitPerMin = 40.0 / 60.0; // €40/h = €0.666.../min
-
+  static const double _fallbackPerKm =
+      1.50; // placeholder until worker streams live rates
+  static const double _fallbackWaitPerMin =
+      40.0 / 60.0; // €40/h = €0.666.../min
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -2320,7 +3007,6 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   bool _bootMinElapsed = false;
   bool _bootFirstLoadDone = false;
   DateTime? _bootStartedAt;
-
 
   // Active trip state
   String? _activeTripId;
@@ -2354,8 +3040,6 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   mb.PolylineAnnotation? _routeLine;
   String _driverMarkerIcon = 'triangle-15';
 
-  
-
   // Splash animations (premium boot feel)
   late final AnimationController _splashAnimCtrl;
   late final Animation<double> _splashPulse;
@@ -2363,10 +3047,11 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   // Active HUD pulse (only meaningful when tracking)
   late final AnimationController _activePulseCtrl;
   late final Animation<double> _activePulse;
-// UI/Camera
+  // UI/Camera
   bool _followCar = false;
   _CameraMode _cameraMode = _CameraMode.overview;
   MapThemeMode? _mapThemeOverride;
+  bool _navigationWakelockEnabled = false;
   bool _hasSwitchedToFollow = false;
   double _lastKnownBearing = 0.0;
   bool _allowOverviewCamera = false;
@@ -2418,11 +3103,10 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     return _bookingStatusOverrides[b.bookingId] ?? b.status;
   }
 
-  List<BookingItem> get _visibleBookings =>
-      _bookings
-          .where((b) => !_deletedBookingIds.contains(b.bookingId))
-          .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
-          .toList();
+  List<BookingItem> get _visibleBookings => _bookings
+      .where((b) => !_deletedBookingIds.contains(b.bookingId))
+      .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
+      .toList();
 
   void _markBookingsUiDirty() {
     _bookingsUiVersion.value = _bookingsUiVersion.value + 1;
@@ -2431,6 +3115,17 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   bool get _mapSupported => !kIsWindows && !kIsWeb;
   bool get kIsWindows => !kIsWeb && Platform.isWindows;
   bool _isAssetRef(String v) => v.trim().toLowerCase().startsWith('assets/');
+
+  void _setNavigationWakelock(bool enabled) {
+    if (_navigationWakelockEnabled == enabled) return;
+    _navigationWakelockEnabled = enabled;
+    final op = enabled ? WakelockPlus.enable() : WakelockPlus.disable();
+    unawaited(
+      op.catchError((Object e, StackTrace st) {
+        debugPrint('[WAKELOCK][WARN] enabled=$enabled error=$e');
+      }),
+    );
+  }
 
   void _onAppLanguageChanged() {
     if (!mounted) return;
@@ -2458,7 +3153,10 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
                 fallback ??
                 Text(
                   kCompanyName,
-                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
                 ),
           );
         }
@@ -2469,7 +3167,8 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
             fit: fit,
             filterQuality: FilterQuality.high,
             errorBuilder: (_, __, ___) =>
-                fallback ?? const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+                fallback ??
+                const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
           );
         }
         return Image.file(
@@ -2478,11 +3177,13 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
           fit: fit,
           filterQuality: FilterQuality.high,
           errorBuilder: (_, __, ___) =>
-              fallback ?? const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+              fallback ??
+              const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
         );
       },
     );
   }
+
   // ===============================
   // JSON helpers (local)
   // ===============================
@@ -2510,7 +3211,9 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   // and returns pickup/dropoff + session status + last ping.
   Future<void> _hydrateActiveBookingDetails(String bookingId) async {
     try {
-      final uri = Uri.parse('$kWorkerBaseUrl$kGetBookingPath?booking_id=${Uri.encodeComponent(bookingId)}');
+      final uri = Uri.parse(
+        '$kWorkerBaseUrl$kGetBookingPath?booking_id=${Uri.encodeComponent(bookingId)}',
+      );
       final res = await http
           .get(uri, headers: _headers(admin: true))
           .timeout(const Duration(seconds: 15));
@@ -2562,7 +3265,6 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     }
   }
 
-
   @override
   void initState() {
     super.initState();
@@ -2572,13 +3274,19 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-    _splashPulse = CurvedAnimation(parent: _splashAnimCtrl, curve: Curves.easeInOut);
+    _splashPulse = CurvedAnimation(
+      parent: _splashAnimCtrl,
+      curve: Curves.easeInOut,
+    );
 
     _activePulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1300),
     )..repeat(reverse: true);
-    _activePulse = CurvedAnimation(parent: _activePulseCtrl, curve: Curves.easeInOut);
+    _activePulse = CurvedAnimation(
+      parent: _activePulseCtrl,
+      curve: Curves.easeInOut,
+    );
 
     _bootStartedAt = DateTime.now();
     // Minimum splash duration so it feels intentional (not a flicker)
@@ -2605,13 +3313,13 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     // Preload the splash logo so we don't hit the errorBuilder fallback on first frame.
     // If the asset path is wrong, Flutter will throw during precache and we'll still fall back.
     unawaited(
-      precacheImage(AssetImage(kFluxidiLogoAsset), context)
-          .catchError((_) {}),
+      precacheImage(AssetImage(kFluxidiLogoAsset), context).catchError((_) {}),
     );
   }
 
   @override
   void dispose() {
+    _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _bookingsUiVersion.dispose();
     _splashAnimCtrl.dispose();
@@ -2630,7 +3338,8 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     _toFocus.dispose();
     super.dispose();
   }
-Map<String, String> _headers({bool admin = false}) {
+
+  Map<String, String> _headers({bool admin = false}) {
     final h = <String, String>{'Content-Type': 'application/json'};
     if (admin && kAdminToken.trim().isNotEmpty) {
       h['x-admin-token'] = kAdminToken.trim();
@@ -2647,11 +3356,14 @@ Map<String, String> _headers({bool admin = false}) {
 
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final primaryUri =
-          Uri.parse('$kBookingBaseUrl$kListBookingsPath?limit=50&t=$ts');
+      final primaryUri = Uri.parse(
+        '$kBookingBaseUrl$kListBookingsPath?limit=50&t=$ts',
+      );
       debugPrint('[RIDES][REFRESH][REQ] GET $primaryUri');
       final res = await http.get(primaryUri, headers: _headers(admin: true));
-      debugPrint('[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}');
+      debugPrint(
+        '[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}',
+      );
 
       if (res.statusCode != 200) {
         throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -2665,23 +3377,24 @@ Map<String, String> _headers({bool admin = false}) {
       // Worker variants:
       // - tracking-api V2: { ok, count, bookings:[...] }
       // - booking-worker tracking bridge: { ok, items:[...] }
-      final raw = (decoded['bookings'] as List<dynamic>? ??
+      final raw =
+          (decoded['bookings'] as List<dynamic>? ??
           decoded['items'] as List<dynamic>? ??
           const []);
       final prevStatusById = <String, String?>{
         for (final b in _bookings) b.bookingId: _effectiveStatusFor(b),
       };
-      final items = raw
-          .whereType<Map<String, dynamic>>()
-          .map((j) {
-            final parsed = BookingItem.fromJson(j);
-            final apiStatus = parsed.status?.trim();
-            final mergedStatus = (apiStatus != null && apiStatus.isNotEmpty)
-                ? apiStatus
-                : (prevStatusById[parsed.bookingId] ?? _bookingStatusOverrides[parsed.bookingId]);
-            return mergedStatus == null ? parsed : parsed.copyWith(status: mergedStatus);
-          })
-          .toList();
+      final items = raw.whereType<Map<String, dynamic>>().map((j) {
+        final parsed = BookingItem.fromJson(j);
+        final apiStatus = parsed.status?.trim();
+        final mergedStatus = (apiStatus != null && apiStatus.isNotEmpty)
+            ? apiStatus
+            : (prevStatusById[parsed.bookingId] ??
+                  _bookingStatusOverrides[parsed.bookingId]);
+        return mergedStatus == null
+            ? parsed
+            : parsed.copyWith(status: mergedStatus);
+      }).toList();
 
       final apiReturnedIds = items.map((e) => e.bookingId).toSet();
       _deletedBookingIds.removeWhere((id) => !apiReturnedIds.contains(id));
@@ -2693,12 +3406,18 @@ Map<String, String> _headers({bool admin = false}) {
       }
 
       final parsedStatuses = items
-          .map((b) => '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}')
+          .map(
+            (b) =>
+                '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
+          )
           .join(', ');
       final visibleStatuses = items
           .where((b) => !_deletedBookingIds.contains(b.bookingId))
           .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
-          .map((b) => '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}')
+          .map(
+            (b) =>
+                '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
+          )
           .join(', ');
       final visibleCount = items
           .where((b) => !_deletedBookingIds.contains(b.bookingId))
@@ -2723,6 +3442,7 @@ Map<String, String> _headers({bool admin = false}) {
       _markBootFirstLoadDone();
     }
   }
+
   /// Open a booking in "ride preview" mode:
   /// - show route in OVERVIEW
   /// - do NOT create a trip_id yet
@@ -2766,6 +3486,7 @@ Map<String, String> _headers({bool admin = false}) {
 
         _trackingStartedAt = null;
       });
+      _setNavigationWakelock(true);
       await _applyMapStyleForMode();
 
       await _hydrateActiveBookingDetails(b.bookingId);
@@ -2799,7 +3520,6 @@ Map<String, String> _headers({bool admin = false}) {
       // Driver explicitly presses START to begin an active tracking session & follow-cam.
 
       if (mounted) setState(() => _isStartingTrip = false);
-
     } catch (e) {
       _toast('Open ride failed: $e');
     }
@@ -2823,8 +3543,8 @@ Map<String, String> _headers({bool admin = false}) {
       _activeTripId = null;
       _activeDirectTripId = null;
     });
+    _setNavigationWakelock(false);
   }
-
 
   Future<void> _startTrip(BookingItem b) async {
     try {
@@ -2843,11 +3563,7 @@ Map<String, String> _headers({bool admin = false}) {
       };
 
       final res = await http
-          .post(
-            uri,
-            headers: _headers(admin: true),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
 
       if (res.statusCode != 200) {
@@ -2856,7 +3572,8 @@ Map<String, String> _headers({bool admin = false}) {
 
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       final sessionId = (j['session_id'] ?? j['sessionId'] ?? '').toString();
-      if (sessionId.isEmpty) throw Exception('No session_id returned by Worker.');
+      if (sessionId.isEmpty)
+        throw Exception('No session_id returned by Worker.');
 
       setState(() {
         _activeTripId = sessionId;
@@ -2882,6 +3599,7 @@ Map<String, String> _headers({bool admin = false}) {
         _waitStartedAt = null;
         _waitElapsed = Duration.zero;
       });
+      _setNavigationWakelock(true);
       await _applyMapStyleForMode();
 
       // Fetch canonical booking details (incl. fixed price) for display
@@ -2892,7 +3610,9 @@ Map<String, String> _headers({bool admin = false}) {
 
       _startTrackingInternal();
       _startMeterTicker();
-      debugPrint('[CAMERA][RIDE_START] force_follow=true booking=${b.bookingId}');
+      debugPrint(
+        '[CAMERA][RIDE_START] force_follow=true booking=${b.bookingId}',
+      );
       await _forceFollowCameraNow(caller: 'start_trip');
       final bb = _activeBooking ?? b;
       await _buildNavRouteToDestination(bb);
@@ -2901,7 +3621,6 @@ Map<String, String> _headers({bool admin = false}) {
       _toast('Start failed: $e');
     }
   }
-
 
   Future<void> _hydrateActiveBookingPrice(String bookingId) async {
     // Pricing is owned by the BOOKING Worker (not the tracking Worker).
@@ -2984,9 +3703,13 @@ Map<String, String> _headers({bool admin = false}) {
         );
       }
 
-      final record = (j['record'] is Map) ? (j['record'] as Map).cast<String, dynamic>() : null;
+      final record = (j['record'] is Map)
+          ? (j['record'] as Map).cast<String, dynamic>()
+          : null;
       final quoteSource = j['quote'] ?? record?['quote'];
-      final quote = (quoteSource is Map) ? quoteSource.cast<String, dynamic>() : null;
+      final quote = (quoteSource is Map)
+          ? quoteSource.cast<String, dynamic>()
+          : null;
       final pricing = (quote != null && quote['pricing'] is Map)
           ? (quote['pricing'] as Map).cast<String, dynamic>()
           : null;
@@ -3001,15 +3724,14 @@ Map<String, String> _headers({bool admin = false}) {
       // pricing: { price_incl_vat | total_price | total | amount | eur | price }
       // quote:   { price | total | total_price | amount | eur }
       final dynamic pMap = pricing;
-      final num? price =
-          (pMap is Map<String, dynamic>)
-              ? (_pickNum(pMap['price_incl_vat']) ??
-                  _pickNum(pMap['total_price']) ??
-                  _pickNum(pMap['total']) ??
-                  _pickNum(pMap['price']) ??
-                  _pickNum(pMap['amount']) ??
-                  _pickNum(pMap['eur']))
-              : null;
+      final num? price = (pMap is Map<String, dynamic>)
+          ? (_pickNum(pMap['price_incl_vat']) ??
+                _pickNum(pMap['total_price']) ??
+                _pickNum(pMap['total']) ??
+                _pickNum(pMap['price']) ??
+                _pickNum(pMap['amount']) ??
+                _pickNum(pMap['eur']))
+          : null;
 
       final num? fallbackFromQuote =
           _pickNum(quote?['price']) ??
@@ -3020,7 +3742,6 @@ Map<String, String> _headers({bool admin = false}) {
 
       final num? resolved = price ?? fallbackFromQuote;
       if (resolved == null) return;
-
 
       if (!mounted) return;
       setState(() {
@@ -3036,7 +3757,6 @@ Map<String, String> _headers({bool admin = false}) {
     }
   }
 
-  
   Future<void> _setBookingStatus(BookingItem b, String status) async {
     if (!mounted) return;
     final bookingId = b.bookingId;
@@ -3047,7 +3767,9 @@ Map<String, String> _headers({bool admin = false}) {
         '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
       );
       final payload = {'booking_id': bookingId, 'status': status};
-      debugPrint('[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}');
+      debugPrint(
+        '[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
+      );
       var statusPersistedOnWorker = false;
       try {
         final res = await http
@@ -3057,7 +3779,9 @@ Map<String, String> _headers({bool admin = false}) {
               body: jsonEncode(payload),
             )
             .timeout(const Duration(seconds: 12));
-        debugPrint('[RIDES][STATUS][RES] code=${res.statusCode} body=${res.body}');
+        debugPrint(
+          '[RIDES][STATUS][RES] code=${res.statusCode} body=${res.body}',
+        );
         dynamic decoded;
         try {
           decoded = jsonDecode(res.body);
@@ -3118,16 +3842,16 @@ Map<String, String> _headers({bool admin = false}) {
         '$kBookingBaseUrl$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
       );
       final payload = {'booking_id': bookingId};
-      debugPrint('[RIDES][DELETE][REQ] url=$uri payload=${jsonEncode(payload)}');
+      debugPrint(
+        '[RIDES][DELETE][REQ] url=$uri payload=${jsonEncode(payload)}',
+      );
 
       final res = await http
-          .post(
-            uri,
-            headers: _headers(admin: true),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
-      debugPrint('[RIDES][DELETE][RES] code=${res.statusCode} body=${res.body}');
+      debugPrint(
+        '[RIDES][DELETE][RES] code=${res.statusCode} body=${res.body}',
+      );
 
       final j = jsonDecode(res.body);
       if (res.statusCode != 200 || (j is Map && j['ok'] != true)) {
@@ -3144,6 +3868,7 @@ Map<String, String> _headers({bool admin = false}) {
           _activeTripId = null;
         }
       });
+      if (!_liveRideActive) _setNavigationWakelock(false);
       _markBookingsUiDirty();
       _toast('🗑️ Verwijderd: ${b.shortId}');
       await _debugFetchBookingSnapshot(
@@ -3169,8 +3894,14 @@ Map<String, String> _headers({bool admin = false}) {
           'This will remove the booking from the list (KV).\n\nID: ${b.bookingId}',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('No')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Yes, delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, delete'),
+          ),
         ],
       ),
     );
@@ -3190,11 +3921,7 @@ Map<String, String> _headers({bool admin = false}) {
         '[RIDES][STATUS->DELETE][REQ] status=$status url=$uri payload=${jsonEncode(payload)}',
       );
       final res = await http
-          .post(
-            uri,
-            headers: _headers(admin: true),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
       debugPrint(
         '[RIDES][STATUS->DELETE][RES] code=${res.statusCode} body=${res.body}',
@@ -3238,7 +3965,6 @@ Map<String, String> _headers({bool admin = false}) {
       debugPrint('[RIDES][$contextLabel][SNAPSHOT][WARN] $e');
     }
   }
-
 
   void _enterWaitMode() {
     if (!_liveRideActive) return;
@@ -3328,7 +4054,9 @@ Map<String, String> _headers({bool admin = false}) {
   double get _liveMeterTotalEur {
     final km = _kmDriven;
     final waitMin = _effectiveWaitElapsed.inMilliseconds / 60000.0;
-    return _fallbackStartFee + (km * _fallbackPerKm) + (waitMin * _fallbackWaitPerMin);
+    return _fallbackStartFee +
+        (km * _fallbackPerKm) +
+        (waitMin * _fallbackWaitPerMin);
   }
 
   void _debugLiveMeter({required String reason}) {
@@ -3362,7 +4090,8 @@ Map<String, String> _headers({bool admin = false}) {
     return '€ ${live.toStringAsFixed(2)}';
   }
 
-  String get _cockpitPriceText => _displayTotalText.replaceFirst('€', '').trim();
+  String get _cockpitPriceText =>
+      _displayTotalText.replaceFirst('€', '').trim();
 
   Future<void> _sendDirectTripWaitEvent({
     required String path,
@@ -3394,7 +4123,9 @@ Map<String, String> _headers({bool admin = false}) {
 
   String _directRideVehicleId() {
     for (final vehicle in vehiclesNotifier.value) {
-      if (vehicle.isActive && vehicle.driverId == kDriverId && vehicle.id.trim().isNotEmpty) {
+      if (vehicle.isActive &&
+          vehicle.driverId == kDriverId &&
+          vehicle.id.trim().isNotEmpty) {
         return vehicle.id.trim();
       }
     }
@@ -3465,7 +4196,9 @@ Map<String, String> _headers({bool admin = false}) {
     final inputs = asMap(quote['inputs']);
     final pricing = asMap(quote['pricing']);
     final pricingMain = asMap(quote['pricing_main'] ?? quote['pricingMain']);
-    final pricingReturn = asMap(quote['pricing_return'] ?? quote['pricingReturn']);
+    final pricingReturn = asMap(
+      quote['pricing_return'] ?? quote['pricingReturn'],
+    );
     final returnInfo = asMap(quote['return']);
     final tracking = asMap(booking.details['tracking_booking']);
     final payload = recordPayload;
@@ -3473,113 +4206,140 @@ Map<String, String> _headers({bool admin = false}) {
     final bookingCustomer = asMap(bookingMap['customer']);
     final payloadBooking = asMap(payload['booking']);
     final payloadBookingCustomer = asMap(payloadBooking['customer']);
-    final customerName = text(bookingMap['custName'] ??
-        bookingMap['customer_name'] ??
-        bookingMap['customerName'] ??
-        bookingMap['name'] ??
-        bookingCustomer['name'] ??
-        bookingCustomer['full_name'] ??
-        detailMap['customer_name'] ??
-        detailMap['customerName'] ??
-        detailMap['name'] ??
-        payload['name'] ??
-        payload['customer_name'] ??
-        payload['customerName'] ??
-        payloadBooking['customer_name'] ??
-        payloadBooking['customerName'] ??
-        payloadBooking['name'] ??
-        payloadBookingCustomer['name'] ??
-        payloadBookingCustomer['full_name'] ??
-        customer['name'] ??
-        customer['full_name'] ??
-        pick([['customer', 'name'], ['booking', 'customer', 'name'], ['record', 'payload', 'customer', 'name'], ['record', 'payload', 'booking', 'customer', 'name']]));
-    final customerPhone = text(bookingMap['custPhone'] ??
-        bookingMap['customer_phone'] ??
-        bookingMap['customerPhone'] ??
-        bookingMap['phone'] ??
-        bookingMap['tel'] ??
-        bookingMap['mobile'] ??
-        bookingCustomer['phone'] ??
-        bookingCustomer['tel'] ??
-        bookingCustomer['mobile'] ??
-        detailMap['customer_phone'] ??
-        detailMap['customerPhone'] ??
-        detailMap['phone'] ??
-        detailMap['tel'] ??
-        detailMap['mobile'] ??
-        payload['phone'] ??
-        payload['customer_phone'] ??
-        payload['customerPhone'] ??
-        payload['tel'] ??
-        payload['mobile'] ??
-        payloadBooking['customer_phone'] ??
-        payloadBooking['customerPhone'] ??
-        payloadBooking['phone'] ??
-        payloadBooking['tel'] ??
-        payloadBooking['mobile'] ??
-        payloadBookingCustomer['phone'] ??
-        payloadBookingCustomer['tel'] ??
-        payloadBookingCustomer['mobile'] ??
-        customer['phone'] ??
-        customer['tel'] ??
-        customer['mobile'] ??
-        pick([['customer', 'phone'], ['booking', 'customer', 'phone'], ['record', 'payload', 'customer', 'phone'], ['record', 'payload', 'booking', 'customer', 'phone']]));
-    final customerEmail = text(bookingMap['custEmail'] ??
-        bookingMap['customer_email'] ??
-        bookingMap['customerEmail'] ??
-        bookingMap['email'] ??
-        bookingCustomer['email'] ??
-        detailMap['customer_email'] ??
-        detailMap['customerEmail'] ??
-        detailMap['email'] ??
-        payload['email'] ??
-        payload['customer_email'] ??
-        payload['customerEmail'] ??
-        payloadBooking['customer_email'] ??
-        payloadBooking['customerEmail'] ??
-        payloadBooking['email'] ??
-        payloadBookingCustomer['email'] ??
-        customer['email'] ??
-        pick([['customer', 'email'], ['booking', 'customer', 'email'], ['record', 'payload', 'customer', 'email'], ['record', 'payload', 'booking', 'customer', 'email']]));
-    final customerCountry = text(bookingMap['customer_country'] ??
-        bookingMap['customerCountry'] ??
-        bookingMap['country'] ??
-        bookingMap['countryCode'] ??
-        bookingMap['country_iso'] ??
-        bookingMap['countryIso'] ??
-        detailMap['customer_country'] ??
-        detailMap['customerCountry'] ??
-        detailMap['country'] ??
-        detailMap['countryCode'] ??
-        detailMap['country_iso'] ??
-        detailMap['countryIso'] ??
-        payload['customer_country'] ??
-        payload['customerCountry'] ??
-        payload['country'] ??
-        payload['countryCode'] ??
-        payload['country_iso'] ??
-        payload['countryIso'] ??
-        payload['locale'] ??
-        payload['language'] ??
-        customer['country'] ??
-        customer['countryCode'] ??
-        customer['countryIso']);
-    final phoneCountryCode = text(bookingMap['phone_country_code'] ??
-        bookingMap['phoneCountryCode'] ??
-        detailMap['phone_country_code'] ??
-        detailMap['phoneCountryCode'] ??
-        payload['phone_country_code'] ??
-        payload['phoneCountryCode'] ??
-        customer['phone_country_code'] ??
-        customer['phoneCountryCode']);
-    final dialCode = text(bookingMap['dial_code'] ??
-        bookingMap['dialCode'] ??
-        detailMap['dial_code'] ??
-        detailMap['dialCode'] ??
-        payload['dial_code'] ??
-        payload['dialCode'] ??
-        customer['dial_code'] ??
-        customer['dialCode']);
+    final customerName = text(
+      bookingMap['custName'] ??
+          bookingMap['customer_name'] ??
+          bookingMap['customerName'] ??
+          bookingMap['name'] ??
+          bookingCustomer['name'] ??
+          bookingCustomer['full_name'] ??
+          detailMap['customer_name'] ??
+          detailMap['customerName'] ??
+          detailMap['name'] ??
+          payload['name'] ??
+          payload['customer_name'] ??
+          payload['customerName'] ??
+          payloadBooking['customer_name'] ??
+          payloadBooking['customerName'] ??
+          payloadBooking['name'] ??
+          payloadBookingCustomer['name'] ??
+          payloadBookingCustomer['full_name'] ??
+          customer['name'] ??
+          customer['full_name'] ??
+          pick([
+            ['customer', 'name'],
+            ['booking', 'customer', 'name'],
+            ['record', 'payload', 'customer', 'name'],
+            ['record', 'payload', 'booking', 'customer', 'name'],
+          ]),
+    );
+    final customerPhone = text(
+      bookingMap['custPhone'] ??
+          bookingMap['customer_phone'] ??
+          bookingMap['customerPhone'] ??
+          bookingMap['phone'] ??
+          bookingMap['tel'] ??
+          bookingMap['mobile'] ??
+          bookingCustomer['phone'] ??
+          bookingCustomer['tel'] ??
+          bookingCustomer['mobile'] ??
+          detailMap['customer_phone'] ??
+          detailMap['customerPhone'] ??
+          detailMap['phone'] ??
+          detailMap['tel'] ??
+          detailMap['mobile'] ??
+          payload['phone'] ??
+          payload['customer_phone'] ??
+          payload['customerPhone'] ??
+          payload['tel'] ??
+          payload['mobile'] ??
+          payloadBooking['customer_phone'] ??
+          payloadBooking['customerPhone'] ??
+          payloadBooking['phone'] ??
+          payloadBooking['tel'] ??
+          payloadBooking['mobile'] ??
+          payloadBookingCustomer['phone'] ??
+          payloadBookingCustomer['tel'] ??
+          payloadBookingCustomer['mobile'] ??
+          customer['phone'] ??
+          customer['tel'] ??
+          customer['mobile'] ??
+          pick([
+            ['customer', 'phone'],
+            ['booking', 'customer', 'phone'],
+            ['record', 'payload', 'customer', 'phone'],
+            ['record', 'payload', 'booking', 'customer', 'phone'],
+          ]),
+    );
+    final customerEmail = text(
+      bookingMap['custEmail'] ??
+          bookingMap['customer_email'] ??
+          bookingMap['customerEmail'] ??
+          bookingMap['email'] ??
+          bookingCustomer['email'] ??
+          detailMap['customer_email'] ??
+          detailMap['customerEmail'] ??
+          detailMap['email'] ??
+          payload['email'] ??
+          payload['customer_email'] ??
+          payload['customerEmail'] ??
+          payloadBooking['customer_email'] ??
+          payloadBooking['customerEmail'] ??
+          payloadBooking['email'] ??
+          payloadBookingCustomer['email'] ??
+          customer['email'] ??
+          pick([
+            ['customer', 'email'],
+            ['booking', 'customer', 'email'],
+            ['record', 'payload', 'customer', 'email'],
+            ['record', 'payload', 'booking', 'customer', 'email'],
+          ]),
+    );
+    final customerCountry = text(
+      bookingMap['customer_country'] ??
+          bookingMap['customerCountry'] ??
+          bookingMap['country'] ??
+          bookingMap['countryCode'] ??
+          bookingMap['country_iso'] ??
+          bookingMap['countryIso'] ??
+          detailMap['customer_country'] ??
+          detailMap['customerCountry'] ??
+          detailMap['country'] ??
+          detailMap['countryCode'] ??
+          detailMap['country_iso'] ??
+          detailMap['countryIso'] ??
+          payload['customer_country'] ??
+          payload['customerCountry'] ??
+          payload['country'] ??
+          payload['countryCode'] ??
+          payload['country_iso'] ??
+          payload['countryIso'] ??
+          payload['locale'] ??
+          payload['language'] ??
+          customer['country'] ??
+          customer['countryCode'] ??
+          customer['countryIso'],
+    );
+    final phoneCountryCode = text(
+      bookingMap['phone_country_code'] ??
+          bookingMap['phoneCountryCode'] ??
+          detailMap['phone_country_code'] ??
+          detailMap['phoneCountryCode'] ??
+          payload['phone_country_code'] ??
+          payload['phoneCountryCode'] ??
+          customer['phone_country_code'] ??
+          customer['phoneCountryCode'],
+    );
+    final dialCode = text(
+      bookingMap['dial_code'] ??
+          bookingMap['dialCode'] ??
+          detailMap['dial_code'] ??
+          detailMap['dialCode'] ??
+          payload['dial_code'] ??
+          payload['dialCode'] ??
+          customer['dial_code'] ??
+          customer['dialCode'],
+    );
 
     final pickupAddress =
         text(booking.from) ??
@@ -3593,8 +4353,16 @@ Map<String, String> _headers({bool admin = false}) {
         text(inputs['to']) ??
         text(bookingMap['to']) ??
         text(tracking['dropoff']);
-    final service = text(bookingMap['service']) ?? text(inputs['service']) ?? text(pick([['service']]));
-    final tier = text(booking.tier) ?? text(bookingMap['tier']) ?? text(inputs['tier']);
+    final service =
+        text(bookingMap['service']) ??
+        text(inputs['service']) ??
+        text(
+          pick([
+            ['service'],
+          ]),
+        );
+    final tier =
+        text(booking.tier) ?? text(bookingMap['tier']) ?? text(inputs['tier']);
     final scheduledPickup =
         text(booking.pickupIso) ??
         text(bookingMap['pickupStartIso']) ??
@@ -3609,49 +4377,119 @@ Map<String, String> _headers({bool admin = false}) {
         booking.price;
     final segmentPrice = booking.bookingId.endsWith('-R')
         ? (number(bookingMap['price_incl_vat_return']) ??
-            number(pricingReturn['price_incl_vat']) ??
-            number(returnInfo['price_incl_vat']) ??
-            number(asMap(returnInfo['pricing'])['price_incl_vat']))
+              number(pricingReturn['price_incl_vat']) ??
+              number(returnInfo['price_incl_vat']) ??
+              number(asMap(returnInfo['pricing'])['price_incl_vat']))
         : (number(bookingMap['price_incl_vat_main']) ??
-            number(pricingMain['price_incl_vat']) ??
-            number(quote['price_incl_vat']));
+              number(pricingMain['price_incl_vat']) ??
+              number(quote['price_incl_vat']));
     final returnPickup =
         text(bookingMap['returnPickupIso']) ??
         text(inputs['return_pickup_iso']) ??
-        text(pick([['return_pickup_iso']]));
-    final returnFrom = text(bookingMap['return_from']) ?? text(inputs['return_from']) ?? text(returnInfo['from']);
-    final returnTo = text(bookingMap['return_to']) ?? text(inputs['return_to']) ?? text(returnInfo['to']);
-    final hasReturnInfo = returnPickup != null ||
+        text(
+          pick([
+            ['return_pickup_iso'],
+          ]),
+        );
+    final returnFrom =
+        text(bookingMap['return_from']) ??
+        text(inputs['return_from']) ??
+        text(returnInfo['from']);
+    final returnTo =
+        text(bookingMap['return_to']) ??
+        text(inputs['return_to']) ??
+        text(returnInfo['to']);
+    final hasReturnInfo =
+        returnPickup != null ||
         returnFrom != null ||
         returnTo != null ||
         returnInfo['enabled'] == true ||
         pricingReturn.isNotEmpty;
+    final paymentStatus = text(
+      bookingMap['payment_status'] ??
+          bookingMap['paymentStatus'] ??
+          detailMap['payment_status'] ??
+          detailMap['paymentStatus'] ??
+          payload['payment_status'] ??
+          payload['paymentStatus'] ??
+          pick([
+            ['payment_status'],
+            ['paymentStatus'],
+            ['booking', 'payment_status'],
+            ['booking', 'paymentStatus'],
+          ]),
+    );
+    final paidAt = text(
+      bookingMap['paid_at'] ??
+          bookingMap['paidAt'] ??
+          detailMap['paid_at'] ??
+          detailMap['paidAt'] ??
+          payload['paid_at'] ??
+          payload['paidAt'],
+    );
+    final paymentProvider = text(
+      bookingMap['payment_provider'] ??
+          bookingMap['paymentProvider'] ??
+          detailMap['payment_provider'] ??
+          detailMap['paymentProvider'] ??
+          payload['payment_provider'] ??
+          payload['paymentProvider'],
+    );
+    final paymentId = text(
+      bookingMap['payment_id'] ??
+          bookingMap['paymentId'] ??
+          detailMap['payment_id'] ??
+          detailMap['paymentId'] ??
+          payload['payment_id'] ??
+          payload['paymentId'],
+    );
 
     List<Map<String, dynamic>> normalizeSegments(dynamic raw) {
       final result = <Map<String, dynamic>>[];
       for (final value in asList(raw)) {
         if (value is! Map) continue;
         final segment = Map<String, dynamic>.from(value);
-        final from = text(segment['from'] ?? segment['origin'] ?? segment['start'] ?? segment['start_address']);
-        final to = text(segment['to'] ?? segment['destination'] ?? segment['end'] ?? segment['end_address']);
+        final from = text(
+          segment['from'] ??
+              segment['origin'] ??
+              segment['start'] ??
+              segment['start_address'],
+        );
+        final to = text(
+          segment['to'] ??
+              segment['destination'] ??
+              segment['end'] ??
+              segment['end_address'],
+        );
         result.add(<String, dynamic>{
           if (from != null) 'from': from,
           if (to != null) 'to': to,
           if (number(segment['distance_km'] ?? segment['km']) != null)
             'distance_km': number(segment['distance_km'] ?? segment['km']),
           if (number(segment['duration_min'] ?? segment['minutes']) != null)
-            'duration_min': number(segment['duration_min'] ?? segment['minutes']),
+            'duration_min': number(
+              segment['duration_min'] ?? segment['minutes'],
+            ),
         });
       }
       return result;
     }
 
     final routeSegments = normalizeSegments(
-      quote['route_segments'] ?? quote['legs'] ?? bookingMap['route_segments'] ?? bookingMap['legs'],
+      quote['route_segments'] ??
+          quote['legs'] ??
+          bookingMap['route_segments'] ??
+          bookingMap['legs'],
     );
-    if (routeSegments.isEmpty && pickupAddress != null && destinationAddress != null) {
-      final distance = number(quote['distance_km'] ?? bookingMap['distance_km']);
-      final duration = number(quote['duration_min'] ?? bookingMap['duration_route_min']);
+    if (routeSegments.isEmpty &&
+        pickupAddress != null &&
+        destinationAddress != null) {
+      final distance = number(
+        quote['distance_km'] ?? bookingMap['distance_km'],
+      );
+      final duration = number(
+        quote['duration_min'] ?? bookingMap['duration_route_min'],
+      );
       if (distance != null || duration != null) {
         routeSegments.add(<String, dynamic>{
           'from': pickupAddress,
@@ -3662,9 +4500,16 @@ Map<String, String> _headers({bool admin = false}) {
       }
     }
     if (hasReturnInfo) {
-      final returnDistance = number(returnInfo['distance_km'] ?? bookingMap['return_distance_km']);
-      final returnDuration = number(returnInfo['duration_min'] ?? bookingMap['return_duration_min']);
-      if (returnFrom != null || returnTo != null || returnDistance != null || returnDuration != null) {
+      final returnDistance = number(
+        returnInfo['distance_km'] ?? bookingMap['return_distance_km'],
+      );
+      final returnDuration = number(
+        returnInfo['duration_min'] ?? bookingMap['return_duration_min'],
+      );
+      if (returnFrom != null ||
+          returnTo != null ||
+          returnDistance != null ||
+          returnDuration != null) {
         routeSegments.add(<String, dynamic>{
           if (returnFrom != null) 'from': returnFrom,
           if (returnTo != null) 'to': returnTo,
@@ -3680,11 +4525,14 @@ Map<String, String> _headers({bool admin = false}) {
       if (destinationAddress != null) 'destination_address': destinationAddress,
       if (scheduledPickup != null) 'scheduled_pickup_at': scheduledPickup,
       if (booking.bookingId.endsWith('-R')) 'subtype': 'Retourrit',
-      if (!booking.bookingId.endsWith('-R') && hasReturnInfo) 'subtype': 'Heenrit',
+      if (!booking.bookingId.endsWith('-R') && hasReturnInfo)
+        'subtype': 'Heenrit',
       if (customerName != null) 'customer_name': customerName,
       if (customerPhone != null) 'customer_phone': customerPhone,
       if (customerEmail != null) 'customer_email': customerEmail,
-      if (customerName != null || customerPhone != null || customerEmail != null)
+      if (customerName != null ||
+          customerPhone != null ||
+          customerEmail != null)
         'customer': <String, dynamic>{
           if (customerName != null) 'name': customerName,
           if (customerPhone != null) 'phone': customerPhone,
@@ -3698,27 +4546,77 @@ Map<String, String> _headers({bool admin = false}) {
       if (number(booking.pax ?? bookingMap['pax'] ?? inputs['pax']) != null)
         'passengers': number(booking.pax ?? bookingMap['pax'] ?? inputs['pax']),
       if (number(booking.bags ?? bookingMap['bags'] ?? inputs['bags']) != null)
-        'luggage_count': number(booking.bags ?? bookingMap['bags'] ?? inputs['bags']),
+        'luggage_count': number(
+          booking.bags ?? bookingMap['bags'] ?? inputs['bags'],
+        ),
       if (number(bookingMap['wait_min'] ?? inputs['wait_min']) != null)
-        'booked_wait_minutes': number(bookingMap['wait_min'] ?? inputs['wait_min']),
-      if ((booking.status ?? '').trim().isNotEmpty) 'booking_status': booking.status!.trim(),
+        'booked_wait_minutes': number(
+          bookingMap['wait_min'] ?? inputs['wait_min'],
+        ),
+      if ((booking.status ?? '').trim().isNotEmpty)
+        'booking_status': booking.status!.trim(),
+      if (paymentStatus != null) ...{
+        'payment_status': paymentStatus,
+        'paymentStatus': paymentStatus,
+      },
+      if (paidAt != null) ...{'paid_at': paidAt, 'paidAt': paidAt},
+      if (paymentProvider != null) ...{
+        'payment_provider': paymentProvider,
+        'paymentProvider': paymentProvider,
+      },
+      if (paymentId != null) ...{
+        'payment_id': paymentId,
+        'paymentId': paymentId,
+      },
       if (totalPackage != null) 'booking_total_eur': totalPackage,
       if (segmentPrice != null) 'segment_price_eur': segmentPrice,
-      if (bookingMap['price_incl_vat_main'] != null || pricingMain['price_incl_vat'] != null)
-        'outbound_price_eur': number(bookingMap['price_incl_vat_main'] ?? pricingMain['price_incl_vat']),
-      if (bookingMap['price_incl_vat_return'] != null || pricingReturn['price_incl_vat'] != null)
-        'return_price_eur': number(bookingMap['price_incl_vat_return'] ?? pricingReturn['price_incl_vat']),
+      if (bookingMap['price_incl_vat_main'] != null ||
+          pricingMain['price_incl_vat'] != null)
+        'outbound_price_eur': number(
+          bookingMap['price_incl_vat_main'] ?? pricingMain['price_incl_vat'],
+        ),
+      if (bookingMap['price_incl_vat_return'] != null ||
+          pricingReturn['price_incl_vat'] != null)
+        'return_price_eur': number(
+          bookingMap['price_incl_vat_return'] ??
+              pricingReturn['price_incl_vat'],
+        ),
       if (returnPickup != null) 'return_scheduled_pickup_at': returnPickup,
       if (returnFrom != null || returnTo != null)
         'return_route': [returnFrom, returnTo].whereType<String>().join(' → '),
       if (routeSegments.isNotEmpty) 'route_segments': routeSegments,
-      if (asList(bookingMap['stops'] ?? inputs['stops'] ?? quote['stops']).isNotEmpty)
-        'stops': asList(bookingMap['stops'] ?? inputs['stops'] ?? quote['stops']).join(' → '),
-      if (text(bookingMap['extra_service_label'] ?? inputs['extra_service_label']) != null)
-        'extras': text(bookingMap['extra_service_label'] ?? inputs['extra_service_label']),
-      if (text(bookingMap['message'] ?? payload['message'] ?? customer['message'] ?? pick([['customer', 'message']])) != null)
-        'notes': text(bookingMap['message'] ?? payload['message'] ?? customer['message'] ?? pick([['customer', 'message']])),
-      if ((booking.currency ?? '').trim().isNotEmpty) 'currency': booking.currency!.trim(),
+      if (asList(
+        bookingMap['stops'] ?? inputs['stops'] ?? quote['stops'],
+      ).isNotEmpty)
+        'stops': asList(
+          bookingMap['stops'] ?? inputs['stops'] ?? quote['stops'],
+        ).join(' → '),
+      if (text(
+            bookingMap['extra_service_label'] ?? inputs['extra_service_label'],
+          ) !=
+          null)
+        'extras': text(
+          bookingMap['extra_service_label'] ?? inputs['extra_service_label'],
+        ),
+      if (text(
+            bookingMap['message'] ??
+                payload['message'] ??
+                customer['message'] ??
+                pick([
+                  ['customer', 'message'],
+                ]),
+          ) !=
+          null)
+        'notes': text(
+          bookingMap['message'] ??
+              payload['message'] ??
+              customer['message'] ??
+              pick([
+                ['customer', 'message'],
+              ]),
+        ),
+      if ((booking.currency ?? '').trim().isNotEmpty)
+        'currency': booking.currency!.trim(),
     };
   }
 
@@ -3817,7 +4715,9 @@ Map<String, String> _headers({bool admin = false}) {
   }) async {
     try {
       final bookingDetails = _plannedBookingDetailsPayload(booking);
-      final price = booking.price ?? BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
+      final price =
+          booking.price ??
+          BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
         'tenant_id': kTenantId,
@@ -3830,7 +4730,8 @@ Map<String, String> _headers({bool admin = false}) {
           'label': (booking.to ?? booking.from ?? booking.shortId).toString(),
         },
         'booking_details': bookingDetails,
-        if (startedAt != null) 'started_at': startedAt.toUtc().toIso8601String(),
+        if (startedAt != null)
+          'started_at': startedAt.toUtc().toIso8601String(),
         'stopped_at': stoppedAt.toUtc().toIso8601String(),
         'km_total': kmTotal,
         'wait_seconds_total': waitSecondsTotal,
@@ -3869,7 +4770,9 @@ Map<String, String> _headers({bool admin = false}) {
       }
       debugPrint('[PLANNED_TRIP][HISTORY][OK] booking=${booking.bookingId}');
     } catch (e) {
-      debugPrint('[PLANNED_TRIP][HISTORY][WARN] booking=${booking.bookingId} reason=$e');
+      debugPrint(
+        '[PLANNED_TRIP][HISTORY][WARN] booking=${booking.bookingId} reason=$e',
+      );
     }
   }
 
@@ -3918,7 +4821,9 @@ Map<String, String> _headers({bool admin = false}) {
     }
 
     double? serverDirectTotal;
-    if (wasDirectRide && directTripId != null && directTripId.trim().isNotEmpty) {
+    if (wasDirectRide &&
+        directTripId != null &&
+        directTripId.trim().isNotEmpty) {
       serverDirectTotal = await _stopDirectTripSessionOnWorker(
         tripId: directTripId,
         kmTotal: _kmDriven,
@@ -3976,6 +4881,7 @@ Map<String, String> _headers({bool admin = false}) {
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
     });
+    _setNavigationWakelock(false);
     await _applyMapStyleForMode();
     if (wasDirectRide) {
       final shownTotal = serverDirectTotal ?? finalTotal;
@@ -4026,8 +4932,9 @@ Map<String, String> _headers({bool admin = false}) {
       distanceFilter: 3,
     );
 
-    _posSub = geo.Geolocator.getPositionStream(locationSettings: settings)
-        .listen((pos) async {
+    _posSub = geo.Geolocator.getPositionStream(locationSettings: settings).listen((
+      pos,
+    ) async {
       final prev = _lastPos;
       _lastPos = pos;
       _startPos ??= pos;
@@ -4212,8 +5119,11 @@ Map<String, String> _headers({bool admin = false}) {
       _followCar = true;
       _allowOverviewCamera = false;
     });
+    _setNavigationWakelock(true);
     await _applyMapStyleForMode();
-    debugPrint('[CAMERA][NAV_START] force_follow=true active_trip=${_activeTripId != null} mode=$_cameraMode');
+    debugPrint(
+      '[CAMERA][NAV_START] force_follow=true active_trip=${_activeTripId != null} mode=$_cameraMode',
+    );
     await _forceFollowCameraNow(caller: 'nav_button');
     final b = _activeBooking;
     if (b != null && _activeTripId == null) {
@@ -4236,7 +5146,8 @@ Map<String, String> _headers({bool admin = false}) {
         search: _fetchPlaceSuggestions,
       ),
     );
-    if (!mounted || destination == null || destination.label.trim().isEmpty) return;
+    if (!mounted || destination == null || destination.label.trim().isEmpty)
+      return;
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
     final selectedPoint = (destination.lon != null && destination.lat != null)
@@ -4303,6 +5214,7 @@ Map<String, String> _headers({bool admin = false}) {
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
     });
+    _setNavigationWakelock(true);
     await _applyMapStyleForMode();
     _startTrackingInternal();
     _startMeterTicker();
@@ -4342,11 +5254,7 @@ Map<String, String> _headers({bool admin = false}) {
       };
 
       final res = await http
-          .post(
-            uri,
-            headers: _headers(admin: true),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 10));
 
       if (!mounted) return;
@@ -4380,12 +5288,11 @@ Map<String, String> _headers({bool admin = false}) {
 
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
-    _routeLineManager =
-        await _map!.annotations.createPolylineAnnotationManager();
-    _pinsPointManager =
-        await _map!.annotations.createPointAnnotationManager();
-    _driverPointManager =
-        await _map!.annotations.createPointAnnotationManager();
+    _routeLineManager = await _map!.annotations
+        .createPolylineAnnotationManager();
+    _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
+    _driverPointManager = await _map!.annotations
+        .createPointAnnotationManager();
   }
 
   MapThemeMode _effectiveMapThemeFor(_CameraMode mode) {
@@ -4447,7 +5354,9 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   double _snapThresholdFor(geo.Position pos) {
-    final accuracy = pos.accuracy.isFinite && pos.accuracy > 0 ? pos.accuracy : 20.0;
+    final accuracy = pos.accuracy.isFinite && pos.accuracy > 0
+        ? pos.accuracy
+        : 20.0;
     return math.max(35.0, math.min(90.0, accuracy * 1.8));
   }
 
@@ -4460,7 +5369,10 @@ Map<String, String> _headers({bool admin = false}) {
     if (routeCoords.length < 2) return null;
     final refLatRad = raw.lat * math.pi / 180.0;
     const metersPerDegLat = 111320.0;
-    final metersPerDegLon = math.max(1.0, metersPerDegLat * math.cos(refLatRad));
+    final metersPerDegLon = math.max(
+      1.0,
+      metersPerDegLat * math.cos(refLatRad),
+    );
 
     var bestDistance = double.infinity;
     var bestAlong = 0.0;
@@ -4514,7 +5426,10 @@ Map<String, String> _headers({bool admin = false}) {
     return _snapToRoute(point)?.distanceAlongRouteM ?? 0.0;
   }
 
-  double _distanceAlongRouteForCoords(List<_LonLat> routeCoords, _LonLat point) {
+  double _distanceAlongRouteForCoords(
+    List<_LonLat> routeCoords,
+    _LonLat point,
+  ) {
     return _snapToRouteOn(routeCoords, point)?.distanceAlongRouteM ?? 0.0;
   }
 
@@ -4539,7 +5454,8 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   _LonLat _displayRoutePointFor(geo.Position pos) {
-    final snap = _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     if (_canSnapToRoute(pos, snap)) return snap!.point;
     return _LonLat(pos.longitude, pos.latitude);
   }
@@ -4552,15 +5468,18 @@ Map<String, String> _headers({bool admin = false}) {
     return _bearingFromPoints(a.lat, a.lon, b.lat, b.lon);
   }
 
-  Future<void> _updateDriverMarker(geo.Position pos,
-      {bool moveCamera = false}) async {
+  Future<void> _updateDriverMarker(
+    geo.Position pos, {
+    bool moveCamera = false,
+  }) async {
     final mgr = _driverPointManager;
     if (mgr == null) return;
 
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
     final bearingData = _driverBearingFor(pos);
-    final markerBearing = _routeBearingAtSnap(_lastRouteSnap) ?? bearingData.bearing;
+    final markerBearing =
+        _routeBearingAtSnap(_lastRouteSnap) ?? bearingData.bearing;
 
     if (_driverMarker == null) {
       try {
@@ -4609,7 +5528,10 @@ Map<String, String> _headers({bool admin = false}) {
     }
   }
 
-  Future<void> _followCameraTesla(geo.Position pos, {bool force = false}) async {
+  Future<void> _followCameraTesla(
+    geo.Position pos, {
+    bool force = false,
+  }) async {
     final now = DateTime.now();
     final last = _lastFollowCameraAt;
     if (!force && last != null && now.difference(last).inMilliseconds < 750) {
@@ -4620,7 +5542,8 @@ Map<String, String> _headers({bool admin = false}) {
     _followCameraInFlight = true;
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final heading = _routeBearingAtSnap(_lastRouteSnap) ?? _cameraBearingFor(pos);
+    final heading =
+        _routeBearingAtSnap(_lastRouteSnap) ?? _cameraBearingFor(pos);
     debugPrint(
       '[CAMERA][FOLLOW] mode=$_cameraMode nav_active=${_cameraMode == _CameraMode.follow} active_trip=${_activeTripId != null} lat=${displayPoint.lat} lng=${displayPoint.lon} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${_lastRouteSnap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} zoom=18.8 pitch=68.0 bearing=$heading',
     );
@@ -4672,8 +5595,11 @@ Map<String, String> _headers({bool admin = false}) {
       return;
     }
 
-    final snap = _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final progressM = _canSnapToRoute(pos, snap) ? snap!.distanceAlongRouteM : null;
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    final progressM = _canSnapToRoute(pos, snap)
+        ? snap!.distanceAlongRouteM
+        : null;
     while (_nextStepIndex < _routeSteps.length - 1) {
       final current = _routeSteps[_nextStepIndex];
       final straightLineM = geo.Geolocator.distanceBetween(
@@ -4693,7 +5619,12 @@ Map<String, String> _headers({bool admin = false}) {
 
     final step = _routeSteps[_nextStepIndex];
     final distanceM = progressM == null
-        ? geo.Geolocator.distanceBetween(pos.latitude, pos.longitude, step.lat, step.lon)
+        ? geo.Geolocator.distanceBetween(
+            pos.latitude,
+            pos.longitude,
+            step.lat,
+            step.lon,
+          )
         : math.max(0.0, step.distanceAlongRouteM - progressM);
     debugPrint(
       '[NAV_PROGRESS] step=$_nextStepIndex/${_routeSteps.length} type=${step.type} modifier=${step.modifier} distance=${distanceM.toStringAsFixed(1)} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${snap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} offRoute=$_offRouteLikely',
@@ -4748,10 +5679,10 @@ Map<String, String> _headers({bool admin = false}) {
         _routeKm = route.$2 / 1000.0;
         _routeDurationSec = route.$3;
       }
-    if (_lastPos != null) {
-      _updateRouteSnapState(_lastPos!);
-      _updateNextNavInstruction(_lastPos!);
-    }
+      if (_lastPos != null) {
+        _updateRouteSnapState(_lastPos!);
+        _updateNextNavInstruction(_lastPos!);
+      }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
     } catch (_) {
@@ -4796,10 +5727,10 @@ Map<String, String> _headers({bool admin = false}) {
         _routeKm = route.$2 / 1000.0;
         _routeDurationSec = route.$3;
       }
-    if (_lastPos != null) {
-      _updateRouteSnapState(_lastPos!);
-      _updateNextNavInstruction(_lastPos!);
-    }
+      if (_lastPos != null) {
+        _updateRouteSnapState(_lastPos!);
+        _updateNextNavInstruction(_lastPos!);
+      }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
     } catch (_) {
@@ -4829,7 +5760,8 @@ Map<String, String> _headers({bool admin = false}) {
     debugPrint('[NAV_PHASE] direct_trip');
     try {
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
-      final toLL = _directRideDestinationPoint ?? await _geocodeOne(dropoffText);
+      final toLL =
+          _directRideDestinationPoint ?? await _geocodeOne(dropoffText);
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
@@ -4844,10 +5776,10 @@ Map<String, String> _headers({bool admin = false}) {
         _routeKm = route.$2 / 1000.0;
         _routeDurationSec = route.$3;
       }
-    if (_lastPos != null) {
-      _updateRouteSnapState(_lastPos!);
-      _updateNextNavInstruction(_lastPos!);
-    }
+      if (_lastPos != null) {
+        _updateRouteSnapState(_lastPos!);
+        _updateNextNavInstruction(_lastPos!);
+      }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
     } catch (e) {
@@ -4875,7 +5807,9 @@ Map<String, String> _headers({bool admin = false}) {
     }
 
     if (pos == null) {
-      debugPrint('[CAMERA][GPS_MISSING] caller=$caller mode=$_cameraMode active_trip=${_activeTripId != null}');
+      debugPrint(
+        '[CAMERA][GPS_MISSING] caller=$caller mode=$_cameraMode active_trip=${_activeTripId != null}',
+      );
       _toast('GPS-locatie nog niet beschikbaar');
       return;
     }
@@ -4908,15 +5842,13 @@ Map<String, String> _headers({bool admin = false}) {
     const radToDeg = 180.0 / math.pi;
     final dLon = (lon2 - lon1) * degToRad;
     final y = math.sin(dLon) * math.cos(lat2 * degToRad);
-    final x = math.cos(lat1 * degToRad) * math.sin(lat2 * degToRad) -
-        math.sin(lat1 * degToRad) *
-            math.cos(lat2 * degToRad) *
-            math.cos(dLon);
+    final x =
+        math.cos(lat1 * degToRad) * math.sin(lat2 * degToRad) -
+        math.sin(lat1 * degToRad) * math.cos(lat2 * degToRad) * math.cos(dLon);
     if (!x.isFinite || !y.isFinite) return null;
     final brng = math.atan2(y, x) * radToDeg;
     return (brng + 360.0) % 360.0;
   }
-
 
   Future<void> _centerOnMe() async {
     final pos = _lastPos;
@@ -4976,7 +5908,8 @@ Map<String, String> _headers({bool admin = false}) {
         _routeLine = null;
         if (_pinsPointManager != null) {
           if (_pickupPin != null) await _pinsPointManager!.delete(_pickupPin!);
-          if (_dropoffPin != null) await _pinsPointManager!.delete(_dropoffPin!);
+          if (_dropoffPin != null)
+            await _pinsPointManager!.delete(_dropoffPin!);
         }
         _pickupPin = null;
         _dropoffPin = null;
@@ -4988,7 +5921,10 @@ Map<String, String> _headers({bool admin = false}) {
 
       // Fallback: direct Mapbox REST (dev only). If MAPBOX_TOKEN isn't provided, we stop here.
       if (kMapboxToken.trim().isEmpty) {
-        await _tryWorkerRouteFallback(fromText: pickupText, toText: dropoffText);
+        await _tryWorkerRouteFallback(
+          fromText: pickupText,
+          toText: dropoffText,
+        );
         return;
       }
 
@@ -5019,19 +5955,22 @@ Map<String, String> _headers({bool admin = false}) {
 
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
-      final allowFit = _allowOverviewCamera &&
+      final allowFit =
+          _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
       if (allowFit) {
-        debugPrint('[CAMERA][PREVIEW_FIT] coords=${coords.length} fitBounds=true');
+        debugPrint(
+          '[CAMERA][PREVIEW_FIT] coords=${coords.length} fitBounds=true',
+        );
         await _fitBoundsToRoute(coords);
       } else {
-        debugPrint('[CAMERA][FIT] allowed=false reason=guarded from=build_overview_route allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}');
+        debugPrint(
+          '[CAMERA][FIT] allowed=false reason=guarded from=build_overview_route allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}',
+        );
       }
     } on _UnauthorizedMapbox catch (_) {
-      _toast(
-        'Mapbox REST token refused (401) — using Worker route instead.',
-      );
+      _toast('Mapbox REST token refused (401) — using Worker route instead.');
       await _tryWorkerRouteFallback(fromText: b.from!, toText: b.to!);
     } catch (e) {
       _toast('Route overview failed: $e');
@@ -5048,11 +5987,7 @@ Map<String, String> _headers({bool admin = false}) {
       final payload = {'from': fromText, 'to': toText};
 
       final res = await http
-          .post(
-            uri,
-            headers: _headers(admin: true),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
 
       if (res.statusCode == 404) {
@@ -5088,10 +6023,8 @@ Map<String, String> _headers({bool admin = false}) {
 
       if (out.length < 2) return;
 
-      final dist = (j['distance_m'] ??
-              j['distanceMeters'] ??
-              j['distance'] ??
-              0) as num;
+      final dist =
+          (j['distance_m'] ?? j['distanceMeters'] ?? j['distance'] ?? 0) as num;
       final dur =
           (j['duration_s'] ?? j['durationSec'] ?? j['duration'] ?? 0) as num;
 
@@ -5115,14 +6048,17 @@ Map<String, String> _headers({bool admin = false}) {
 
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(out);
-      final allowFit = _allowOverviewCamera &&
+      final allowFit =
+          _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
       if (allowFit) {
         debugPrint('[CAMERA][PREVIEW_FIT] coords=${out.length} fitBounds=true');
         await _fitBoundsToRoute(out);
       } else {
-        debugPrint('[CAMERA][FIT] allowed=false reason=guarded from=worker_route_fallback allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}');
+        debugPrint(
+          '[CAMERA][FIT] allowed=false reason=guarded from=worker_route_fallback allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}',
+        );
       }
     } catch (e) {
       _toast('Worker route failed: $e');
@@ -5154,7 +6090,9 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   Future<(List<_LonLat>, double, int)> _directionsRoute(
-      _LonLat from, _LonLat to) async {
+    _LonLat from,
+    _LonLat to,
+  ) async {
     final coords = '${from.lon},${from.lat};${to.lon},${to.lat}';
     final lang = _mapboxDirectionsLanguageCode();
     final uri = Uri.parse(
@@ -5182,12 +6120,16 @@ Map<String, String> _headers({bool admin = false}) {
     final out = <_LonLat>[];
     for (final c in line) {
       final pair = c as List<dynamic>;
-      out.add(_LonLat((pair[0] as num).toDouble(), (pair[1] as num).toDouble()));
+      out.add(
+        _LonLat((pair[0] as num).toDouble(), (pair[1] as num).toDouble()),
+      );
     }
     final navSteps = <_NavStep>[];
     final legs = (r0['legs'] as List<dynamic>? ?? const <dynamic>[]);
     for (final legAny in legs) {
-      final leg = (legAny is Map<String, dynamic>) ? legAny : <String, dynamic>{};
+      final leg = (legAny is Map<String, dynamic>)
+          ? legAny
+          : <String, dynamic>{};
       final steps = (leg['steps'] as List<dynamic>? ?? const <dynamic>[]);
       for (final stepAny in steps) {
         final step = (stepAny is Map<String, dynamic>)
@@ -5196,12 +6138,15 @@ Map<String, String> _headers({bool admin = false}) {
         final maneuver = (step['maneuver'] is Map<String, dynamic>)
             ? (step['maneuver'] as Map<String, dynamic>)
             : <String, dynamic>{};
-        final loc = (maneuver['location'] as List<dynamic>? ?? const <dynamic>[]);
+        final loc =
+            (maneuver['location'] as List<dynamic>? ?? const <dynamic>[]);
         if (loc.length < 2) continue;
         final lon = (loc[0] as num?)?.toDouble();
         final lat = (loc[1] as num?)?.toDouble();
         if (lat == null || lon == null) continue;
-        final rawInstruction = (maneuver['instruction'] ?? '').toString().trim();
+        final rawInstruction = (maneuver['instruction'] ?? '')
+            .toString()
+            .trim();
         final instruction = _localizeNavInstructionMvp(rawInstruction);
         final street = (step['name'] ?? '').toString().trim();
         final type = (maneuver['type'] ?? '').toString().trim();
@@ -5217,7 +6162,10 @@ Map<String, String> _headers({bool admin = false}) {
             street: street,
             type: type,
             modifier: modifier,
-            distanceAlongRouteM: _distanceAlongRouteForCoords(out, _LonLat(lon, lat)),
+            distanceAlongRouteM: _distanceAlongRouteForCoords(
+              out,
+              _LonLat(lon, lat),
+            ),
             distanceM: stepDistance,
             durationSec: stepDuration,
           ),
@@ -5317,57 +6265,131 @@ Map<String, String> _headers({bool admin = false}) {
 
   String _shortNavAction(String instruction, String? type, String? modifier) {
     if (_navTypeIsArrival(type)) {
-      return _tr(nl: 'bestemming bereikt', en: 'destination reached', fr: 'destination atteinte', es: 'destino alcanzado');
+      return _tr(
+        nl: 'bestemming bereikt',
+        en: 'destination reached',
+        fr: 'destination atteinte',
+        es: 'destino alcanzado',
+      );
     }
     if (_navTypeIsRoundabout(type)) {
-      return _tr(nl: 'neem de rotonde', en: 'take the roundabout', fr: 'prenez le rond-point', es: 'toma la rotonda');
+      return _tr(
+        nl: 'neem de rotonde',
+        en: 'take the roundabout',
+        fr: 'prenez le rond-point',
+        es: 'toma la rotonda',
+      );
     }
     final mod = (modifier ?? '').toLowerCase();
     if (mod.contains('slight left')) {
-      return _tr(nl: 'flauw linksaf', en: 'slight left', fr: 'légèrement à gauche', es: 'ligeramente a la izquierda');
+      return _tr(
+        nl: 'flauw linksaf',
+        en: 'slight left',
+        fr: 'légèrement à gauche',
+        es: 'ligeramente a la izquierda',
+      );
     }
     if (mod.contains('slight right')) {
-      return _tr(nl: 'flauw rechtsaf', en: 'slight right', fr: 'légèrement à droite', es: 'ligeramente a la derecha');
+      return _tr(
+        nl: 'flauw rechtsaf',
+        en: 'slight right',
+        fr: 'légèrement à droite',
+        es: 'ligeramente a la derecha',
+      );
     }
     if (mod.contains('left')) {
-      return _tr(nl: 'linksaf', en: 'turn left', fr: 'tournez à gauche', es: 'gira a la izquierda');
+      return _tr(
+        nl: 'linksaf',
+        en: 'turn left',
+        fr: 'tournez à gauche',
+        es: 'gira a la izquierda',
+      );
     }
     if (mod.contains('right')) {
-      return _tr(nl: 'rechtsaf', en: 'turn right', fr: 'tournez à droite', es: 'gira a la derecha');
+      return _tr(
+        nl: 'rechtsaf',
+        en: 'turn right',
+        fr: 'tournez à droite',
+        es: 'gira a la derecha',
+      );
     }
     if (mod.contains('straight') || mod.contains('forward')) {
-      return _tr(nl: 'rechtdoor', en: 'continue straight', fr: 'continuez tout droit', es: 'sigue recto');
+      return _tr(
+        nl: 'rechtdoor',
+        en: 'continue straight',
+        fr: 'continuez tout droit',
+        es: 'sigue recto',
+      );
     }
 
     final lower = instruction.toLowerCase();
-    if (lower.contains('links') || lower.contains('left') || lower.contains('gauche')) {
-      return _tr(nl: 'linksaf', en: 'turn left', fr: 'tournez à gauche', es: 'gira a la izquierda');
+    if (lower.contains('links') ||
+        lower.contains('left') ||
+        lower.contains('gauche')) {
+      return _tr(
+        nl: 'linksaf',
+        en: 'turn left',
+        fr: 'tournez à gauche',
+        es: 'gira a la izquierda',
+      );
     }
-    if (lower.contains('rechts') || lower.contains('right') || lower.contains('droite')) {
-      return _tr(nl: 'rechtsaf', en: 'turn right', fr: 'tournez à droite', es: 'gira a la derecha');
+    if (lower.contains('rechts') ||
+        lower.contains('right') ||
+        lower.contains('droite')) {
+      return _tr(
+        nl: 'rechtsaf',
+        en: 'turn right',
+        fr: 'tournez à droite',
+        es: 'gira a la derecha',
+      );
     }
-    if (lower.contains('rotonde') || lower.contains('roundabout') || lower.contains('rond-point')) {
-      return _tr(nl: 'neem de rotonde', en: 'take the roundabout', fr: 'prenez le rond-point', es: 'toma la rotonda');
+    if (lower.contains('rotonde') ||
+        lower.contains('roundabout') ||
+        lower.contains('rond-point')) {
+      return _tr(
+        nl: 'neem de rotonde',
+        en: 'take the roundabout',
+        fr: 'prenez le rond-point',
+        es: 'toma la rotonda',
+      );
     }
-    if (lower.contains('rechtdoor') || lower.contains('continue') || lower.contains('straight')) {
-      return _tr(nl: 'rechtdoor', en: 'continue straight', fr: 'continuez tout droit', es: 'sigue recto');
+    if (lower.contains('rechtdoor') ||
+        lower.contains('continue') ||
+        lower.contains('straight')) {
+      return _tr(
+        nl: 'rechtdoor',
+        en: 'continue straight',
+        fr: 'continuez tout droit',
+        es: 'sigue recto',
+      );
     }
     return instruction;
   }
 
-  IconData _maneuverIconData(String? type, String? modifier, String instruction) {
+  IconData _maneuverIconData(
+    String? type,
+    String? modifier,
+    String instruction,
+  ) {
     if (_navTypeIsArrival(type)) return Icons.flag_rounded;
     if (_navTypeIsRoundabout(type)) return Icons.roundabout_right_rounded;
     final combined = '${modifier ?? ''} $instruction'.toLowerCase();
     if (combined.contains('slight left')) return Icons.turn_slight_left_rounded;
-    if (combined.contains('slight right')) return Icons.turn_slight_right_rounded;
-    if (combined.contains('left') || combined.contains('links') || combined.contains('gauche')) {
+    if (combined.contains('slight right'))
+      return Icons.turn_slight_right_rounded;
+    if (combined.contains('left') ||
+        combined.contains('links') ||
+        combined.contains('gauche')) {
       return Icons.turn_left_rounded;
     }
-    if (combined.contains('right') || combined.contains('rechts') || combined.contains('droite')) {
+    if (combined.contains('right') ||
+        combined.contains('rechts') ||
+        combined.contains('droite')) {
       return Icons.turn_right_rounded;
     }
-    if ((type ?? '').toLowerCase().contains('exit') || combined.contains('exit') || combined.contains('afrit')) {
+    if ((type ?? '').toLowerCase().contains('exit') ||
+        combined.contains('exit') ||
+        combined.contains('afrit')) {
       return Icons.call_split_rounded;
     }
     return Icons.straight_rounded;
@@ -5432,17 +6454,20 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   Future<void> _fitBoundsToRoute(List<_LonLat> coords) async {
-    final skip = _cameraMode == _CameraMode.follow ||
+    final skip =
+        _cameraMode == _CameraMode.follow ||
         _activeTripId != null ||
         !_allowOverviewCamera;
     final reason = (_cameraMode == _CameraMode.follow)
         ? 'follow_mode'
         : (_activeTripId != null)
-            ? 'ride_started'
-            : (!_allowOverviewCamera)
-                ? 'overview_not_allowed'
-                : 'none';
-    debugPrint('[CAMERA][FIT] allowed=${!skip} skipped=$skip reason=$reason mode=$_cameraMode active_trip=${_activeTripId != null} allow_overview=$_allowOverviewCamera coords=${coords.length}');
+        ? 'ride_started'
+        : (!_allowOverviewCamera)
+        ? 'overview_not_allowed'
+        : 'none';
+    debugPrint(
+      '[CAMERA][FIT] allowed=${!skip} skipped=$skip reason=$reason mode=$_cameraMode active_trip=${_activeTripId != null} allow_overview=$_allowOverviewCamera coords=${coords.length}',
+    );
     if (_map == null || coords.isEmpty) return;
     if (skip) return;
 
@@ -5481,7 +6506,6 @@ Map<String, String> _headers({bool admin = false}) {
     }
   }
 
-  
   void _markBootFirstLoadDone() {
     if (_bootFirstLoadDone) return;
     _bootFirstLoadDone = true;
@@ -5498,10 +6522,6 @@ Map<String, String> _headers({bool admin = false}) {
       _showBootSplash = false;
     });
   }
-
-
-
-  
 
   InputDecoration _inputDeco(String hint) {
     return InputDecoration(
@@ -5579,7 +6599,8 @@ Map<String, String> _headers({bool admin = false}) {
           perm == geo.LocationPermission.deniedForever) {
         final req = await geo.Geolocator.requestPermission();
         if (req == geo.LocationPermission.denied ||
-            req == geo.LocationPermission.deniedForever) return;
+            req == geo.LocationPermission.deniedForever)
+          return;
       }
       final pos = await geo.Geolocator.getCurrentPosition(
         desiredAccuracy: geo.LocationAccuracy.best,
@@ -5594,7 +6615,10 @@ Map<String, String> _headers({bool admin = false}) {
     } catch (_) {}
   }
 
-  Widget _suggestionList({required List<_PlaceSuggestion> items, required void Function(_PlaceSuggestion) onPick}) {
+  Widget _suggestionList({
+    required List<_PlaceSuggestion> items,
+    required void Function(_PlaceSuggestion) onPick,
+  }) {
     if (items.isEmpty) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.only(top: 10),
@@ -5608,7 +6632,8 @@ Map<String, String> _headers({bool admin = false}) {
         padding: const EdgeInsets.symmetric(vertical: 6),
         shrinkWrap: true,
         itemCount: items.length,
-        separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0x22000000)),
+        separatorBuilder: (_, __) =>
+            const Divider(height: 1, color: Color(0x22000000)),
         itemBuilder: (_, i) {
           final s = items[i];
           return ListTile(
@@ -5625,7 +6650,6 @@ Map<String, String> _headers({bool admin = false}) {
       ),
     );
   }
-
 
   Future<void> _startManualTrip() async {
     final from = _manualFromCtrl.text.trim();
@@ -5648,7 +6672,6 @@ Map<String, String> _headers({bool admin = false}) {
     await _startTrip(b);
   }
 
-
   Widget _buildBrandBar(bool tripActive) {
     // Robust top bar: larger logo + stronger presence.
     // Pulse only when a trip is active (cockpit mode).
@@ -5670,7 +6693,9 @@ Map<String, String> _headers({bool admin = false}) {
                 border: Border.all(color: Colors.white.withOpacity(0.10)),
                 boxShadow: [
                   BoxShadow(
-                    color: kFluxidiYellowSoft.withOpacity(tripActive ? 0.55 * pulse : 0.20),
+                    color: kFluxidiYellowSoft.withOpacity(
+                      tripActive ? 0.55 * pulse : 0.20,
+                    ),
                     blurRadius: tripActive ? (28 * pulse) : 18,
                     spreadRadius: tripActive ? (2 * pulse) : 1,
                   ),
@@ -5686,17 +6711,24 @@ Map<String, String> _headers({bool admin = false}) {
                   const SizedBox(width: 10),
                   // Pulsing logo capsule (only on active trip)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(18),
                       color: Colors.black.withOpacity(0.18),
                       border: Border.all(
-                        color: const Color(0xFFFFD36A).withOpacity(tripActive ? (0.30 + 0.25 * pulse) : 0.18),
+                        color: const Color(0xFFFFD36A).withOpacity(
+                          tripActive ? (0.30 + 0.25 * pulse) : 0.18,
+                        ),
                       ),
                       boxShadow: tripActive
                           ? [
                               BoxShadow(
-                                color: const Color(0x66F5C400).withOpacity(0.55 * pulse),
+                                color: const Color(
+                                  0x66F5C400,
+                                ).withOpacity(0.55 * pulse),
                                 blurRadius: 26 * pulse,
                                 spreadRadius: 2 * pulse,
                               ),
@@ -5709,7 +6741,10 @@ Map<String, String> _headers({bool admin = false}) {
                         height: 40,
                         fallback: Text(
                           kCompanyName,
-                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 18,
+                          ),
                         ),
                       ),
                     ),
@@ -5732,7 +6767,9 @@ Map<String, String> _headers({bool admin = false}) {
                     width: 12,
                     height: 12,
                     decoration: BoxDecoration(
-                      color: tripActive ? const Color(0xFF4CD964) : Colors.white38,
+                      color: tripActive
+                          ? const Color(0xFF4CD964)
+                          : Colors.white38,
                       shape: BoxShape.circle,
                       boxShadow: tripActive
                           ? [
@@ -5768,8 +6805,8 @@ Map<String, String> _headers({bool admin = false}) {
     final dotColor = (state == 2)
         ? Colors.greenAccent
         : (state == 1)
-            ? Colors.amberAccent
-            : Colors.redAccent;
+        ? Colors.amberAccent
+        : Colors.redAccent;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
@@ -5802,10 +6839,13 @@ Map<String, String> _headers({bool admin = false}) {
                   child: AnimatedBuilder(
                     animation: _activePulseCtrl,
                     builder: (_, __) {
-                      final pulse =
-                          active ? (0.98 + 0.04 * _activePulse.value) : 1.0;
+                      final pulse = active
+                          ? (0.98 + 0.04 * _activePulse.value)
+                          : 1.0;
                       return Transform.scale(
-                        scale: compactNavHeader ? (pulse * 1.28) : (pulse * 1.6),
+                        scale: compactNavHeader
+                            ? (pulse * 1.28)
+                            : (pulse * 1.6),
                         child: _tenantLogo(
                           height: compactNavHeader ? 68 : 92,
                           fallback: const Icon(
@@ -5824,8 +6864,9 @@ Map<String, String> _headers({bool admin = false}) {
               AnimatedBuilder(
                 animation: _activePulseCtrl,
                 builder: (_, __) {
-                  final pulse =
-                      active ? (0.75 + 0.25 * _activePulse.value) : 1.0;
+                  final pulse = active
+                      ? (0.75 + 0.25 * _activePulse.value)
+                      : 1.0;
                   return Transform.scale(
                     scale: compactNavHeader ? (pulse * 1.2) : (pulse * 1.6),
                     child: Container(
@@ -5867,7 +6908,9 @@ Map<String, String> _headers({bool admin = false}) {
 
     // Fallback if destination is missing
     final hasB = to.isNotEmpty;
-    final routeTextSafe = hasB ? routeText : (routeText.isNotEmpty ? (routeText + '  ->  B: —') : 'B: —');
+    final routeTextSafe = hasB
+        ? routeText
+        : (routeText.isNotEmpty ? (routeText + '  ->  B: —') : 'B: —');
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),
@@ -5918,12 +6961,18 @@ Map<String, String> _headers({bool admin = false}) {
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.black.withOpacity(0.18),
-                          border: Border.all(color: Colors.white.withOpacity(0.12)),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.12),
+                          ),
                           boxShadow: [
                             BoxShadow(
                               blurRadius: 18,
                               spreadRadius: 1,
-                              color: (liveActive ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.12),
+                              color:
+                                  (liveActive
+                                          ? Colors.greenAccent
+                                          : Colors.amberAccent)
+                                      .withOpacity(0.12),
                             ),
                           ],
                         ),
@@ -5933,7 +6982,9 @@ Map<String, String> _headers({bool admin = false}) {
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
-                              color: liveActive ? Colors.greenAccent : Colors.amberAccent,
+                              color: liveActive
+                                  ? Colors.greenAccent
+                                  : Colors.amberAccent,
                             ),
                           ),
                         ),
@@ -5944,48 +6995,51 @@ Map<String, String> _headers({bool admin = false}) {
                 ],
                 // Primary action
                 Center(
-                child: SizedBox(
-                  width: 220,
-                  height: 56,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: liveActive
-                          ? Colors.redAccent.withOpacity(0.95)
-                          : const Color(0xFF1B7F3A),
-                      shape: const StadiumBorder(),
-                      elevation: 0,
-                    ).copyWith(
-                      side: MaterialStateProperty.all(
-                        BorderSide(
-                          color: liveActive
-                              ? Colors.redAccent.withOpacity(0.95)
-                              : kFluxidiYellow.withOpacity(0.95),
-                          width: 1.2,
+                  child: SizedBox(
+                    width: 220,
+                    height: 56,
+                    child: FilledButton(
+                      style:
+                          FilledButton.styleFrom(
+                            backgroundColor: liveActive
+                                ? Colors.redAccent.withOpacity(0.95)
+                                : const Color(0xFF1B7F3A),
+                            shape: const StadiumBorder(),
+                            elevation: 0,
+                          ).copyWith(
+                            side: MaterialStateProperty.all(
+                              BorderSide(
+                                color: liveActive
+                                    ? Colors.redAccent.withOpacity(0.95)
+                                    : kFluxidiYellow.withOpacity(0.95),
+                                width: 1.2,
+                              ),
+                            ),
+                            overlayColor: MaterialStateProperty.all(
+                              kFluxidiYellowSoft,
+                            ),
+                          ),
+                      onPressed: () async {
+                        if (liveActive) {
+                          await _stopTripSafely();
+                        } else {
+                          final b = _activeBooking;
+                          if (b == null) return;
+                          await _startTrip(b);
+                        }
+                      },
+                      child: Text(
+                        liveActive ? 'STOP' : 'START',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                          color: Colors.white,
                         ),
                       ),
-                      overlayColor: MaterialStateProperty.all(kFluxidiYellowSoft),
-                    ),
-                    onPressed: () async {
-                      if (liveActive) {
-                        await _stopTripSafely();
-                      } else {
-                        final b = _activeBooking;
-                        if (b == null) return;
-                        await _startTrip(b);
-                      }
-                    },
-                    child: Text(
-                      liveActive ? 'STOP' : 'START',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
-                        color: Colors.white,
-                      ),
-                    ),
                     ),
                   ),
                 ),
-                ],
+              ],
             ),
           ),
         ),
@@ -5993,7 +7047,11 @@ Map<String, String> _headers({bool admin = false}) {
     );
   }
 
-  Widget _dial({required String label, required String value, required bool big}) {
+  Widget _dial({
+    required String label,
+    required String value,
+    required bool big,
+  }) {
     final size = big ? 92.0 : 78.0;
     final valueStyle = TextStyle(
       color: Colors.white,
@@ -6022,11 +7080,7 @@ Map<String, String> _headers({bool admin = false}) {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                value,
-                textAlign: TextAlign.center,
-                style: valueStyle,
-              ),
+              Text(value, textAlign: TextAlign.center, style: valueStyle),
               const SizedBox(height: 2),
               Text(
                 label,
@@ -6088,173 +7142,192 @@ Map<String, String> _headers({bool admin = false}) {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-
-
   Widget _buildBootSplashOverlay() {
+    final pulse = _splashPulse.value;
 
-final pulse = _splashPulse.value;
-
-// Premium boot overlay: subtle golden aura + animated ring + logo shimmer.
-return IgnorePointer(
-  ignoring: true,
-  child: AnimatedOpacity(
-    duration: const Duration(milliseconds: 280),
-    opacity: _showBootSplash ? 1 : 0,
-    child: Container(
-      color: const Color(0xFF070709),
-      child: Stack(
-        children: [
-          // Background aura
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: const Alignment(0, -0.25),
-                  radius: 0.95,
-                  colors: [
-                    const Color(0x33FFD36A).withOpacity(0.35 + 0.15 * pulse),
-                    const Color(0x00070709),
-                  ],
+    // Premium boot overlay: subtle golden aura + animated ring + logo shimmer.
+    return IgnorePointer(
+      ignoring: true,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 280),
+        opacity: _showBootSplash ? 1 : 0,
+        child: Container(
+          color: const Color(0xFF070709),
+          child: Stack(
+            children: [
+              // Background aura
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(0, -0.25),
+                      radius: 0.95,
+                      colors: [
+                        const Color(
+                          0x33FFD36A,
+                        ).withOpacity(0.35 + 0.15 * pulse),
+                        const Color(0x00070709),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
 
-          // Center brand
-          Center(
-            child: AnimatedBuilder(
-              animation: _splashAnimCtrl,
-              builder: (context, _) {
-                final p = _splashPulse.value;
-                final ringAlpha = (0.22 + 0.18 * p).clamp(0.0, 1.0);
-                final glowAlpha = (0.45 + 0.30 * p).clamp(0.0, 1.0);
-                final scale = 0.985 + 0.025 * p;
+              // Center brand
+              Center(
+                child: AnimatedBuilder(
+                  animation: _splashAnimCtrl,
+                  builder: (context, _) {
+                    final p = _splashPulse.value;
+                    final ringAlpha = (0.22 + 0.18 * p).clamp(0.0, 1.0);
+                    final glowAlpha = (0.45 + 0.30 * p).clamp(0.0, 1.0);
+                    final scale = 0.985 + 0.025 * p;
 
-                return Transform.scale(
-                  scale: scale,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 280,
-                        height: 280,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Outer animated ring
-                            Container(
-                              width: 268,
-                              height: 268,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Color.fromRGBO(255, 211, 106, ringAlpha),
-                                  width: 2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Color.fromRGBO(255, 211, 106, glowAlpha),
-                                    blurRadius: 28 + 18 * p,
-                                    spreadRadius: 2 + 2 * p,
+                    return Transform.scale(
+                      scale: scale,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 280,
+                            height: 280,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                // Outer animated ring
+                                Container(
+                                  width: 268,
+                                  height: 268,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Color.fromRGBO(
+                                        255,
+                                        211,
+                                        106,
+                                        ringAlpha,
+                                      ),
+                                      width: 2,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Color.fromRGBO(
+                                          255,
+                                          211,
+                                          106,
+                                          glowAlpha,
+                                        ),
+                                        blurRadius: 28 + 18 * p,
+                                        spreadRadius: 2 + 2 * p,
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            ),
-
-                            // Inner soft ring
-                            Container(
-                              width: 214,
-                              height: 214,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Color.fromRGBO(255, 211, 106, (ringAlpha * 0.55).clamp(0.0, 1.0)),
-                                  width: 1,
                                 ),
-                              ),
-                            ),
 
-                            // Logo + shimmer mask
-                            ShaderMask(
-                              shaderCallback: (rect) {
-                                // Shimmer sweeps horizontally across the logo
-                                final t = _splashAnimCtrl.value; // 0..1
-                                final start = -0.6 + 1.6 * t;
-                                return LinearGradient(
-                                  begin: Alignment(start, 0),
-                                  end: Alignment(start + 0.8, 0),
-                                  colors: const [
-                                    Color(0x66FFFFFF),
-                                    Color(0xFFFFFFFF),
-                                    Color(0x66FFFFFF),
-                                  ],
-                                  stops: const [0.0, 0.5, 1.0],
-                                ).createShader(rect);
-                              },
-                              blendMode: BlendMode.srcATop,
-                              child: SizedBox(
-                                width: 210,
-                                height: 210,
-                                child: _tenantLogo(
-                                  height: 210,
-                                  fallback: const Text(
-                                    'FLUXIDI',
-                                    style: TextStyle(
-                                      color: Color(0xFFFFD36A),
-                                      fontSize: 32,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 4,
+                                // Inner soft ring
+                                Container(
+                                  width: 214,
+                                  height: 214,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Color.fromRGBO(
+                                        255,
+                                        211,
+                                        106,
+                                        (ringAlpha * 0.55).clamp(0.0, 1.0),
+                                      ),
+                                      width: 1,
                                     ),
                                   ),
                                 ),
+
+                                // Logo + shimmer mask
+                                ShaderMask(
+                                  shaderCallback: (rect) {
+                                    // Shimmer sweeps horizontally across the logo
+                                    final t = _splashAnimCtrl.value; // 0..1
+                                    final start = -0.6 + 1.6 * t;
+                                    return LinearGradient(
+                                      begin: Alignment(start, 0),
+                                      end: Alignment(start + 0.8, 0),
+                                      colors: const [
+                                        Color(0x66FFFFFF),
+                                        Color(0xFFFFFFFF),
+                                        Color(0x66FFFFFF),
+                                      ],
+                                      stops: const [0.0, 0.5, 1.0],
+                                    ).createShader(rect);
+                                  },
+                                  blendMode: BlendMode.srcATop,
+                                  child: SizedBox(
+                                    width: 210,
+                                    height: 210,
+                                    child: _tenantLogo(
+                                      height: 210,
+                                      fallback: const Text(
+                                        'FLUXIDI',
+                                        style: TextStyle(
+                                          color: Color(0xFFFFD36A),
+                                          fontSize: 32,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 4,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          Text(
+                            kCompanyName,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Driver • Live Tracking',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.78),
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          // Minimal loading hint
+                          SizedBox(
+                            width: 120,
+                            child: LinearProgressIndicator(
+                              minHeight: 3,
+                              backgroundColor: const Color(0x22FFFFFF),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Color.fromRGBO(
+                                  255,
+                                  211,
+                                  106,
+                                  (0.75 + 0.20 * p).clamp(0.0, 1.0),
+                                ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 22),
-                      Text(
-                        kCompanyName,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Driver • Live Tracking',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.78),
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      // Minimal loading hint
-                      SizedBox(
-                        width: 120,
-                        child: LinearProgressIndicator(
-                          minHeight: 3,
-                          backgroundColor: const Color(0x22FFFFFF),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Color.fromRGBO(255, 211, 106, (0.75 + 0.20 * p).clamp(0.0, 1.0)),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-    ),
-  ),
-);
+    );
   }
 
   ButtonStyle _ghostButtonStyle() {
@@ -6262,9 +7335,7 @@ return IgnorePointer(
       foregroundColor: Colors.white,
       side: BorderSide(color: kFluxidiYellow.withOpacity(0.85), width: 1.2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-    ).copyWith(
-      overlayColor: MaterialStateProperty.all(kFluxidiYellowSoft),
-    );
+    ).copyWith(overlayColor: MaterialStateProperty.all(kFluxidiYellowSoft));
   }
 
   ButtonStyle _startButtonStyle() {
@@ -6291,18 +7362,19 @@ return IgnorePointer(
     return rawStatus.trim();
   }
 
-
   // -------------------------------
   // UI helpers for stats
   // -------------------------------
 
   int? _remainingSec() {
-    final remainingKm =
-        (_routeKm != null) ? (_routeKm! - _kmDriven).clamp(0.0, 999999.0) : null;
+    final remainingKm = (_routeKm != null)
+        ? (_routeKm! - _kmDriven).clamp(0.0, 999999.0)
+        : null;
     if (_routeDurationSec == null ||
         _routeKm == null ||
         _routeKm! <= 0 ||
-        remainingKm == null) return null;
+        remainingKm == null)
+      return null;
     final ratio = (remainingKm / _routeKm!).clamp(0.0, 1.0);
     return (_routeDurationSec! * ratio).round();
   }
@@ -6317,8 +7389,9 @@ return IgnorePointer(
   }
 
   String _fmtRemainingKm() {
-    final remainingKm =
-        (_routeKm != null) ? (_routeKm! - _kmDriven).clamp(0.0, 999999.0) : null;
+    final remainingKm = (_routeKm != null)
+        ? (_routeKm! - _kmDriven).clamp(0.0, 999999.0)
+        : null;
     if (remainingKm == null) return '—';
     return remainingKm.toStringAsFixed(1);
   }
@@ -6329,7 +7402,6 @@ return IgnorePointer(
     return b!.price!.toStringAsFixed(2);
   }
 
-
   String _fmtMoney(num amount, String currency) {
     // Keep it simple & predictable (no locale surprises)
     final value = amount.toDouble().toStringAsFixed(2);
@@ -6338,7 +7410,6 @@ return IgnorePointer(
     if (cur.length <= 3) return '$cur $value';
     return '$value';
   }
-
 
   // -------------------------------
   // UI
@@ -6384,12 +7455,14 @@ return IgnorePointer(
                 child: OutlinedButton.icon(
                   onPressed: _openDirectRideEntry,
                   icon: const Icon(Icons.local_taxi_outlined, size: 18),
-                  label: Text(_tr(
-                    nl: 'Straatrit starten',
-                    en: 'Start direct ride',
-                    fr: 'Demarrer une course directe',
-                    es: 'Iniciar viaje directo',
-                  )),
+                  label: Text(
+                    _tr(
+                      nl: 'Straatrit starten',
+                      en: 'Start direct ride',
+                      fr: 'Demarrer une course directe',
+                      es: 'Iniciar viaje directo',
+                    ),
+                  ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFFFFD36A),
                     side: BorderSide(
@@ -6399,7 +7472,10 @@ return IgnorePointer(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 11,
+                      horizontal: 12,
+                    ),
                   ),
                 ),
               ),
@@ -6428,7 +7504,10 @@ return IgnorePointer(
     return ClipRRect(
       borderRadius: BorderRadius.circular(compact ? 16 : 18),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: compact ? 8 : 12, sigmaY: compact ? 8 : 12),
+        filter: ImageFilter.blur(
+          sigmaX: compact ? 8 : 12,
+          sigmaY: compact ? 8 : 12,
+        ),
         child: Container(
           constraints: BoxConstraints(maxHeight: compact ? 72 : 86),
           padding: EdgeInsets.symmetric(
@@ -6455,13 +7534,12 @@ return IgnorePointer(
                 decoration: BoxDecoration(
                   color: const Color(0xFF2D8CFF),
                   borderRadius: BorderRadius.circular(compact ? 14 : 16),
-                  border: Border.all(color: Colors.white.withOpacity(0.80), width: 1.5),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.80),
+                    width: 1.5,
+                  ),
                 ),
-                child: Icon(
-                  icon,
-                  size: compact ? 32 : 40,
-                  color: Colors.white,
-                ),
+                child: Icon(icon, size: compact ? 32 : 40, color: Colors.white),
               ),
               SizedBox(width: compact ? 10 : 12),
               Expanded(
@@ -6507,7 +7585,10 @@ return IgnorePointer(
     return ClipRRect(
       borderRadius: BorderRadius.circular(compact ? 10 : 12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: compact ? 8 : 10, sigmaY: compact ? 8 : 10),
+        filter: ImageFilter.blur(
+          sigmaX: compact ? 8 : 10,
+          sigmaY: compact ? 8 : 10,
+        ),
         child: Container(
           constraints: BoxConstraints(maxHeight: compact ? 50 : 56),
           padding: EdgeInsets.symmetric(
@@ -6538,7 +7619,10 @@ return IgnorePointer(
     return ClipRRect(
       borderRadius: BorderRadius.circular(compact ? 10 : 12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: compact ? 8 : 10, sigmaY: compact ? 8 : 10),
+        filter: ImageFilter.blur(
+          sigmaX: compact ? 8 : 10,
+          sigmaY: compact ? 8 : 10,
+        ),
         child: Container(
           constraints: BoxConstraints(maxHeight: compact ? 50 : 56),
           padding: EdgeInsets.symmetric(
@@ -6582,7 +7666,9 @@ return IgnorePointer(
                 decoration: BoxDecoration(
                   color: const Color(0xFF07142D).withOpacity(0.88),
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFFFD36A).withOpacity(0.55)),
+                  border: Border.all(
+                    color: const Color(0xFFFFD36A).withOpacity(0.55),
+                  ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.30),
@@ -6618,13 +7704,14 @@ return IgnorePointer(
     return 'Open menu -> Ritten om een rit te kiezen en start hem om te rijden.';
   }
 
-
   @override
   Widget build(BuildContext context) {
     final bool liveActive = _liveRideActive;
     final bool hasSelection = _activeBooking != null;
     final bool hasDirectDraft = _directRideDraft;
-    final int state = liveActive ? 2 : ((hasSelection || hasDirectDraft) ? 1 : 0);
+    final int state = liveActive
+        ? 2
+        : ((hasSelection || hasDirectDraft) ? 1 : 0);
     final bool showCockpit = liveActive || hasSelection || hasDirectDraft;
     final screenH = MediaQuery.of(context).size.height;
     final bool isLandscape =
@@ -6632,10 +7719,9 @@ return IgnorePointer(
     final bool collapseTopBarInLandscapeNav =
         isLandscape && _cameraMode == _CameraMode.follow;
     final double arrowBottom = isLandscape ? 106.0 : 152.0;
-    final double navBannerTop = MediaQuery.of(context).padding.top +
-        (isLandscape
-            ? 8
-            : (_cameraMode == _CameraMode.follow ? 128 : 74));
+    final double navBannerTop =
+        MediaQuery.of(context).padding.top +
+        (isLandscape ? 8 : (_cameraMode == _CameraMode.follow ? 128 : 74));
     if (_cameraMode == _CameraMode.follow) {
       debugPrint(
         '[UI_ARROW] visible=true orientation=${isLandscape ? 'landscape' : 'portrait'} bottom=$arrowBottom bearing=$_uiArrowBearing',
@@ -6770,7 +7856,8 @@ return IgnorePointer(
                           padding: EdgeInsets.only(
                             left: 10,
                             right: 10,
-                            bottom: MediaQuery.of(context).viewInsets.bottom + 4,
+                            bottom:
+                                MediaQuery.of(context).viewInsets.bottom + 4,
                           ),
                           child: showCockpit
                               ? SizedBox(
@@ -6781,7 +7868,8 @@ return IgnorePointer(
                                     priceText: _cockpitPriceText,
                                     tripStarted: _liveRideActive,
                                     isWaiting: _isWaiting,
-                                    navActive: _cameraMode == _CameraMode.follow,
+                                    navActive:
+                                        _cameraMode == _CameraMode.follow,
                                     onNav: _openNavigation,
                                     onStart: _handleCockpitStart,
                                     onStop: _stopTrip,
@@ -6812,7 +7900,8 @@ return IgnorePointer(
                           padding: EdgeInsets.only(
                             left: 12,
                             right: 12,
-                            bottom: MediaQuery.of(context).viewInsets.bottom + 6,
+                            bottom:
+                                MediaQuery.of(context).viewInsets.bottom + 6,
                           ),
                           child: showCockpit
                               ? CockpitWidget(
@@ -6870,10 +7959,7 @@ return IgnorePointer(
       decoration: const BoxDecoration(
         gradient: RadialGradient(
           radius: 1.2,
-          colors: [
-            Color(0xFF141B2F),
-            Color(0xFF070A10),
-          ],
+          colors: [Color(0xFF141B2F), Color(0xFF070A10)],
         ),
       ),
       child: Center(
@@ -6890,9 +7976,13 @@ return IgnorePointer(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w700)),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(subtitle, style: const TextStyle(color: Colors.white70)),
               ],
@@ -6933,7 +8023,8 @@ return IgnorePointer(
               backgroundColor: const Color(0xFFED6A5A).withOpacity(0.28),
               foregroundColor: const Color(0xFFFFB4AA),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
             onPressed: _stopTrip,
             child: Text(kStopShortLabel),
@@ -6948,8 +8039,12 @@ return IgnorePointer(
 
     return Container(
       margin: const EdgeInsets.all(12),
-      padding:
-          EdgeInsets.only(left: 14, right: 14, top: 14, bottom: 14 + padding),
+      padding: EdgeInsets.only(
+        left: 14,
+        right: 14,
+        top: 14,
+        bottom: 14 + padding,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF141B2F).withOpacity(0.94),
         borderRadius: BorderRadius.circular(22),
@@ -6973,7 +8068,10 @@ return IgnorePointer(
             Expanded(
               child: Text(
                 kAvailableBookingsTitle,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             OutlinedButton.icon(
@@ -6993,8 +8091,10 @@ return IgnorePointer(
         else if (_bookingsError != null)
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Text('Error: $_bookingsError',
-                style: const TextStyle(color: Colors.redAccent)),
+            child: Text(
+              'Error: $_bookingsError',
+              style: const TextStyle(color: Colors.redAccent),
+            ),
           )
         else if (visibleBookings.isEmpty)
           Padding(
@@ -7022,7 +8122,9 @@ return IgnorePointer(
         final narrow = c.maxWidth < 380;
         final tight = c.maxWidth < 340;
         final actionHeight = narrow ? 44.0 : 42.0;
-        final statusText = _rideStatusLabel((_effectiveStatusFor(b) ?? 'PENDING'));
+        final statusText = _rideStatusLabel(
+          (_effectiveStatusFor(b) ?? 'PENDING'),
+        );
 
         return Container(
           padding: EdgeInsets.all(tight ? 12 : 14),
@@ -7094,7 +8196,10 @@ return IgnorePointer(
                       child: FilledButton(
                         style: _startButtonStyle().copyWith(
                           padding: MaterialStateProperty.all(
-                            const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                            const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 0,
+                            ),
                           ),
                         ),
                         onPressed: () => _goToRide(b),
@@ -7114,16 +8219,18 @@ return IgnorePointer(
               ],
               const SizedBox(height: 10),
               _line(
-                  icon: Icons.radio_button_checked,
-                  title: kPickupLabel,
-                  value: b.from ?? '—',
-                  maxLines: narrow ? 2 : 3),
+                icon: Icons.radio_button_checked,
+                title: kPickupLabel,
+                value: b.from ?? '—',
+                maxLines: narrow ? 2 : 3,
+              ),
               const SizedBox(height: 6),
               _line(
-                  icon: Icons.place,
-                  title: kDropoffLabel,
-                  value: b.to ?? '—',
-                  maxLines: narrow ? 2 : 3),
+                icon: Icons.place,
+                title: kDropoffLabel,
+                value: b.to ?? '—',
+                maxLines: narrow ? 2 : 3,
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 6,
@@ -7133,7 +8240,8 @@ return IgnorePointer(
                   _pill(text: '${b.pax ?? 0} pax'),
                   _pill(text: '${b.bags ?? 0} bags'),
                   _pill(text: 'ID: ${b.shortId}', textColor: Colors.white70),
-                  if (b.price != null) _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
+                  if (b.price != null)
+                    _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
                 ],
               ),
               const SizedBox(height: 10),
@@ -7143,7 +8251,9 @@ return IgnorePointer(
                   height: actionHeight,
                   child: OutlinedButton.icon(
                     style: _ghostButtonStyle(),
-                    onPressed: actionBusy ? null : () => _setBookingStatus(b, 'COMPLETED'),
+                    onPressed: actionBusy
+                        ? null
+                        : () => _setBookingStatus(b, 'COMPLETED'),
                     icon: const Icon(Icons.check_circle_outline, size: 18),
                     label: Text(
                       kRideActionCompletedLabel,
@@ -7159,7 +8269,9 @@ return IgnorePointer(
                         height: actionHeight,
                         child: OutlinedButton.icon(
                           style: _ghostButtonStyle(),
-                          onPressed: actionBusy ? null : () => _setBookingStatus(b, 'CANCELLED'),
+                          onPressed: actionBusy
+                              ? null
+                              : () => _setBookingStatus(b, 'CANCELLED'),
                           icon: const Icon(Icons.cancel_outlined, size: 18),
                           label: Text(
                             kRideActionCancelledLabel,
@@ -7188,8 +8300,13 @@ return IgnorePointer(
                         height: actionHeight,
                         child: OutlinedButton.icon(
                           style: _ghostButtonStyle(),
-                          onPressed: actionBusy ? null : () => _setBookingStatus(b, 'COMPLETED'),
-                          icon: const Icon(Icons.check_circle_outline, size: 18),
+                          onPressed: actionBusy
+                              ? null
+                              : () => _setBookingStatus(b, 'COMPLETED'),
+                          icon: const Icon(
+                            Icons.check_circle_outline,
+                            size: 18,
+                          ),
                           label: Text(kRideActionCompletedLabel),
                         ),
                       ),
@@ -7200,7 +8317,9 @@ return IgnorePointer(
                         height: actionHeight,
                         child: OutlinedButton.icon(
                           style: _ghostButtonStyle(),
-                          onPressed: actionBusy ? null : () => _setBookingStatus(b, 'CANCELLED'),
+                          onPressed: actionBusy
+                              ? null
+                              : () => _setBookingStatus(b, 'CANCELLED'),
                           icon: const Icon(Icons.cancel_outlined, size: 18),
                           label: Text(kRideActionCancelledLabel),
                         ),
@@ -7226,217 +8345,219 @@ return IgnorePointer(
     );
   }
 
-
   Widget _buildCockpitWidget() {
-  // ✅ Minimal cockpit (driving only):
-  // - Big ETA + KM remaining (countdown starts when we move)
-  // - Bottom controls: NAV | START/STOP | WACHT/GA
-  final eta = _etaText.isNotEmpty ? _etaText : '—';
-  final km = _kmRemainingText.isNotEmpty ? _kmRemainingText : '—';
+    // ✅ Minimal cockpit (driving only):
+    // - Big ETA + KM remaining (countdown starts when we move)
+    // - Bottom controls: NAV | START/STOP | WACHT/GA
+    final eta = _etaText.isNotEmpty ? _etaText : '—';
+    final km = _kmRemainingText.isNotEmpty ? _kmRemainingText : '—';
 
-  final bool tripStarted = _activeTripId != null;
-  final bool waiting = _isWaiting;
+    final bool tripStarted = _activeTripId != null;
+    final bool waiting = _isWaiting;
 
-  return SafeArea(
-    minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-    child: Align(
-      alignment: Alignment.bottomCenter,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0B1733).withOpacity(0.78),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: kGlow.withOpacity(tripStarted ? 0.50 : 0.22),
-                width: 1.2,
+    return SafeArea(
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B1733).withOpacity(0.78),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: kGlow.withOpacity(tripStarted ? 0.50 : 0.22),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: kGlow.withOpacity(tripStarted ? 0.18 : 0.10),
+                    blurRadius: tripStarted ? 16 : 10,
+                    spreadRadius: 0.5,
+                  ),
+                ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: kGlow.withOpacity(tripStarted ? 0.18 : 0.10),
-                  blurRadius: tripStarted ? 16 : 10,
-                  spreadRadius: 0.5,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // === Big numbers ===
-                Row(
-                  children: [
-                    Expanded(
-                      child: _bigMetric(
-                        label: 'ETA',
-                        value: eta,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // === Big numbers ===
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _bigMetric(label: 'ETA', value: eta),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _bigMetric(
-                        label: 'KM',
-                        value: km,
-                        suffix: 'km',
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _bigMetric(label: 'KM', value: km, suffix: 'km'),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
 
-                // === Controls ===
-                Row(
-                  children: [
-                    Expanded(
-                      child: _cockpitButton(
-                        label: 'NAV',
-                        icon: Icons.navigation,
-                        onTap: _openNavigation,
-                        enabled: _routeCoords.isNotEmpty,
+                  // === Controls ===
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _cockpitButton(
+                          label: 'NAV',
+                          icon: Icons.navigation,
+                          onTap: _openNavigation,
+                          enabled: _routeCoords.isNotEmpty,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _cockpitButton(
-                        label: tripStarted ? 'STOP' : 'START',
-                        icon: tripStarted ? Icons.stop_circle_outlined : Icons.play_circle_outline,
-                        onTap: () {
-                          final b = _activeBooking;
-                          if (!tripStarted) {
-                            if (b == null) {
-                              _toast('Kies eerst een rit in Ritten.');
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _cockpitButton(
+                          label: tripStarted ? 'STOP' : 'START',
+                          icon: tripStarted
+                              ? Icons.stop_circle_outlined
+                              : Icons.play_circle_outline,
+                          onTap: () {
+                            final b = _activeBooking;
+                            if (!tripStarted) {
+                              if (b == null) {
+                                _toast('Kies eerst een rit in Ritten.');
+                                return;
+                              }
+                              _startTrip(b);
+                            } else {
+                              _stopTrip();
+                            }
+                          },
+                          emphasis: true,
+                          enabled: (tripStarted || _activeBooking != null),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _cockpitButton(
+                          label: waiting ? 'GA' : 'WACHT',
+                          icon: waiting ? Icons.play_arrow : Icons.pause,
+                          onTap: () {
+                            if (!tripStarted) {
+                              _toast('Start eerst de rit.');
                               return;
                             }
-                            _startTrip(b);
-                          } else {
-                            _stopTrip();
-                          }
-                        },
-                        emphasis: true,
-                        enabled: (tripStarted || _activeBooking != null),
+                            if (waiting) {
+                              _exitWaitMode();
+                            } else {
+                              _enterWaitMode();
+                            }
+                          },
+                          enabled: tripStarted,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _cockpitButton(
-                        label: waiting ? 'GA' : 'WACHT',
-                        icon: waiting ? Icons.play_arrow : Icons.pause,
-                        onTap: () {
-                          if (!tripStarted) {
-                            _toast('Start eerst de rit.');
-                            return;
-                          }
-                          if (waiting) {
-                            _exitWaitMode();
-                          } else {
-                            _enterWaitMode();
-                          }
-                        },
-                        enabled: tripStarted,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _bigMetric({required String label, required String value, String? suffix}) {
-  return Container(
-    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(18),
-      color: Colors.white.withOpacity(0.06),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
+  Widget _bigMetric({
+    required String label,
+    required String value,
+    String? suffix,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: Colors.white.withOpacity(0.06),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
             style: TextStyle(
               color: Colors.white.withOpacity(0.70),
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.6,
-            )),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w900,
-              ),
             ),
-            if (suffix != null) ...[
-              const SizedBox(width: 6),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  suffix,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.70),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 30,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
+              if (suffix != null) ...[
+                const SizedBox(width: 6),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    suffix,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.70),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _cockpitButton({
-  required String label,
-  required IconData icon,
-  required VoidCallback onTap,
-  bool enabled = true,
-  bool emphasis = false,
-}) {
-  final baseOpacity = enabled ? 1.0 : 0.45;
-  return InkWell(
-    borderRadius: BorderRadius.circular(16),
-    onTap: enabled ? onTap : null,
-    child: Container(
-      height: 46,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.white.withOpacity(emphasis ? 0.10 : 0.06),
-        border: Border.all(
-          color: kGlow.withOpacity(emphasis ? 0.55 * baseOpacity : 0.28 * baseOpacity),
-          width: 1.1,
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 18, color: Colors.white.withOpacity(baseOpacity)),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.4,
-              color: Colors.white.withOpacity(baseOpacity),
-            ),
           ),
         ],
       ),
-    ),
-  );
-}
+    );
+  }
+
+  Widget _cockpitButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool enabled = true,
+    bool emphasis = false,
+  }) {
+    final baseOpacity = enabled ? 1.0 : 0.45;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: enabled ? onTap : null,
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white.withOpacity(emphasis ? 0.10 : 0.06),
+          border: Border.all(
+            color: kGlow.withOpacity(
+              emphasis ? 0.55 * baseOpacity : 0.28 * baseOpacity,
+            ),
+            width: 1.1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 18, color: Colors.white.withOpacity(baseOpacity)),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+                color: Colors.white.withOpacity(baseOpacity),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _dialGauge({
     required String label,
@@ -7479,7 +8600,9 @@ Widget _cockpitButton({
                     shape: BoxShape.circle,
                     color: Colors.black.withOpacity(0.18),
                     border: Border.all(
-                      color: const Color(0xFFFFD36A).withOpacity(0.22 + 0.22 * t),
+                      color: const Color(
+                        0xFFFFD36A,
+                      ).withOpacity(0.22 + 0.22 * t),
                       width: 1.0,
                     ),
                     boxShadow: [
@@ -7494,7 +8617,11 @@ Widget _cockpitButton({
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(icon, size: 16, color: const Color(0xFFFFD36A).withOpacity(0.92)),
+                      Icon(
+                        icon,
+                        size: 16,
+                        color: const Color(0xFFFFD36A).withOpacity(0.92),
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         value,
@@ -7549,7 +8676,9 @@ Widget _cockpitButton({
             height: 86,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
-              color: filled ? const Color(0xFF3B2230) : const Color(0xFF0B1733).withOpacity(0.45),
+              color: filled
+                  ? const Color(0xFF3B2230)
+                  : const Color(0xFF0B1733).withOpacity(0.45),
               border: Border.all(
                 color: filled
                     ? const Color(0xFFFFA7C0).withOpacity(0.50 + 0.25 * t)
@@ -7575,7 +8704,13 @@ Widget _cockpitButton({
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 22, color: filled ? const Color(0xFFFFA7C0) : const Color(0xFFFFD36A)),
+                Icon(
+                  icon,
+                  size: 22,
+                  color: filled
+                      ? const Color(0xFFFFA7C0)
+                      : const Color(0xFFFFD36A),
+                ),
                 const SizedBox(height: 6),
                 Text(
                   label,
@@ -7625,7 +8760,11 @@ Widget _cockpitButton({
           ),
           child: Row(
             children: [
-              Icon(icon, size: 18, color: const Color(0xFFFFD36A).withOpacity(0.9)),
+              Icon(
+                icon,
+                size: 18,
+                color: const Color(0xFFFFD36A).withOpacity(0.9),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -7676,7 +8815,9 @@ Widget _cockpitButton({
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: filled ? const Color(0xFF3B2230) : const Color(0xFF0B1733).withOpacity(0.55),
+          color: filled
+              ? const Color(0xFF3B2230)
+              : const Color(0xFF0B1733).withOpacity(0.55),
           border: Border.all(
             color: filled
                 ? const Color(0xFFFFA7C0).withOpacity(0.55)
@@ -7687,7 +8828,11 @@ Widget _cockpitButton({
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: filled ? const Color(0xFFFFA7C0) : const Color(0xFFFFD36A)),
+            Icon(
+              icon,
+              size: 18,
+              color: filled ? const Color(0xFFFFA7C0) : const Color(0xFFFFD36A),
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -7715,9 +8860,13 @@ Widget _cockpitButton({
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$k: ',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.70), fontSize: 12)),
+          Text(
+            '$k: ',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.70),
+              fontSize: 12,
+            ),
+          ),
           Text(v, style: const TextStyle(fontWeight: FontWeight.w800)),
         ],
       ),
@@ -7764,27 +8913,32 @@ Widget _cockpitButton({
                 ),
               ),
               const SizedBox(height: 10),
-              Text(kActiveRideTitle,
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              Text(
+                kActiveRideTitle,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
               const SizedBox(height: 10),
               if (b != null) ...[
                 _line(
-                    icon: Icons.confirmation_number,
-                    title: 'Trip ID',
-                    value: _activeTripId ?? '—',
-                    maxLines: 1),
+                  icon: Icons.confirmation_number,
+                  title: 'Trip ID',
+                  value: _activeTripId ?? '—',
+                  maxLines: 1,
+                ),
                 const SizedBox(height: 8),
                 _line(
-                    icon: Icons.radio_button_checked,
-                    title: kPickupLabel,
-                    value: b.from ?? '—',
-                    maxLines: 3),
+                  icon: Icons.radio_button_checked,
+                  title: kPickupLabel,
+                  value: b.from ?? '—',
+                  maxLines: 3,
+                ),
                 const SizedBox(height: 8),
                 _line(
-                    icon: Icons.place,
-                    title: kDropoffLabel,
-                    value: b.to ?? '—',
-                    maxLines: 3),
+                  icon: Icons.place,
+                  title: kDropoffLabel,
+                  value: b.to ?? '—',
+                  maxLines: 3,
+                ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
@@ -7793,7 +8947,10 @@ Widget _cockpitButton({
                     _pill(text: (b.tier ?? 'premium').toUpperCase()),
                     _pill(text: '${b.pax ?? 0} pax'),
                     _pill(text: '${b.bags ?? 0} bags'),
-                    _pill(text: 'Pings: $_pingCount', textColor: Colors.white70),
+                    _pill(
+                      text: 'Pings: $_pingCount',
+                      textColor: Colors.white70,
+                    ),
                   ],
                 ),
               ],
@@ -7806,11 +8963,14 @@ Widget _cockpitButton({
                     foregroundColor: const Color(0xFFFFB4AA),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18)),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
                   ),
                   onPressed: _stopTrip,
-                  child: const Text('Stop rit',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: const Text(
+                    'Stop rit',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
                 ),
               ),
             ],
@@ -7861,9 +9021,13 @@ Widget _cockpitButton({
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.72), fontSize: 12)),
+              Text(
+                title,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.72),
+                  fontSize: 12,
+                ),
+              ),
               const SizedBox(height: 2),
               Text(
                 value,
@@ -7912,7 +9076,6 @@ Widget _cockpitButton({
     _toast('Geen toegang voor jouw rol.');
   }
 
-
   void _openBookingsHub() {
     if (!_canAccessDriverOpsScreens()) {
       Navigator.pop(context);
@@ -7956,7 +9119,9 @@ Widget _cockpitButton({
         _allowOverviewCamera = false;
       });
       await _applyMapStyleForMode();
-      debugPrint('[CAMERA][NAV_START] source=open_live_ride force_follow=true active_trip=true');
+      debugPrint(
+        '[CAMERA][NAV_START] source=open_live_ride force_follow=true active_trip=true',
+      );
       await _forceFollowCameraNow(caller: 'open_live_ride');
     } catch (_) {
       // Never crash the UI from a camera move.
@@ -7982,56 +9147,50 @@ Widget _cockpitButton({
     );
   }
 
-
-  
-void _openCalculator() {
-  if (!_canAccessCustomerBookingScreens()) {
+  void _openCalculator() {
+    if (!_canAccessCustomerBookingScreens()) {
+      Navigator.pop(context);
+      _denyRoleAccess();
+      return;
+    }
+    // Close drawer first for a clean transition.
     Navigator.pop(context);
-    _denyRoleAccess();
-    return;
-  }
-  // Close drawer first for a clean transition.
-  Navigator.pop(context);
 
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (ctx) => CalculatorPage(
-        bookingBaseUrl: kBookingBaseUrl,
-        mapboxToken: kMapboxToken,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
+        ),
       ),
-    ),
-  );
-}
-
-void _openBusinessSettings() {
-  if (!_canAccessAdminManagementScreens()) {
-    Navigator.pop(context);
-    _denyRoleAccess();
-    return;
+    );
   }
-  Navigator.pop(context);
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (ctx) => const BusinessSettingsPage(),
-    ),
-  );
-}
 
-void _openVehicles() {
-  if (!_canAccessAdminManagementScreens()) {
+  void _openBusinessSettings() {
+    if (!_canAccessAdminManagementScreens()) {
+      Navigator.pop(context);
+      _denyRoleAccess();
+      return;
+    }
     Navigator.pop(context);
-    _denyRoleAccess();
-    return;
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (ctx) => const BusinessSettingsPage()));
   }
-  Navigator.pop(context);
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (ctx) => const VehicleManagementPage(),
-    ),
-  );
-}
 
-Drawer _buildDrawer() {
+  void _openVehicles() {
+    if (!_canAccessAdminManagementScreens()) {
+      Navigator.pop(context);
+      _denyRoleAccess();
+      return;
+    }
+    Navigator.pop(context);
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (ctx) => const VehicleManagementPage()));
+  }
+
+  Drawer _buildDrawer() {
     final role = appRoleNotifier.value;
     final isCustomer = role == AppRole.customer;
     final isDriver = role == AppRole.driver;
@@ -8047,8 +9206,10 @@ Drawer _buildDrawer() {
         child: ListView(
           padding: const EdgeInsets.all(12),
           children: [
-            const Text('Fluxidi Driver',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const Text(
+              'Fluxidi Driver',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 12),
             Text(
               kDrawerLanguageLabel,
@@ -8077,7 +9238,10 @@ Drawer _buildDrawer() {
                 isDense: true,
                 filled: true,
                 fillColor: const Color(0xFF0B0B0B),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: Color(0x22FFFFFF)),
@@ -8109,21 +9273,15 @@ Drawer _buildDrawer() {
               items: [
                 DropdownMenuItem(
                   value: MapThemeMode.light,
-                  child: Text(_tr(
-                    nl: 'Licht',
-                    en: 'Light',
-                    fr: 'Clair',
-                    es: 'Claro',
-                  )),
+                  child: Text(
+                    _tr(nl: 'Licht', en: 'Light', fr: 'Clair', es: 'Claro'),
+                  ),
                 ),
                 DropdownMenuItem(
                   value: MapThemeMode.dark,
-                  child: Text(_tr(
-                    nl: 'Donker',
-                    en: 'Dark',
-                    fr: 'Sombre',
-                    es: 'Oscuro',
-                  )),
+                  child: Text(
+                    _tr(nl: 'Donker', en: 'Dark', fr: 'Sombre', es: 'Oscuro'),
+                  ),
                 ),
               ],
               onChanged: (v) {
@@ -8135,7 +9293,10 @@ Drawer _buildDrawer() {
                 isDense: true,
                 filled: true,
                 fillColor: const Color(0xFF0B0B0B),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: Color(0x22FFFFFF)),
@@ -8157,7 +9318,10 @@ Drawer _buildDrawer() {
                 title: Text(kBookingsTitle),
                 subtitle: Text(
                   kBookingsMenuSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openBookingsHub,
@@ -8170,7 +9334,10 @@ Drawer _buildDrawer() {
                 title: Text(kLiveRideTitle),
                 subtitle: Text(
                   kLiveRideMenuSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openLiveRide,
@@ -8179,12 +9346,14 @@ Drawer _buildDrawer() {
             if (canSeeDriverOps)
               ListTile(
                 leading: const Icon(Icons.local_taxi_outlined),
-                title: Text(_tr(
-                  nl: 'Straatrit',
-                  en: 'Direct ride',
-                  fr: 'Course directe',
-                  es: 'Viaje directo',
-                )),
+                title: Text(
+                  _tr(
+                    nl: 'Straatrit',
+                    en: 'Direct ride',
+                    fr: 'Course directe',
+                    es: 'Viaje directo',
+                  ),
+                ),
                 subtitle: Text(
                   _tr(
                     nl: 'Start een rit zonder voorafgaande boeking',
@@ -8192,7 +9361,10 @@ Drawer _buildDrawer() {
                     fr: 'Demarrer une course sans reservation',
                     es: 'Iniciar un viaje sin reserva',
                   ),
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openDirectRideEntry,
@@ -8201,12 +9373,14 @@ Drawer _buildDrawer() {
             if (canSeeDriverOps)
               ListTile(
                 leading: const Icon(Icons.history),
-                title: Text(_tr(
-                  nl: 'Ritten historiek',
-                  en: 'Ride history',
-                  fr: 'Historique des courses',
-                  es: 'Historial de viajes',
-                )),
+                title: Text(
+                  _tr(
+                    nl: 'Ritten historiek',
+                    en: 'Ride history',
+                    fr: 'Historique des courses',
+                    es: 'Historial de viajes',
+                  ),
+                ),
                 subtitle: Text(
                   _tr(
                     nl: 'Bekijk afgeronde straatritten',
@@ -8214,7 +9388,10 @@ Drawer _buildDrawer() {
                     fr: 'Voir les courses directes terminees',
                     es: 'Ver viajes directos completados',
                   ),
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openTripHistory,
@@ -8224,10 +9401,17 @@ Drawer _buildDrawer() {
             if (canSeeCustomerBooking)
               ListTile(
                 leading: const Icon(Icons.calculate_outlined),
-                title: Text(appConfig.strings.calculatorTitle.of(appConfig.defaultLanguage)),
+                title: Text(
+                  appConfig.strings.calculatorTitle.of(
+                    appConfig.defaultLanguage,
+                  ),
+                ),
                 subtitle: Text(
                   kCalculatorMenuSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openCalculator,
@@ -8238,7 +9422,10 @@ Drawer _buildDrawer() {
                 title: Text(kDrawerBusinessSettingsLabel),
                 subtitle: Text(
                   kDrawerBusinessSettingsSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openBusinessSettings,
@@ -8249,7 +9436,10 @@ Drawer _buildDrawer() {
                 title: Text(kDrawerVehiclesLabel),
                 subtitle: Text(
                   kDrawerVehiclesSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openVehicles,
@@ -8262,32 +9452,35 @@ Drawer _buildDrawer() {
                 title: Text(kActiveRideTitle),
                 subtitle: Text(
                   kActiveRideMenuSubtitle,
-                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openLiveRide,
               ),
-
 
             const SizedBox(height: 8),
             const Divider(color: Colors.white12),
             const SizedBox(height: 8),
             if (canSeeDriverOps)
               ListTile(
-              leading: const Icon(Icons.refresh),
-              title: Text(kRefreshBookingsLabel),
-              onTap: () {
-                Navigator.pop(context);
-                _refreshBookings();
-              },
-            ),
+                leading: const Icon(Icons.refresh),
+                title: Text(kRefreshBookingsLabel),
+                onTap: () {
+                  Navigator.pop(context);
+                  _refreshBookings();
+                },
+              ),
             if (canSeeDriverOps)
               ListTile(
                 leading: const Icon(Icons.my_location),
                 title: Text(kCenterOnMeLabel),
                 onTap: () async {
                   Navigator.pop(context);
-                  final pos = _lastPos ?? await geo.Geolocator.getCurrentPosition();
+                  final pos =
+                      _lastPos ?? await geo.Geolocator.getCurrentPosition();
                   _lastPos = pos;
 
                   if (_map != null) {
@@ -8309,7 +9502,6 @@ Drawer _buildDrawer() {
     );
   }
 }
-
 
 /// Small icon button with Fluxidi yellow glow.
 ///
@@ -8393,33 +9585,39 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
 
       for (var i = 0; i < items.length; i++) {
         final d = items[i].bookingDetails;
-        final namePresent = readDeep(d, const [
-          ['customer_name'],
-          ['customerName'],
-          ['name'],
-          ['customer', 'name'],
-          ['booking', 'customer_name'],
-          ['booking', 'customer', 'name'],
-          ['booking', 'custName'],
-        ]) != null;
-        final phonePresent = readDeep(d, const [
-          ['customer_phone'],
-          ['customerPhone'],
-          ['phone'],
-          ['customer', 'phone'],
-          ['booking', 'customer_phone'],
-          ['booking', 'customer', 'phone'],
-          ['booking', 'custPhone'],
-        ]) != null;
-        final emailPresent = readDeep(d, const [
-          ['customer_email'],
-          ['customerEmail'],
-          ['email'],
-          ['customer', 'email'],
-          ['booking', 'customer_email'],
-          ['booking', 'customer', 'email'],
-          ['booking', 'custEmail'],
-        ]) != null;
+        final namePresent =
+            readDeep(d, const [
+              ['customer_name'],
+              ['customerName'],
+              ['name'],
+              ['customer', 'name'],
+              ['booking', 'customer_name'],
+              ['booking', 'customer', 'name'],
+              ['booking', 'custName'],
+            ]) !=
+            null;
+        final phonePresent =
+            readDeep(d, const [
+              ['customer_phone'],
+              ['customerPhone'],
+              ['phone'],
+              ['customer', 'phone'],
+              ['booking', 'customer_phone'],
+              ['booking', 'customer', 'phone'],
+              ['booking', 'custPhone'],
+            ]) !=
+            null;
+        final emailPresent =
+            readDeep(d, const [
+              ['customer_email'],
+              ['customerEmail'],
+              ['email'],
+              ['customer', 'email'],
+              ['booking', 'customer_email'],
+              ['booking', 'customer', 'email'],
+              ['booking', 'custEmail'],
+            ]) !=
+            null;
         debugPrint(
           '[CONTACT][HISTORY] '
           'kind=${items[i].kind} '
@@ -8466,11 +9664,9 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       );
       return;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _RideReceiptPage(item: item),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _RideReceiptPage(item: item)));
   }
 
   Future<void> _archiveTrip(_TripHistoryItem item) async {
@@ -8528,131 +9724,151 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
-      appBar: AppBar(
         backgroundColor: const Color(0xFF0B1020),
-        elevation: 0,
-        title: Text(_receiptText('tripHistoryTitle')),
-        actions: [
-          IconButton(
-            tooltip: _receiptText('refresh'),
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: FutureBuilder<List<_TripHistoryItem>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '${_receiptText('historyLoadFailed')}\n${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70),
-                ),
-              ),
-            );
-          }
-          final items = snapshot.data ?? const <_TripHistoryItem>[];
-          if (items.isEmpty) {
-            return Center(
-              child: Text(
-                _receiptText('historyEmpty'),
-                style: const TextStyle(color: Colors.white70),
-              ),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              final km = item.kmTotal == null ? '—' : '${item.kmTotal!.toStringAsFixed(1)} km';
-              final total = item.totalEur == null
-                  ? '€ —'
-                  : '€ ${item.totalEur!.toStringAsFixed(2)}';
-              return Card(
-                color: const Color(0xFF141B2F),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => _openReceipt(item),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(0, 4, 12, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ListTile(
-                          leading: const Icon(Icons.local_taxi_outlined, color: Colors.white70),
-                          title: Text(
-                            item.destination,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                      '${item.kindLabel} • ${_formatDate(item.startedAt)}\n$km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)} • ${_localizedRideStatus(item.status)}',
-                              style: const TextStyle(color: Colors.white70, height: 1.35),
-                            ),
-                          ),
-                          trailing: Text(
-                            total,
-                            style: const TextStyle(
-                              color: Color(0xFFFFD400),
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          contentPadding: const EdgeInsets.only(left: 16),
-                          isThreeLine: true,
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            alignment: WrapAlignment.end,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: () => _archiveTrip(item),
-                                icon: const Icon(Icons.archive_outlined, size: 18),
-                                label: Text(_receiptText('archiveTripLabel')),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.white70,
-                                  side: const BorderSide(color: Colors.white24),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                              ),
-                              FilledButton.icon(
-                                onPressed: () => _openReceipt(item),
-                                icon: const Icon(Icons.receipt_long, size: 18),
-                                label: Text(_receiptText('receiptTitle')),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFFD400),
-                                  foregroundColor: const Color(0xFF101010),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0B1020),
+          elevation: 0,
+          title: Text(_receiptText('tripHistoryTitle')),
+          actions: [
+            IconButton(
+              tooltip: _receiptText('refresh'),
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: FutureBuilder<List<_TripHistoryItem>>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    '${_receiptText('historyLoadFailed')}\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
                   ),
                 ),
               );
-            },
-          );
-        },
+            }
+            final items = snapshot.data ?? const <_TripHistoryItem>[];
+            if (items.isEmpty) {
+              return Center(
+                child: Text(
+                  _receiptText('historyEmpty'),
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              );
+            }
+            return ListView.separated(
+              padding: const EdgeInsets.all(12),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                final km = item.kmTotal == null
+                    ? '—'
+                    : '${item.kmTotal!.toStringAsFixed(1)} km';
+                final total = item.totalEur == null
+                    ? '€ —'
+                    : '€ ${item.totalEur!.toStringAsFixed(2)}';
+                return Card(
+                  color: const Color(0xFF141B2F),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => _openReceipt(item),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(0, 4, 12, 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ListTile(
+                            leading: const Icon(
+                              Icons.local_taxi_outlined,
+                              color: Colors.white70,
+                            ),
+                            title: Text(
+                              item.destination,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${item.kindLabel} • ${_formatDate(item.startedAt)}\n$km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)} • ${_localizedRideStatus(item.status)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                            trailing: Text(
+                              total,
+                              style: const TextStyle(
+                                color: Color(0xFFFFD400),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            contentPadding: const EdgeInsets.only(left: 16),
+                            isThreeLine: true,
+                          ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: WrapAlignment.end,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _archiveTrip(item),
+                                  icon: const Icon(
+                                    Icons.archive_outlined,
+                                    size: 18,
+                                  ),
+                                  label: Text(_receiptText('archiveTripLabel')),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white70,
+                                    side: const BorderSide(
+                                      color: Colors.white24,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                                FilledButton.icon(
+                                  onPressed: () => _openReceipt(item),
+                                  icon: const Icon(
+                                    Icons.receipt_long,
+                                    size: 18,
+                                  ),
+                                  label: Text(_receiptText('receiptTitle')),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFFD400),
+                                    foregroundColor: const Color(0xFF101010),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
-    ));
+    );
   }
 }
 
@@ -8686,6 +9902,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   _TripHistoryItem get item => widget.item;
 
+  @override
+  void initState() {
+    super.initState();
+    _paymentStatus = _initialPaymentStatus();
+  }
+
   String _formatDate(String? iso) {
     if (iso == null || iso.trim().isEmpty) return '—';
     try {
@@ -8711,6 +9933,26 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   String? _detailText(String key) {
     final text = item.detail(key);
     return text == null || text == 'null' ? null : text;
+  }
+
+  _ReceiptPaymentStatus _initialPaymentStatus() {
+    final raw = _firstDetailPathText(const [
+      ['payment_status'],
+      ['paymentStatus'],
+      ['booking', 'payment_status'],
+      ['booking', 'paymentStatus'],
+      ['record', 'payment_status'],
+      ['record', 'paymentStatus'],
+      ['record', 'booking', 'payment_status'],
+      ['record', 'booking', 'paymentStatus'],
+      ['mollie', 'status'],
+      ['record', 'mollie', 'status'],
+    ])?.toLowerCase().trim();
+    if (raw == 'paid' || raw == 'settled') return _ReceiptPaymentStatus.paid;
+    if (raw == 'open' || raw == 'pending' || raw == 'authorized') {
+      return _ReceiptPaymentStatus.sent;
+    }
+    return _ReceiptPaymentStatus.pending;
   }
 
   String? _cleanContactText(dynamic value) {
@@ -8776,79 +10018,82 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String? get _customerName => _firstDetailPathText([
-        ['customer_name'],
-        ['customerName'],
-        ['name'],
-        ['customer', 'name'],
-        ['booking', 'customer_name'],
-        ['booking', 'customerName'],
-        ['booking', 'name'],
-        ['booking', 'customer', 'name'],
-        ['record', 'payload', 'customer_name'],
-        ['record', 'payload', 'customerName'],
-        ['record', 'payload', 'name'],
-        ['record', 'payload', 'customer', 'name'],
-        ['record', 'payload', 'booking', 'customer_name'],
-        ['record', 'payload', 'booking', 'customerName'],
-        ['record', 'payload', 'booking', 'name'],
-        ['record', 'payload', 'booking', 'customer', 'name'],
-      ]);
+    ['customer_name'],
+    ['customerName'],
+    ['name'],
+    ['customer', 'name'],
+    ['booking', 'customer_name'],
+    ['booking', 'customerName'],
+    ['booking', 'name'],
+    ['booking', 'customer', 'name'],
+    ['record', 'payload', 'customer_name'],
+    ['record', 'payload', 'customerName'],
+    ['record', 'payload', 'name'],
+    ['record', 'payload', 'customer', 'name'],
+    ['record', 'payload', 'booking', 'customer_name'],
+    ['record', 'payload', 'booking', 'customerName'],
+    ['record', 'payload', 'booking', 'name'],
+    ['record', 'payload', 'booking', 'customer', 'name'],
+  ]);
 
   String? get _customerPhoneRaw => _firstDetailPathText([
-        ['customer_phone'],
-        ['customerPhone'],
-        ['phone'],
-        ['tel'],
-        ['mobile'],
-        ['customer', 'phone'],
-        ['customer', 'tel'],
-        ['customer', 'mobile'],
-        ['booking', 'customer_phone'],
-        ['booking', 'customerPhone'],
-        ['booking', 'phone'],
-        ['booking', 'tel'],
-        ['booking', 'mobile'],
-        ['booking', 'customer', 'phone'],
-        ['booking', 'customer', 'tel'],
-        ['booking', 'customer', 'mobile'],
-        ['record', 'payload', 'customer_phone'],
-        ['record', 'payload', 'customerPhone'],
-        ['record', 'payload', 'phone'],
-        ['record', 'payload', 'tel'],
-        ['record', 'payload', 'mobile'],
-        ['record', 'payload', 'customer', 'phone'],
-        ['record', 'payload', 'customer', 'tel'],
-        ['record', 'payload', 'customer', 'mobile'],
-        ['record', 'payload', 'booking', 'customer_phone'],
-        ['record', 'payload', 'booking', 'customerPhone'],
-        ['record', 'payload', 'booking', 'phone'],
-        ['record', 'payload', 'booking', 'tel'],
-        ['record', 'payload', 'booking', 'mobile'],
-        ['record', 'payload', 'booking', 'customer', 'phone'],
-        ['record', 'payload', 'booking', 'customer', 'tel'],
-        ['record', 'payload', 'booking', 'customer', 'mobile'],
-      ]);
+    ['customer_phone'],
+    ['customerPhone'],
+    ['phone'],
+    ['tel'],
+    ['mobile'],
+    ['customer', 'phone'],
+    ['customer', 'tel'],
+    ['customer', 'mobile'],
+    ['booking', 'customer_phone'],
+    ['booking', 'customerPhone'],
+    ['booking', 'phone'],
+    ['booking', 'tel'],
+    ['booking', 'mobile'],
+    ['booking', 'customer', 'phone'],
+    ['booking', 'customer', 'tel'],
+    ['booking', 'customer', 'mobile'],
+    ['record', 'payload', 'customer_phone'],
+    ['record', 'payload', 'customerPhone'],
+    ['record', 'payload', 'phone'],
+    ['record', 'payload', 'tel'],
+    ['record', 'payload', 'mobile'],
+    ['record', 'payload', 'customer', 'phone'],
+    ['record', 'payload', 'customer', 'tel'],
+    ['record', 'payload', 'customer', 'mobile'],
+    ['record', 'payload', 'booking', 'customer_phone'],
+    ['record', 'payload', 'booking', 'customerPhone'],
+    ['record', 'payload', 'booking', 'phone'],
+    ['record', 'payload', 'booking', 'tel'],
+    ['record', 'payload', 'booking', 'mobile'],
+    ['record', 'payload', 'booking', 'customer', 'phone'],
+    ['record', 'payload', 'booking', 'customer', 'tel'],
+    ['record', 'payload', 'booking', 'customer', 'mobile'],
+  ]);
 
-  String? get _customerEmail => _validEmail(_firstDetailPathText([
-        ['customer_email'],
-        ['customerEmail'],
-        ['email'],
-        ['customer', 'email'],
-        ['booking', 'customer_email'],
-        ['booking', 'customerEmail'],
-        ['booking', 'email'],
-        ['booking', 'customer', 'email'],
-        ['record', 'payload', 'customer_email'],
-        ['record', 'payload', 'customerEmail'],
-        ['record', 'payload', 'email'],
-        ['record', 'payload', 'customer', 'email'],
-        ['record', 'payload', 'booking', 'customer_email'],
-        ['record', 'payload', 'booking', 'customerEmail'],
-        ['record', 'payload', 'booking', 'email'],
-        ['record', 'payload', 'booking', 'customer', 'email'],
-      ]));
+  String? get _customerEmail => _validEmail(
+    _firstDetailPathText([
+      ['customer_email'],
+      ['customerEmail'],
+      ['email'],
+      ['customer', 'email'],
+      ['booking', 'customer_email'],
+      ['booking', 'customerEmail'],
+      ['booking', 'email'],
+      ['booking', 'customer', 'email'],
+      ['record', 'payload', 'customer_email'],
+      ['record', 'payload', 'customerEmail'],
+      ['record', 'payload', 'email'],
+      ['record', 'payload', 'customer', 'email'],
+      ['record', 'payload', 'booking', 'customer_email'],
+      ['record', 'payload', 'booking', 'customerEmail'],
+      ['record', 'payload', 'booking', 'email'],
+      ['record', 'payload', 'booking', 'customer', 'email'],
+    ]),
+  );
 
-  String? get _customerCountryContext => _firstDetailText([
+  String? get _customerCountryContext =>
+      _firstDetailText([
         'phone_country_code',
         'phoneCountryCode',
         'dial_code',
@@ -8861,7 +10106,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         'countryIso',
         'locale',
         'language',
-      ]) ?? _tenantDefaultCountryIso();
+      ]) ??
+      _tenantDefaultCountryIso();
 
   String? _tenantDefaultCountryIso() {
     // Tenant-level fallback only. Future white-label tenants should move this into tenant config.
@@ -8869,8 +10115,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return null;
   }
 
-  String? get _customerPhoneE164 =>
-      _normalizePhoneForWhatsApp(_customerPhoneRaw, countryContext: _customerCountryContext);
+  String? get _customerPhoneE164 => _normalizePhoneForWhatsApp(
+    _customerPhoneRaw,
+    countryContext: _customerCountryContext,
+  );
 
   bool get _hasAnyRawCustomerContact =>
       (_customerName?.trim().isNotEmpty ?? false) ||
@@ -8889,7 +10137,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   String _maskPhoneForLog(String? value) {
     final digits = value?.replaceAll(RegExp(r'\D'), '') ?? '';
     if (digits.isEmpty) return '-';
-    final suffix = digits.length <= 2 ? digits : digits.substring(digits.length - 2);
+    final suffix = digits.length <= 2
+        ? digits
+        : digits.substring(digits.length - 2);
     return '***$suffix';
   }
 
@@ -8970,7 +10220,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
     final normalized = '$dial$national';
     final normalizedDigits = normalized.replaceAll(RegExp(r'\D'), '');
-    if (normalizedDigits.length < 8 || normalizedDigits.length > 15) return null;
+    if (normalizedDigits.length < 8 || normalizedDigits.length > 15)
+      return null;
     return normalized;
   }
 
@@ -9095,9 +10346,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return normalized
         .split(RegExp(r'\s+'))
         .where((part) => part.isNotEmpty)
-        .map((part) => part.length == 1
-            ? part.toUpperCase()
-            : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}')
+        .map(
+          (part) => part.length == 1
+              ? part.toUpperCase()
+              : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+        )
         .join(' ');
   }
 
@@ -9109,7 +10362,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   bool get _hasReturnPriceSplit {
     final outbound = _detailDouble('outbound_price_eur');
     final ret = _detailDouble('return_price_eur');
-    return outbound != null && ret != null && ret > 0 && !_sameMoney(outbound, ret);
+    return outbound != null &&
+        ret != null &&
+        ret > 0 &&
+        !_sameMoney(outbound, ret);
   }
 
   bool get _hasReturnBookingInfo =>
@@ -9126,11 +10382,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final rows = <Widget>[];
 
     if (_hasReturnBookingInfo && (outbound != null || ret != null)) {
-      if (package != null && !_sameMoney(package, outbound) && !_sameMoney(package, ret)) {
-        rows.add(_receiptRow(_receiptText('packagePrice'), _moneyText(package)));
+      if (package != null &&
+          !_sameMoney(package, outbound) &&
+          !_sameMoney(package, ret)) {
+        rows.add(
+          _receiptRow(_receiptText('packagePrice'), _moneyText(package)),
+        );
       }
       if (outbound != null) {
-        rows.add(_receiptRow(_receiptText('outboundPrice'), _moneyText(outbound)));
+        rows.add(
+          _receiptRow(_receiptText('outboundPrice'), _moneyText(outbound)),
+        );
       }
       if (ret != null && !_sameMoney(ret, outbound)) {
         rows.add(_receiptRow(_receiptText('returnPrice'), _moneyText(ret)));
@@ -9202,7 +10464,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         'ref': _customerReference,
         'amount': amount.toStringAsFixed(2),
         'currency': item.currency,
-        'memo': '$kCompanyName ${_receiptText('receiptTitle')} ${item.receiptNumber}',
+        'memo':
+            '$kCompanyName ${_receiptText('receiptTitle')} ${item.receiptNumber}',
       },
     ).toString();
   }
@@ -9217,9 +10480,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     await Clipboard.setData(ClipboardData(text: _paymentLink()));
     _markPaymentRequestSent();
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_receiptText('paymentLinkCopied'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_receiptText('paymentLinkCopied'))));
   }
 
   Future<void> _openWhatsApp(
@@ -9228,7 +10491,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     required String message,
   }) async {
     final digits = phoneE164.replaceAll(RegExp(r'\D'), '');
-    final uri = Uri.https('wa.me', '/$digits', <String, String>{'text': message});
+    final uri = Uri.https('wa.me', '/$digits', <String, String>{
+      'text': message,
+    });
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -9251,12 +10516,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ? 'mailto:${Uri.encodeComponent(recipient)}?subject=$encodedSubject&body=$encodedBody'
           : 'mailto:?subject=$encodedSubject&body=$encodedBody',
     );
-    _debugReceiptContactState('email_open', emailOverride: recipient.isNotEmpty ? recipient : null);
+    _debugReceiptContactState(
+      'email_open',
+      emailOverride: recipient.isNotEmpty ? recipient : null,
+    );
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_receiptText('emailOpenFailed'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_receiptText('emailOpenFailed'))));
     }
   }
 
@@ -9268,7 +10536,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       );
       return;
     }
-    await _openWhatsApp(context, phoneE164: phone, message: _receiptCustomerMessage());
+    await _openWhatsApp(
+      context,
+      phoneE164: phone,
+      message: _receiptCustomerMessage(),
+    );
   }
 
   Future<void> _emailReceiptGeneric(BuildContext context) async {
@@ -9325,7 +10597,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               const SizedBox(height: 12),
               Text(
                 _totalText(),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const SizedBox(height: 8),
               SelectableText(
@@ -9360,7 +10635,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           : _ReceiptPaymentStatus.paid;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_receiptText('paymentStatus')}: ${_paymentStatusText()}')),
+      SnackBar(
+        content: Text(
+          '${_receiptText('paymentStatus')}: ${_paymentStatusText()}',
+        ),
+      ),
     );
   }
 
@@ -9369,16 +10648,20 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_receiptText('paymentStatus')}: ${_paymentStatusText()}')),
+      SnackBar(
+        content: Text(
+          '${_receiptText('paymentStatus')}: ${_paymentStatusText()}',
+        ),
+      ),
     );
   }
 
   Future<void> _shareReceipt(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: _shareText()));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_receiptText('receiptCopied'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_receiptText('receiptCopied'))));
   }
 
   void _comingSoon(BuildContext context, String label) {
@@ -9388,9 +10671,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   void _printReceiptPlaceholder(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_receiptText('printLater'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_receiptText('printLater'))));
   }
 
   Widget _receiptRow(String label, String value, {bool highlight = false}) {
@@ -9456,8 +10739,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   String? _plannedSubtype() {
     final explicit = _detailText('subtype');
     if (explicit != null) return _localizedRideSubtype(explicit);
-    if ((item.bookingId ?? '').endsWith('-R')) return _receiptText('returnRide');
-    if (_detailText('return_scheduled_pickup_at') != null || _detailText('return_route') != null) {
+    if ((item.bookingId ?? '').endsWith('-R'))
+      return _receiptText('returnRide');
+    if (_detailText('return_scheduled_pickup_at') != null ||
+        _detailText('return_route') != null) {
       return _receiptText('outboundRide');
     }
     return null;
@@ -9482,7 +10767,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         if (distance != null) '${distance.toStringAsFixed(1)} km',
         if (duration != null) '${duration.round()} min',
       ].join(', ');
-      final route = parts.isEmpty ? '${_receiptText('route')} ${i + 1}' : parts.join(' ');
+      final route = parts.isEmpty
+          ? '${_receiptText('route')} ${i + 1}'
+          : parts.join(' ');
       lines.add('${i + 1}. $route${meta.isEmpty ? '' : ': $meta'}');
     }
     return lines.isEmpty ? null : lines.join('\n');
@@ -9641,21 +10928,49 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  _receiptRow(_receiptText('receiptNumber'), item.receiptNumber),
+                  _receiptRow(
+                    _receiptText('receiptNumber'),
+                    item.receiptNumber,
+                  ),
                   _receiptRow(_receiptText('type'), item.kindLabel),
-                  _optionalReceiptRow(_receiptText('subtype'), _plannedSubtype()),
-                  _receiptRow(_receiptText('startTime'), _formatDate(item.startedAt)),
-                  _receiptRow(_receiptText('endTime'), _formatDate(item.stoppedAt)),
+                  _optionalReceiptRow(
+                    _receiptText('subtype'),
+                    _plannedSubtype(),
+                  ),
+                  _receiptRow(
+                    _receiptText('startTime'),
+                    _formatDate(item.startedAt),
+                  ),
+                  _receiptRow(
+                    _receiptText('endTime'),
+                    _formatDate(item.stoppedAt),
+                  ),
                   _receiptRow(_receiptText('from'), item.origin),
                   _receiptRow(_receiptText('to'), item.destination),
                   _receiptRow(_receiptText('distance'), _kmText()),
-                  _receiptRow(_receiptText('actualWaitingTime'), _formatWait(item.waitSecondsTotal)),
-                  _receiptRow(_receiptText('total'), _totalText(), highlight: true),
+                  _receiptRow(
+                    _receiptText('actualWaitingTime'),
+                    _formatWait(item.waitSecondsTotal),
+                  ),
+                  _receiptRow(
+                    _receiptText('total'),
+                    _totalText(),
+                    highlight: true,
+                  ),
                   if (_hasAnyRawCustomerContact) ...[
                     _sectionTitle(_receiptText('customerDetails')),
-                    _optionalReceiptRow(_receiptText('customerName'), _customerName),
-                    _optionalReceiptRow(_receiptText('customerPhone'), _customerPhoneRaw),
-                    _optionalReceiptRow(_receiptText('customerEmail'), _customerEmail),
+                    _optionalReceiptRow(
+                      _receiptText('customerName'),
+                      _customerName,
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('customerPhone'),
+                      _customerPhoneRaw,
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('customerEmail'),
+                      _customerEmail,
+                    ),
                   ],
                   if (_isPlannedReceipt) ...[
                     _sectionTitle(_receiptText('plannedBookingDetails')),
@@ -9665,28 +10980,66 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                           ? null
                           : _formatDate(_detailText('scheduled_pickup_at')),
                     ),
-                    _optionalReceiptRow(_receiptText('service'), _displayToken(_detailText('service_type'))),
-                    _optionalReceiptRow(_receiptText('tier'), _displayToken(_detailText('tier'))),
-                    _optionalReceiptRow(_receiptText('passengers'), _detailText('passengers')),
-                    _optionalReceiptRow(_receiptText('bags'), _detailText('luggage_count')),
-                    _optionalReceiptRow(_receiptText('bookedWaitingTime'), _minutesText('booked_wait_minutes')),
-                    _optionalReceiptRow(_receiptText('extraStops'), _detailText('stops')),
-                    _optionalReceiptRow(_receiptText('extras'), _detailText('extras')),
-                    _optionalReceiptRow(_receiptText('notes'), _detailText('notes')),
+                    _optionalReceiptRow(
+                      _receiptText('service'),
+                      _displayToken(_detailText('service_type')),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('tier'),
+                      _displayToken(_detailText('tier')),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('passengers'),
+                      _detailText('passengers'),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('bags'),
+                      _detailText('luggage_count'),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('bookedWaitingTime'),
+                      _minutesText('booked_wait_minutes'),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('extraStops'),
+                      _detailText('stops'),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('extras'),
+                      _detailText('extras'),
+                    ),
+                    _optionalReceiptRow(
+                      _receiptText('notes'),
+                      _detailText('notes'),
+                    ),
                     _sectionTitle(_receiptText('routeAndPrices')),
-                    _optionalReceiptRow(_receiptText('routeDetails'), _routeSegmentsText()),
+                    _optionalReceiptRow(
+                      _receiptText('routeDetails'),
+                      _routeSegmentsText(),
+                    ),
                     ..._plannedPriceRows(),
                     _optionalReceiptRow(
                       _receiptText('returnPlanned'),
                       _detailText('return_scheduled_pickup_at') == null
                           ? null
-                          : _formatDate(_detailText('return_scheduled_pickup_at')),
+                          : _formatDate(
+                              _detailText('return_scheduled_pickup_at'),
+                            ),
                     ),
-                    _optionalReceiptRow(_receiptText('returnRoute'), _detailText('return_route')),
+                    _optionalReceiptRow(
+                      _receiptText('returnRoute'),
+                      _detailText('return_route'),
+                    ),
                   ],
                   _sectionTitle(_receiptText('statusPaymentSection')),
-                  _receiptRow(_receiptText('rideStatus'), _localizedRideStatus(item.status)),
-                  _receiptRow(_receiptText('paymentStatus'), _paymentStatusText()),
+                  _receiptRow(
+                    _receiptText('rideStatus'),
+                    _localizedRideStatus(item.status),
+                  ),
+                  _receiptRow(
+                    _receiptText('paymentStatus'),
+                    _paymentStatusText(),
+                  ),
                 ],
               ),
             ),
@@ -9756,7 +11109,6 @@ class _BookingsHubPage extends StatelessWidget {
   }
 }
 
-
 class _GlowIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onPressed;
@@ -9782,7 +11134,9 @@ class _GlowIconButton extends StatelessWidget {
           height: 42,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: disabled ? Colors.white.withOpacity(0.04) : Colors.white.withOpacity(0.06),
+            color: disabled
+                ? Colors.white.withOpacity(0.04)
+                : Colors.white.withOpacity(0.06),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
             boxShadow: disabled
@@ -9798,7 +11152,9 @@ class _GlowIconButton extends StatelessWidget {
           child: Icon(
             icon,
             size: 20,
-            color: disabled ? Colors.white.withOpacity(0.35) : Colors.white.withOpacity(0.90),
+            color: disabled
+                ? Colors.white.withOpacity(0.35)
+                : Colors.white.withOpacity(0.90),
           ),
         ),
       ),
