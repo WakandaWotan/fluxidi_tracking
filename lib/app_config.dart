@@ -252,6 +252,170 @@ class BusinessSettingsState {
   }
 }
 
+class BackendBusinessProfile {
+  final String companyName;
+  final String legalName;
+  final String vatNumber;
+  final String companyRegistrationNumber;
+  final String address;
+  final String postcode;
+  final String city;
+  final String country;
+  final String phone;
+  final String email;
+  final String website;
+  final String invoiceEmail;
+  final String iban;
+  final String paymentReferencePrefix;
+  final String invoiceReceiptFooterText;
+
+  const BackendBusinessProfile({
+    required this.companyName,
+    required this.legalName,
+    required this.vatNumber,
+    required this.companyRegistrationNumber,
+    required this.address,
+    required this.postcode,
+    required this.city,
+    required this.country,
+    required this.phone,
+    required this.email,
+    required this.website,
+    required this.invoiceEmail,
+    required this.iban,
+    required this.paymentReferencePrefix,
+    required this.invoiceReceiptFooterText,
+  });
+
+  factory BackendBusinessProfile.defaults() => BackendBusinessProfile(
+        companyName: appConfig.companyName,
+        legalName: appConfig.companyName,
+        vatNumber: '',
+        companyRegistrationNumber: '',
+        address: '',
+        postcode: '',
+        city: '',
+        country: 'BE',
+        phone: appConfig.supportPhone,
+        email: appConfig.supportEmail,
+        website: '',
+        invoiceEmail: appConfig.supportEmail,
+        iban: '',
+        paymentReferencePrefix: 'FLX',
+        invoiceReceiptFooterText: '',
+      );
+
+  factory BackendBusinessProfile.fromJson(Map<String, dynamic> json) {
+    final fallback = BackendBusinessProfile.defaults();
+    String text(String key, String fallbackValue) =>
+        (json[key] ?? fallbackValue).toString();
+    return BackendBusinessProfile(
+      companyName: text('companyName', fallback.companyName),
+      legalName: text('legalName', fallback.legalName),
+      vatNumber: text('vatNumber', fallback.vatNumber),
+      companyRegistrationNumber: text(
+        'companyRegistrationNumber',
+        fallback.companyRegistrationNumber,
+      ),
+      address: text('address', fallback.address),
+      postcode: text('postcode', fallback.postcode),
+      city: text('city', fallback.city),
+      country: text('country', fallback.country),
+      phone: text('phone', fallback.phone),
+      email: text('email', fallback.email),
+      website: text('website', fallback.website),
+      invoiceEmail: text('invoiceEmail', fallback.invoiceEmail),
+      iban: text('iban', fallback.iban),
+      paymentReferencePrefix:
+          text('paymentReferencePrefix', fallback.paymentReferencePrefix),
+      invoiceReceiptFooterText:
+          text('invoiceReceiptFooterText', fallback.invoiceReceiptFooterText),
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'companyName': companyName,
+        'legalName': legalName,
+        'vatNumber': vatNumber,
+        'companyRegistrationNumber': companyRegistrationNumber,
+        'address': address,
+        'postcode': postcode,
+        'city': city,
+        'country': country,
+        'phone': phone,
+        'email': email,
+        'website': website,
+        'invoiceEmail': invoiceEmail,
+        'iban': iban,
+        'paymentReferencePrefix': paymentReferencePrefix,
+        'invoiceReceiptFooterText': invoiceReceiptFooterText,
+      };
+}
+
+class BackendTaxProfile {
+  final bool vatEnabled;
+  final double vatRate;
+  final String vatDisplayMode;
+  final Map<String, String> vatLabels;
+
+  const BackendTaxProfile({
+    required this.vatEnabled,
+    required this.vatRate,
+    required this.vatDisplayMode,
+    required this.vatLabels,
+  });
+
+  factory BackendTaxProfile.defaults() => BackendTaxProfile(
+        vatEnabled: true,
+        vatRate: appConfig.defaultVatRate,
+        vatDisplayMode: 'excl',
+        vatLabels: const <String, String>{
+          'nl': 'BTW',
+          'en': 'VAT',
+          'fr': 'TVA',
+          'es': 'IVA',
+        },
+      );
+
+  factory BackendTaxProfile.fromJson(Map<String, dynamic> json) {
+    final fallback = BackendTaxProfile.defaults();
+    final rawRate = json['vatRate'] ?? json['vat_rate'];
+    final parsedRate = rawRate is num
+        ? rawRate.toDouble()
+        : double.tryParse(rawRate?.toString().replaceAll(',', '.') ?? '');
+    final labels = json['vatLabels'] is Map
+        ? Map<String, dynamic>.from(json['vatLabels'] as Map)
+        : const <String, dynamic>{};
+    String label(String key) =>
+        (labels[key] ?? fallback.vatLabels[key] ?? '').toString();
+    final mode = (json['vatDisplayMode'] ?? json['vat_mode'] ?? fallback.vatDisplayMode)
+        .toString()
+        .trim()
+        .toLowerCase();
+    return BackendTaxProfile(
+      vatEnabled:
+          json['vatEnabled'] is bool ? json['vatEnabled'] as bool : fallback.vatEnabled,
+      vatRate: parsedRate == null || !parsedRate.isFinite
+          ? fallback.vatRate
+          : parsedRate.clamp(0.0, 1.0).toDouble(),
+      vatDisplayMode: mode == 'incl' ? 'incl' : 'excl',
+      vatLabels: <String, String>{
+        'nl': label('nl'),
+        'en': label('en'),
+        'fr': label('fr'),
+        'es': label('es'),
+      },
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'vatEnabled': vatEnabled,
+        'vatRate': vatRate,
+        'vatDisplayMode': vatDisplayMode,
+        'vatLabels': vatLabels,
+      };
+}
+
 class VehicleProfile {
   final String id;
   final String vehicleName;
@@ -855,6 +1019,18 @@ Future<void> _persistLocalTenantState() async {
 const String _fleetSyncAdminToken =
     String.fromEnvironment('ADMIN_TOKEN', defaultValue: '');
 
+Map<String, String> _adminJsonHeaders() {
+  final headers = <String, String>{
+    'Content-Type': 'application/json',
+  };
+  final token = _fleetSyncAdminToken.trim();
+  if (token.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $token';
+    headers['x-admin-token'] = token;
+  }
+  return headers;
+}
+
 Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
   return <String, dynamic>{
     'base_fare': s.pricingBaseFare,
@@ -906,21 +1082,13 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(VehicleProfile v) {
 Future<bool> syncPricingProfileToBackend() async {
   try {
     final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/profile');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-    };
-    final token = _fleetSyncAdminToken.trim();
-    if (token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
-      headers['x-admin-token'] = token;
-    }
     final profilePayload = _encodePricingProfileForBackend(
       businessSettingsNotifier.value,
     );
     await http
         .post(
           endpoint,
-          headers: headers,
+          headers: _adminJsonHeaders(),
           body: jsonEncode(<String, dynamic>{'pricing_profile': profilePayload}),
         )
         .timeout(const Duration(seconds: 12));
@@ -933,14 +1101,6 @@ Future<bool> syncPricingProfileToBackend() async {
 Future<bool> syncFleetInventoryToBackend() async {
   try {
     final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-    };
-    final token = _fleetSyncAdminToken.trim();
-    if (token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
-      headers['x-admin-token'] = token;
-    }
     final fleetPayload = vehiclesNotifier.value
         .map(_encodeVehicleForBackendFleet)
         .where((e) => (e['vehicle_id'] as String).isNotEmpty)
@@ -948,7 +1108,7 @@ Future<bool> syncFleetInventoryToBackend() async {
     await http
         .post(
           endpoint,
-          headers: headers,
+          headers: _adminJsonHeaders(),
           body: jsonEncode(<String, dynamic>{'vehicles': fleetPayload}),
         )
         .timeout(const Duration(seconds: 12));
@@ -957,6 +1117,82 @@ Future<bool> syncFleetInventoryToBackend() async {
     // Keep local-first UX stable even when backend sync fails.
     return false;
   }
+}
+
+Future<BackendBusinessProfile> fetchBackendBusinessProfile() async {
+  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile');
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['business_profile'];
+  if (profile is! Map) throw Exception('Missing business_profile');
+  return BackendBusinessProfile.fromJson(Map<String, dynamic>.from(profile));
+}
+
+Future<BackendBusinessProfile> saveBackendBusinessProfile(
+  BackendBusinessProfile profile,
+) async {
+  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile');
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          'business_profile': profile.toJson(),
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final saved = decoded['business_profile'];
+  if (saved is! Map) throw Exception('Missing business_profile');
+  return BackendBusinessProfile.fromJson(Map<String, dynamic>.from(saved));
+}
+
+Future<BackendTaxProfile> fetchBackendTaxProfile() async {
+  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile');
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['tax_profile'];
+  if (profile is! Map) throw Exception('Missing tax_profile');
+  return BackendTaxProfile.fromJson(Map<String, dynamic>.from(profile));
+}
+
+Future<BackendTaxProfile> saveBackendTaxProfile(
+  BackendTaxProfile profile,
+) async {
+  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile');
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          'tax_profile': profile.toJson(),
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final saved = decoded['tax_profile'];
+  if (saved is! Map) throw Exception('Missing tax_profile');
+  return BackendTaxProfile.fromJson(Map<String, dynamic>.from(saved));
 }
 
 Future<void> loadLocalTenantState() async {
