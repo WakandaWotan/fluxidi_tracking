@@ -8920,7 +8920,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   Future<void> _sendReceiptWhatsApp(BuildContext context) async {
     final phone = _customerPhoneE164;
-    if (phone == null) return;
+    if (phone == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('noValidWhatsappPhone'))),
+      );
+      return;
+    }
     await _openWhatsApp(context, phoneE164: phone, message: _receiptCustomerMessage());
   }
 
@@ -9194,7 +9199,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   Widget _receiptActionsSection(BuildContext context) {
-    final customerPhone = _customerPhoneE164;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -9214,20 +9218,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             ),
           ),
           const SizedBox(height: 10),
-          if (customerPhone != null) ...[
-            FilledButton.icon(
-              onPressed: () => _sendReceiptWhatsApp(context),
-              icon: const Icon(Icons.chat_outlined),
-              label: Text(_receiptText('whatsappReceipt')),
-            ),
-            const SizedBox(height: 8),
-          ] else if (_hasAnyRawCustomerContact) ...[
-            Text(
-              _receiptText('noValidWhatsappPhone'),
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-          ],
+          FilledButton.icon(
+            onPressed: () => _sendReceiptWhatsApp(context),
+            icon: const Icon(Icons.chat_outlined),
+            label: Text(_receiptText('whatsappReceipt')),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => _emailReceiptGeneric(context),
             icon: const Icon(Icons.email_outlined),
