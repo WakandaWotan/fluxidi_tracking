@@ -1046,6 +1046,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _phoneCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _companyNameCtrl = TextEditingController();
+  final TextEditingController _vatNumberCtrl = TextEditingController();
   final TextEditingController _messageCtrl = TextEditingController();
   bool _submitting = false;
   String? _submitState;
@@ -1080,6 +1082,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
+    _companyNameCtrl.dispose();
+    _vatNumberCtrl.dispose();
     _messageCtrl.dispose();
     super.dispose();
   }
@@ -1170,6 +1174,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
+    final companyName = _companyNameCtrl.text.trim();
+    final vatNumber = _vatNumberCtrl.text.trim();
     if (name.isEmpty || phone.isEmpty || email.isEmpty || !_isValidEmail(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1189,6 +1195,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'full_name': name,
         'phone': phone,
         'email': email,
+        'companyName': companyName,
+        'vatNumber': vatNumber,
         'message': _messageCtrl.text.trim(),
       },
       'name': name,
@@ -1197,6 +1205,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'customer_name': name,
       'customer_phone': phone,
       'customer_email': email,
+      'customer_company_name': companyName,
+      'customer_vat_number': vatNumber,
+      'customerCompanyName': companyName,
+      'customerVatNumber': vatNumber,
+      'companyName': companyName,
+      'vatNumber': vatNumber,
+      'billing_company_name': companyName,
+      'billing_vat_number': vatNumber,
+      'company_name': companyName,
+      'vat_number': vatNumber,
       'message': _messageCtrl.text.trim(),
       // Website contract includes full quote object under "quote"
       'quote': widget.quote,
@@ -1435,6 +1453,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 _input(_phoneCtrl, widget.strings.bookingPhoneLabel.of(widget.language), keyboardType: TextInputType.phone),
                 const SizedBox(height: 8),
                 _input(_emailCtrl, widget.strings.bookingEmailLabel.of(widget.language), keyboardType: TextInputType.emailAddress),
+                const SizedBox(height: 8),
+                _input(_companyNameCtrl, widget.strings.bookingCompanyNameOptionalLabel.of(widget.language)),
+                const SizedBox(height: 8),
+                _input(_vatNumberCtrl, widget.strings.bookingVatNumberOptionalLabel.of(widget.language)),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    widget.strings.bookingVatNumberHelpText.of(widget.language),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 _input(_messageCtrl, widget.strings.bookingMessageOptionalLabel.of(widget.language), maxLines: 3),
               ],

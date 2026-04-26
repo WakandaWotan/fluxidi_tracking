@@ -87,6 +87,9 @@ class AppStrings {
   final LocalizedText bookingFullNameLabel;
   final LocalizedText bookingPhoneLabel;
   final LocalizedText bookingEmailLabel;
+  final LocalizedText bookingCompanyNameOptionalLabel;
+  final LocalizedText bookingVatNumberOptionalLabel;
+  final LocalizedText bookingVatNumberHelpText;
   final LocalizedText bookingMessageOptionalLabel;
   final LocalizedText bookingConfirmButtonLabel;
   final LocalizedText bookingSubmitPlaceholderMessage;
@@ -199,6 +202,9 @@ class AppStrings {
     required this.bookingFullNameLabel,
     required this.bookingPhoneLabel,
     required this.bookingEmailLabel,
+    required this.bookingCompanyNameOptionalLabel,
+    required this.bookingVatNumberOptionalLabel,
+    required this.bookingVatNumberHelpText,
     required this.bookingMessageOptionalLabel,
     required this.bookingConfirmButtonLabel,
     required this.bookingSubmitPlaceholderMessage,
@@ -351,6 +357,9 @@ const AppStrings _nl = AppStrings(
   bookingFullNameLabel: LocalizedText(nl: 'Volledige naam', en: 'Full name', fr: 'Nom complet', es: 'Nombre completo'),
   bookingPhoneLabel: LocalizedText(nl: 'Telefoonnummer', en: 'Phone number', fr: 'Numero de telephone', es: 'Numero de telefono'),
   bookingEmailLabel: LocalizedText(nl: 'E-mailadres', en: 'Email address', fr: 'Adresse e-mail', es: 'Correo electronico'),
+  bookingCompanyNameOptionalLabel: LocalizedText(nl: 'Bedrijfsnaam (optioneel)', en: 'Company name (optional)', fr: 'Nom de l’entreprise (optionnel)', es: 'Nombre de empresa (opcional)'),
+  bookingVatNumberOptionalLabel: LocalizedText(nl: 'BTW-nummer (optioneel)', en: 'VAT number (optional)', fr: 'Numéro de TVA (optionnel)', es: 'Número de IVA (opcional)'),
+  bookingVatNumberHelpText: LocalizedText(nl: 'Vul je BTW-nummer in voor zakelijke facturatie.', en: 'Enter your VAT number for business invoicing.', fr: 'Saisissez votre numéro de TVA pour la facturation professionnelle.', es: 'Introduce tu número de IVA para facturación empresarial.'),
   bookingMessageOptionalLabel: LocalizedText(nl: 'Bericht (optioneel)', en: 'Message (optional)', fr: 'Message (optionnel)', es: 'Mensaje (opcional)'),
   bookingConfirmButtonLabel: LocalizedText(nl: 'Bevestig boeking', en: 'Confirm booking', fr: 'Confirmer la reservation', es: 'Confirmar reserva'),
   bookingSubmitPlaceholderMessage: LocalizedText(nl: 'Boeking is klaar om te versturen zodra de app-booking API is gekoppeld.', en: 'Booking is ready to submit once app booking API is connected.', fr: 'La reservation est prete a etre envoyee des que l API de reservation app est connectee.', es: 'La reserva esta lista para enviar cuando se conecte la API de reservas de la app.'),
