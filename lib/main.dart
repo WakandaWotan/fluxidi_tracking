@@ -2960,6 +2960,30 @@ Map<String, String> _headers({bool admin = false}) {
         }
       });
 
+      if (kDebugMode) {
+        bool nonEmpty(dynamic v) {
+          if (v == null) return false;
+          final s = v.toString().trim();
+          return s.isNotEmpty && s.toLowerCase() != 'null';
+        }
+
+        final details = _activeBooking?.details ?? const <String, dynamic>{};
+        final hasBookingMap = details['booking'] is Map;
+        final bookingMap = hasBookingMap
+            ? Map<String, dynamic>.from(details['booking'] as Map)
+            : const <String, dynamic>{};
+        debugPrint(
+          '[CONTACT][HYDRATE] '
+          'topNamePresent=${nonEmpty(details['customer_name']) || nonEmpty(details['customerName']) || nonEmpty(details['name'])} '
+          'topPhonePresent=${nonEmpty(details['customer_phone']) || nonEmpty(details['customerPhone']) || nonEmpty(details['phone'])} '
+          'topEmailPresent=${nonEmpty(details['customer_email']) || nonEmpty(details['customerEmail']) || nonEmpty(details['email'])} '
+          'bookingNamePresent=${nonEmpty(bookingMap['custName']) || nonEmpty(bookingMap['customer_name']) || nonEmpty(bookingMap['name'])} '
+          'bookingPhonePresent=${nonEmpty(bookingMap['custPhone']) || nonEmpty(bookingMap['customer_phone']) || nonEmpty(bookingMap['phone'])} '
+          'bookingEmailPresent=${nonEmpty(bookingMap['custEmail']) || nonEmpty(bookingMap['customer_email']) || nonEmpty(bookingMap['email'])} '
+          'hasBookingMap=$hasBookingMap',
+        );
+      }
+
       final record = (j['record'] is Map) ? (j['record'] as Map).cast<String, dynamic>() : null;
       final quoteSource = j['quote'] ?? record?['quote'];
       final quote = (quoteSource is Map) ? quoteSource.cast<String, dynamic>() : null;
@@ -3813,6 +3837,26 @@ Map<String, String> _headers({bool admin = false}) {
         if (price != null) 'total_eur': price.toDouble(),
         'currency': booking.currency ?? kDefaultCurrency,
       };
+      if (kDebugMode) {
+        bool nonEmpty(dynamic v) {
+          if (v == null) return false;
+          final s = v.toString().trim();
+          return s.isNotEmpty && s.toLowerCase() != 'null';
+        }
+
+        final nestedCustomer = (bookingDetails['customer'] is Map)
+            ? Map<String, dynamic>.from(bookingDetails['customer'] as Map)
+            : const <String, dynamic>{};
+        debugPrint(
+          '[CONTACT][STOP_PAYLOAD] '
+          'namePresent=${nonEmpty(bookingDetails['customer_name'])} '
+          'phonePresent=${nonEmpty(bookingDetails['customer_phone'])} '
+          'emailPresent=${nonEmpty(bookingDetails['customer_email'])} '
+          'nestedNamePresent=${nonEmpty(nestedCustomer['name'])} '
+          'nestedPhonePresent=${nonEmpty(nestedCustomer['phone'])} '
+          'nestedEmailPresent=${nonEmpty(nestedCustomer['email'])}',
+        );
+      }
       final res = await http
           .post(
             Uri.parse('$kWorkerBaseUrl$kRecordPlannedTripStopPath'),
@@ -8318,11 +8362,75 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     }
     final trips = decoded['trips'];
     if (trips is! List) return <_TripHistoryItem>[];
-    return trips
+    final items = trips
         .whereType<Map>()
         .map((e) => _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)))
         .where((e) => e.tripId.trim().isNotEmpty)
         .toList(growable: false);
+    if (kDebugMode) {
+      bool nonEmpty(dynamic v) {
+        if (v == null) return false;
+        final s = v.toString().trim();
+        return s.isNotEmpty && s.toLowerCase() != 'null';
+      }
+
+      String? readDeep(Map<String, dynamic> details, List<List<String>> paths) {
+        for (final path in paths) {
+          dynamic current = details;
+          var ok = true;
+          for (final key in path) {
+            if (current is Map && current.containsKey(key)) {
+              current = current[key];
+            } else {
+              ok = false;
+              break;
+            }
+          }
+          if (ok && nonEmpty(current)) return current.toString();
+        }
+        return null;
+      }
+
+      for (var i = 0; i < items.length; i++) {
+        final d = items[i].bookingDetails;
+        final namePresent = readDeep(d, const [
+          ['customer_name'],
+          ['customerName'],
+          ['name'],
+          ['customer', 'name'],
+          ['booking', 'customer_name'],
+          ['booking', 'customer', 'name'],
+          ['booking', 'custName'],
+        ]) != null;
+        final phonePresent = readDeep(d, const [
+          ['customer_phone'],
+          ['customerPhone'],
+          ['phone'],
+          ['customer', 'phone'],
+          ['booking', 'customer_phone'],
+          ['booking', 'customer', 'phone'],
+          ['booking', 'custPhone'],
+        ]) != null;
+        final emailPresent = readDeep(d, const [
+          ['customer_email'],
+          ['customerEmail'],
+          ['email'],
+          ['customer', 'email'],
+          ['booking', 'customer_email'],
+          ['booking', 'customer', 'email'],
+          ['booking', 'custEmail'],
+        ]) != null;
+        debugPrint(
+          '[CONTACT][HISTORY] '
+          'kind=${items[i].kind} '
+          'index=$i '
+          'namePresent=$namePresent '
+          'phonePresent=$phonePresent '
+          'emailPresent=$emailPresent',
+        );
+      }
+    }
+    return items;
   }
 
   void _refresh() {
