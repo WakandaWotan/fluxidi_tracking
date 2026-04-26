@@ -202,6 +202,20 @@ String _receiptText(String key) {
       return _tr(nl: 'Kon ritten historiek niet laden.', en: 'Could not load ride history.', fr: "Impossible de charger l'historique.", es: 'No se pudo cargar el historial.');
     case 'historyEmpty':
       return _tr(nl: 'Nog geen ritten gevonden.', en: 'No rides found yet.', fr: 'Aucune course trouvée.', es: 'Aun no hay viajes.');
+    case 'archiveTripLabel':
+      return _tr(nl: 'Verberg', en: 'Hide', fr: 'Masquer', es: 'Ocultar');
+    case 'archiveTripTitle':
+      return _tr(nl: 'Deze rit verbergen uit de historiek?', en: 'Hide this ride from history?', fr: 'Masquer cette course de l’historique ?', es: '¿Ocultar este viaje del historial?');
+    case 'archiveTripBody':
+      return _tr(nl: 'De ritbon blijft bewaard voor administratie.', en: 'The receipt will remain stored for administration.', fr: 'Le reçu reste conservé pour l’administration.', es: 'El recibo seguirá guardado para la administración.');
+    case 'archiveTripCancel':
+      return _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar');
+    case 'archiveTripConfirm':
+      return _tr(nl: 'Verbergen', en: 'Hide', fr: 'Masquer', es: 'Ocultar');
+    case 'archiveTripSuccess':
+      return _tr(nl: 'Rit verborgen uit historiek.', en: 'Ride hidden from history.', fr: 'Course masquée de l’historique.', es: 'Viaje ocultado del historial.');
+    case 'archiveTripFailed':
+      return _tr(nl: 'Kon rit niet verbergen.', en: 'Could not hide ride.', fr: 'Impossible de masquer la course.', es: 'No se pudo ocultar el viaje.');
     case 'waitingCompact':
       return _tr(nl: 'wachten', en: 'waiting', fr: 'attente', es: 'espera');
     case 'type':
@@ -8321,16 +8335,16 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Deze rit verbergen uit de historiek?'),
-        content: const Text('De ritbon blijft bewaard voor administratie.'),
+        title: Text(_receiptText('archiveTripTitle')),
+        content: Text(_receiptText('archiveTripBody')),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annuleren'),
+            child: Text(_receiptText('archiveTripCancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Verbergen'),
+            child: Text(_receiptText('archiveTripConfirm')),
           ),
         ],
       ),
@@ -8357,19 +8371,21 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       if (!mounted) return;
       _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Rit verborgen uit historiek.')),
+        SnackBar(content: Text(_receiptText('archiveTripSuccess'))),
       );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kon rit niet verbergen. Probeer opnieuw.')),
+        SnackBar(content: Text(_receiptText('archiveTripFailed'))),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
       backgroundColor: const Color(0xFF0B1020),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0B1020),
@@ -8465,7 +8481,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                               OutlinedButton.icon(
                                 onPressed: () => _archiveTrip(item),
                                 icon: const Icon(Icons.archive_outlined, size: 18),
-                                label: const Text('Verberg'),
+                                label: Text(_receiptText('archiveTripLabel')),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: Colors.white70,
                                   side: const BorderSide(color: Colors.white24),
@@ -8494,7 +8510,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
           );
         },
       ),
-    );
+    ));
   }
 }
 
