@@ -14,6 +14,19 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/payment_return.dart';
+export 'package:fluxidi_tracking/payment_return.dart'
+    show
+        kFluxidiPaymentReturnScheme,
+        kFluxidiPaymentReturnHost,
+        kFluxidiPaymentReturnUrl,
+        FluxidiPaymentStatus,
+        FluxidiPendingPayment,
+        fluxidiPendingPaymentNotifier,
+        setFluxidiPendingPayment,
+        clearFluxidiPendingPayment,
+        paymentReturnCoordinator,
+        PaymentReturnCoordinator;
 import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -75,6 +88,11 @@ Map<String, String> _adminHeaders() {
   };
 }
 
+// Pending Mollie payment tracking lives in lib/payment_return.dart and is
+// re-exported above so existing references in this file (and other modules)
+// keep working unchanged.
+
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,6 +105,10 @@ Future<void> main() async {
   } else {
     mb.MapboxOptions.setAccessToken(kMapboxToken);
   }
+  // App-level Mollie return-to-app coordinator. Started here (not inside any
+  // screen State) so deep links + lifecycle resume are handled regardless of
+  // which page is currently mounted.
+  paymentReturnCoordinator.start(bookingBaseUrl: kBookingBaseUrl);
   runApp(const FluxidiDriverApp());
 }
 
@@ -2289,7 +2311,9 @@ class DriverHomePage extends StatefulWidget {
   State<DriverHomePage> createState() => _DriverHomePageState();
 }
 
-class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStateMixin {
+class _DriverHomePageState extends State<DriverHomePage>
+    with TickerProviderStateMixin {
+  String? _lastPaymentConfirmationSnackbarId;
   DateTime? _trackingStartedAt; // tracking start timestamp
   bool _isStartingTrip = false; // UX: start button state
   Timer? _meterTicker;
@@ -2410,6 +2434,7 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   _RouteSnap? _lastRouteSnap;
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
+  int _routeCleanupEpoch = 0;
 
   void _resetNavProgressState({bool clearRoute = false}) {
     if (clearRoute) {
@@ -2427,6 +2452,91 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     _lastRouteSnap = null;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
+  }
+
+  bool _isRouteTaskStillValid({
+    required int epoch,
+    String? expectedBookingId,
+    bool requireDirectRide = false,
+  }) {
+    if (epoch != _routeCleanupEpoch) return false;
+    if (requireDirectRide && !_directRideActive) return false;
+    if (expectedBookingId != null) {
+      final activeId = _activeBooking?.bookingId;
+      if (activeId == null || activeId != expectedBookingId) return false;
+    }
+    return true;
+  }
+
+  Future<void> _clearActiveRouteAndNavigationState({
+    required String reason,
+    String? bookingId,
+    bool clearActiveSelection = true,
+  }) async {
+    final activeBookingId = _activeBooking?.bookingId;
+    final hasPolylineBefore = _routeLine != null || _routeLineOutline != null;
+    final routeCoordsBefore = _routeCoords.length;
+    final navStepsBefore = _routeSteps.length;
+    if (!clearActiveSelection &&
+        !hasPolylineBefore &&
+        routeCoordsBefore == 0 &&
+        navStepsBefore == 0) {
+      return;
+    }
+
+    try {
+      if (_routeLineManager != null) {
+        if (_routeLineOutline != null) {
+          await _routeLineManager!.delete(_routeLineOutline!);
+        }
+        if (_routeLine != null) {
+          await _routeLineManager!.delete(_routeLine!);
+        }
+      }
+      _routeLineOutline = null;
+      _routeLine = null;
+
+      if (_pinsPointManager != null) {
+        if (_pickupPin != null) {
+          await _pinsPointManager!.delete(_pickupPin!);
+        }
+        if (_dropoffPin != null) {
+          await _pinsPointManager!.delete(_dropoffPin!);
+        }
+      }
+      _pickupPin = null;
+      _dropoffPin = null;
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _routeCleanupEpoch++;
+      _resetNavProgressState(clearRoute: true);
+      _routePhase = _RideRoutePhase.trip;
+      _navStepsLoading = false;
+      _cameraMode = _CameraMode.overview;
+      _hasSwitchedToFollow = false;
+      _followCar = false;
+      _allowOverviewCamera = false;
+      if (clearActiveSelection) {
+        _activeTripId = null;
+        _activeDirectTripId = null;
+        _activeBooking = null;
+        _directRideActive = false;
+        _directRideDestinationText = null;
+        _directRideDestinationPoint = null;
+        _lastPing = '—';
+        _pingCount = 0;
+        _kmDriven = 0.0;
+        _trackingStartedAt = null;
+        _isWaiting = false;
+        _waitStartedAt = null;
+        _waitElapsed = Duration.zero;
+      }
+    });
+    _setNavigationWakelock(false);
+    await _applyMapStyleForMode();
+
   }
 
   bool _isClosedRideStatus(String? rawStatus) {
@@ -2598,6 +2708,7 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   void initState() {
     super.initState();
     appLanguageNotifier.addListener(_onAppLanguageChanged);
+    fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
 
     _splashAnimCtrl = AnimationController(
       vsync: this,
@@ -2630,6 +2741,30 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Mollie return-to-app + payment finalization fallback
+  // ---------------------------------------------------------------------------
+  // The deep-link listener, lifecycle observer, and /pay/status reconciliation
+  // now live in `PaymentReturnCoordinator` (lib/payment_return.dart) and are
+  // started once from main(), so they don't depend on this State being mounted.
+  void _onPendingPaymentStatusChanged() {
+    final pending = fluxidiPendingPaymentNotifier.value;
+    if (!mounted || pending == null) return;
+    if (pending.status != FluxidiPaymentStatus.confirmed) return;
+    if (_lastPaymentConfirmationSnackbarId == pending.paymentBookingId) return;
+    _lastPaymentConfirmationSnackbarId = pending.paymentBookingId;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_tr(
+          nl: 'Betaling bevestigd. Je boeking is bevestigd.',
+          en: 'Payment confirmed. Your booking is confirmed.',
+          fr: 'Paiement confirme. Votre reservation est confirmee.',
+          es: 'Pago confirmado. Tu reserva esta confirmada.',
+        )),
+      ),
+    );
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -2645,6 +2780,7 @@ class _DriverHomePageState extends State<DriverHomePage> with TickerProviderStat
   void dispose() {
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
+    fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentStatusChanged);
     _bookingsUiVersion.dispose();
     _splashAnimCtrl.dispose();
     _activePulseCtrl.dispose();
@@ -2823,9 +2959,6 @@ Map<String, String> _headers({bool admin = false}) {
       _startTrackingInternal();
 
       final bb = _activeBooking ?? b;
-      debugPrint(
-        '[CAMERA][OPEN_OVERVIEW] booking=${b.bookingId} allow_overview=$_allowOverviewCamera mode=$_cameraMode',
-      );
       await _buildOverviewRoute(bb);
 
       // Stay in overview mode after opening a booking.
@@ -2839,24 +2972,14 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   void _clearActiveSelection() {
-    setState(() {
-      _activeBooking = null;
-      _activeTripId = null;
-      _activeDirectTripId = null;
-      _directRideActive = false;
-      _directRideDestinationText = null;
-      _directRideDestinationPoint = null;
-
-      // Reset live/tracking state (compile-safe).
-      _trackingStartedAt = null;
-      _resetNavProgressState(clearRoute: true);
-      _kmDriven = 0.0;
-      _isWaiting = false;
-      _stopTrackingInternal();
-      _activeTripId = null;
-      _activeDirectTripId = null;
-    });
-    _setNavigationWakelock(false);
+    _stopTrackingInternal();
+    unawaited(
+      _clearActiveRouteAndNavigationState(
+        reason: 'manual_clear_selection',
+        bookingId: _activeBooking?.bookingId,
+        clearActiveSelection: true,
+      ),
+    );
   }
 
 
@@ -2927,7 +3050,6 @@ Map<String, String> _headers({bool admin = false}) {
 
       _startTrackingInternal();
       _startMeterTicker();
-      debugPrint('[CAMERA][RIDE_START] force_follow=true booking=${b.bookingId}');
       await _forceFollowCameraNow(caller: 'start_trip');
       final bb = _activeBooking ?? b;
       await _buildNavRouteToDestination(bb);
@@ -2994,30 +3116,6 @@ Map<String, String> _headers({bool admin = false}) {
           );
         }
       });
-
-      if (kDebugMode) {
-        bool nonEmpty(dynamic v) {
-          if (v == null) return false;
-          final s = v.toString().trim();
-          return s.isNotEmpty && s.toLowerCase() != 'null';
-        }
-
-        final details = _activeBooking?.details ?? const <String, dynamic>{};
-        final hasBookingMap = details['booking'] is Map;
-        final bookingMap = hasBookingMap
-            ? Map<String, dynamic>.from(details['booking'] as Map)
-            : const <String, dynamic>{};
-        debugPrint(
-          '[CONTACT][HYDRATE] '
-          'topNamePresent=${nonEmpty(details['customer_name']) || nonEmpty(details['customerName']) || nonEmpty(details['name'])} '
-          'topPhonePresent=${nonEmpty(details['customer_phone']) || nonEmpty(details['customerPhone']) || nonEmpty(details['phone'])} '
-          'topEmailPresent=${nonEmpty(details['customer_email']) || nonEmpty(details['customerEmail']) || nonEmpty(details['email'])} '
-          'bookingNamePresent=${nonEmpty(bookingMap['custName']) || nonEmpty(bookingMap['customer_name']) || nonEmpty(bookingMap['name'])} '
-          'bookingPhonePresent=${nonEmpty(bookingMap['custPhone']) || nonEmpty(bookingMap['customer_phone']) || nonEmpty(bookingMap['phone'])} '
-          'bookingEmailPresent=${nonEmpty(bookingMap['custEmail']) || nonEmpty(bookingMap['customer_email']) || nonEmpty(bookingMap['email'])} '
-          'hasBookingMap=$hasBookingMap',
-        );
-      }
 
       final record = (j['record'] is Map) ? (j['record'] as Map).cast<String, dynamic>() : null;
       final quoteSource = j['quote'] ?? record?['quote'];
@@ -3121,6 +3219,21 @@ Map<String, String> _headers({bool admin = false}) {
           _activeBooking = _activeBooking!.copyWith(status: status);
         }
       });
+      final normalizedStatus = status.trim().toUpperCase();
+      final shouldRouteCleanup = _activeBooking?.bookingId == bookingId &&
+          !_liveRideActive &&
+          (normalizedStatus == 'COMPLETED' ||
+              normalizedStatus == 'CANCELLED' ||
+              normalizedStatus == 'DELETED');
+      if (shouldRouteCleanup) {
+        _stopTrackingInternal();
+        _stopMeterTicker();
+        await _clearActiveRouteAndNavigationState(
+          reason: normalizedStatus.toLowerCase(),
+          bookingId: bookingId,
+          clearActiveSelection: true,
+        );
+      }
       _markBookingsUiDirty();
       _toast('✅ $status: ${b.shortId}');
       if (!statusPersistedOnWorker) {
@@ -3174,11 +3287,16 @@ Map<String, String> _headers({bool admin = false}) {
         _deletedBookingIds.add(bookingId);
         _bookingStatusOverrides[bookingId] = 'DELETED';
         _bookings.removeWhere((x) => x.bookingId == bookingId);
-        if (_activeBooking?.bookingId == bookingId) {
-          _activeBooking = null;
-          _activeTripId = null;
-        }
       });
+      if (_activeBooking?.bookingId == bookingId) {
+        _stopTrackingInternal();
+        _stopMeterTicker();
+        await _clearActiveRouteAndNavigationState(
+          reason: 'delete',
+          bookingId: bookingId,
+          clearActiveSelection: true,
+        );
+      }
       if (!_liveRideActive) _setNavigationWakelock(false);
       _markBookingsUiDirty();
       _toast('🗑️ Verwijderd: ${b.shortId}');
@@ -3273,6 +3391,143 @@ Map<String, String> _headers({bool admin = false}) {
     } catch (e) {
       debugPrint('[RIDES][$contextLabel][SNAPSHOT][WARN] $e');
     }
+  }
+
+  Future<Map<String, dynamic>> _fetchPaymentFieldsForHistory(String bookingId) async {
+    Map<String, dynamic> asMap(dynamic value) =>
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    List<dynamic> asList(dynamic value) => value is List ? value : const [];
+    String? text(dynamic value) {
+      final s = value?.toString().trim();
+      if (s == null || s.isEmpty || s.toLowerCase() == 'null') return null;
+      return s;
+    }
+
+    Map<String, dynamic> parsePayment(dynamic rootRaw) {
+      final root = asMap(rootRaw);
+      final data = asMap(root['data']);
+      final record = asMap(root['record']);
+      final booking = asMap(root['booking']);
+      final dataRecord = asMap(data['record']);
+      final dataBooking = asMap(data['booking']);
+      final recordBooking = asMap(record['booking']);
+      final dataRecordBooking = asMap(dataRecord['booking']);
+
+      final paymentStatus = text(root['payment_status'] ??
+          root['paymentStatus'] ??
+          record['payment_status'] ??
+          record['paymentStatus'] ??
+          recordBooking['payment_status'] ??
+          recordBooking['paymentStatus'] ??
+          booking['payment_status'] ??
+          booking['paymentStatus'] ??
+          data['payment_status'] ??
+          data['paymentStatus'] ??
+          dataRecord['payment_status'] ??
+          dataRecord['paymentStatus'] ??
+          dataBooking['payment_status'] ??
+          dataBooking['paymentStatus'] ??
+          dataRecordBooking['payment_status'] ??
+          dataRecordBooking['paymentStatus']);
+      final paidAt = text(root['paid_at'] ??
+          root['paidAt'] ??
+          record['paid_at'] ??
+          record['paidAt'] ??
+          booking['paid_at'] ??
+          booking['paidAt'] ??
+          data['paid_at'] ??
+          data['paidAt'] ??
+          dataRecord['paid_at'] ??
+          dataRecord['paidAt'] ??
+          dataBooking['paid_at'] ??
+          dataBooking['paidAt']);
+      final paymentProvider = text(root['payment_provider'] ??
+          root['paymentProvider'] ??
+          record['payment_provider'] ??
+          record['paymentProvider'] ??
+          booking['payment_provider'] ??
+          booking['paymentProvider'] ??
+          data['payment_provider'] ??
+          data['paymentProvider'] ??
+          dataRecord['payment_provider'] ??
+          dataRecord['paymentProvider'] ??
+          dataBooking['payment_provider'] ??
+          dataBooking['paymentProvider']);
+      final paymentId = text(root['payment_id'] ??
+          root['paymentId'] ??
+          record['payment_id'] ??
+          record['paymentId'] ??
+          booking['payment_id'] ??
+          booking['paymentId'] ??
+          data['payment_id'] ??
+          data['paymentId'] ??
+          dataRecord['payment_id'] ??
+          dataRecord['paymentId'] ??
+          dataBooking['payment_id'] ??
+          dataBooking['paymentId']);
+
+      return <String, dynamic>{
+        if (paymentStatus != null) ...{
+          'payment_status': paymentStatus,
+          'paymentStatus': paymentStatus,
+        },
+        if (paidAt != null) ...{'paid_at': paidAt, 'paidAt': paidAt},
+        if (paymentProvider != null) ...{
+          'payment_provider': paymentProvider,
+          'paymentProvider': paymentProvider,
+        },
+        if (paymentId != null) ...{'payment_id': paymentId, 'paymentId': paymentId},
+      };
+    }
+
+    Future<Map<String, dynamic>> fetchAndParse(Uri uri) async {
+      final res = await http
+          .get(uri, headers: _headers(admin: true))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode < 200 || res.statusCode >= 300) return <String, dynamic>{};
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map) return <String, dynamic>{};
+
+      final root = Map<String, dynamic>.from(decoded);
+      var parsed = parsePayment(root);
+      if (parsed['payment_status'] != null) return parsed;
+
+      // Fallback shape: /bookings?limit=... returns a list under items/data/items.
+      final candidateLists = <List<dynamic>>[
+        asList(root['items']),
+        asList(asMap(root['data'])['items']),
+        asList(root['bookings']),
+        asList(asMap(root['data'])['bookings']),
+      ];
+      for (final list in candidateLists) {
+        for (final raw in list) {
+          final item = asMap(raw);
+          final itemBookingId = text(item['booking_id'] ?? item['bookingId'] ?? item['id']);
+          if (itemBookingId == null || itemBookingId.trim() != bookingId) continue;
+          parsed = parsePayment(item);
+          if (parsed.isNotEmpty) return parsed;
+        }
+      }
+      return <String, dynamic>{};
+    }
+
+    try {
+      final byId = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      );
+      final parsedById = await fetchAndParse(byId);
+      if (parsedById.isNotEmpty) return parsedById;
+    } catch (_) {}
+
+    try {
+      final listUrl = Uri.parse(
+        '$kBookingBaseUrl/bookings?limit=200&t=${DateTime.now().millisecondsSinceEpoch}',
+      );
+      final parsedList = await fetchAndParse(listUrl);
+      if (parsedList.isNotEmpty) return parsedList;
+    } catch (_) {}
+
+    return <String, dynamic>{};
   }
 
 
@@ -3888,6 +4143,34 @@ Map<String, String> _headers({bool admin = false}) {
   }) async {
     try {
       final bookingDetails = _plannedBookingDetailsPayload(booking);
+      final authoritativePayment =
+          await _fetchPaymentFieldsForHistory(booking.bookingId);
+      if (authoritativePayment.isNotEmpty) {
+        bookingDetails.addAll(authoritativePayment);
+        final existingBooking = bookingDetails['booking'];
+        if (existingBooking is Map) {
+          final mergedBooking = Map<String, dynamic>.from(existingBooking);
+          if (authoritativePayment['payment_status'] != null) {
+            mergedBooking['payment_status'] = authoritativePayment['payment_status'];
+            mergedBooking['paymentStatus'] = authoritativePayment['payment_status'];
+          }
+          if (authoritativePayment['paid_at'] != null) {
+            mergedBooking['paid_at'] = authoritativePayment['paid_at'];
+            mergedBooking['paidAt'] = authoritativePayment['paid_at'];
+          }
+          if (authoritativePayment['payment_provider'] != null) {
+            mergedBooking['payment_provider'] =
+                authoritativePayment['payment_provider'];
+            mergedBooking['paymentProvider'] =
+                authoritativePayment['payment_provider'];
+          }
+          if (authoritativePayment['payment_id'] != null) {
+            mergedBooking['payment_id'] = authoritativePayment['payment_id'];
+            mergedBooking['paymentId'] = authoritativePayment['payment_id'];
+          }
+          bookingDetails['booking'] = mergedBooking;
+        }
+      }
       final price = booking.price ?? BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
@@ -3907,27 +4190,21 @@ Map<String, String> _headers({bool admin = false}) {
         'wait_seconds_total': waitSecondsTotal,
         if (price != null) 'total_eur': price.toDouble(),
         'currency': booking.currency ?? kDefaultCurrency,
+        if (bookingDetails['payment_status'] != null)
+          'payment_status': bookingDetails['payment_status'],
+        if (bookingDetails['paymentStatus'] != null)
+          'paymentStatus': bookingDetails['paymentStatus'],
+        if (bookingDetails['paid_at'] != null) 'paid_at': bookingDetails['paid_at'],
+        if (bookingDetails['paidAt'] != null) 'paidAt': bookingDetails['paidAt'],
+        if (bookingDetails['payment_provider'] != null)
+          'payment_provider': bookingDetails['payment_provider'],
+        if (bookingDetails['paymentProvider'] != null)
+          'paymentProvider': bookingDetails['paymentProvider'],
+        if (bookingDetails['payment_id'] != null)
+          'payment_id': bookingDetails['payment_id'],
+        if (bookingDetails['paymentId'] != null)
+          'paymentId': bookingDetails['paymentId'],
       };
-      if (kDebugMode) {
-        bool nonEmpty(dynamic v) {
-          if (v == null) return false;
-          final s = v.toString().trim();
-          return s.isNotEmpty && s.toLowerCase() != 'null';
-        }
-
-        final nestedCustomer = (bookingDetails['customer'] is Map)
-            ? Map<String, dynamic>.from(bookingDetails['customer'] as Map)
-            : const <String, dynamic>{};
-        debugPrint(
-          '[CONTACT][STOP_PAYLOAD] '
-          'namePresent=${nonEmpty(bookingDetails['customer_name'])} '
-          'phonePresent=${nonEmpty(bookingDetails['customer_phone'])} '
-          'emailPresent=${nonEmpty(bookingDetails['customer_email'])} '
-          'nestedNamePresent=${nonEmpty(nestedCustomer['name'])} '
-          'nestedPhonePresent=${nonEmpty(nestedCustomer['phone'])} '
-          'nestedEmailPresent=${nonEmpty(nestedCustomer['email'])}',
-        );
-      }
       final res = await http
           .post(
             Uri.parse('$kWorkerBaseUrl$kRecordPlannedTripStopPath'),
@@ -4003,52 +4280,11 @@ Map<String, String> _headers({bool admin = false}) {
     if (stoppedBooking != null) {
       await _completeStoppedBooking(stoppedBooking);
     }
-
-    try {
-      if (_routeLineManager != null && _routeLineOutline != null) {
-        await _routeLineManager!.delete(_routeLineOutline!);
-      }
-      if (_routeLineManager != null && _routeLine != null) {
-        await _routeLineManager!.delete(_routeLine!);
-      }
-      _routeLineOutline = null;
-      _routeLine = null;
-
-      if (_pinsPointManager != null) {
-        if (_pickupPin != null) await _pinsPointManager!.delete(_pickupPin!);
-        if (_dropoffPin != null) await _pinsPointManager!.delete(_dropoffPin!);
-      }
-      _pickupPin = null;
-      _dropoffPin = null;
-    } catch (_) {}
-
-    setState(() {
-      _activeTripId = null;
-      _activeDirectTripId = null;
-      _activeBooking = null;
-      _directRideActive = false;
-      _directRideDestinationText = null;
-      _directRideDestinationPoint = null;
-      _directRideDestinationPoint = null;
-      _lastPing = '—';
-      _pingCount = 0;
-      _kmDriven = 0.0;
-      _trackingStartedAt = null;
-
-      _resetNavProgressState(clearRoute: true);
-      _routePhase = _RideRoutePhase.trip;
-
-      _cameraMode = _CameraMode.overview;
-      _hasSwitchedToFollow = false;
-      _followCar = false;
-      _allowOverviewCamera = false;
-
-      _isWaiting = false;
-      _waitStartedAt = null;
-      _waitElapsed = Duration.zero;
-    });
-    _setNavigationWakelock(false);
-    await _applyMapStyleForMode();
+    await _clearActiveRouteAndNavigationState(
+      reason: 'stop',
+      bookingId: stoppedBooking?.bookingId,
+      clearActiveSelection: true,
+    );
     if (wasDirectRide) {
       final shownTotal = serverDirectTotal ?? finalTotal;
       _toast('Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}');
@@ -4286,7 +4522,6 @@ Map<String, String> _headers({bool admin = false}) {
     });
     _setNavigationWakelock(true);
     await _applyMapStyleForMode();
-    debugPrint('[CAMERA][NAV_START] force_follow=true active_trip=${_activeTripId != null} mode=$_cameraMode');
     await _forceFollowCameraNow(caller: 'nav_button');
     final b = _activeBooking;
     if (b != null && _activeTripId == null) {
@@ -4606,9 +4841,6 @@ Map<String, String> _headers({bool admin = false}) {
     final offRoute = _offRouteHitCount >= 3;
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
-      debugPrint(
-        '[NAV_PROGRESS][OFF_ROUTE] likely=$_offRouteLikely rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${snap.distanceFromRouteM.toStringAsFixed(1)} TODO=recalculate_route',
-      );
     }
   }
 
@@ -4660,22 +4892,13 @@ Map<String, String> _headers({bool admin = false}) {
           ),
         );
       }
-      debugPrint(
-        '[MARKER][DRIVER] lat=${displayPoint.lat} lng=${displayPoint.lon} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${_lastRouteSnap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} bearing=$markerBearing visible=true source=${bearingData.source} icon=$_driverMarkerIcon event=create',
-      );
     } else {
       _driverMarker!.geometry = p;
       _driverMarker!.iconRotate = markerBearing;
       await mgr.update(_driverMarker!);
-      debugPrint(
-        '[MARKER][DRIVER] lat=${displayPoint.lat} lng=${displayPoint.lon} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${_lastRouteSnap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} bearing=$markerBearing visible=true source=${bearingData.source} icon=$_driverMarkerIcon event=update',
-      );
     }
 
     if (moveCamera && _cameraMode != _CameraMode.follow) {
-      debugPrint(
-        '[CAMERA][MARKER_MOVE] mode=$_cameraMode active_trip=${_activeTripId != null} lat=${displayPoint.lat} lng=${displayPoint.lon} zoom=13.5',
-      );
       await _map?.flyTo(
         mb.CameraOptions(center: p, zoom: 13.5),
         mb.MapAnimationOptions(duration: 700),
@@ -4695,9 +4918,6 @@ Map<String, String> _headers({bool admin = false}) {
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
     final heading = _routeBearingAtSnap(_lastRouteSnap) ?? _cameraBearingFor(pos);
-    debugPrint(
-      '[CAMERA][FOLLOW] mode=$_cameraMode nav_active=${_cameraMode == _CameraMode.follow} active_trip=${_activeTripId != null} lat=${displayPoint.lat} lng=${displayPoint.lon} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${_lastRouteSnap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} zoom=18.8 pitch=68.0 bearing=$heading',
-    );
 
     try {
       await _map?.flyTo(
@@ -4769,9 +4989,6 @@ Map<String, String> _headers({bool admin = false}) {
     final distanceM = progressM == null
         ? geo.Geolocator.distanceBetween(pos.latitude, pos.longitude, step.lat, step.lon)
         : math.max(0.0, step.distanceAlongRouteM - progressM);
-    debugPrint(
-      '[NAV_PROGRESS] step=$_nextStepIndex/${_routeSteps.length} type=${step.type} modifier=${step.modifier} distance=${distanceM.toStringAsFixed(1)} rawAccuracy=${pos.accuracy.toStringAsFixed(1)} snapDistance=${snap?.distanceFromRouteM.toStringAsFixed(1) ?? '-'} offRoute=$_offRouteLikely',
-    );
 
     if (!mounted) {
       _nextNavInstruction = step.instruction;
@@ -4792,6 +5009,14 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   Future<void> _buildNavRouteToPickup(BookingItem b) async {
+    final epoch = _routeCleanupEpoch;
+    final expectedBookingId = b.bookingId;
+    if (!_isRouteTaskStillValid(
+      epoch: epoch,
+      expectedBookingId: expectedBookingId,
+    )) {
+      return;
+    }
     if (_lastPos == null) return;
     final pickupText = (b.from ?? '').trim();
     if (pickupText.isEmpty) return;
@@ -4811,6 +5036,12 @@ Map<String, String> _headers({bool admin = false}) {
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
+      if (!_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        return;
+      }
       if (mounted) {
         setState(() {
           _routeCoords = coords;
@@ -4831,15 +5062,28 @@ Map<String, String> _headers({bool admin = false}) {
     } catch (_) {
       // Keep previous route if pickup route fetch fails.
     } finally {
-      if (mounted) {
-        setState(() => _navStepsLoading = false);
-      } else {
-        _navStepsLoading = false;
+      if (_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        if (mounted) {
+          setState(() => _navStepsLoading = false);
+        } else {
+          _navStepsLoading = false;
+        }
       }
     }
   }
 
   Future<void> _buildNavRouteToDestination(BookingItem b) async {
+    final epoch = _routeCleanupEpoch;
+    final expectedBookingId = b.bookingId;
+    if (!_isRouteTaskStillValid(
+      epoch: epoch,
+      expectedBookingId: expectedBookingId,
+    )) {
+      return;
+    }
     if (_lastPos == null) return;
     final dropoffText = (b.to ?? '').trim();
     if (dropoffText.isEmpty) return;
@@ -4859,6 +5103,12 @@ Map<String, String> _headers({bool admin = false}) {
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
+      if (!_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        return;
+      }
       if (mounted) {
         setState(() {
           _routeCoords = coords;
@@ -4879,15 +5129,27 @@ Map<String, String> _headers({bool admin = false}) {
     } catch (_) {
       // Keep previous route if destination route fetch fails.
     } finally {
-      if (mounted) {
-        setState(() => _navStepsLoading = false);
-      } else {
-        _navStepsLoading = false;
+      if (_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        if (mounted) {
+          setState(() => _navStepsLoading = false);
+        } else {
+          _navStepsLoading = false;
+        }
       }
     }
   }
 
   Future<void> _buildDirectRouteToDestination(String destinationText) async {
+    final epoch = _routeCleanupEpoch;
+    if (!_isRouteTaskStillValid(
+      epoch: epoch,
+      requireDirectRide: true,
+    )) {
+      return;
+    }
     if (_lastPos == null) return;
     final dropoffText = destinationText.trim();
     if (dropoffText.isEmpty) return;
@@ -4907,6 +5169,12 @@ Map<String, String> _headers({bool admin = false}) {
       final route = await _directionsRoute(fromLL, toLL);
       final coords = route.$1;
       if (coords.length < 2) return;
+      if (!_isRouteTaskStillValid(
+        epoch: epoch,
+        requireDirectRide: true,
+      )) {
+        return;
+      }
       if (mounted) {
         setState(() {
           _routeCoords = coords;
@@ -4927,10 +5195,15 @@ Map<String, String> _headers({bool admin = false}) {
     } catch (e) {
       _toast('Straatrit route mislukt: $e');
     } finally {
-      if (mounted) {
-        setState(() => _navStepsLoading = false);
-      } else {
-        _navStepsLoading = false;
+      if (_isRouteTaskStillValid(
+        epoch: epoch,
+        requireDirectRide: true,
+      )) {
+        if (mounted) {
+          setState(() => _navStepsLoading = false);
+        } else {
+          _navStepsLoading = false;
+        }
       }
     }
   }
@@ -4949,7 +5222,6 @@ Map<String, String> _headers({bool admin = false}) {
     }
 
     if (pos == null) {
-      debugPrint('[CAMERA][GPS_MISSING] caller=$caller mode=$_cameraMode active_trip=${_activeTripId != null}');
       _toast('GPS-locatie nog niet beschikbaar');
       return;
     }
@@ -5006,9 +5278,6 @@ Map<String, String> _headers({bool admin = false}) {
     }
 
     final p = _mbPoint(pos.longitude, pos.latitude);
-    debugPrint(
-      '[CAMERA][CENTER_ME] mode=$_cameraMode active_trip=${_activeTripId != null} lat=${pos.latitude} lng=${pos.longitude} zoom=13.5',
-    );
     await _map?.flyTo(
       mb.CameraOptions(center: p, zoom: 13.5),
       mb.MapAnimationOptions(duration: 650),
@@ -5027,16 +5296,20 @@ Map<String, String> _headers({bool admin = false}) {
   // -------------------------------
 
   Future<void> _buildOverviewRoute(BookingItem b) async {
+    final epoch = _routeCleanupEpoch;
+    final expectedBookingId = b.bookingId;
+    if (!_isRouteTaskStillValid(
+      epoch: epoch,
+      expectedBookingId: expectedBookingId,
+    )) {
+      return;
+    }
     if (!_mapSupported || _map == null) return;
     if ((b.from ?? '').isEmpty || (b.to ?? '').isEmpty) return;
 
     try {
       final pickupText = (b.from ?? '').trim();
       final dropoffText = (b.to ?? '').trim();
-      debugPrint(
-        '[ROUTE][PREVIEW_START] pickup=$pickupText destination=$dropoffText',
-      );
-
       // Preview must always represent booked ride path: pickup -> destination.
       // Never use current GPS here.
       try {
@@ -5057,12 +5330,22 @@ Map<String, String> _headers({bool admin = false}) {
       } catch (_) {}
 
       // Prefer server-side routing (Worker) so the app never needs to call Mapbox Directions directly.
-      await _tryWorkerRouteFallback(fromText: pickupText, toText: dropoffText);
+      await _tryWorkerRouteFallback(
+        fromText: pickupText,
+        toText: dropoffText,
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      );
       if (_routeCoords.length >= 2) return;
 
       // Fallback: direct Mapbox REST (dev only). If MAPBOX_TOKEN isn't provided, we stop here.
       if (kMapboxToken.trim().isEmpty) {
-        await _tryWorkerRouteFallback(fromText: pickupText, toText: dropoffText);
+        await _tryWorkerRouteFallback(
+          fromText: pickupText,
+          toText: dropoffText,
+          epoch: epoch,
+          expectedBookingId: expectedBookingId,
+        );
         return;
       }
 
@@ -5075,6 +5358,12 @@ Map<String, String> _headers({bool admin = false}) {
       final durationSec = route.$3;
 
       if (coords.length < 2) return;
+      if (!_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        return;
+      }
 
       setState(() {
         _routeCoords = coords;
@@ -5082,40 +5371,40 @@ Map<String, String> _headers({bool admin = false}) {
         _routeDurationSec = durationSec;
         _routePhase = _RideRoutePhase.trip;
       });
-      debugPrint(
-        '[ROUTE][PREVIEW_RESULT] coords=${coords.length} distance=${distanceMeters.toStringAsFixed(1)} duration=$durationSec',
-      );
-      if (coords.length <= 2 || distanceMeters < 250) {
-        debugPrint(
-          '[ROUTE][PREVIEW_WARNING] suspicious_preview_route=true coords=${coords.length} distance_m=${distanceMeters.toStringAsFixed(1)}',
-        );
-      }
-
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
       final allowFit = _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
       if (allowFit) {
-        debugPrint('[CAMERA][PREVIEW_FIT] coords=${coords.length} fitBounds=true');
         await _fitBoundsToRoute(coords);
-      } else {
-        debugPrint('[CAMERA][FIT] allowed=false reason=guarded from=build_overview_route allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}');
       }
     } on _UnauthorizedMapbox catch (_) {
       _toast(
         'Mapbox REST token refused (401) — using Worker route instead.',
       );
-      await _tryWorkerRouteFallback(fromText: b.from!, toText: b.to!);
+      await _tryWorkerRouteFallback(
+        fromText: b.from!,
+        toText: b.to!,
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      );
     } catch (e) {
       _toast('Route overview failed: $e');
-      await _tryWorkerRouteFallback(fromText: b.from!, toText: b.to!);
+      await _tryWorkerRouteFallback(
+        fromText: b.from!,
+        toText: b.to!,
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      );
     }
   }
 
   Future<void> _tryWorkerRouteFallback({
     required String fromText,
     required String toText,
+    required int epoch,
+    required String expectedBookingId,
   }) async {
     try {
       final uri = Uri.parse('$kWorkerBaseUrl$kWorkerRoutePath');
@@ -5161,6 +5450,12 @@ Map<String, String> _headers({bool admin = false}) {
       }
 
       if (out.length < 2) return;
+      if (!_isRouteTaskStillValid(
+        epoch: epoch,
+        expectedBookingId: expectedBookingId,
+      )) {
+        return;
+      }
 
       final dist = (j['distance_m'] ??
               j['distanceMeters'] ??
@@ -5178,25 +5473,13 @@ Map<String, String> _headers({bool admin = false}) {
         _routeDurationSec = dur.toInt();
         _routePhase = _RideRoutePhase.trip;
       });
-      debugPrint(
-        '[ROUTE][PREVIEW_RESULT] coords=${out.length} distance=${dist.toDouble().toStringAsFixed(1)} duration=${dur.toInt()}',
-      );
-      if (out.length <= 2 || dist.toDouble() < 250) {
-        debugPrint(
-          '[ROUTE][PREVIEW_WARNING] suspicious_preview_route=true coords=${out.length} distance_m=${dist.toDouble().toStringAsFixed(1)}',
-        );
-      }
-
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(out);
       final allowFit = _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
       if (allowFit) {
-        debugPrint('[CAMERA][PREVIEW_FIT] coords=${out.length} fitBounds=true');
         await _fitBoundsToRoute(out);
-      } else {
-        debugPrint('[CAMERA][FIT] allowed=false reason=guarded from=worker_route_fallback allow_overview=$_allowOverviewCamera mode=$_cameraMode active_trip=${_activeTripId != null}');
       }
     } catch (e) {
       _toast('Worker route failed: $e');
@@ -5509,14 +5792,6 @@ Map<String, String> _headers({bool admin = false}) {
     final skip = _cameraMode == _CameraMode.follow ||
         _activeTripId != null ||
         !_allowOverviewCamera;
-    final reason = (_cameraMode == _CameraMode.follow)
-        ? 'follow_mode'
-        : (_activeTripId != null)
-            ? 'ride_started'
-            : (!_allowOverviewCamera)
-                ? 'overview_not_allowed'
-                : 'none';
-    debugPrint('[CAMERA][FIT] allowed=${!skip} skipped=$skip reason=$reason mode=$_cameraMode active_trip=${_activeTripId != null} allow_overview=$_allowOverviewCamera coords=${coords.length}');
     if (_map == null || coords.isEmpty) return;
     if (skip) return;
 
@@ -6710,12 +6985,6 @@ return IgnorePointer(
         (isLandscape
             ? 8
             : (_cameraMode == _CameraMode.follow ? 128 : 74));
-    if (_cameraMode == _CameraMode.follow) {
-      debugPrint(
-        '[UI_ARROW] visible=true orientation=${isLandscape ? 'landscape' : 'portrait'} bottom=$arrowBottom bearing=$_uiArrowBearing',
-      );
-    }
-
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -8030,7 +8299,6 @@ Widget _cockpitButton({
         _allowOverviewCamera = false;
       });
       await _applyMapStyleForMode();
-      debugPrint('[CAMERA][NAV_START] source=open_live_ride force_follow=true active_trip=true');
       await _forceFollowCameraNow(caller: 'open_live_ride');
     } catch (_) {
       // Never crash the UI from a camera move.
@@ -8441,88 +8709,6 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         .map((e) => _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)))
         .where((e) => e.tripId.trim().isNotEmpty)
         .toList(growable: false);
-    if (kDebugMode) {
-      bool nonEmpty(dynamic v) {
-        if (v == null) return false;
-        final s = v.toString().trim();
-        return s.isNotEmpty && s.toLowerCase() != 'null';
-      }
-
-      String? readDeep(Map<String, dynamic> details, List<List<String>> paths) {
-        for (final path in paths) {
-          dynamic current = details;
-          var ok = true;
-          for (final key in path) {
-            if (current is Map && current.containsKey(key)) {
-              current = current[key];
-            } else {
-              ok = false;
-              break;
-            }
-          }
-          if (ok && nonEmpty(current)) return current.toString();
-        }
-        return null;
-      }
-
-      for (var i = 0; i < items.length; i++) {
-        final d = items[i].bookingDetails;
-        final namePresent = readDeep(d, const [
-          ['customer_name'],
-          ['customerName'],
-          ['name'],
-          ['customer', 'name'],
-          ['booking', 'customer_name'],
-          ['booking', 'customer', 'name'],
-          ['booking', 'custName'],
-        ]) != null;
-        final phonePresent = readDeep(d, const [
-          ['customer_phone'],
-          ['customerPhone'],
-          ['phone'],
-          ['customer', 'phone'],
-          ['booking', 'customer_phone'],
-          ['booking', 'customer', 'phone'],
-          ['booking', 'custPhone'],
-        ]) != null;
-        final emailPresent = readDeep(d, const [
-          ['customer_email'],
-          ['customerEmail'],
-          ['email'],
-          ['customer', 'email'],
-          ['booking', 'customer_email'],
-          ['booking', 'customer', 'email'],
-          ['booking', 'custEmail'],
-        ]) != null;
-        final paymentStatus = readDeep(d, const [
-          ['payment_status'],
-          ['paymentStatus'],
-          ['booking', 'payment_status'],
-          ['booking', 'paymentStatus'],
-          ['record', 'payment_status'],
-          ['record', 'paymentStatus'],
-          ['record', 'booking', 'payment_status'],
-          ['record', 'booking', 'paymentStatus'],
-          ['mollie', 'status'],
-          ['record', 'mollie', 'status'],
-        ]);
-        debugPrint(
-          '[CONTACT][HISTORY] '
-          'kind=${items[i].kind} '
-          'index=$i '
-          'namePresent=$namePresent '
-          'phonePresent=$phonePresent '
-          'emailPresent=$emailPresent',
-        );
-        debugPrint(
-          '[PAYMENT_STATUS][TRIP_HISTORY] '
-          'kind=${items[i].kind} '
-          'index=$i '
-          'bookingId=${items[i].bookingId ?? '-'} '
-          'paymentStatus=${paymentStatus ?? '-'}',
-        );
-      }
-    }
     return items;
   }
 
@@ -8783,6 +8969,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   void initState() {
     super.initState();
     _paymentStatus = _initialPaymentStatus();
+    unawaited(_resolveReceiptPaymentStatus());
   }
 
   String _formatDate(String? iso) {
@@ -8825,11 +9012,288 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ['mollie', 'status'],
       ['record', 'mollie', 'status'],
     ])?.toLowerCase().trim();
-    if (raw == 'paid' || raw == 'settled') return _ReceiptPaymentStatus.paid;
+    if (raw == 'paid' || raw == 'settled' || raw == 'confirmed') {
+      return _ReceiptPaymentStatus.paid;
+    }
     if (raw == 'open' || raw == 'pending' || raw == 'authorized') {
       return _ReceiptPaymentStatus.sent;
     }
     return _ReceiptPaymentStatus.pending;
+  }
+
+  _ReceiptPaymentStatus _paymentStatusFromRaw(String? raw) {
+    final normalized = raw?.toLowerCase().trim();
+    if (normalized == 'paid' ||
+        normalized == 'settled' ||
+        normalized == 'confirmed') {
+      return _ReceiptPaymentStatus.paid;
+    }
+    if (normalized == 'open' ||
+        normalized == 'pending' ||
+        normalized == 'authorized') {
+      return _ReceiptPaymentStatus.sent;
+    }
+    return _ReceiptPaymentStatus.pending;
+  }
+
+  String? _mapText(Map<String, dynamic> map, String key) {
+    final value = map[key];
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty || text.toLowerCase() == 'null') return null;
+    return text;
+  }
+
+  String? _historyTopLevelPaymentStatus() {
+    return _mapText(item.bookingDetails, 'payment_status') ??
+        _mapText(item.bookingDetails, 'paymentStatus');
+  }
+
+  String? _historyNestedPaymentStatus() {
+    return _firstDetailPathText(const [
+      ['booking', 'payment_status'],
+      ['booking', 'paymentStatus'],
+      ['booking_details', 'payment_status'],
+      ['booking_details', 'paymentStatus'],
+      ['record', 'payment_status'],
+      ['record', 'paymentStatus'],
+      ['record', 'booking', 'payment_status'],
+      ['record', 'booking', 'paymentStatus'],
+      ['mollie', 'status'],
+      ['record', 'mollie', 'status'],
+    ]);
+  }
+
+  void _mergePaymentFieldsIntoReceiptDetails(Map<String, dynamic> fields) {
+    for (final entry in fields.entries) {
+      final value = entry.value?.toString().trim();
+      if (value == null || value.isEmpty || value.toLowerCase() == 'null') continue;
+      item.bookingDetails[entry.key] = entry.value;
+    }
+    final bookingMap = item.bookingDetails['booking'];
+    if (bookingMap is Map) {
+      final mutableBooking = Map<String, dynamic>.from(bookingMap);
+      if (fields['payment_status'] != null) mutableBooking['payment_status'] = fields['payment_status'];
+      if (fields['paymentStatus'] != null) mutableBooking['paymentStatus'] = fields['paymentStatus'];
+      if (fields['paid_at'] != null) mutableBooking['paid_at'] = fields['paid_at'];
+      if (fields['paidAt'] != null) mutableBooking['paidAt'] = fields['paidAt'];
+      if (fields['payment_provider'] != null) mutableBooking['payment_provider'] = fields['payment_provider'];
+      if (fields['paymentProvider'] != null) mutableBooking['paymentProvider'] = fields['paymentProvider'];
+      if (fields['payment_id'] != null) mutableBooking['payment_id'] = fields['payment_id'];
+      if (fields['paymentId'] != null) mutableBooking['paymentId'] = fields['paymentId'];
+      item.bookingDetails['booking'] = mutableBooking;
+    }
+  }
+
+  Map<String, dynamic>? _extractAuthoritativePaymentFields(
+    Map<String, dynamic> root,
+  ) {
+    Map<String, dynamic> asMap(dynamic value) =>
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    String? text(dynamic value) {
+      final s = value?.toString().trim();
+      if (s == null || s.isEmpty || s.toLowerCase() == 'null') return null;
+      return s;
+    }
+
+    final data = asMap(root['data']);
+    final record = asMap(root['record']);
+    final booking = asMap(root['booking']);
+    final recordBooking = asMap(record['booking']);
+    final dataRecord = asMap(data['record']);
+    final dataBooking = asMap(data['booking']);
+    final dataRecordBooking = asMap(dataRecord['booking']);
+
+    String? firstHit(
+      String snake,
+      String camel,
+      Map<String, dynamic> map,
+    ) {
+      final hit = text(map[snake] ?? map[camel]);
+      return hit;
+    }
+
+    final paymentStatus = firstHit('payment_status', 'paymentStatus', root) ??
+        firstHit('payment_status', 'paymentStatus', record) ??
+        firstHit('payment_status', 'paymentStatus', recordBooking) ??
+        firstHit('payment_status', 'paymentStatus', booking) ??
+        firstHit('payment_status', 'paymentStatus', data) ??
+        firstHit('payment_status', 'paymentStatus', dataRecord) ??
+        firstHit('payment_status', 'paymentStatus', dataBooking) ??
+        firstHit('payment_status', 'paymentStatus', dataRecordBooking);
+    final paidAt = text(root['paid_at'] ??
+        root['paidAt'] ??
+        record['paid_at'] ??
+        record['paidAt'] ??
+        recordBooking['paid_at'] ??
+        recordBooking['paidAt'] ??
+        booking['paid_at'] ??
+        booking['paidAt'] ??
+        data['paid_at'] ??
+        data['paidAt'] ??
+        dataRecord['paid_at'] ??
+        dataRecord['paidAt'] ??
+        dataBooking['paid_at'] ??
+        dataBooking['paidAt'] ??
+        dataRecordBooking['paid_at'] ??
+        dataRecordBooking['paidAt']);
+    final paymentProvider = text(root['payment_provider'] ??
+        root['paymentProvider'] ??
+        record['payment_provider'] ??
+        record['paymentProvider'] ??
+        booking['payment_provider'] ??
+        booking['paymentProvider'] ??
+        data['payment_provider'] ??
+        data['paymentProvider'] ??
+        dataRecord['payment_provider'] ??
+        dataRecord['paymentProvider'] ??
+        dataBooking['payment_provider'] ??
+        dataBooking['paymentProvider']);
+    final paymentId = text(root['payment_id'] ??
+        root['paymentId'] ??
+        record['payment_id'] ??
+        record['paymentId'] ??
+        booking['payment_id'] ??
+        booking['paymentId'] ??
+        data['payment_id'] ??
+        data['paymentId'] ??
+        dataRecord['payment_id'] ??
+        dataRecord['paymentId'] ??
+        dataBooking['payment_id'] ??
+        dataBooking['paymentId']);
+
+    if (paymentStatus == null &&
+        paidAt == null &&
+        paymentProvider == null &&
+        paymentId == null) {
+      return null;
+    }
+    return <String, dynamic>{
+      if (paymentStatus != null) ...{
+        'payment_status': paymentStatus,
+        'paymentStatus': paymentStatus,
+      },
+      if (paidAt != null) ...{'paid_at': paidAt, 'paidAt': paidAt},
+      if (paymentProvider != null) ...{
+        'payment_provider': paymentProvider,
+        'paymentProvider': paymentProvider,
+      },
+      if (paymentId != null) ...{'payment_id': paymentId, 'paymentId': paymentId},
+    };
+  }
+
+  Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(String bookingId) async {
+    Map<String, dynamic> asMap(dynamic value) =>
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    List<dynamic> asList(dynamic value) => value is List ? value : const [];
+    try {
+      final uri = Uri.parse('$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}');
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (kAdminToken.trim().isNotEmpty) {
+        headers['x-admin-token'] = kAdminToken.trim();
+      }
+      final res = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 12));
+      Map<String, dynamic>? parsed;
+      dynamic decoded;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          final root = Map<String, dynamic>.from(decoded);
+          parsed = _extractAuthoritativePaymentFields(root);
+          if (parsed == null || parsed.isEmpty) {
+            for (final list in <List<dynamic>>[
+              asList(root['items']),
+              asList(asMap(root['data'])['items']),
+              asList(root['bookings']),
+              asList(asMap(root['data'])['bookings']),
+            ]) {
+              for (final raw in list) {
+                final entry = asMap(raw);
+                final entryBookingId = (entry['booking_id'] ??
+                        entry['bookingId'] ??
+                        entry['id'] ??
+                        '')
+                    .toString()
+                    .trim();
+                if (entryBookingId != bookingId) continue;
+                parsed = _extractAuthoritativePaymentFields(entry);
+                if (parsed != null && parsed.isNotEmpty) break;
+              }
+              if (parsed != null && parsed.isNotEmpty) break;
+            }
+          }
+        }
+      }
+      if (parsed != null && parsed.isNotEmpty) return parsed;
+
+      final listUri = Uri.parse(
+        '$kBookingBaseUrl/bookings?limit=200&t=${DateTime.now().millisecondsSinceEpoch}',
+      );
+      final listRes = await http
+          .get(listUri, headers: headers)
+          .timeout(const Duration(seconds: 12));
+      Map<String, dynamic>? listParsed;
+      if (listRes.statusCode >= 200 && listRes.statusCode < 300) {
+        final listDecoded = jsonDecode(listRes.body);
+        if (listDecoded is Map) {
+          final root = Map<String, dynamic>.from(listDecoded);
+          for (final list in <List<dynamic>>[
+            asList(root['items']),
+            asList(asMap(root['data'])['items']),
+            asList(root['bookings']),
+            asList(asMap(root['data'])['bookings']),
+          ]) {
+            for (final raw in list) {
+              final entry = asMap(raw);
+              final entryBookingId = (entry['booking_id'] ??
+                      entry['bookingId'] ??
+                      entry['id'] ??
+                      '')
+                  .toString()
+                  .trim();
+              if (entryBookingId != bookingId) continue;
+              listParsed = _extractAuthoritativePaymentFields(entry);
+              if (listParsed != null && listParsed.isNotEmpty) break;
+            }
+            if (listParsed != null && listParsed.isNotEmpty) break;
+          }
+        }
+      }
+      if (listParsed != null && listParsed.isNotEmpty) return listParsed;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _resolveReceiptPaymentStatus() async {
+    final bookingId = (item.bookingId ?? '').trim();
+    final historyPaymentStatus = _historyTopLevelPaymentStatus();
+    final nestedPaymentStatus = _historyNestedPaymentStatus();
+
+    String? authoritativePaymentStatus;
+    if (bookingId.isNotEmpty) {
+      final fields = await _fetchAuthoritativePaymentFields(bookingId);
+      if (fields != null && fields.isNotEmpty) {
+        _mergePaymentFieldsIntoReceiptDetails(fields);
+        authoritativePaymentStatus =
+            _mapText(fields, 'payment_status') ?? _mapText(fields, 'paymentStatus');
+      }
+    }
+
+    String? resolved = authoritativePaymentStatus;
+    if (resolved != null && resolved.isNotEmpty) {
+    } else if (historyPaymentStatus != null && historyPaymentStatus.isNotEmpty) {
+      resolved = historyPaymentStatus;
+    } else if (nestedPaymentStatus != null && nestedPaymentStatus.isNotEmpty) {
+      resolved = nestedPaymentStatus;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _paymentStatus = _paymentStatusFromRaw(resolved);
+    });
   }
 
   String? _cleanContactText(dynamic value) {
@@ -9614,7 +10078,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   Widget _paymentSection(BuildContext context) {
     final receiptTotal = _receiptTotalAmount();
-    final canRequestPayment = receiptTotal != null && receiptTotal > 0;
+    final alreadyPaid = _paymentStatus == _ReceiptPaymentStatus.paid;
+    final canRequestPayment =
+        !alreadyPaid && receiptTotal != null && receiptTotal > 0;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -9637,23 +10103,25 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           _receiptRow(_receiptText('paymentStatus'), _paymentStatusText()),
           _receiptRow(_receiptText('amount'), _totalText(), highlight: true),
           const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: canRequestPayment ? () => _showPaymentQr(context) : null,
-            icon: const Icon(Icons.qr_code_2),
-            label: Text(_receiptText('payByQr')),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
-            icon: const Icon(Icons.payments_outlined),
-            label: Text(_receiptText('cashReceived')),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
-            icon: const Icon(Icons.credit_card),
-            label: Text(_receiptText('paidByCardTerminal')),
-          ),
+          if (!alreadyPaid) ...[
+            FilledButton.icon(
+              onPressed: canRequestPayment ? () => _showPaymentQr(context) : null,
+              icon: const Icon(Icons.qr_code_2),
+              label: Text(_receiptText('payByQr')),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
+              icon: const Icon(Icons.payments_outlined),
+              label: Text(_receiptText('cashReceived')),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
+              icon: const Icon(Icons.credit_card),
+              label: Text(_receiptText('paidByCardTerminal')),
+            ),
+          ],
         ],
       ),
     );
