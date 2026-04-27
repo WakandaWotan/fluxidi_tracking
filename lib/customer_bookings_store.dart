@@ -1,0 +1,863 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+class StoredCustomerBooking {
+  const StoredCustomerBooking({
+    required this.bookingId,
+    this.publicBookingId = '',
+    this.paymentBookingId = '',
+    this.customerName = '',
+    this.customerPhone = '',
+    this.customerEmail = '',
+    this.from = '',
+    this.to = '',
+    this.pickupIso = '',
+    this.price,
+    this.currency = '',
+    this.service = '',
+    this.tier = '',
+    this.pax = '',
+    this.bags = '',
+    this.paymentStatus = '',
+    this.status = '',
+    this.createdAt = '',
+    this.businessDetected = false,
+    this.invoiceRequested = false,
+    this.companyName = '',
+    this.vatNumber = '',
+    this.invoiceEmail = '',
+    this.invoiceAddress = '',
+    this.quote = const <String, dynamic>{},
+    this.updatedAt = '',
+  });
+
+  final String bookingId;
+  final String publicBookingId;
+  final String paymentBookingId;
+  final String customerName;
+  final String customerPhone;
+  final String customerEmail;
+  final String from;
+  final String to;
+  final String pickupIso;
+  final double? price;
+  final String currency;
+  final String service;
+  final String tier;
+  final String pax;
+  final String bags;
+  final String paymentStatus;
+  final String status;
+  final String createdAt;
+  final bool businessDetected;
+  final bool invoiceRequested;
+  final String companyName;
+  final String vatNumber;
+  final String invoiceEmail;
+  final String invoiceAddress;
+  final Map<String, dynamic> quote;
+  final String updatedAt;
+
+  String get canonicalBookingId {
+    final primary = bookingId.trim();
+    if (primary.isNotEmpty) return primary;
+    return publicBookingId.trim();
+  }
+
+  StoredCustomerBooking copyWith({
+    String? bookingId,
+    String? publicBookingId,
+    String? paymentBookingId,
+    String? customerName,
+    String? customerPhone,
+    String? customerEmail,
+    String? from,
+    String? to,
+    String? pickupIso,
+    double? price,
+    bool clearPrice = false,
+    String? currency,
+    String? service,
+    String? tier,
+    String? pax,
+    String? bags,
+    String? paymentStatus,
+    String? status,
+    String? createdAt,
+    bool? businessDetected,
+    bool? invoiceRequested,
+    String? companyName,
+    String? vatNumber,
+    String? invoiceEmail,
+    String? invoiceAddress,
+    Map<String, dynamic>? quote,
+    String? updatedAt,
+  }) {
+    return StoredCustomerBooking(
+      bookingId: bookingId ?? this.bookingId,
+      publicBookingId: publicBookingId ?? this.publicBookingId,
+      paymentBookingId: paymentBookingId ?? this.paymentBookingId,
+      customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
+      customerEmail: customerEmail ?? this.customerEmail,
+      from: from ?? this.from,
+      to: to ?? this.to,
+      pickupIso: pickupIso ?? this.pickupIso,
+      price: clearPrice ? null : (price ?? this.price),
+      currency: currency ?? this.currency,
+      service: service ?? this.service,
+      tier: tier ?? this.tier,
+      pax: pax ?? this.pax,
+      bags: bags ?? this.bags,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      businessDetected: businessDetected ?? this.businessDetected,
+      invoiceRequested: invoiceRequested ?? this.invoiceRequested,
+      companyName: companyName ?? this.companyName,
+      vatNumber: vatNumber ?? this.vatNumber,
+      invoiceEmail: invoiceEmail ?? this.invoiceEmail,
+      invoiceAddress: invoiceAddress ?? this.invoiceAddress,
+      quote: quote ?? this.quote,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  static String _string(dynamic value) => value?.toString().trim() ?? '';
+
+  static bool _isMeaningfulString(String s) {
+    final normalized = s.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    if (normalized == '-' || normalized == 'null' || normalized == 'undefined') {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _bool(dynamic value) {
+    if (value is bool) return value;
+    final s = _string(value).toLowerCase();
+    return s == '1' || s == 'true' || s == 'yes' || s == 'ja';
+  }
+
+  static double? _double(dynamic value) {
+    if (value is num) return value.toDouble();
+    final s = _string(value);
+    if (s.isEmpty) return null;
+    return double.tryParse(s.replaceAll(',', '.'));
+  }
+
+  static Map<String, dynamic> _map(dynamic value) {
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    return <String, dynamic>{};
+  }
+
+  static dynamic _valueAtPath(Map<String, dynamic> source, String path) {
+    dynamic current = source;
+    for (final segment in path.split('.')) {
+      if (current is Map && current.containsKey(segment)) {
+        current = current[segment];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  static String _firstPathValue(
+    Map<String, dynamic> source,
+    List<String> paths, {
+    String fallback = '',
+  }) {
+    for (final path in paths) {
+      final value = _valueAtPath(source, path);
+      final s = _string(value);
+      if (_isMeaningfulString(s)) return s;
+    }
+    return fallback;
+  }
+
+  static double? _firstPathDouble(
+    Map<String, dynamic> source,
+    List<String> paths, {
+    double? fallback,
+  }) {
+    for (final path in paths) {
+      final value = _valueAtPath(source, path);
+      final n = _double(value);
+      if (n != null) return n;
+    }
+    return fallback;
+  }
+
+  static String _firstNonEmpty(List<dynamic> values) {
+    for (final value in values) {
+      final s = _string(value);
+      if (_isMeaningfulString(s)) return s;
+    }
+    return '';
+  }
+
+  static String _preferNonEmpty(String authoritative, String localFallback) {
+    if (_isMeaningfulString(authoritative)) return authoritative;
+    if (_isMeaningfulString(localFallback)) return localFallback;
+    return '';
+  }
+
+  static StoredCustomerBooking fromBookSuccess({
+    required Map<String, dynamic> response,
+    required Map<String, dynamic> requestPayload,
+    required String customerName,
+    required String customerPhone,
+    required String customerEmail,
+  }) {
+    final bookingMap = _map(response['booking']);
+    final payloadMap = _map(requestPayload);
+    final quoteMap = _map(payloadMap['quote']);
+    final data = <String, dynamic>{
+      ...response,
+      'booking': bookingMap,
+      'payload': payloadMap,
+      'quote': quoteMap,
+    };
+    final bookingId = _firstNonEmpty([
+      response['booking_id'],
+      response['bookingId'],
+      bookingMap['booking_id'],
+      bookingMap['bookingId'],
+      response['public_reference'],
+      response['publicReference'],
+    ]);
+    final paymentBookingId = _firstNonEmpty([
+      response['payment_booking_id'],
+      response['paymentBookingId'],
+      bookingMap['payment_booking_id'],
+      bookingMap['paymentBookingId'],
+    ]);
+    final paymentStatus = _firstNonEmpty([
+      response['payment_status'],
+      response['paymentStatus'],
+      bookingMap['payment_status'],
+      bookingMap['paymentStatus'],
+      response['requiresPayment'] == true ? 'pending' : 'unpaid',
+    ]);
+    final lifecycleStatus = _firstNonEmpty([
+      response['status'],
+      bookingMap['status'],
+      'PENDING',
+    ]).toUpperCase();
+    final businessDetected = _bool(_firstNonEmpty([
+      response['business_detected'],
+      bookingMap['business_detected'],
+      requestPayload['vat_number'],
+      requestPayload['company_name'],
+    ]));
+    final invoiceRequested = _bool(_firstNonEmpty([
+      response['invoice_requested'],
+      bookingMap['invoice_requested'],
+      requestPayload['invoice_requested'],
+      businessDetected ? 'true' : 'false',
+    ]));
+    return StoredCustomerBooking(
+      bookingId: bookingId,
+      publicBookingId: bookingId,
+      paymentBookingId: paymentBookingId,
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
+      customerEmail: customerEmail.trim().toLowerCase(),
+      from: _firstPathValue(data, const <String>[
+        'from',
+        'pickup',
+        'pickup_address',
+        'pickupAddress',
+        'origin',
+        'booking.from',
+        'booking.pickup',
+        'booking.pickup_address',
+        'booking.pickupAddress',
+        'payload.from',
+        'payload.pickup_address',
+        'quote.inputs.from',
+      ]),
+      to: _firstPathValue(data, const <String>[
+        'to',
+        'destination',
+        'destination_address',
+        'destinationAddress',
+        'dropoff',
+        'dropoff_address',
+        'booking.to',
+        'booking.destination',
+        'booking.destination_address',
+        'payload.to',
+        'payload.destination_address',
+        'quote.inputs.to',
+      ]),
+      pickupIso: _firstNonEmpty([
+        requestPayload['pickup_iso'],
+        bookingMap['pickup_iso'],
+        bookingMap['pickupStartIso'],
+        payloadMap['pickup_iso'],
+      ]),
+      price: _firstPathDouble(data, const <String>[
+        'price',
+        'total',
+        'amount',
+        'price_incl_vat',
+        'priceInclVat',
+        'booking.price',
+        'booking.total',
+        'booking.amount',
+        'quote.price_incl_vat',
+        'quote.priceInclVat',
+        'payload.price',
+        'payload.total',
+        'payload.amount',
+        'payload.quote.price_incl_vat',
+      ]),
+      currency: _firstNonEmpty([
+        response['currency'],
+        bookingMap['currency'],
+        payloadMap['currency'],
+        quoteMap['currency'],
+        'EUR',
+      ]),
+      service: _firstPathValue(data, const <String>[
+        'service',
+        'extra_service',
+        'extra_service_key',
+        'booking.service',
+        'booking.extra_service',
+        'payload.service',
+        'quote.inputs.service',
+      ]),
+      tier: _firstNonEmpty([
+        payloadMap['tier'],
+        bookingMap['tier'],
+        quoteMap['tier'],
+      ]),
+      pax: _firstNonEmpty([
+        payloadMap['pax'],
+        bookingMap['pax'],
+        bookingMap['passengers'],
+        quoteMap['pax'],
+      ]),
+      bags: _firstNonEmpty([
+        payloadMap['bags'],
+        bookingMap['bags'],
+        quoteMap['bags'],
+      ]),
+      paymentStatus: paymentStatus.toLowerCase(),
+      status: lifecycleStatus,
+      createdAt: DateTime.now().toIso8601String(),
+      businessDetected: businessDetected,
+      invoiceRequested: invoiceRequested,
+      companyName: _firstNonEmpty([
+        requestPayload['company_name'],
+        requestPayload['companyName'],
+        bookingMap['company_name'],
+      ]),
+      vatNumber: _firstNonEmpty([
+        requestPayload['vat_number'],
+        requestPayload['vatNumber'],
+        bookingMap['vat_number'],
+      ]),
+      invoiceEmail: _firstNonEmpty([
+        requestPayload['invoice_email'],
+        bookingMap['invoice_email'],
+      ]),
+      invoiceAddress: _firstNonEmpty([
+        requestPayload['invoice_address'],
+        bookingMap['invoice_address'],
+      ]),
+      quote: quoteMap,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+  }
+
+  static StoredCustomerBooking fromAuthoritativeResponse({
+    required String bookingId,
+    required Map<String, dynamic> response,
+    StoredCustomerBooking? fallback,
+  }) {
+    final root = _map(response);
+    final data = _map(root['data']);
+    final rootRecord = _map(root['record']);
+    final rec = rootRecord.isNotEmpty ? rootRecord : _map(data['record']);
+    final booking = _map(rec['booking']);
+    final bookingDetails = _map(rec['booking_details']);
+    final payload = _map(rec['payload']);
+    final quote = _map(rec['quote']);
+    final merged = <String, dynamic>{
+      ...root,
+      'record': rec,
+      'booking': booking,
+      'payload': payload,
+      'quote': quote,
+      'booking_details': bookingDetails,
+      'data': data,
+    };
+    final resolvedBookingId = _firstNonEmpty([
+      bookingId,
+      response['booking_id'],
+      rec['booking_id'],
+      booking['booking_id'],
+    ]);
+    return StoredCustomerBooking(
+      bookingId: resolvedBookingId,
+      publicBookingId: _firstNonEmpty([
+        response['booking_id'],
+        response['public_booking_id'],
+        resolvedBookingId,
+      ]),
+      paymentBookingId: _firstNonEmpty([
+        rec['payment_booking_id'],
+        rec['paymentBookingId'],
+        booking['payment_booking_id'],
+        booking['paymentBookingId'],
+        fallback?.paymentBookingId,
+      ]),
+      customerName: _firstNonEmpty([
+        booking['customer_name'],
+        booking['name'],
+        fallback?.customerName,
+      ]),
+      customerPhone: _firstNonEmpty([
+        booking['customer_phone'],
+        booking['phone'],
+        fallback?.customerPhone,
+      ]),
+      customerEmail: _firstNonEmpty([
+        booking['customer_email'],
+        booking['email'],
+        fallback?.customerEmail,
+      ]).toLowerCase(),
+      from: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'from',
+          'pickup',
+          'pickup_address',
+          'pickupAddress',
+          'origin',
+          'booking.from',
+          'booking.pickup',
+          'booking.pickup_address',
+          'booking.pickupAddress',
+          'record.from',
+          'record.booking.from',
+          'record.booking.pickup_address',
+          'record.booking_details.from',
+          'record.booking_details.pickup_address',
+          'data.record.booking.from',
+          'data.record.booking_details.from',
+          'payload.from',
+          'payload.pickup_address',
+          'quote.inputs.from',
+        ]),
+        fallback?.from ?? '',
+      ),
+      to: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'to',
+          'destination',
+          'destination_address',
+          'destinationAddress',
+          'dropoff',
+          'dropoff_address',
+          'booking.to',
+          'booking.destination',
+          'booking.destination_address',
+          'record.booking.to',
+          'record.booking.destination_address',
+          'record.booking_details.to',
+          'record.booking_details.destination_address',
+          'data.record.booking.to',
+          'data.record.booking_details.to',
+          'payload.to',
+          'payload.destination_address',
+          'quote.inputs.to',
+        ]),
+        fallback?.to ?? '',
+      ),
+      pickupIso: _firstNonEmpty([
+        _firstPathValue(merged, const <String>[
+          'pickup_iso',
+          'pickupStartIso',
+          'record.pickup_iso',
+          'record.booking.pickup_iso',
+          'record.booking.pickupStartIso',
+          'record.booking_details.pickup_iso',
+          'payload.pickup_iso',
+        ]),
+        booking['pickupStartIso'],
+        booking['pickup_iso'],
+        booking['pickupAt'],
+        fallback?.pickupIso,
+      ]),
+      price: _firstPathDouble(merged, const <String>[
+        'price',
+        'total',
+        'amount',
+        'price_incl_vat',
+        'priceInclVat',
+        'booking.price',
+        'booking.total',
+        'booking.amount',
+        'record.price',
+        'record.total',
+        'record.booking.price',
+        'record.booking.total',
+        'record.booking_details.price',
+        'record.booking_details.total',
+        'quote.price_incl_vat',
+        'quote.priceInclVat',
+        'payload.price',
+        'payload.total',
+        'payload.amount',
+        'payload.quote.price_incl_vat',
+      ], fallback: fallback?.price),
+      currency: _firstNonEmpty([
+        _firstPathValue(merged, const <String>[
+          'currency',
+          'record.currency',
+          'booking.currency',
+          'record.booking.currency',
+          'record.booking_details.currency',
+          'quote.currency',
+          'payload.currency',
+        ]),
+        booking['currency'],
+        rec['currency'],
+        fallback?.currency,
+        'EUR',
+      ]),
+      service: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'service',
+          'extra_service',
+          'extra_service_key',
+          'booking.service',
+          'booking.extra_service',
+          'record.booking.service',
+          'record.booking.extra_service',
+          'payload.service',
+          'quote.inputs.service',
+        ]),
+        fallback?.service ?? '',
+      ),
+      tier: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'tier',
+          'booking.tier',
+          'record.booking.tier',
+          'record.booking_details.tier',
+          'payload.tier',
+          'quote.inputs.tier',
+        ]),
+        fallback?.tier ?? '',
+      ),
+      pax: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'pax',
+          'passengers',
+          'booking.pax',
+          'booking.passengers',
+          'record.booking.pax',
+          'record.booking_details.pax',
+          'payload.pax',
+          'quote.inputs.pax',
+        ]),
+        fallback?.pax ?? '',
+      ),
+      bags: _preferNonEmpty(
+        _firstPathValue(merged, const <String>[
+          'bags',
+          'booking.bags',
+          'record.booking.bags',
+          'record.booking_details.bags',
+          'payload.bags',
+          'quote.inputs.bags',
+        ]),
+        fallback?.bags ?? '',
+      ),
+      paymentStatus: _firstNonEmpty([
+        rec['payment_status'],
+        rec['paymentStatus'],
+        booking['payment_status'],
+        booking['paymentStatus'],
+        fallback?.paymentStatus,
+      ]).toLowerCase(),
+      status: _firstNonEmpty([
+        response['status'],
+        rec['status'],
+        rec['stage'],
+        booking['status'],
+        fallback?.status,
+      ]).toUpperCase(),
+      createdAt: _firstNonEmpty([
+        rec['createdAt'],
+        rec['created_at'],
+        booking['created_at'],
+        fallback?.createdAt,
+        DateTime.now().toIso8601String(),
+      ]),
+      businessDetected: _bool(_firstNonEmpty([
+        booking['business_detected'],
+        booking['business_customer'],
+        booking['is_business'],
+        fallback?.businessDetected,
+      ])),
+      invoiceRequested: _bool(_firstNonEmpty([
+        booking['invoice_requested'],
+        fallback?.invoiceRequested,
+      ])),
+      companyName: _firstNonEmpty([
+        booking['company_name'],
+        fallback?.companyName,
+      ]),
+      vatNumber: _firstNonEmpty([
+        booking['vat_number'],
+        fallback?.vatNumber,
+      ]),
+      invoiceEmail: _firstNonEmpty([
+        booking['invoice_email'],
+        fallback?.invoiceEmail,
+      ]),
+      invoiceAddress: _firstNonEmpty([
+        booking['invoice_address'],
+        booking['billing_address'],
+        fallback?.invoiceAddress,
+      ]),
+      quote: quote.isNotEmpty ? quote : (fallback?.quote ?? const <String, dynamic>{}),
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+  }
+
+  factory StoredCustomerBooking.fromJson(Map<String, dynamic> json) {
+    return StoredCustomerBooking(
+      bookingId: _string(json['booking_id']),
+      publicBookingId: _string(json['public_booking_id']),
+      paymentBookingId: _string(json['payment_booking_id']),
+      customerName: _string(json['customer_name']),
+      customerPhone: _string(json['customer_phone']),
+      customerEmail: _string(json['customer_email']).toLowerCase(),
+      from: _string(json['from']),
+      to: _string(json['to']),
+      pickupIso: _string(json['pickup_iso']),
+      price: _double(json['price']),
+      currency: _firstNonEmpty([json['currency'], 'EUR']),
+      service: _string(json['service']),
+      tier: _string(json['tier']),
+      pax: _string(json['pax']),
+      bags: _string(json['bags']),
+      paymentStatus: _string(json['payment_status']).toLowerCase(),
+      status: _string(json['status']).toUpperCase(),
+      createdAt: _string(json['created_at']),
+      businessDetected: _bool(json['business_detected']),
+      invoiceRequested: _bool(json['invoice_requested']),
+      companyName: _string(json['company_name']),
+      vatNumber: _string(json['vat_number']),
+      invoiceEmail: _string(json['invoice_email']),
+      invoiceAddress: _string(json['invoice_address']),
+      quote: _map(json['quote']),
+      updatedAt: _string(json['updated_at']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'booking_id': bookingId,
+      'public_booking_id': publicBookingId,
+      'payment_booking_id': paymentBookingId,
+      'customer_name': customerName,
+      'customer_phone': customerPhone,
+      'customer_email': customerEmail,
+      'from': from,
+      'to': to,
+      'pickup_iso': pickupIso,
+      'price': price,
+      'currency': currency,
+      'service': service,
+      'tier': tier,
+      'pax': pax,
+      'bags': bags,
+      'payment_status': paymentStatus,
+      'status': status,
+      'created_at': createdAt,
+      'business_detected': businessDetected,
+      'invoice_requested': invoiceRequested,
+      'company_name': companyName,
+      'vat_number': vatNumber,
+      'invoice_email': invoiceEmail,
+      'invoice_address': invoiceAddress,
+      'quote': quote,
+      'updated_at': updatedAt,
+    };
+  }
+}
+
+class CustomerBookingsStore {
+  CustomerBookingsStore._();
+
+  static final CustomerBookingsStore instance = CustomerBookingsStore._();
+
+  static const String _fileName = 'customer_bookings_v1.json';
+
+  List<StoredCustomerBooking>? _cache;
+
+  Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}customer_state',
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return File('${dir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  Future<List<StoredCustomerBooking>> loadAll() async {
+    if (_cache != null) {
+      return List<StoredCustomerBooking>.from(_cache!);
+    }
+    try {
+      final file = await _file();
+      if (!await file.exists()) {
+        _cache = <StoredCustomerBooking>[];
+        return const <StoredCustomerBooking>[];
+      }
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) {
+        _cache = <StoredCustomerBooking>[];
+        return const <StoredCustomerBooking>[];
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) {
+        _cache = <StoredCustomerBooking>[];
+        return const <StoredCustomerBooking>[];
+      }
+      final items = decoded
+          .whereType<Map>()
+          .map((m) => StoredCustomerBooking.fromJson(Map<String, dynamic>.from(m)))
+          .toList(growable: false);
+      _cache = items;
+      return List<StoredCustomerBooking>.from(items);
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] $err');
+      _cache = <StoredCustomerBooking>[];
+      return const <StoredCustomerBooking>[];
+    }
+  }
+
+  Future<void> _saveAll(List<StoredCustomerBooking> items) async {
+    _cache = List<StoredCustomerBooking>.from(items);
+    try {
+      final file = await _file();
+      final payload = items.map((e) => e.toJson()).toList(growable: false);
+      await file.writeAsString(jsonEncode(payload));
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
+    }
+  }
+
+  int _findIndex(List<StoredCustomerBooking> items, StoredCustomerBooking incoming) {
+    final bookingId = incoming.bookingId.trim();
+    final publicId = incoming.publicBookingId.trim();
+    final paymentBookingId = incoming.paymentBookingId.trim();
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      if (bookingId.isNotEmpty && item.bookingId.trim() == bookingId) return i;
+      if (publicId.isNotEmpty && item.publicBookingId.trim() == publicId) return i;
+      if (paymentBookingId.isNotEmpty &&
+          item.paymentBookingId.trim().isNotEmpty &&
+          item.paymentBookingId.trim() == paymentBookingId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  Future<void> upsert(StoredCustomerBooking booking) async {
+    final list = await loadAll();
+    final index = _findIndex(list, booking);
+    final now = DateTime.now().toIso8601String();
+    final incoming = booking.copyWith(
+      updatedAt: now,
+      createdAt: booking.createdAt.trim().isEmpty ? now : booking.createdAt,
+    );
+    if (index >= 0) {
+      final existing = list[index];
+      list[index] = existing.copyWith(
+        bookingId: incoming.bookingId.isNotEmpty ? incoming.bookingId : existing.bookingId,
+        publicBookingId: incoming.publicBookingId.isNotEmpty
+            ? incoming.publicBookingId
+            : existing.publicBookingId,
+        paymentBookingId: incoming.paymentBookingId.isNotEmpty
+            ? incoming.paymentBookingId
+            : existing.paymentBookingId,
+        customerName: incoming.customerName.isNotEmpty ? incoming.customerName : existing.customerName,
+        customerPhone: incoming.customerPhone.isNotEmpty ? incoming.customerPhone : existing.customerPhone,
+        customerEmail: incoming.customerEmail.isNotEmpty ? incoming.customerEmail : existing.customerEmail,
+        from: incoming.from.isNotEmpty ? incoming.from : existing.from,
+        to: incoming.to.isNotEmpty ? incoming.to : existing.to,
+        pickupIso: incoming.pickupIso.isNotEmpty ? incoming.pickupIso : existing.pickupIso,
+        price: incoming.price ?? existing.price,
+        currency: incoming.currency.isNotEmpty ? incoming.currency : existing.currency,
+        service: incoming.service.isNotEmpty ? incoming.service : existing.service,
+        tier: incoming.tier.isNotEmpty ? incoming.tier : existing.tier,
+        pax: incoming.pax.isNotEmpty ? incoming.pax : existing.pax,
+        bags: incoming.bags.isNotEmpty ? incoming.bags : existing.bags,
+        paymentStatus: incoming.paymentStatus.isNotEmpty
+            ? incoming.paymentStatus
+            : existing.paymentStatus,
+        status: incoming.status.isNotEmpty ? incoming.status : existing.status,
+        createdAt: existing.createdAt.isNotEmpty ? existing.createdAt : incoming.createdAt,
+        businessDetected: incoming.businessDetected || existing.businessDetected,
+        invoiceRequested: incoming.invoiceRequested || existing.invoiceRequested,
+        companyName: incoming.companyName.isNotEmpty ? incoming.companyName : existing.companyName,
+        vatNumber: incoming.vatNumber.isNotEmpty ? incoming.vatNumber : existing.vatNumber,
+        invoiceEmail: incoming.invoiceEmail.isNotEmpty ? incoming.invoiceEmail : existing.invoiceEmail,
+        invoiceAddress: incoming.invoiceAddress.isNotEmpty
+            ? incoming.invoiceAddress
+            : existing.invoiceAddress,
+        quote: incoming.quote.isNotEmpty ? incoming.quote : existing.quote,
+        updatedAt: now,
+      );
+    } else {
+      list.add(incoming);
+    }
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    await _saveAll(list);
+  }
+
+  Future<void> markPaid({
+    required String bookingId,
+    String? paymentBookingId,
+  }) async {
+    final list = await loadAll();
+    final bId = bookingId.trim();
+    final pId = (paymentBookingId ?? '').trim();
+    bool changed = false;
+    final now = DateTime.now().toIso8601String();
+    for (int i = 0; i < list.length; i++) {
+      final item = list[i];
+      if ((bId.isNotEmpty && item.bookingId.trim() == bId) ||
+          (pId.isNotEmpty && item.paymentBookingId.trim() == pId)) {
+        list[i] = item.copyWith(
+          paymentStatus: 'paid',
+          status: item.status.isNotEmpty ? item.status : 'CONFIRMED',
+          updatedAt: now,
+        );
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _saveAll(list);
+    }
+  }
+}

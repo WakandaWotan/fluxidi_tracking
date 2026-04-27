@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
@@ -1057,6 +1058,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   bool _submitStateIsError = false;
   Map<String, dynamic>? _finalPricing;
   String? _finalPricingBookingId;
+  String? _createdBookingId;
   String? _ownPaymentBookingId;
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
@@ -1083,6 +1085,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: ${_finalPricingBookingId!.trim()}',
         ].join('\n');
       });
+      final bookingId = (_createdBookingId ?? _finalPricingBookingId ?? '').trim();
+      unawaited(
+        CustomerBookingsStore.instance.markPaid(
+          bookingId: bookingId,
+          paymentBookingId: ownId,
+        ),
+      );
       if (!_postPaymentNavigated) {
         _postPaymentNavigated = true;
         final messenger = ScaffoldMessenger.maybeOf(context);
@@ -1439,6 +1448,26 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           publicBookingId: publicRef.isNotEmpty ? publicRef : null,
         );
       }
+      final storedBooking = StoredCustomerBooking.fromBookSuccess(
+        response: body,
+        requestPayload: payload,
+        customerName: name,
+        customerPhone: phone,
+        customerEmail: email,
+      ).copyWith(
+        bookingId: bookingRef.isNotEmpty ? bookingRef : publicRef,
+        publicBookingId: publicRef,
+        paymentBookingId: paymentBookingId,
+        paymentStatus: paymentFlow
+            ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
+            : 'unpaid',
+        status: paymentFlow ? 'PENDING' : 'CONFIRMED',
+        companyName: companyName,
+        vatNumber: vatNumber,
+        businessDetected: vatNumber.trim().isNotEmpty || companyName.trim().isNotEmpty,
+        invoiceRequested: vatNumber.trim().isNotEmpty || companyName.trim().isNotEmpty,
+      );
+      await CustomerBookingsStore.instance.upsert(storedBooking);
       final finalPricing =
           bookingRef.isNotEmpty ? await _fetchFinalAuthoritativePricing(bookingRef) : null;
 
@@ -1456,6 +1485,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         _submitStateIsError = false;
         _finalPricing = finalPricing;
         _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
+        _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
       });
       if (safeCheckoutUrl.isNotEmpty) {
         await _showBookingSuccessDialog(
