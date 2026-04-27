@@ -1362,6 +1362,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         es: 'Pagado',
       );
     }
+    if (p == 'unpaid' || p == 'pending' || p == 'pay_in_car') {
+      return _t(
+        nl: 'Te betalen in de wagen',
+        en: 'To pay in the vehicle',
+        fr: 'A payer dans le vehicule',
+        es: 'A pagar en el vehiculo',
+      );
+    }
     return _t(
       nl: 'Te betalen in de wagen',
       en: 'To pay in the vehicle',
@@ -1488,11 +1496,28 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${booking.from.isEmpty ? '-' : booking.from} → ${booking.to.isEmpty ? '-' : booking.to}',
+                                _t(
+                                  nl: 'Route',
+                                  en: 'Route',
+                                  fr: 'Itineraire',
+                                  es: 'Ruta',
+                                ),
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w700,
                                 ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_t(nl: 'Ophaaladres', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${booking.from.isEmpty ? '-' : booking.from}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.86)),
+                                softWrap: true,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${_t(nl: 'Bestemming', en: 'Destination', fr: 'Destination', es: 'Destino')}: ${booking.to.isEmpty ? '-' : booking.to}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.86)),
+                                softWrap: true,
                               ),
                               const SizedBox(height: 8),
                               Text(
@@ -1507,9 +1532,25 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                                 '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
                                 style: TextStyle(color: Colors.white.withOpacity(0.8)),
                               ),
-                              Text(
-                                '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
-                                style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                              const SizedBox(height: 4),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ',
+                                    style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      _formatPrice(booking),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                      textAlign: TextAlign.right,
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 10),
                               Align(
@@ -2009,6 +2050,21 @@ class CustomerBookingView {
     return null;
   }
 
+  bool _toBool(dynamic value) {
+    if (value is bool) return value;
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    return text == 'true' || text == '1' || text == 'yes' || text == 'ja';
+  }
+
+  bool _firstPathBool(List<String> paths) {
+    for (final path in paths) {
+      final raw = _valueAtPath(path);
+      if (raw == null) continue;
+      return _toBool(raw);
+    }
+    return false;
+  }
+
   String _preferNonEmptyText(String authoritative, String localFallback) {
     if (_isMeaningful(authoritative)) return authoritative;
     if (_isMeaningful(localFallback)) return localFallback;
@@ -2275,11 +2331,100 @@ class CustomerBookingView {
         booking['vat'],
       ]);
   String get invoiceEmail => _firstNonEmpty([
-        booking['invoice_email'],
+        _firstPathValue(const <String>[
+          'invoice_email',
+          'invoiceEmail',
+          'booking.invoice_email',
+          'booking.invoiceEmail',
+          'record.invoice_email',
+          'record.invoiceEmail',
+          'record.booking.invoice_email',
+          'record.booking.invoiceEmail',
+          'record.booking_details.invoice_email',
+          'record.booking_details.invoiceEmail',
+          'customer_email',
+          'customerEmail',
+          'email',
+          'custEmail',
+          'booking.customer_email',
+          'booking.customerEmail',
+          'booking.email',
+          'booking.custEmail',
+          'record.booking.customer_email',
+          'record.booking.customerEmail',
+          'record.booking.email',
+          'record.booking.custEmail',
+          'payload.customer_email',
+          'payload.customerEmail',
+          'payload.email',
+          'payload.custEmail',
+        ]),
       ]);
   String get invoiceAddress => _firstNonEmpty([
-        booking['invoice_address'],
-        booking['billing_address'],
+        _firstPathValue(const <String>[
+          'invoice_address',
+          'invoiceAddress',
+          'billing_address',
+          'billingAddress',
+          'company_address',
+          'companyAddress',
+          'booking.invoice_address',
+          'booking.invoiceAddress',
+          'booking.billing_address',
+          'booking.billingAddress',
+          'booking.company_address',
+          'booking.companyAddress',
+          'record.invoice_address',
+          'record.invoiceAddress',
+          'record.billing_address',
+          'record.billingAddress',
+          'record.company_address',
+          'record.companyAddress',
+          'record.booking.invoice_address',
+          'record.booking.invoiceAddress',
+          'record.booking.billing_address',
+          'record.booking.billingAddress',
+          'record.booking.company_address',
+          'record.booking.companyAddress',
+        ]),
+      ]);
+  String get invoiceUrl => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'invoice_url',
+          'invoiceUrl',
+          'invoice_pdf_url',
+          'invoicePdfUrl',
+          'invoice_download_url',
+          'invoiceDownloadUrl',
+          'booking.invoice_url',
+          'booking.invoiceUrl',
+          'booking.invoice_pdf_url',
+          'booking.invoicePdfUrl',
+          'booking.invoice_download_url',
+          'booking.invoiceDownloadUrl',
+          'record.invoice_url',
+          'record.invoiceUrl',
+          'record.invoice_pdf_url',
+          'record.invoicePdfUrl',
+          'record.invoice_download_url',
+          'record.invoiceDownloadUrl',
+          'record.booking.invoice_url',
+          'record.booking.invoiceUrl',
+          'record.booking.invoice_pdf_url',
+          'record.booking.invoicePdfUrl',
+          'record.booking.invoice_download_url',
+          'record.booking.invoiceDownloadUrl',
+        ]),
+      ]);
+  bool get invoiceEmailAvailable => _firstPathBool(const <String>[
+        'invoice_email_available',
+        'invoiceEmailAvailable',
+        'booking.invoice_email_available',
+        'booking.invoiceEmailAvailable',
+        'record.invoice_email_available',
+        'record.invoiceEmailAvailable',
+        'record.booking.invoice_email_available',
+        'record.booking.invoiceEmailAvailable',
       ]);
   bool get businessCustomer {
     if (vatNumber.isNotEmpty || companyName.isNotEmpty) return true;
@@ -2525,6 +2670,31 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return '$symbol$formatted';
   }
 
+  String _notFilled() => _t(
+        nl: 'Nog niet ingevuld',
+        en: 'Not filled in yet',
+        fr: 'Pas encore renseigne',
+        es: 'Aun no completado',
+      );
+
+  Future<void> _openExternalUrl(BuildContext context, String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null) return;
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_t(
+            nl: 'Kon link niet openen.',
+            en: 'Could not open link.',
+            fr: "Impossible d'ouvrir le lien.",
+            es: 'No se pudo abrir el enlace.',
+          )),
+        ),
+      );
+    }
+  }
+
   String _lifecycleLabel(String s) {
     switch (s) {
       case 'COMPLETED':
@@ -2618,8 +2788,27 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
   }
 
-  Widget _kv(String label, String value) {
-    final v = value.trim().isEmpty ? '-' : value;
+  Widget _kv(String label, String value, {bool stacked = false, String? emptyText}) {
+    final v = value.trim().isEmpty ? (emptyText ?? '-') : value.trim();
+    if (stacked) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              v,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -2629,6 +2818,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             width: 130,
             child: Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Colors.white.withOpacity(0.7)),
             ),
           ),
@@ -2651,6 +2842,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         final v = _view;
         final paid = v.isPaid;
         final business = v.businessCustomer;
+        final invoiceEmail = v.invoiceEmail.trim().isEmpty ? _notFilled() : v.invoiceEmail.trim();
+        final invoiceAddress =
+            v.invoiceAddress.trim().isEmpty ? _notFilled() : v.invoiceAddress.trim();
+        final hasInvoiceUrl = v.invoiceUrl.trim().isNotEmpty;
+        final hasInvoiceEmailAction = v.invoiceEmailAvailable;
         final invoiceFieldsExist = v.companyName.isNotEmpty ||
             v.vatNumber.isNotEmpty ||
             v.invoiceEmail.isNotEmpty ||
@@ -2802,8 +2998,26 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   _section(
                     title: _t(nl: 'Route', en: 'Route', fr: 'Itineraire', es: 'Ruta'),
                     children: [
-                      _kv(_t(nl: 'Ophaaladres', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida'), v.fromAddress),
-                      _kv(_t(nl: 'Bestemming', en: 'Destination', fr: 'Destination', es: 'Destino'), v.toAddress),
+                      _kv(
+                        _t(
+                          nl: 'Ophaaladres',
+                          en: 'Pickup',
+                          fr: 'Prise en charge',
+                          es: 'Recogida',
+                        ),
+                        v.fromAddress,
+                        stacked: true,
+                      ),
+                      _kv(
+                        _t(
+                          nl: 'Bestemming',
+                          en: 'Destination',
+                          fr: 'Destination',
+                          es: 'Destino',
+                        ),
+                        v.toAddress,
+                        stacked: true,
+                      ),
                       _kv(
                         _t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada'),
                         _formatPickup(v.pickupIso),
@@ -2815,7 +3029,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                     children: [
                       _kv(_t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'), v.customerName),
                       _kv(_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono'), v.customerPhone),
-                      _kv(_t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Email'), v.customerEmail),
+                      _kv(
+                        _t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Email'),
+                        v.customerEmail,
+                        stacked: true,
+                      ),
                     ],
                   ),
                   _section(
@@ -2867,10 +3085,48 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
                               : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
                         ),
-                        _kv(_t(nl: 'Bedrijfsnaam', en: 'Company name', fr: "Nom de l'entreprise", es: 'Empresa'), v.companyName),
-                        _kv(_t(nl: 'BTW-nummer', en: 'VAT number', fr: 'Numero de TVA', es: 'NIF/IVA'), v.vatNumber),
-                        _kv(_t(nl: 'Factuur e-mail', en: 'Invoice email', fr: 'E-mail facture', es: 'Email de factura'), v.invoiceEmail),
-                        _kv(_t(nl: 'Factuuradres', en: 'Invoice address', fr: 'Adresse de facturation', es: 'Direccion de factura'), v.invoiceAddress),
+                        _kv(
+                          _t(
+                            nl: 'Bedrijfsnaam',
+                            en: 'Company name',
+                            fr: "Nom de l'entreprise",
+                            es: 'Empresa',
+                          ),
+                          v.companyName,
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'BTW-nummer',
+                            en: 'VAT number',
+                            fr: 'Numero de TVA',
+                            es: 'NIF/IVA',
+                          ),
+                          v.vatNumber,
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Factuur e-mail',
+                            en: 'Invoice email',
+                            fr: 'E-mail facture',
+                            es: 'Email de factura',
+                          ),
+                          invoiceEmail,
+                          stacked: true,
+                          emptyText: _notFilled(),
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Factuuradres',
+                            en: 'Invoice address',
+                            fr: 'Adresse de facturation',
+                            es: 'Direccion de factura',
+                          ),
+                          invoiceAddress,
+                          stacked: true,
+                          emptyText: _notFilled(),
+                        ),
                         const SizedBox(height: 8),
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -2903,23 +3159,74 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           runSpacing: 8,
                           children: [
                             OutlinedButton.icon(
-                              onPressed: null,
+                              onPressed:
+                                  hasInvoiceUrl ? () => _openExternalUrl(context, v.invoiceUrl) : null,
                               icon: const Icon(Icons.visibility_outlined),
-                              label: Text(_t(nl: 'Bekijk factuur', en: 'View invoice', fr: 'Voir la facture', es: 'Ver factura')),
+                              label: Text(
+                                hasInvoiceUrl
+                                    ? _t(
+                                        nl: 'Bekijk factuur',
+                                        en: 'View invoice',
+                                        fr: 'Voir la facture',
+                                        es: 'Ver factura',
+                                      )
+                                    : _t(
+                                        nl: 'Binnenkort beschikbaar',
+                                        en: 'Coming soon',
+                                        fr: 'Bientot disponible',
+                                        es: 'Disponible pronto',
+                                      ),
+                              ),
                             ),
                             OutlinedButton.icon(
-                              onPressed: null,
+                              onPressed:
+                                  hasInvoiceUrl ? () => _openExternalUrl(context, v.invoiceUrl) : null,
                               icon: const Icon(Icons.download_outlined),
-                              label: Text(_t(nl: 'Download PDF', en: 'Download PDF', fr: 'Telecharger PDF', es: 'Descargar PDF')),
+                              label: Text(
+                                hasInvoiceUrl
+                                    ? _t(
+                                        nl: 'Download PDF',
+                                        en: 'Download PDF',
+                                        fr: 'Telecharger PDF',
+                                        es: 'Descargar PDF',
+                                      )
+                                    : _t(
+                                        nl: 'Binnenkort beschikbaar',
+                                        en: 'Coming soon',
+                                        fr: 'Bientot disponible',
+                                        es: 'Disponible pronto',
+                                      ),
+                              ),
                             ),
                             OutlinedButton.icon(
-                              onPressed: null,
+                              onPressed: hasInvoiceEmailAction
+                                  ? () {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(_t(
+                                            nl: 'Binnenkort beschikbaar',
+                                            en: 'Coming soon',
+                                            fr: 'Bientot disponible',
+                                            es: 'Disponible pronto',
+                                          )),
+                                        ),
+                                      );
+                                    }
+                                  : null,
                               icon: const Icon(Icons.email_outlined),
                               label: Text(_t(
-                                nl: 'Stuur opnieuw via e-mail',
-                                en: 'Resend via email',
-                                fr: 'Renvoyer par e-mail',
-                                es: 'Reenviar por email',
+                                nl: hasInvoiceEmailAction
+                                    ? 'Stuur opnieuw via e-mail'
+                                    : 'Binnenkort beschikbaar',
+                                en: hasInvoiceEmailAction
+                                    ? 'Resend via email'
+                                    : 'Coming soon',
+                                fr: hasInvoiceEmailAction
+                                    ? 'Renvoyer par e-mail'
+                                    : 'Bientot disponible',
+                                es: hasInvoiceEmailAction
+                                    ? 'Reenviar por email'
+                                    : 'Disponible pronto',
                               )),
                             ),
                           ],
@@ -4142,6 +4449,21 @@ class _DriverHomePageState extends State<DriverHomePage>
   final ValueNotifier<int> _bookingsUiVersion = ValueNotifier<int>(0);
 
   Timer? _bookingPollTimer; // auto-refresh bookings
+  Future<void>? _bookingsRefreshInFlight;
+  DateTime? _lastBookingsRefreshAt;
+  DateTime? _lastStatusTriggeredRefreshAt;
+  DateTime? _lastManualRefreshAt;
+  bool _bookingsHubVisible = false;
+  int? _activeBookingPollIntervalMs;
+  static const Duration _bookingsPollIntervalFastList = Duration(seconds: 9);
+  static const Duration _bookingsPollIntervalSafeLive = Duration(seconds: 25);
+  static const Duration _bookingsMinRefreshIntervalFastList =
+      Duration(seconds: 8);
+  static const Duration _bookingsMinRefreshIntervalSafeLive =
+      Duration(seconds: 20);
+  static const Duration _manualRefreshCooldown = Duration(seconds: 4);
+  static const Duration _statusRefreshCooldown = Duration(seconds: 8);
+  int _activeBookingRefreshTimerCount = 0;
 
   // Boot splash (logo on dark background + loader)
   bool _bootSplashVisible = true;
@@ -4162,6 +4484,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   // Location tracking
   StreamSubscription<geo.Position>? _posSub;
+  int _activeGeolocatorSubscriptionCount = 0;
   geo.Position? _lastPos;
   geo.Position? _startPos;
   double _kmDriven = 0.0;
@@ -4183,6 +4506,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   mb.PolylineAnnotation? _routeLineOutline;
   mb.PolylineAnnotation? _routeLine;
   String _driverMarkerIcon = 'triangle-15';
+  late final Widget _stableMapWidget;
+  String? _pendingMapStyleUri;
+  DateTime? _lastMapWidgetBuildLogAt;
+  DateTime? _lastDriverBuildLogAt;
 
   
 
@@ -4208,6 +4535,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   List<_LonLat> _routeCoords = [];
   double? _routeKm;
   int? _routeDurationSec;
+  String _lastPinsDrawSignature = '';
+  DateTime? _lastPinsDrawAt;
+  String _lastRouteDrawSignature = '';
+  DateTime? _lastRouteDrawAt;
+  static const Duration _routeDrawDebounce = Duration(seconds: 2);
   _RideRoutePhase _routePhase = _RideRoutePhase.trip;
   List<_NavStep> _routeSteps = const <_NavStep>[];
   int _nextStepIndex = 0;
@@ -4222,6 +4554,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
   int _routeCleanupEpoch = 0;
+  int _mapRedrawCountThisMinute = 0;
+  int _routeRedrawCountThisMinute = 0;
+  Timer? _renderDebugWindowTimer;
 
   void _resetNavProgressState({bool clearRoute = false}) {
     if (clearRoute) {
@@ -4323,6 +4658,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     _setNavigationWakelock(false);
     await _applyMapStyleForMode();
+    if (!_liveRideActive) {
+      _startBookingPolling(reason: 'route_state_cleared');
+    }
 
   }
 
@@ -4494,6 +4832,18 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void initState() {
     super.initState();
+    debugPrint('[MAP][HOSTING_MODE] mode=HC textureView=true');
+    _stableMapWidget = mb.MapWidget(
+      key: const ValueKey('mapbox_map'),
+      onMapCreated: _onMapCreated,
+      textureView: true,
+      androidHostingMode: mb.AndroidPlatformViewHostingMode.HC,
+      styleUri: 'mapbox://styles/mapbox/streets-v12',
+      cameraOptions: mb.CameraOptions(
+        center: _mbPoint(3.62, 50.78),
+        zoom: 12.0,
+      ),
+    );
     appLanguageNotifier.addListener(_onAppLanguageChanged);
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
 
@@ -4517,14 +4867,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       _bootMinElapsed = true;
       _maybeHideBootSplash();
     });
-    _refreshBookings();
-
-    // Auto-refresh bookings so website bookings appear in the app.
-    _bookingPollTimer?.cancel();
-    _bookingPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (!mounted) return;
-      if (_loadingBookings) return;
-      _refreshBookings();
+    _refreshBookings(trigger: 'init_boot');
+    _startBookingPolling(reason: 'init');
+    _renderDebugWindowTimer?.cancel();
+    _renderDebugWindowTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      debugPrint(
+        '[RIDES][DEBUG_COUNTERS][MINUTE] bookingTimers=$_activeBookingRefreshTimerCount geolocatorSubs=$_activeGeolocatorSubscriptionCount mapRedrawPerMin=$_mapRedrawCountThisMinute routeRedrawPerMin=$_routeRedrawCountThisMinute',
+      );
+      _mapRedrawCountThisMinute = 0;
+      _routeRedrawCountThisMinute = 0;
     });
   }
 
@@ -4565,6 +4916,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   void dispose() {
+    debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     fluxidiPendingPaymentNotifier.removeListener(_onPendingPaymentStatusChanged);
@@ -4573,8 +4925,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activePulseCtrl.dispose();
     _stopMeterTicker();
     _stopTrackingInternal();
-    _bookingPollTimer?.cancel();
-    _bookingPollTimer = null;
+    _stopBookingPolling(reason: 'dispose');
+    _renderDebugWindowTimer?.cancel();
+    _renderDebugWindowTimer = null;
     _manualFromCtrl.dispose();
     _manualToCtrl.dispose();
     _directRideDestinationText = null;
@@ -4593,7 +4946,104 @@ Map<String, String> _headers({bool admin = false}) {
     return h;
   }
 
-  Future<void> _refreshBookings() async {
+  void _startBookingPolling({required String reason}) {
+    if (_liveRideActive) {
+      _stopBookingPolling(reason: 'tracking_started');
+      return;
+    }
+    final fastListMode = _bookingsHubVisible && !_liveRideActive;
+    final interval =
+        fastListMode ? _bookingsPollIntervalFastList : _bookingsPollIntervalSafeLive;
+    final mode = fastListMode ? 'fast_list' : 'safe_live';
+    if (_bookingPollTimer != null &&
+        _activeBookingPollIntervalMs == interval.inMilliseconds) {
+      return;
+    }
+    _bookingPollTimer?.cancel();
+    debugPrint(
+      '[RIDES][POLL][MODE] mode=$mode intervalMs=${interval.inMilliseconds}',
+    );
+    _bookingPollTimer = Timer.periodic(interval, (_) {
+      if (!mounted) return;
+      if (_liveRideActive) return;
+      _refreshBookings(trigger: 'periodic_poll');
+    });
+    _activeBookingRefreshTimerCount = 1;
+    _activeBookingPollIntervalMs = interval.inMilliseconds;
+    debugPrint('[RIDES][POLL][START] reason=$reason activeTimers=$_activeBookingRefreshTimerCount');
+  }
+
+  void _stopBookingPolling({required String reason}) {
+    if (_bookingPollTimer == null) return;
+    _bookingPollTimer?.cancel();
+    _bookingPollTimer = null;
+    _activeBookingRefreshTimerCount = 0;
+    _activeBookingPollIntervalMs = null;
+    debugPrint('[RIDES][POLL][STOP] reason=$reason activeTimers=$_activeBookingRefreshTimerCount');
+  }
+
+  Future<void> _refreshBookings({
+    bool force = false,
+    String trigger = 'unknown',
+  }) async {
+    if (_bookingsRefreshInFlight != null) {
+      debugPrint('[RIDES][REFRESH][SKIP] reason=in_flight trigger=$trigger');
+      return _bookingsRefreshInFlight!;
+    }
+    final now = DateTime.now();
+    final isManualTrigger = trigger == 'drawer_manual' || trigger == 'list_manual';
+    if (force && isManualTrigger && _lastManualRefreshAt != null) {
+      final elapsed = now.difference(_lastManualRefreshAt!);
+      if (elapsed < _manualRefreshCooldown) {
+        debugPrint(
+          '[RIDES][REFRESH][SKIP] reason=manual_cooldown trigger=$trigger elapsedMs=${elapsed.inMilliseconds}',
+        );
+        return;
+      }
+    }
+    if (force && isManualTrigger) {
+      _lastManualRefreshAt = now;
+    }
+
+    final fastListMode = _bookingsHubVisible && !_liveRideActive;
+    final minInterval = fastListMode
+        ? _bookingsMinRefreshIntervalFastList
+        : _bookingsMinRefreshIntervalSafeLive;
+    final minIntervalReason = fastListMode
+        ? 'min_interval_fast_list'
+        : 'min_interval_safe_live';
+    if (!force && _lastBookingsRefreshAt != null) {
+      final elapsed = now.difference(_lastBookingsRefreshAt!);
+      if (elapsed < minInterval) {
+        debugPrint(
+          '[RIDES][REFRESH][SKIP] reason=$minIntervalReason trigger=$trigger elapsedMs=${elapsed.inMilliseconds}',
+        );
+        return;
+      }
+    }
+    if (force && trigger == 'status_change' && _lastStatusTriggeredRefreshAt != null) {
+      final elapsed = now.difference(_lastStatusTriggeredRefreshAt!);
+      if (elapsed < _statusRefreshCooldown) {
+        debugPrint(
+          '[RIDES][REFRESH][SKIP] reason=status_cooldown trigger=$trigger elapsedMs=${elapsed.inMilliseconds}',
+        );
+        return;
+      }
+    }
+    if (force && trigger == 'status_change') {
+      _lastStatusTriggeredRefreshAt = now;
+    }
+    _lastBookingsRefreshAt = now;
+    final task = _performRefreshBookings(trigger: trigger);
+    _bookingsRefreshInFlight = task;
+    try {
+      await task;
+    } finally {
+      _bookingsRefreshInFlight = null;
+    }
+  }
+
+  Future<void> _performRefreshBookings({required String trigger}) async {
     setState(() {
       _loadingBookings = true;
       _bookingsError = null;
@@ -4604,7 +5054,7 @@ Map<String, String> _headers({bool admin = false}) {
       final ts = DateTime.now().millisecondsSinceEpoch;
       final primaryUri =
           Uri.parse('$kBookingBaseUrl$kListBookingsPath?limit=50&t=$ts');
-      debugPrint('[RIDES][REFRESH][REQ] GET $primaryUri');
+      debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
       final res = await http.get(primaryUri, headers: _headers(admin: true));
       debugPrint('[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}');
 
@@ -5033,7 +5483,7 @@ Map<String, String> _headers({bool admin = false}) {
         bookingId: bookingId,
         contextLabel: 'STATUS_AFTER_WRITE',
       );
-      await _refreshBookings();
+      await _refreshBookings(force: true, trigger: 'status_change');
     } catch (e) {
       _toast('❌ Status update failed: $e');
     } finally {
@@ -5091,7 +5541,7 @@ Map<String, String> _headers({bool admin = false}) {
         bookingId: bookingId,
         contextLabel: 'DELETE_AFTER_WRITE',
       );
-      await _refreshBookings();
+      await _refreshBookings(force: true, trigger: 'delete_action');
     } catch (e) {
       _toast('❌ Delete failed: $e');
     } finally {
@@ -6113,8 +6563,13 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   void _startTrackingInternal() {
-    _bookingPollTimer?.cancel();
-    _posSub?.cancel();
+    if (_posSub != null) {
+      debugPrint(
+        '[RIDES][TRACKING][SKIP_START] reason=already_active geolocatorSubs=$_activeGeolocatorSubscriptionCount',
+      );
+      return;
+    }
+    _stopBookingPolling(reason: 'tracking_started');
 
     const settings = geo.LocationSettings(
       accuracy: geo.LocationAccuracy.bestForNavigation,
@@ -6192,14 +6647,22 @@ Map<String, String> _headers({bool admin = false}) {
 
       await _sendPing(pos);
     });
+    _activeGeolocatorSubscriptionCount = 1;
+    debugPrint('[RIDES][TRACKING][START] geolocatorSubs=$_activeGeolocatorSubscriptionCount');
   }
 
   void _stopTrackingInternal() {
+    if (_posSub == null) return;
     _posSub?.cancel();
     _posSub = null;
+    _activeGeolocatorSubscriptionCount = 0;
+    debugPrint('[RIDES][TRACKING][STOP] geolocatorSubs=$_activeGeolocatorSubscriptionCount');
     _startPos = null;
     _lastFollowCameraAt = null;
     _followCameraInFlight = false;
+    if (!_liveRideActive) {
+      _startBookingPolling(reason: 'tracking_stopped');
+    }
   }
 
   /// ===============================
@@ -6458,6 +6921,7 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
   Future<void> _onMapCreated(mb.MapboxMap mapboxMap) async {
+    debugPrint('[MAP][CREATED] style=$_activeMapStyleUri');
     _map = mapboxMap;
     await _applyMapStyleForMode();
     await _recreateAnnotationManagers();
@@ -6503,13 +6967,23 @@ Map<String, String> _headers({bool admin = false}) {
     if (_map == null) return;
     final theme = _effectiveMapThemeFor(_cameraMode);
     final target = _styleForMode(_cameraMode);
-    if (_activeMapStyleUri == target) return;
+    debugPrint('[MAP][STYLE_REQ] theme=${theme == MapThemeMode.light ? 'light' : 'dark'} target=$target active=$_activeMapStyleUri pending=${_pendingMapStyleUri ?? ''}');
+    if (_activeMapStyleUri == target) {
+      debugPrint('[MAP][STYLE_SKIP] reason=already_active target=$target');
+      return;
+    }
+    if (_pendingMapStyleUri == target) {
+      debugPrint('[MAP][STYLE_SKIP] reason=in_flight target=$target');
+      return;
+    }
+    _pendingMapStyleUri = target;
     try {
       debugPrint(
         '[MAP_THEME] selected=${theme == MapThemeMode.light ? 'light' : 'dark'} style=$target',
       );
       await _map!.style.setStyleURI(target);
       _activeMapStyleUri = target;
+      _mapRedrawCountThisMinute += 1;
       await _recreateAnnotationManagers();
       _driverMarker = null;
       _pickupPin = null;
@@ -6526,7 +7000,14 @@ Map<String, String> _headers({bool admin = false}) {
       debugPrint(
         '[MAP_THEME] redraw route=${_routeCoords.length >= 2} marker=${_lastPos != null} pins=${_routeCoords.length >= 2}',
       );
-    } catch (_) {}
+      debugPrint('[MAP][STYLE_DONE] target=$target');
+    } catch (e) {
+      debugPrint('[MAP][STYLE_SKIP] reason=error target=$target error=$e');
+    } finally {
+      if (_pendingMapStyleUri == target) {
+        _pendingMapStyleUri = null;
+      }
+    }
   }
 
   Future<void> _setMapTheme(MapThemeMode theme) async {
@@ -7051,11 +7532,69 @@ Map<String, String> _headers({bool admin = false}) {
   }
 
 
+  Future<geo.Position?> _fetchCurrentPositionForRecenter() async {
+    final serviceEnabled = await geo.Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      debugPrint('[GPS][RECENTER][SERVICE_DISABLED]');
+      _toast(_tr(
+        nl: 'Locatieservice staat uit. Zet GPS aan om te centreren.',
+        en: 'Location service is disabled. Enable GPS to recenter.',
+        fr: 'Le service de localisation est desactive. Activez le GPS pour recentrer.',
+        es: 'El servicio de ubicacion esta desactivado. Activa el GPS para recentrar.',
+      ));
+      return null;
+    }
+
+    var permission = await geo.Geolocator.checkPermission();
+    if (permission == geo.LocationPermission.denied) {
+      permission = await geo.Geolocator.requestPermission();
+    }
+    if (permission == geo.LocationPermission.denied ||
+        permission == geo.LocationPermission.deniedForever) {
+      debugPrint('[GPS][RECENTER][PERMISSION_DENIED]');
+      _toast(_tr(
+        nl: 'Geen locatiepermissie. Geef toegang om te centreren.',
+        en: 'Location permission denied. Grant access to recenter.',
+        fr: 'Permission de localisation refusee. Autorisez-la pour recentrer.',
+        es: 'Permiso de ubicacion denegado. Concedelo para recentrar.',
+      ));
+      return null;
+    }
+
+    debugPrint('[GPS][RECENTER][FETCH_START]');
+    try {
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      ).timeout(const Duration(seconds: 10));
+      debugPrint(
+        '[GPS][RECENTER][FETCH_OK] lat=${pos.latitude.toStringAsFixed(6)} lng=${pos.longitude.toStringAsFixed(6)}',
+      );
+      return pos;
+    } catch (e) {
+      debugPrint('[GPS][RECENTER][ERROR] $e');
+      _toast(_tr(
+        nl: 'GPS-positie ophalen mislukt. Probeer opnieuw.',
+        en: 'Failed to get GPS position. Please try again.',
+        fr: 'Impossible de recuperer la position GPS. Reessayez.',
+        es: 'No se pudo obtener la posicion GPS. Intentalo de nuevo.',
+      ));
+      return null;
+    }
+  }
+
   Future<void> _centerOnMe() async {
-    final pos = _lastPos;
-    if (pos == null) {
-      _toast('Nog geen GPS-positie');
-      return;
+    debugPrint('[GPS][RECENTER][TAP]');
+    geo.Position? pos = _lastPos;
+    if (pos != null) {
+      debugPrint('[GPS][RECENTER][CACHE_HIT]');
+    } else {
+      pos = await _fetchCurrentPositionForRecenter();
+      if (pos == null) return;
+      _lastPos = pos;
+    }
+
+    if (_mapSupported && _map != null && _driverPointManager != null) {
+      await _updateDriverMarker(pos, moveCamera: false);
     }
 
     // If NAV is enabled and a trip is active, use navigation follow camera.
@@ -7520,6 +8059,17 @@ Map<String, String> _headers({bool admin = false}) {
   Future<void> _drawPins(_LonLat pickup, _LonLat dropoff) async {
     final mgr = _pinsPointManager;
     if (mgr == null) return;
+    final now = DateTime.now();
+    final signature =
+        '${pickup.lon.toStringAsFixed(5)},${pickup.lat.toStringAsFixed(5)}|${dropoff.lon.toStringAsFixed(5)},${dropoff.lat.toStringAsFixed(5)}';
+    final lastPinsAt = _lastPinsDrawAt;
+    if (signature == _lastPinsDrawSignature &&
+        lastPinsAt != null &&
+        now.difference(lastPinsAt) < _routeDrawDebounce) {
+      return;
+    }
+    _lastPinsDrawSignature = signature;
+    _lastPinsDrawAt = now;
 
     try {
       if (_pickupPin != null) await mgr.delete(_pickupPin!);
@@ -7544,6 +8094,21 @@ Map<String, String> _headers({bool admin = false}) {
   Future<void> _drawRouteLine(List<_LonLat> coords) async {
     final mgr = _routeLineManager;
     if (mgr == null) return;
+    if (coords.length < 2) return;
+    final first = coords.first;
+    final last = coords.last;
+    final now = DateTime.now();
+    final signature =
+        '${coords.length}:${first.lon.toStringAsFixed(5)},${first.lat.toStringAsFixed(5)}>${last.lon.toStringAsFixed(5)},${last.lat.toStringAsFixed(5)}';
+    final lastRouteAt = _lastRouteDrawAt;
+    if (signature == _lastRouteDrawSignature &&
+        lastRouteAt != null &&
+        now.difference(lastRouteAt) < _routeDrawDebounce) {
+      return;
+    }
+    _lastRouteDrawSignature = signature;
+    _lastRouteDrawAt = now;
+    _routeRedrawCountThisMinute += 1;
 
     try {
       if (_routeLineOutline != null) await mgr.delete(_routeLineOutline!);
@@ -8757,6 +9322,14 @@ return IgnorePointer(
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final lastBuildLog = _lastDriverBuildLogAt;
+    if (lastBuildLog == null || now.difference(lastBuildLog).inSeconds >= 5) {
+      _lastDriverBuildLogAt = now;
+      debugPrint(
+        '[DRIVER][BUILD] live=$_liveRideActive mode=$_cameraMode loadingBookings=$_loadingBookings',
+      );
+    }
     final bool liveActive = _liveRideActive;
     final bool hasSelection = _activeBooking != null;
     final bool hasDirectDraft = _directRideDraft;
@@ -8970,6 +9543,12 @@ return IgnorePointer(
   }
 
   Widget _buildMapLayer() {
+    final now = DateTime.now();
+    final lastBuildLog = _lastMapWidgetBuildLogAt;
+    if (lastBuildLog == null || now.difference(lastBuildLog).inSeconds >= 5) {
+      _lastMapWidgetBuildLogAt = now;
+      debugPrint('[MAP][WIDGET_BUILD] mapSupported=$_mapSupported hasMap=${_map != null}');
+    }
     if (kIsWindows) {
       return _mapPlaceholder(
         title: 'Map unavailable on Windows',
@@ -8984,15 +9563,7 @@ return IgnorePointer(
       );
     }
 
-    return mb.MapWidget(
-      key: const ValueKey('mapbox_map'),
-      onMapCreated: _onMapCreated,
-      styleUri: 'mapbox://styles/mapbox/streets-v12',
-      cameraOptions: mb.CameraOptions(
-        center: _mbPoint(3.62, 50.78),
-        zoom: 12.0,
-      ),
-    );
+    return _stableMapWidget;
   }
 
   Widget _mapPlaceholder({required String title, required String subtitle}) {
@@ -10043,7 +10614,7 @@ Widget _cockpitButton({
   }
 
 
-  void _openBookingsHub() {
+  void _openBookingsHub() async {
     if (!_canAccessDriverOpsScreens()) {
       Navigator.pop(context);
       _denyRoleAccess();
@@ -10051,16 +10622,25 @@ Widget _cockpitButton({
     }
     // Close drawer first for a clean transition.
     Navigator.pop(context);
-    Navigator.of(context).push(
+    if (mounted) {
+      setState(() => _bookingsHubVisible = true);
+    } else {
+      _bookingsHubVisible = true;
+    }
+    _startBookingPolling(reason: 'bookings_hub_open');
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (ctx) => _BookingsHubPage(
           title: kBookingsTitle,
           buildList: (h) => _buildBookingsList(h),
-          onRefresh: _refreshBookings,
+          onRefresh: () => _refreshBookings(force: true, trigger: 'list_manual'),
           repaintListenable: _bookingsUiVersion,
         ),
       ),
     );
+    if (!mounted) return;
+    setState(() => _bookingsHubVisible = false);
+    _startBookingPolling(reason: 'bookings_hub_closed');
   }
 
   void _openLiveRide() async {
@@ -10407,7 +10987,7 @@ Drawer _buildDrawer() {
               title: Text(kRefreshBookingsLabel),
               onTap: () {
                 Navigator.pop(context);
-                _refreshBookings();
+                _refreshBookings(force: true, trigger: 'drawer_manual');
               },
             ),
             if (canSeeDriverOps)
@@ -10416,18 +10996,7 @@ Drawer _buildDrawer() {
                 title: Text(kCenterOnMeLabel),
                 onTap: () async {
                   Navigator.pop(context);
-                  final pos = _lastPos ?? await geo.Geolocator.getCurrentPosition();
-                  _lastPos = pos;
-
-                  if (_map != null) {
-                    final p = _mbPoint(pos.longitude, pos.latitude);
-                    await _map!.flyTo(
-                      mb.CameraOptions(center: p, zoom: 14.0),
-                      mb.MapAnimationOptions(duration: 900),
-                    );
-                  } else {
-                    _toast('Kaart niet beschikbaar hier.');
-                  }
+                  await _centerOnMe();
                 },
               ),
             if (canSeeDriverOps) const SizedBox(height: 8),
@@ -11576,6 +12145,68 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return _displayToken(value) ?? '—';
   }
 
+  String? _displayExtraValue(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is String) {
+      final token = _displayToken(raw);
+      return token == null || token == '—' ? null : token;
+    }
+    if (raw is List) {
+      final values = raw
+          .map(_displayExtraValue)
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toList(growable: false);
+      if (values.isEmpty) return null;
+      return values.join(', ');
+    }
+    if (raw is Map) {
+      final values = <String>[];
+      raw.forEach((key, value) {
+        final include = value == true ||
+            value == 1 ||
+            value?.toString().toLowerCase().trim() == 'true' ||
+            value?.toString().trim() == '1';
+        if (!include) return;
+        final label = _displayToken(key.toString());
+        if (label != null && label != '—') values.add(label);
+      });
+      if (values.isEmpty) return null;
+      return values.join(', ');
+    }
+    return null;
+  }
+
+  String? _plannedExtrasText() {
+    const paths = <List<String>>[
+      ['extras'],
+      ['extra_service'],
+      ['extra_service_key'],
+      ['selected_options'],
+      ['premium_options'],
+      ['booking', 'extras'],
+      ['booking', 'extra_service'],
+      ['booking', 'extra_service_key'],
+      ['booking', 'selected_options'],
+      ['booking', 'premium_options'],
+      ['record', 'payload', 'extras'],
+      ['record', 'payload', 'extra_service'],
+      ['record', 'payload', 'extra_service_key'],
+      ['record', 'payload', 'selected_options'],
+      ['record', 'payload', 'premium_options'],
+      ['record', 'payload', 'booking', 'extras'],
+      ['record', 'payload', 'booking', 'extra_service'],
+      ['record', 'payload', 'booking', 'extra_service_key'],
+      ['record', 'payload', 'booking', 'selected_options'],
+      ['record', 'payload', 'booking', 'premium_options'],
+    ];
+    for (final path in paths) {
+      final text = _displayExtraValue(_detailAt(path));
+      if (text != null && text.trim().isNotEmpty) return text;
+    }
+    return null;
+  }
+
   bool _sameMoney(double? a, double? b) {
     if (a == null || b == null) return false;
     return (a - b).abs() < 0.005;
@@ -12240,7 +12871,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                     _optionalReceiptRow(_receiptText('extraStops'), _detailText('stops')),
                     _receiptRow(
                       _receiptText('extras'),
-                      _displayToken(_detailText('extras')) ??
+                      _plannedExtrasText() ??
                           _tr(
                             nl: 'Geen extra opties',
                             en: 'No extra options',

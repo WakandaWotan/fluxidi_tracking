@@ -17,7 +17,8 @@
     <application
         android:label="fluxidi_tracking"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true">
 
         <!-- ===== Mapbox access token ===== -->
         <meta-data
