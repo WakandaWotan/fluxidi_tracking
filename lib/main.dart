@@ -14,6 +14,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 export 'package:fluxidi_tracking/payment_return.dart'
     show
@@ -303,8 +304,20 @@ String _receiptText(String key) {
       return _tr(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada');
     case 'service':
       return _tr(nl: 'Service', en: 'Service', fr: 'Service', es: 'Servicio');
+    case 'passengerTransport':
+      return _tr(nl: 'Personenvervoer', en: 'Passenger transport', fr: 'Transport de passagers', es: 'Transporte de pasajeros');
+    case 'businessRide':
+      return _tr(nl: 'Zakelijke rit', en: 'Business ride', fr: "Course d'affaires", es: 'Viaje de negocios');
+    case 'airportTransfer':
+      return _tr(nl: 'Luchthavenvervoer', en: 'Airport transfer', fr: 'Transfert aeroport', es: 'Traslado al aeropuerto');
     case 'tier':
       return _tr(nl: 'Tier', en: 'Tier', fr: 'Catégorie', es: 'Categoría');
+    case 'tierComfort':
+      return _tr(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
+    case 'tierPrivate':
+      return _tr(nl: 'Private', en: 'Private', fr: 'Prive', es: 'Privado');
+    case 'tierPremium':
+      return _tr(nl: 'Premium', en: 'Premium', fr: 'Premium', es: 'Premium');
     case 'passengers':
       return _tr(nl: 'Passagiers / Pax', en: 'Passengers / Pax', fr: 'Passagers / Pax', es: 'Pasajeros / Pax');
     case 'bags':
@@ -361,6 +374,8 @@ String _receiptText(String key) {
       return _tr(nl: 'Cash ontvangen', en: 'Cash received', fr: 'Espèces reçues', es: 'Efectivo recibido');
     case 'paidByCardTerminal':
       return _tr(nl: 'Betaald via Bancontact', en: 'Paid by card terminal', fr: 'Payé par terminal bancaire', es: 'Pagado con terminal de tarjeta');
+    case 'confirmQrPaid':
+      return _tr(nl: 'QR betaling bevestigd', en: 'QR payment confirmed', fr: 'Paiement QR confirme', es: 'Pago QR confirmado');
     case 'paymentStatus':
       return _tr(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut du paiement', es: 'Estado del pago');
     case 'rideStatus':
@@ -371,6 +386,12 @@ String _receiptText(String key) {
       return _tr(nl: 'Onbetaald', en: 'Unpaid', fr: 'Non payé', es: 'No pagado');
     case 'paymentSent':
       return _tr(nl: 'Betaalverzoek verstuurd', en: 'Payment request sent', fr: 'Demande de paiement envoyée', es: 'Solicitud de pago enviada');
+    case 'paymentMarkedPaid':
+      return _tr(nl: 'Betaling als betaald opgeslagen.', en: 'Payment saved as paid.', fr: 'Paiement enregistre comme paye.', es: 'Pago guardado como pagado.');
+    case 'paymentMarkFailed':
+      return _tr(nl: 'Kon betaling niet opslaan. Probeer opnieuw.', en: 'Could not save payment. Please retry.', fr: 'Impossible denregistrer le paiement. Reessayez.', es: 'No se pudo guardar el pago. Intentalo de nuevo.');
+    case 'bookingIdMissing':
+      return _tr(nl: 'Boekings-ID ontbreekt.', en: 'Booking ID is missing.', fr: 'ID de reservation manquant.', es: 'Falta el ID de reserva.');
     case 'demoPayment':
       return _tr(nl: 'Markeer betaald (demo)', en: 'Mark paid (demo)', fr: 'Marquer comme payé (demo)', es: 'Marcar pagado (demo)');
     case 'qrPayment':
@@ -1104,6 +1125,27 @@ class CustomerHomePage extends StatelessWidget {
             ),
             _entryCard(
               context: context,
+              icon: Icons.search_outlined,
+              title: _t(
+                nl: 'Mijn boekingen',
+                en: 'My bookings',
+                fr: 'Mes reservations',
+                es: 'Mis reservas',
+              ),
+              subtitle: _t(
+                nl: 'Bekijk automatisch je gemaakte boekingen op dit toestel.',
+                en: 'Automatically view bookings created on this device.',
+                fr: 'Consultez automatiquement les reservations de cet appareil.',
+                es: 'Consulta automaticamente las reservas de este dispositivo.',
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CustomerBookingsPage(),
+                ),
+              ),
+            ),
+            _entryCard(
+              context: context,
               icon: Icons.local_taxi_outlined,
               title: _t(
                 nl: "Taxi's in de buurt",
@@ -1146,6 +1188,1751 @@ class CustomerHomePage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class CustomerBookingsPage extends StatefulWidget {
+  const CustomerBookingsPage({super.key});
+
+  @override
+  State<CustomerBookingsPage> createState() => _CustomerBookingsPageState();
+}
+
+class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
+  bool _loading = true;
+  bool _refreshing = false;
+  String? _error;
+  DateTime? _lastUpdated;
+  List<StoredCustomerBooking> _bookings = const <StoredCustomerBooking>[];
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocal();
+  }
+
+  Future<void> _loadLocal() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await CustomerBookingsStore.instance.loadAll();
+      if (!mounted) return;
+      setState(() {
+        _bookings = items;
+        _loading = false;
+        _lastUpdated = DateTime.now();
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = _t(
+          nl: 'Laden mislukt.',
+          en: 'Loading failed.',
+          fr: 'Chargement echoue.',
+          es: 'Error al cargar.',
+        );
+      });
+      debugPrint('[CUSTOMER_BOOKINGS][LOAD_SCREEN_ERROR] $err');
+    }
+  }
+
+  Future<void> _refreshAuthoritative() async {
+    if (_refreshing) return;
+    setState(() {
+      _refreshing = true;
+      _error = null;
+    });
+    try {
+      final snapshot = await CustomerBookingsStore.instance.loadAll();
+      for (final item in snapshot) {
+        final id = item.canonicalBookingId.trim();
+        if (id.isEmpty) continue;
+        try {
+          final uri = Uri.parse(
+            '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+          );
+          final res = await http.get(uri).timeout(const Duration(seconds: 12));
+          if (res.statusCode != 200) continue;
+          final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          if (decoded is! Map<String, dynamic> || decoded['ok'] != true) continue;
+          final stored = StoredCustomerBooking.fromAuthoritativeResponse(
+            bookingId: id,
+            response: decoded,
+            fallback: item,
+          );
+          await CustomerBookingsStore.instance.upsert(stored);
+        } catch (_) {
+          // Keep refresh resilient: skip individual booking failures.
+        }
+      }
+      final refreshed = await CustomerBookingsStore.instance.loadAll();
+      if (!mounted) return;
+      setState(() {
+        _bookings = refreshed;
+        _refreshing = false;
+        _lastUpdated = DateTime.now();
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _refreshing = false;
+        _error = _t(
+          nl: 'Vernieuwen mislukt.',
+          en: 'Refresh failed.',
+          fr: "Echec de l'actualisation.",
+          es: 'Error al actualizar.',
+        );
+      });
+      debugPrint('[CUSTOMER_BOOKINGS][REFRESH_ERROR] $err');
+    }
+  }
+
+  String _formatPickup(String iso) {
+    if (iso.trim().isEmpty) return '-';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return iso;
+    final local = dt.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _formatPrice(StoredCustomerBooking booking) {
+    final amount = booking.price;
+    if (amount == null) return '-';
+    final currency = booking.currency.toUpperCase().trim();
+    final symbol = currency.isEmpty || currency == 'EUR' ? '€' : '$currency ';
+    return '$symbol${amount.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  String _statusLabel(StoredCustomerBooking booking) {
+    final status = booking.status.toUpperCase();
+    if (status == 'PENDING') {
+      return _t(
+        nl: 'In behandeling',
+        en: 'Pending',
+        fr: 'En cours',
+        es: 'Pendiente',
+      );
+    }
+    if (status == 'CONFIRMED') {
+      return _t(
+        nl: 'Bevestigd',
+        en: 'Confirmed',
+        fr: 'Confirmee',
+        es: 'Confirmada',
+      );
+    }
+    if (status == 'COMPLETED') {
+      return _t(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Terminee',
+        es: 'Finalizada',
+      );
+    }
+    if (status == 'CANCELLED') {
+      return _t(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annulee',
+        es: 'Cancelada',
+      );
+    }
+    return status.isEmpty ? '-' : status;
+  }
+
+  String _paymentLabel(StoredCustomerBooking booking) {
+    final p = booking.paymentStatus.toLowerCase().trim();
+    if (p == 'paid' || p == 'confirmed' || p == 'success' || p == 'completed') {
+      return _t(
+        nl: 'Betaald',
+        en: 'Paid',
+        fr: 'Paye',
+        es: 'Pagado',
+      );
+    }
+    return _t(
+      nl: 'Te betalen in de wagen',
+      en: 'To pay in the vehicle',
+      fr: 'A payer dans le vehicule',
+      es: 'A pagar en el vehiculo',
+    );
+  }
+
+  String _formatLastUpdated() {
+    final value = _lastUpdated;
+    if (value == null) return '-';
+    String two(int n) => n.toString().padLeft(2, '0');
+    final local = value.toLocal();
+    return '${two(local.day)}/${two(local.month)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  Future<void> _openDetails(StoredCustomerBooking booking) async {
+    final id = booking.canonicalBookingId.trim();
+    if (id.isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CustomerBookingDetailPage(
+          bookingId: id,
+          initialView: CustomerBookingView.fromStored(booking),
+          startsFromLocalCache: true,
+        ),
+      ),
+    );
+    await _loadLocal();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: const Color(0xFF0B1020),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0B1020),
+          title: Text(_t(
+            nl: 'Mijn boekingen',
+            en: 'My bookings',
+            fr: 'Mes reservations',
+            es: 'Mis reservas',
+          )),
+          actions: [
+            IconButton(
+              tooltip: _t(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Actualiser',
+                es: 'Actualizar',
+              ),
+              onPressed: _refreshing ? null : _refreshAuthoritative,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: _refreshAuthoritative,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                Text(
+                  '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Derniere mise a jour', es: 'Ultima actualizacion')}: ${_formatLastUpdated()}',
+                  style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 12),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withOpacity(0.4)),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Color(0xFFFFB4B4)),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                if (_loading)
+                  const Center(child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(),
+                  ))
+                else if (_bookings.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141B2F),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Geen boekingen gevonden.',
+                        en: 'No bookings found.',
+                        fr: 'Aucune reservation trouvee.',
+                        es: 'No se encontraron reservas.',
+                      ),
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  )
+                else
+                  ..._bookings.map((booking) => Card(
+                        color: const Color(0xFF141B2F),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${booking.from.isEmpty ? '-' : booking.from} → ${booking.to.isEmpty ? '-' : booking.to}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                              ),
+                              Text(
+                                '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${_statusLabel(booking)}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                              ),
+                              Text(
+                                '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                              ),
+                              Text(
+                                '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
+                                style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                              ),
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: OutlinedButton(
+                                  onPressed: () => _openDetails(booking),
+                                  child: Text(_t(
+                                    nl: 'Boeking bekijken',
+                                    en: 'View booking',
+                                    fr: 'Voir la reservation',
+                                    es: 'Ver reserva',
+                                  )),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.search_outlined),
+                    onPressed: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const CustomerBookingLookupPage(),
+                        ),
+                      );
+                      await _loadLocal();
+                    },
+                    label: Text(_t(
+                      nl: 'Andere boeking opzoeken',
+                      en: 'Look up another booking',
+                      fr: 'Rechercher une autre reservation',
+                      es: 'Buscar otra reserva',
+                    )),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Customer-facing booking lookup screen.
+///
+/// Lets a customer enter a booking reference (and optionally phone/email for
+/// validation) and retrieves authoritative booking details via
+/// `GET /bookings/{id}`. Read-only — does not touch payment, pricing, booking
+/// creation or driver flows.
+class CustomerBookingLookupPage extends StatefulWidget {
+  const CustomerBookingLookupPage({super.key});
+
+  @override
+  State<CustomerBookingLookupPage> createState() =>
+      _CustomerBookingLookupPageState();
+}
+
+class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _bookingIdCtrl = TextEditingController();
+  final _contactCtrl = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void dispose() {
+    _bookingIdCtrl.dispose();
+    _contactCtrl.dispose();
+    super.dispose();
+  }
+
+  String _normalizePhone(String v) {
+    final digits = StringBuffer();
+    for (final ch in v.codeUnits) {
+      if (ch >= 0x30 && ch <= 0x39) digits.writeCharCode(ch);
+    }
+    final out = digits.toString();
+    if (out.length >= 7) {
+      return out.substring(out.length - 7);
+    }
+    return out;
+  }
+
+  bool _matchesContact(CustomerBookingView view, String contact) {
+    final c = contact.trim();
+    if (c.isEmpty) return true;
+    if (c.contains('@')) {
+      final email = view.customerEmail.toLowerCase();
+      return email.isNotEmpty && c.toLowerCase() == email;
+    }
+    final cNorm = _normalizePhone(c);
+    final pNorm = _normalizePhone(view.customerPhone);
+    if (cNorm.isEmpty || pNorm.isEmpty) return false;
+    return pNorm.endsWith(cNorm) || cNorm.endsWith(pNorm);
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final bookingId = _bookingIdCtrl.text.trim();
+    final contact = _contactCtrl.text.trim();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = _t(
+            nl: 'Boeking niet gevonden. Controleer de referentie.',
+            en: 'Booking not found. Please check your reference.',
+            fr: 'Reservation introuvable. Verifiez votre reference.',
+            es: 'Reserva no encontrada. Verifica tu referencia.',
+          );
+        });
+        return;
+      }
+      final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = _t(
+            nl: 'Boeking niet gevonden. Controleer de referentie.',
+            en: 'Booking not found. Please check your reference.',
+            fr: 'Reservation introuvable. Verifiez votre reference.',
+            es: 'Reserva no encontrada. Verifica tu referencia.',
+          );
+        });
+        return;
+      }
+      final view = CustomerBookingView.fromResponse(bookingId, decoded);
+      if (contact.isNotEmpty && !_matchesContact(view, contact)) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = _t(
+            nl: 'Gegevens komen niet overeen met deze boeking.',
+            en: 'Details do not match this booking.',
+            fr: 'Les coordonnees ne correspondent pas a cette reservation.',
+            es: 'Los datos no coinciden con esta reserva.',
+          );
+        });
+        return;
+      }
+      final stored = StoredCustomerBooking.fromAuthoritativeResponse(
+        bookingId: bookingId,
+        response: decoded,
+      );
+      await CustomerBookingsStore.instance.upsert(stored);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CustomerBookingDetailPage(
+            bookingId: bookingId,
+            initialView: view,
+            startsFromLocalCache: false,
+          ),
+        ),
+      );
+    } catch (err) {
+      if (!mounted) return;
+      debugPrint('[CUSTOMER_LOOKUP][ERROR] bookingId=${_bookingIdCtrl.text.trim()} error=$err');
+      setState(() {
+        _busy = false;
+        _error = _t(
+          nl: 'Verbinding mislukt. Probeer het opnieuw.',
+          en: 'Connection failed. Please try again.',
+          fr: 'Connexion echouee. Veuillez reessayer.',
+          es: 'Conexion fallida. Intentalo de nuevo.',
+        );
+      });
+    }
+  }
+
+  Widget _field({
+    required String label,
+    required TextEditingController controller,
+    String? Function(String?)? validator,
+    TextInputType keyboardType = TextInputType.text,
+    String? hintText,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          validator: validator,
+          keyboardType: keyboardType,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: hintText,
+            hintStyle: const TextStyle(color: Colors.white38),
+            filled: true,
+            fillColor: const Color(0xFF141B2F),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: const Color(0xFF0B1020),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0B1020),
+          title: Text(_t(
+            nl: 'Controleer of volg je boeking',
+            en: 'Check or follow your booking',
+            fr: 'Verifier ou suivre votre reservation',
+            es: 'Consulta o sigue tu reserva',
+          )),
+        ),
+        body: SafeArea(
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text(
+                  _t(
+                    nl: 'Vul je boekingsreferentie in om je boeking terug te vinden.',
+                    en: 'Enter your booking reference to look up your booking.',
+                    fr: 'Entrez votre reference pour retrouver la reservation.',
+                    es: 'Introduce tu referencia para encontrar tu reserva.',
+                  ),
+                  style: TextStyle(color: Colors.white.withOpacity(0.78)),
+                ),
+                const SizedBox(height: 14),
+                _field(
+                  label: _t(
+                    nl: 'Boekingsreferentie',
+                    en: 'Booking reference',
+                    fr: 'Reference de reservation',
+                    es: 'Referencia de reserva',
+                  ),
+                  controller: _bookingIdCtrl,
+                  hintText: 'bv. 2026-04-538473',
+                  validator: (v) {
+                    final s = (v ?? '').trim();
+                    if (s.isEmpty) {
+                      return _t(
+                        nl: 'Voer je boekingsreferentie in',
+                        en: 'Enter your booking reference',
+                        fr: 'Entrez votre reference',
+                        es: 'Introduce tu referencia',
+                      );
+                    }
+                    if (s.length < 4) {
+                      return _t(
+                        nl: 'Referentie lijkt te kort',
+                        en: 'Reference looks too short',
+                        fr: 'Reference trop courte',
+                        es: 'La referencia es muy corta',
+                      );
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _field(
+                  label: _t(
+                    nl: 'E-mail of telefoon (optioneel)',
+                    en: 'Email or phone (optional)',
+                    fr: 'E-mail ou telephone (optionnel)',
+                    es: 'Email o telefono (opcional)',
+                  ),
+                  controller: _contactCtrl,
+                  hintText: _t(
+                    nl: 'Extra controle op je gegevens',
+                    en: 'Extra check against your details',
+                    fr: 'Verification supplementaire',
+                    es: 'Verificacion adicional',
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withOpacity(0.4)),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Color(0xFFFFB4B4)),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _busy ? null : _submit,
+                  icon: const Icon(Icons.search),
+                  label: Text(_busy
+                      ? _t(
+                          nl: 'Zoeken...',
+                          en: 'Searching...',
+                          fr: 'Recherche...',
+                          es: 'Buscando...',
+                        )
+                      : _t(
+                          nl: 'Zoek mijn boeking',
+                          en: 'Find my booking',
+                          fr: 'Trouver ma reservation',
+                          es: 'Buscar mi reserva',
+                        )),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE5B641),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Read-only customer-safe view extracted from the authoritative booking
+/// record returned by `GET /bookings/{id}`. Driver/admin/internal fields
+/// (raw tokens, vehicle assignments, internal IDs) are intentionally not
+/// surfaced.
+class CustomerBookingView {
+  CustomerBookingView({
+    required this.bookingId,
+    required this.lifecycleStatus,
+    required this.booking,
+    required this.record,
+    required this.source,
+  });
+
+  final String bookingId;
+  final String lifecycleStatus;
+  final Map<String, dynamic> booking;
+  final Map<String, dynamic> record;
+  final Map<String, dynamic> source;
+
+  factory CustomerBookingView.fromResponse(
+    String bookingId,
+    Map<String, dynamic> response,
+  ) {
+    final rawRecord = response['record'];
+    final record = (rawRecord is Map)
+        ? Map<String, dynamic>.from(rawRecord)
+        : <String, dynamic>{};
+    final rawBooking = record['booking'];
+    final booking = (rawBooking is Map)
+        ? Map<String, dynamic>.from(rawBooking)
+        : <String, dynamic>{};
+    final lifecycle = (response['status']?.toString().trim() ??
+            record['status']?.toString().trim() ??
+            '')
+        .toUpperCase();
+    return CustomerBookingView(
+      bookingId: bookingId,
+      lifecycleStatus: lifecycle,
+      booking: booking,
+      record: record,
+      source: response,
+    );
+  }
+
+  factory CustomerBookingView.fromStored(StoredCustomerBooking stored) {
+    final booking = <String, dynamic>{
+      'from': stored.from,
+      'to': stored.to,
+      'pickup_iso': stored.pickupIso,
+      'customer_name': stored.customerName,
+      'customer_phone': stored.customerPhone,
+      'customer_email': stored.customerEmail,
+      'price_incl_vat': stored.price,
+      'currency': stored.currency,
+      'service': stored.service,
+      'tier': stored.tier,
+      'pax': stored.pax,
+      'bags': stored.bags,
+      'payment_status': stored.paymentStatus,
+      'company_name': stored.companyName,
+      'vat_number': stored.vatNumber,
+      'invoice_email': stored.invoiceEmail,
+      'invoice_address': stored.invoiceAddress,
+      'business_customer': stored.businessDetected,
+      'invoice_requested': stored.invoiceRequested,
+      'quote': stored.quote,
+    };
+    final record = <String, dynamic>{
+      'status': stored.status,
+      'payment_status': stored.paymentStatus,
+      'booking': booking,
+      'payload': <String, dynamic>{
+        'from': stored.from,
+        'to': stored.to,
+        'pickup_iso': stored.pickupIso,
+        'service': stored.service,
+        'tier': stored.tier,
+        'pax': stored.pax,
+        'bags': stored.bags,
+      },
+    };
+    final source = <String, dynamic>{
+      'record': record,
+      'booking': booking,
+      'quote': stored.quote,
+      'payload': record['payload'],
+    };
+    return CustomerBookingView(
+      bookingId: stored.canonicalBookingId,
+      lifecycleStatus: stored.status.toUpperCase(),
+      booking: booking,
+      record: record,
+      source: source,
+    );
+  }
+
+  bool _isMeaningful(String value) {
+    final s = value.trim().toLowerCase();
+    if (s.isEmpty) return false;
+    if (s == '-' || s == 'null' || s == 'undefined') return false;
+    return true;
+  }
+
+  String _firstNonEmpty(List<dynamic> values) {
+    for (final v in values) {
+      if (v == null) continue;
+      final s = v.toString().trim();
+      if (_isMeaningful(s)) return s;
+    }
+    return '';
+  }
+
+  dynamic _valueAtPath(String path) {
+    dynamic current = source;
+    for (final segment in path.split('.')) {
+      if (current is Map && current.containsKey(segment)) {
+        current = current[segment];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  String _firstPathValue(List<String> paths) {
+    for (final path in paths) {
+      final raw = _valueAtPath(path);
+      final s = raw?.toString().trim() ?? '';
+      if (_isMeaningful(s)) return s;
+    }
+    return '';
+  }
+
+  double? _firstPathNum(List<String> paths) {
+    for (final path in paths) {
+      final raw = _valueAtPath(path);
+      if (raw is num) return raw.toDouble();
+      final s = raw?.toString().trim() ?? '';
+      if (!_isMeaningful(s)) continue;
+      final parsed = double.tryParse(s.replaceAll(',', '.'));
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  String _preferNonEmptyText(String authoritative, String localFallback) {
+    if (_isMeaningful(authoritative)) return authoritative;
+    if (_isMeaningful(localFallback)) return localFallback;
+    return '';
+  }
+
+  CustomerBookingView mergedWithExisting(CustomerBookingView existing) {
+    final mergedBooking = <String, dynamic>{
+      ...existing.booking,
+      ...booking,
+    };
+    final mergedRecord = <String, dynamic>{
+      ...existing.record,
+      ...record,
+    };
+    final mergedSource = <String, dynamic>{
+      ...existing.source,
+      ...source,
+    };
+
+    final mergedFrom = _preferNonEmptyText(fromAddress, existing.fromAddress);
+    final mergedTo = _preferNonEmptyText(toAddress, existing.toAddress);
+    final mergedPickupIso = _preferNonEmptyText(pickupIso, existing.pickupIso);
+    final mergedName = _preferNonEmptyText(customerName, existing.customerName);
+    final mergedPhone = _preferNonEmptyText(customerPhone, existing.customerPhone);
+    final mergedEmail = _preferNonEmptyText(customerEmail, existing.customerEmail);
+    final mergedService = _preferNonEmptyText(service, existing.service);
+    final mergedTier = _preferNonEmptyText(tier, existing.tier);
+    final mergedPax = _preferNonEmptyText(pax, existing.pax);
+    final mergedBags = _preferNonEmptyText(bags, existing.bags);
+    final mergedCurrency = _preferNonEmptyText(currency, existing.currency);
+    final mergedPaymentStatus =
+        _preferNonEmptyText(rawPaymentStatus, existing.rawPaymentStatus);
+    final mergedLifecycleStatus =
+        _preferNonEmptyText(lifecycleStatus, existing.lifecycleStatus);
+    final mergedPrice = totalAmount ?? existing.totalAmount;
+
+    if (_isMeaningful(mergedFrom)) {
+      mergedSource['from'] = mergedFrom;
+      mergedBooking['from'] = mergedFrom;
+      mergedRecord['from'] = mergedFrom;
+    }
+    if (_isMeaningful(mergedTo)) {
+      mergedSource['to'] = mergedTo;
+      mergedBooking['to'] = mergedTo;
+      mergedRecord['to'] = mergedTo;
+    }
+    if (_isMeaningful(mergedPickupIso)) {
+      mergedBooking['pickup_iso'] = mergedPickupIso;
+      mergedRecord['pickup_iso'] = mergedPickupIso;
+    }
+    if (_isMeaningful(mergedName)) mergedBooking['customer_name'] = mergedName;
+    if (_isMeaningful(mergedPhone)) mergedBooking['customer_phone'] = mergedPhone;
+    if (_isMeaningful(mergedEmail)) mergedBooking['customer_email'] = mergedEmail;
+    if (_isMeaningful(mergedService)) mergedBooking['service'] = mergedService;
+    if (_isMeaningful(mergedTier)) mergedBooking['tier'] = mergedTier;
+    if (_isMeaningful(mergedPax)) mergedBooking['pax'] = mergedPax;
+    if (_isMeaningful(mergedBags)) mergedBooking['bags'] = mergedBags;
+    if (_isMeaningful(mergedCurrency)) mergedBooking['currency'] = mergedCurrency;
+    if (_isMeaningful(mergedPaymentStatus)) {
+      mergedBooking['payment_status'] = mergedPaymentStatus;
+      mergedRecord['payment_status'] = mergedPaymentStatus;
+    }
+    if (_isMeaningful(mergedLifecycleStatus)) {
+      mergedRecord['status'] = mergedLifecycleStatus;
+    }
+    if (mergedPrice != null) {
+      mergedBooking['price_incl_vat'] = mergedPrice;
+      mergedRecord['amount'] = mergedPrice;
+      mergedSource['price_incl_vat'] = mergedPrice;
+    }
+
+    mergedRecord['booking'] = mergedBooking;
+    mergedSource['record'] = mergedRecord;
+    mergedSource['booking'] = mergedBooking;
+
+    return CustomerBookingView(
+      bookingId: _preferNonEmptyText(bookingId, existing.bookingId),
+      lifecycleStatus: mergedLifecycleStatus,
+      booking: mergedBooking,
+      record: mergedRecord,
+      source: mergedSource,
+    );
+  }
+
+  String get fromAddress => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'from',
+          'pickup',
+          'pickup_address',
+          'pickupAddress',
+          'origin',
+          'booking.from',
+          'booking.pickup',
+          'booking.pickup_address',
+          'booking.pickupAddress',
+          'record.from',
+          'record.booking.from',
+          'record.booking.pickup',
+          'record.booking.pickup_address',
+          'record.booking_details.from',
+          'record.booking_details.pickup_address',
+          'data.record.booking.from',
+          'data.record.booking_details.from',
+          'payload.from',
+          'payload.pickup_address',
+          'quote.inputs.from',
+        ]),
+      ]);
+  String get toAddress => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'to',
+          'destination',
+          'destination_address',
+          'destinationAddress',
+          'dropoff',
+          'dropoff_address',
+          'booking.to',
+          'booking.destination',
+          'booking.destination_address',
+          'record.to',
+          'record.booking.to',
+          'record.booking.destination',
+          'record.booking.destination_address',
+          'record.booking_details.to',
+          'record.booking_details.destination_address',
+          'data.record.booking.to',
+          'data.record.booking_details.to',
+          'payload.to',
+          'payload.destination_address',
+          'quote.inputs.to',
+        ]),
+      ]);
+  String get pickupIso => _firstNonEmpty([
+        booking['pickupStartIso'],
+        booking['pickup_iso'],
+        booking['pickup_at'],
+        booking['pickupAt'],
+        record['pickup_iso'],
+      ]);
+  String get customerName => _firstNonEmpty([
+        booking['customer_name'],
+        booking['name'],
+        record['customer_name'],
+      ]);
+  String get customerPhone => _firstNonEmpty([
+        booking['customer_phone'],
+        booking['phone'],
+        booking['customer_phone_e164'],
+      ]);
+  String get customerEmail => _firstNonEmpty([
+        booking['customer_email'],
+        booking['email'],
+      ]).toLowerCase();
+  String get service => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'service',
+          'extra_service',
+          'extra_service_key',
+          'booking.service',
+          'booking.extra_service',
+          'record.booking.service',
+          'record.booking.extra_service',
+          'payload.service',
+          'quote.inputs.service',
+        ]),
+      ]);
+  String get tier => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'tier',
+          'booking.tier',
+          'record.booking.tier',
+          'record.booking_details.tier',
+          'payload.tier',
+          'quote.inputs.tier',
+        ]),
+      ]);
+  String get pax => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'pax',
+          'passengers',
+          'booking.pax',
+          'booking.passengers',
+          'record.booking.pax',
+          'record.booking_details.pax',
+          'payload.pax',
+          'quote.inputs.pax',
+        ]),
+      ]);
+  String get bags => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'bags',
+          'booking.bags',
+          'record.booking.bags',
+          'record.booking_details.bags',
+          'payload.bags',
+          'quote.inputs.bags',
+        ]),
+      ]);
+  String get currency => _firstNonEmpty([
+        _firstPathValue(const <String>[
+          'currency',
+          'booking.currency',
+          'record.currency',
+          'record.booking.currency',
+          'record.booking_details.currency',
+          'quote.currency',
+          'payload.currency',
+        ]),
+        'EUR',
+      ]);
+  double? get totalAmount {
+    return _firstPathNum(const <String>[
+      'price',
+      'total',
+      'amount',
+      'final_total',
+      'total_price',
+      'price_incl_vat',
+      'priceInclVat',
+      'booking.price',
+      'booking.total',
+      'booking.amount',
+      'booking.final_total',
+      'booking.total_price',
+      'booking.price_incl_vat',
+      'record.price',
+      'record.total',
+      'record.amount',
+      'record.final_total',
+      'record.total_price',
+      'record.price_incl_vat',
+      'record.booking.price',
+      'record.booking.total',
+      'record.booking.amount',
+      'record.booking.final_total',
+      'record.booking.total_price',
+      'record.booking_details.price',
+      'record.booking_details.total',
+      'record.booking_details.amount',
+      'record.booking_details.final_total',
+      'record.booking_details.total_price',
+      'record.booking_details.price_incl_vat',
+      'quote.price_incl_vat',
+      'quote.priceInclVat',
+      'quote.total_price',
+      'quote.total',
+      'payload.price',
+      'payload.total',
+      'payload.amount',
+      'payload.final_total',
+      'payload.total_price',
+      'payload.price_incl_vat',
+      'payload.quote.price_incl_vat',
+    ]);
+  }
+
+  String get companyName => _firstNonEmpty([
+        booking['company_name'],
+        booking['company'],
+      ]);
+  String get vatNumber => _firstNonEmpty([
+        booking['vat_number'],
+        booking['vat'],
+      ]);
+  String get invoiceEmail => _firstNonEmpty([
+        booking['invoice_email'],
+      ]);
+  String get invoiceAddress => _firstNonEmpty([
+        booking['invoice_address'],
+        booking['billing_address'],
+      ]);
+  bool get businessCustomer {
+    if (vatNumber.isNotEmpty || companyName.isNotEmpty) return true;
+    final flag = booking['business_customer'] ?? booking['is_business'];
+    if (flag is bool) return flag;
+    if (flag is String) {
+      final v = flag.toLowerCase().trim();
+      return v == 'true' || v == 'yes' || v == 'ja' || v == '1';
+    }
+    return false;
+  }
+
+  String get rawPaymentStatus {
+    final candidates = <dynamic>[
+      record['payment_status'],
+      record['paymentStatus'],
+      booking['payment_status'],
+      booking['paymentStatus'],
+      _firstPathValue(const <String>[
+        'payment_status',
+        'paymentStatus',
+        'record.booking.payment_status',
+        'record.booking.paymentStatus',
+        'record.booking_details.payment_status',
+        'record.booking_details.paymentStatus',
+      ]),
+    ];
+    for (final v in candidates) {
+      if (v == null) continue;
+      final s = v.toString().trim();
+      if (s.isNotEmpty) return s.toLowerCase();
+    }
+    return '';
+  }
+
+  String get paymentMethod {
+    return _firstNonEmpty([
+      _firstPathValue(const <String>[
+        'payment_method',
+        'paymentMethod',
+        'booking.payment_method',
+        'booking.paymentMethod',
+        'record.payment_method',
+        'record.paymentMethod',
+        'record.booking.payment_method',
+        'record.booking.paymentMethod',
+        'record.booking_details.payment_method',
+        'record.booking_details.paymentMethod',
+      ]),
+    ]).toLowerCase();
+  }
+
+  bool get _methodImpliesPaid {
+    const inCarPaidMethods = <String>{'cash', 'bancontact', 'qr', 'card'};
+    return inCarPaidMethods.contains(paymentMethod);
+  }
+
+  bool get isPaid {
+    final s = rawPaymentStatus;
+    return s == 'paid' || s == 'confirmed' || s == 'completed' || s == 'success' || _methodImpliesPaid;
+  }
+
+  String get extraOptions {
+    final direct = _firstPathValue(const <String>[
+      'extras',
+      'extra_service',
+      'extra_service_key',
+      'premium_options',
+      'selected_options',
+      'booking.extras',
+      'booking.extra_service',
+      'booking.extra_service_key',
+      'booking.premium_options',
+      'booking.selected_options',
+      'record.booking.extras',
+      'record.booking.extra_service',
+      'record.booking.extra_service_key',
+      'record.booking.premium_options',
+      'record.booking.selected_options',
+      'payload.extras',
+      'payload.extra_service',
+      'payload.extra_service_key',
+      'payload.premium_options',
+      'payload.selected_options',
+      'quote.inputs.extras',
+      'quote.inputs.extra_service',
+      'quote.inputs.extra_service_key',
+    ]);
+    if (direct.isNotEmpty) return direct;
+
+    String normalizeList(dynamic raw) {
+      if (raw is! List) return '';
+      final values = raw
+          .map((e) => e?.toString().trim() ?? '')
+          .where((e) => _isMeaningful(e))
+          .toList(growable: false);
+      if (values.isEmpty) return '';
+      return values.join(', ');
+    }
+
+    final listValue = normalizeList(_valueAtPath('extras'));
+    if (listValue.isNotEmpty) return listValue;
+    final bookingListValue = normalizeList(_valueAtPath('booking.extras'));
+    if (bookingListValue.isNotEmpty) return bookingListValue;
+    final payloadListValue = normalizeList(_valueAtPath('payload.extras'));
+    if (payloadListValue.isNotEmpty) return payloadListValue;
+    return '';
+  }
+}
+
+/// Customer-facing booking detail screen. Read-only; pull-to-refresh re-fetches
+/// the same `GET /bookings/{id}` endpoint. Does not expose driver/admin data
+/// or modify any backend state.
+class CustomerBookingDetailPage extends StatefulWidget {
+  const CustomerBookingDetailPage({
+    super.key,
+    required this.bookingId,
+    required this.initialView,
+    this.startsFromLocalCache = false,
+  });
+
+  final String bookingId;
+  final CustomerBookingView initialView;
+  final bool startsFromLocalCache;
+
+  @override
+  State<CustomerBookingDetailPage> createState() =>
+      _CustomerBookingDetailPageState();
+}
+
+class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
+  late CustomerBookingView _view = widget.initialView;
+  bool _refreshing = false;
+  String? _refreshError;
+  late bool _usingLocalCache = widget.startsFromLocalCache;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() {
+      _refreshing = true;
+      _refreshError = null;
+    });
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode == 200) {
+        final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
+          final authoritativeView =
+              CustomerBookingView.fromResponse(widget.bookingId, decoded);
+          final view = authoritativeView.mergedWithExisting(_view);
+          final localFallback = StoredCustomerBooking(
+            bookingId: _view.bookingId,
+            publicBookingId: _view.bookingId,
+            customerName: _view.customerName,
+            customerPhone: _view.customerPhone,
+            customerEmail: _view.customerEmail,
+            from: _view.fromAddress,
+            to: _view.toAddress,
+            pickupIso: _view.pickupIso,
+            price: _view.totalAmount,
+            currency: _view.currency,
+            service: _view.service,
+            tier: _view.tier,
+            pax: _view.pax,
+            bags: _view.bags,
+            paymentStatus: _view.rawPaymentStatus,
+            status: _view.lifecycleStatus,
+            createdAt: DateTime.now().toIso8601String(),
+            updatedAt: DateTime.now().toIso8601String(),
+          );
+          final stored = StoredCustomerBooking.fromAuthoritativeResponse(
+            bookingId: widget.bookingId,
+            response: decoded,
+            fallback: localFallback,
+          );
+          await CustomerBookingsStore.instance.upsert(stored);
+          if (!mounted) return;
+          setState(() {
+            _view = view;
+            _usingLocalCache = false;
+            _refreshing = false;
+          });
+          return;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _refreshing = false;
+        _usingLocalCache = true;
+        _refreshError = _t(
+          nl: 'Vernieuwen mislukt.',
+          en: 'Refresh failed.',
+          fr: "Echec de l'actualisation.",
+          es: 'Error al actualizar.',
+        );
+      });
+    } catch (err) {
+      if (!mounted) return;
+      debugPrint('[CUSTOMER_DETAIL][REFRESH_ERROR] bookingId=${widget.bookingId} error=$err');
+      setState(() {
+        _refreshing = false;
+        _usingLocalCache = true;
+        _refreshError = _t(
+          nl: 'Verbinding mislukt. Probeer het opnieuw.',
+          en: 'Connection failed. Please try again.',
+          fr: 'Connexion echouee. Veuillez reessayer.',
+          es: 'Conexion fallida. Intentalo de nuevo.',
+        );
+      });
+    }
+  }
+
+  String _formatPickup(String iso) {
+    if (iso.isEmpty) return '-';
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return iso;
+    final local = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _formatPrice(double? amount, String currency) {
+    if (amount == null) return '-';
+    final cur = currency.toUpperCase();
+    final symbol = cur.isEmpty || cur == 'EUR' ? '€' : '$cur ';
+    final formatted = amount.toStringAsFixed(2).replaceAll('.', ',');
+    return '$symbol$formatted';
+  }
+
+  String _lifecycleLabel(String s) {
+    switch (s) {
+      case 'COMPLETED':
+        return _t(nl: 'Voltooid', en: 'Completed', fr: 'Terminee', es: 'Finalizada');
+      case 'CANCELLED':
+        return _t(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annulee', es: 'Cancelada');
+      case 'PENDING':
+        return _t(nl: 'In behandeling', en: 'Pending', fr: 'En cours', es: 'Pendiente');
+      case 'CONFIRMED':
+        return _t(nl: 'Bevestigd', en: 'Confirmed', fr: 'Confirmee', es: 'Confirmada');
+      default:
+        return s.isEmpty ? '-' : s;
+    }
+  }
+
+  String _tokenLabel(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return '-';
+    final normalized = text.replaceAll('_', ' ').replaceAll('-', ' ');
+    return normalized
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part.length == 1
+            ? part.toUpperCase()
+            : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}')
+        .join(' ');
+  }
+
+  String _serviceLabel(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return '-';
+    if (value == 'passenger' || value == 'personenvervoer') {
+      return _t(
+        nl: 'Personenvervoer',
+        en: 'Passenger transport',
+        fr: 'Transport de passagers',
+        es: 'Transporte de pasajeros',
+      );
+    }
+    if (value == 'business' || value == 'zakelijk') {
+      return _t(
+        nl: 'Zakelijke rit',
+        en: 'Business ride',
+        fr: "Course d'affaires",
+        es: 'Viaje de negocios',
+      );
+    }
+    if (value == 'airport' || value == 'luchthaven') {
+      return _t(
+        nl: 'Luchthavenvervoer',
+        en: 'Airport transfer',
+        fr: 'Transfert aeroport',
+        es: 'Traslado al aeropuerto',
+      );
+    }
+    return _tokenLabel(raw);
+  }
+
+  String _tierLabel(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return '-';
+    if (value == 'comfort') return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
+    if (value == 'private') return _t(nl: 'Private', en: 'Private', fr: 'Prive', es: 'Privado');
+    if (value == 'premium') return _t(nl: 'Premium', en: 'Premium', fr: 'Premium', es: 'Premium');
+    return _tokenLabel(raw);
+  }
+
+  Widget _section({required String title, required List<Widget> children}) {
+    return Card(
+      color: const Color(0xFF141B2F),
+      margin: const EdgeInsets.only(bottom: 14),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+                color: Color(0xFFE5B641),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _kv(String label, String value) {
+    final v = value.trim().isEmpty ? '-' : value;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              v,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) {
+        final v = _view;
+        final paid = v.isPaid;
+        final business = v.businessCustomer;
+        final invoiceFieldsExist = v.companyName.isNotEmpty ||
+            v.vatNumber.isNotEmpty ||
+            v.invoiceEmail.isNotEmpty ||
+            v.invoiceAddress.isNotEmpty;
+        final showInvoiceSection = business || invoiceFieldsExist;
+
+        return Scaffold(
+          backgroundColor: const Color(0xFF0B1020),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0B1020),
+            title: Text(_t(
+              nl: 'Boekingsdetail',
+              en: 'Booking detail',
+              fr: 'Detail de reservation',
+              es: 'Detalle de reserva',
+            )),
+            actions: [
+              IconButton(
+                tooltip: _t(nl: 'Vernieuwen', en: 'Refresh', fr: 'Actualiser', es: 'Actualizar'),
+                onPressed: _refreshing ? null : _refresh,
+                icon: _refreshing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          body: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  if (_refreshError != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.withOpacity(0.4)),
+                      ),
+                      child: Text(
+                        _refreshError!,
+                        style: const TextStyle(color: Color(0xFFFFB4B4)),
+                      ),
+                    ),
+                  if (_usingLocalCache)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2410),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE5B641)),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Je ziet lokale gegevens. Vernieuwen voor de laatste status.',
+                          en: 'Showing local data. Refresh for the latest status.',
+                          fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.',
+                          es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.',
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: paid ? const Color(0xFF11331F) : const Color(0xFF2A2410),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: paid ? const Color(0xFF34D29A) : const Color(0xFFE5B641),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          paid ? Icons.verified_outlined : Icons.payments_outlined,
+                          color: paid ? const Color(0xFF34D29A) : const Color(0xFFE5B641),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                paid
+                                    ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
+                                    : _t(
+                                        nl: 'Te betalen in de wagen',
+                                        en: 'To pay in the vehicle',
+                                        fr: 'A payer dans le vehicule',
+                                        es: 'A pagar en el vehiculo',
+                                      ),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                paid
+                                    ? _t(
+                                        nl: 'Je betaling is bevestigd.',
+                                        en: 'Your payment has been confirmed.',
+                                        fr: 'Votre paiement est confirme.',
+                                        es: 'Tu pago esta confirmado.',
+                                      )
+                                    : _t(
+                                        nl: 'Voldoe het bedrag bij de chauffeur.',
+                                        en: 'Pay the driver during your ride.',
+                                        fr: 'Reglez le chauffeur pendant la course.',
+                                        es: 'Paga al conductor durante el viaje.',
+                                      ),
+                                style: TextStyle(color: Colors.white.withOpacity(0.85)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _section(
+                    title: _t(nl: 'Boeking', en: 'Booking', fr: 'Reservation', es: 'Reserva'),
+                    children: [
+                      _kv(_t(nl: 'Boeking ID', en: 'Booking ID', fr: 'ID reservation', es: 'ID reserva'), v.bookingId),
+                      _kv(_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado'), _lifecycleLabel(v.lifecycleStatus)),
+                      _kv(
+                        _t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago'),
+                        paid
+                            ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
+                            : _t(
+                                nl: 'Te betalen in de wagen',
+                                en: 'To pay in the vehicle',
+                                fr: 'A payer dans le vehicule',
+                                es: 'A pagar en el vehiculo',
+                              ),
+                      ),
+                    ],
+                  ),
+                  _section(
+                    title: _t(nl: 'Route', en: 'Route', fr: 'Itineraire', es: 'Ruta'),
+                    children: [
+                      _kv(_t(nl: 'Ophaaladres', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida'), v.fromAddress),
+                      _kv(_t(nl: 'Bestemming', en: 'Destination', fr: 'Destination', es: 'Destino'), v.toAddress),
+                      _kv(
+                        _t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada'),
+                        _formatPickup(v.pickupIso),
+                      ),
+                    ],
+                  ),
+                  _section(
+                    title: _t(nl: 'Klantgegevens', en: 'Customer', fr: 'Client', es: 'Cliente'),
+                    children: [
+                      _kv(_t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'), v.customerName),
+                      _kv(_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono'), v.customerPhone),
+                      _kv(_t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Email'), v.customerEmail),
+                    ],
+                  ),
+                  _section(
+                    title: _t(nl: 'Rit details', en: 'Ride details', fr: 'Details de course', es: 'Detalles del viaje'),
+                    children: [
+                      _kv(_t(nl: 'Service', en: 'Service', fr: 'Service', es: 'Servicio'), _serviceLabel(v.service)),
+                      _kv(_t(nl: 'Tier', en: 'Tier', fr: 'Categorie', es: 'Categoria'), _tierLabel(v.tier)),
+                      _kv(_t(nl: 'Passagiers', en: 'Passengers', fr: 'Passagers', es: 'Pasajeros'), v.pax),
+                      _kv(_t(nl: 'Bagage', en: 'Bags', fr: 'Bagages', es: 'Equipaje'), v.bags),
+                      _kv(
+                        _t(nl: 'Extra opties', en: 'Extra options', fr: 'Options supplementaires', es: 'Opciones extra'),
+                        v.extraOptions.isEmpty
+                            ? _t(
+                                nl: 'Geen extra opties',
+                                en: 'No extra options',
+                                fr: 'Aucune option supplementaire',
+                                es: 'Sin opciones extra',
+                              )
+                            : _tokenLabel(v.extraOptions),
+                      ),
+                    ],
+                  ),
+                  _section(
+                    title: _t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio'),
+                    children: [
+                      _kv(
+                        _t(nl: 'Totaal', en: 'Total', fr: 'Total', es: 'Total'),
+                        _formatPrice(v.totalAmount, v.currency),
+                      ),
+                    ],
+                  ),
+                  if (showInvoiceSection)
+                    _section(
+                      title: _t(
+                        nl: 'Zakelijk / Factuur',
+                        en: 'Business / Invoice',
+                        fr: 'Professionnel / Facture',
+                        es: 'Empresa / Factura',
+                      ),
+                      children: [
+                        _kv(
+                          _t(
+                            nl: 'Zakelijke klant',
+                            en: 'Business customer',
+                            fr: 'Client professionnel',
+                            es: 'Cliente empresa',
+                          ),
+                          business
+                              ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                              : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+                        ),
+                        _kv(_t(nl: 'Bedrijfsnaam', en: 'Company name', fr: "Nom de l'entreprise", es: 'Empresa'), v.companyName),
+                        _kv(_t(nl: 'BTW-nummer', en: 'VAT number', fr: 'Numero de TVA', es: 'NIF/IVA'), v.vatNumber),
+                        _kv(_t(nl: 'Factuur e-mail', en: 'Invoice email', fr: 'E-mail facture', es: 'Email de factura'), v.invoiceEmail),
+                        _kv(_t(nl: 'Factuuradres', en: 'Invoice address', fr: 'Adresse de facturation', es: 'Direccion de factura'), v.invoiceAddress),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1B2440),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withOpacity(0.08)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.receipt_long_outlined, color: Color(0xFFE5B641)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _t(
+                                    nl: 'Factuur komt beschikbaar na verwerking.',
+                                    en: 'Invoice will be available after processing.',
+                                    fr: 'La facture sera disponible apres traitement.',
+                                    es: 'La factura estara disponible tras el procesamiento.',
+                                  ),
+                                  style: TextStyle(color: Colors.white.withOpacity(0.85)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: null,
+                              icon: const Icon(Icons.visibility_outlined),
+                              label: Text(_t(nl: 'Bekijk factuur', en: 'View invoice', fr: 'Voir la facture', es: 'Ver factura')),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: null,
+                              icon: const Icon(Icons.download_outlined),
+                              label: Text(_t(nl: 'Download PDF', en: 'Download PDF', fr: 'Telecharger PDF', es: 'Descargar PDF')),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: null,
+                              icon: const Icon(Icons.email_outlined),
+                              label: Text(_t(
+                                nl: 'Stuur opnieuw via e-mail',
+                                en: 'Resend via email',
+                                fr: 'Renvoyer par e-mail',
+                                es: 'Reenviar por email',
+                              )),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -9080,6 +10867,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       if (fields['paymentProvider'] != null) mutableBooking['paymentProvider'] = fields['paymentProvider'];
       if (fields['payment_id'] != null) mutableBooking['payment_id'] = fields['payment_id'];
       if (fields['paymentId'] != null) mutableBooking['paymentId'] = fields['paymentId'];
+      if (fields['payment_method'] != null) mutableBooking['payment_method'] = fields['payment_method'];
+      if (fields['paymentMethod'] != null) mutableBooking['paymentMethod'] = fields['paymentMethod'];
+      if (fields['payment_source'] != null) mutableBooking['payment_source'] = fields['payment_source'];
+      if (fields['paymentSource'] != null) mutableBooking['paymentSource'] = fields['paymentSource'];
       item.bookingDetails['booking'] = mutableBooking;
     }
   }
@@ -9160,11 +10951,37 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         dataRecord['paymentId'] ??
         dataBooking['payment_id'] ??
         dataBooking['paymentId']);
+    final paymentMethod = text(root['payment_method'] ??
+        root['paymentMethod'] ??
+        record['payment_method'] ??
+        record['paymentMethod'] ??
+        booking['payment_method'] ??
+        booking['paymentMethod'] ??
+        data['payment_method'] ??
+        data['paymentMethod'] ??
+        dataRecord['payment_method'] ??
+        dataRecord['paymentMethod'] ??
+        dataBooking['payment_method'] ??
+        dataBooking['paymentMethod']);
+    final paymentSource = text(root['payment_source'] ??
+        root['paymentSource'] ??
+        record['payment_source'] ??
+        record['paymentSource'] ??
+        booking['payment_source'] ??
+        booking['paymentSource'] ??
+        data['payment_source'] ??
+        data['paymentSource'] ??
+        dataRecord['payment_source'] ??
+        dataRecord['paymentSource'] ??
+        dataBooking['payment_source'] ??
+        dataBooking['paymentSource']);
 
     if (paymentStatus == null &&
         paidAt == null &&
         paymentProvider == null &&
-        paymentId == null) {
+        paymentId == null &&
+        paymentMethod == null &&
+        paymentSource == null) {
       return null;
     }
     return <String, dynamic>{
@@ -9178,7 +10995,48 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         'paymentProvider': paymentProvider,
       },
       if (paymentId != null) ...{'payment_id': paymentId, 'paymentId': paymentId},
+      if (paymentMethod != null) ...{
+        'payment_method': paymentMethod,
+        'paymentMethod': paymentMethod,
+      },
+      if (paymentSource != null) ...{
+        'payment_source': paymentSource,
+        'paymentSource': paymentSource,
+      },
     };
+  }
+
+  String? _paymentMethodFromDetails() {
+    return _firstDetailPathText(const [
+      ['payment_method'],
+      ['paymentMethod'],
+      ['booking', 'payment_method'],
+      ['booking', 'paymentMethod'],
+      ['booking_details', 'payment_method'],
+      ['booking_details', 'paymentMethod'],
+      ['record', 'payment_method'],
+      ['record', 'paymentMethod'],
+      ['record', 'booking', 'payment_method'],
+      ['record', 'booking', 'paymentMethod'],
+    ])?.toLowerCase().trim();
+  }
+
+  String? _paymentSourceFromDetails() {
+    return _firstDetailPathText(const [
+      ['payment_source'],
+      ['paymentSource'],
+      ['booking', 'payment_source'],
+      ['booking', 'paymentSource'],
+      ['record', 'payment_source'],
+      ['record', 'paymentSource'],
+      ['record', 'booking', 'payment_source'],
+      ['record', 'booking', 'paymentSource'],
+    ])?.toLowerCase().trim();
+  }
+
+  bool _methodImpliesPaid(String? method) {
+    final m = method?.toLowerCase().trim() ?? '';
+    return m == 'cash' || m == 'bancontact' || m == 'qr' || m == 'card';
   }
 
   Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(String bookingId) async {
@@ -9273,12 +11131,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final nestedPaymentStatus = _historyNestedPaymentStatus();
 
     String? authoritativePaymentStatus;
+    String? authoritativePaymentMethod;
     if (bookingId.isNotEmpty) {
       final fields = await _fetchAuthoritativePaymentFields(bookingId);
       if (fields != null && fields.isNotEmpty) {
         _mergePaymentFieldsIntoReceiptDetails(fields);
         authoritativePaymentStatus =
             _mapText(fields, 'payment_status') ?? _mapText(fields, 'paymentStatus');
+        authoritativePaymentMethod =
+            _mapText(fields, 'payment_method') ?? _mapText(fields, 'paymentMethod');
       }
     }
 
@@ -9290,9 +11151,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       resolved = nestedPaymentStatus;
     }
 
+    final methodFromDetails = authoritativePaymentMethod ?? _paymentMethodFromDetails();
+    final sourceFromDetails = _paymentSourceFromDetails();
+    final markAsPaidFromMethod = _methodImpliesPaid(methodFromDetails) &&
+        (sourceFromDetails == null || sourceFromDetails.isEmpty || sourceFromDetails == 'in_car');
     if (!mounted) return;
     setState(() {
-      _paymentStatus = _paymentStatusFromRaw(resolved);
+      final fromStatus = _paymentStatusFromRaw(resolved);
+      _paymentStatus = markAsPaidFromMethod && fromStatus != _ReceiptPaymentStatus.paid
+          ? _ReceiptPaymentStatus.paid
+          : fromStatus;
     });
   }
 
@@ -9684,6 +11552,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         .join(' ');
   }
 
+  String _displayServiceToken(String? value) {
+    final raw = value?.trim() ?? '';
+    final normalized = raw.toLowerCase();
+    if (normalized == 'passenger' || normalized == 'personenvervoer') {
+      return _receiptText('passengerTransport');
+    }
+    if (normalized == 'business' || normalized == 'zakelijk') {
+      return _receiptText('businessRide');
+    }
+    if (normalized == 'airport' || normalized == 'luchthaven') {
+      return _receiptText('airportTransfer');
+    }
+    return _displayToken(value) ?? '—';
+  }
+
+  String _displayTierToken(String? value) {
+    final raw = value?.trim() ?? '';
+    final normalized = raw.toLowerCase();
+    if (normalized == 'comfort') return _receiptText('tierComfort');
+    if (normalized == 'private') return _receiptText('tierPrivate');
+    if (normalized == 'premium') return _receiptText('tierPremium');
+    return _displayToken(value) ?? '—';
+  }
+
   bool _sameMoney(double? a, double? b) {
     if (a == null || b == null) return false;
     return (a - b).abs() < 0.005;
@@ -9925,6 +11817,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             child: Text(_receiptText('close')),
           ),
           FilledButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _persistInCarPayment(
+                context: context,
+                method: 'qr',
+              );
+            },
+            child: Text(_receiptText('confirmQrPaid')),
+          ),
+          FilledButton(
             onPressed: () {
               Navigator.of(ctx).pop();
               _copyPaymentLink(context);
@@ -9947,13 +11849,87 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     );
   }
 
-  void _markPaidMvp(BuildContext context) {
-    if (_paymentStatus != _ReceiptPaymentStatus.paid) {
-      setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+  Future<void> _persistInCarPayment({
+    required BuildContext context,
+    required String method,
+  }) async {
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('bookingIdMissing'))),
+      );
+      return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_receiptText('paymentStatus')}: ${_paymentStatusText()}')),
-    );
+
+    final amount = _receiptTotalAmount();
+    final normalizedMethod = method.toLowerCase().trim();
+    final payload = <String, dynamic>{
+      'booking_id': bookingId,
+      'payment_status': 'paid',
+      'payment_method': normalizedMethod,
+      'payment_source': 'in_car',
+      'currency': item.currency.trim().isEmpty ? 'EUR' : item.currency.trim().toUpperCase(),
+      'paid_by_driver_id': kDriverId,
+      'paid_at': DateTime.now().toUtc().toIso8601String(),
+      if (amount != null) 'amount': amount,
+    };
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (kAdminToken.trim().isNotEmpty) {
+      headers['x-admin-token'] = kAdminToken.trim();
+    }
+
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/payment',
+      );
+      final res = await http
+          .post(uri, headers: headers, body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      final root = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+      final extracted = _extractAuthoritativePaymentFields(root) ?? <String, dynamic>{};
+      extracted['payment_status'] = 'paid';
+      extracted['paymentStatus'] = 'paid';
+      extracted['payment_method'] = normalizedMethod;
+      extracted['paymentMethod'] = normalizedMethod;
+      extracted['payment_source'] = 'in_car';
+      extracted['paymentSource'] = 'in_car';
+      _mergePaymentFieldsIntoReceiptDetails(extracted);
+
+      if (mounted) {
+        setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+      }
+
+      final paymentBookingId = _firstDetailPathText(const [
+        ['payment_booking_id'],
+        ['paymentBookingId'],
+        ['booking', 'payment_booking_id'],
+        ['booking', 'paymentBookingId'],
+        ['record', 'payment_booking_id'],
+        ['record', 'paymentBookingId'],
+        ['record', 'booking', 'payment_booking_id'],
+        ['record', 'booking', 'paymentBookingId'],
+      ]);
+      await CustomerBookingsStore.instance.markPaid(
+        bookingId: bookingId,
+        paymentBookingId: paymentBookingId,
+      );
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentMarkedPaid'))),
+      );
+    } catch (err) {
+      debugPrint('[RECEIPT][PAYMENT_MARK_FAILED] bookingId=$bookingId method=$method err=$err');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+      );
+    }
   }
 
   Future<void> _shareReceipt(BuildContext context) async {
@@ -10111,13 +12087,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
+              onPressed: canRequestPayment
+                  ? () => _persistInCarPayment(context: context, method: 'cash')
+                  : null,
               icon: const Icon(Icons.payments_outlined),
               label: Text(_receiptText('cashReceived')),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: canRequestPayment ? () => _markPaidMvp(context) : null,
+              onPressed: canRequestPayment
+                  ? () => _persistInCarPayment(context: context, method: 'bancontact')
+                  : null,
               icon: const Icon(Icons.credit_card),
               label: Text(_receiptText('paidByCardTerminal')),
             ),
@@ -10252,13 +12232,22 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                           ? null
                           : _formatDate(_detailText('scheduled_pickup_at')),
                     ),
-                    _optionalReceiptRow(_receiptText('service'), _displayToken(_detailText('service_type'))),
-                    _optionalReceiptRow(_receiptText('tier'), _displayToken(_detailText('tier'))),
+                    _optionalReceiptRow(_receiptText('service'), _displayServiceToken(_detailText('service_type'))),
+                    _optionalReceiptRow(_receiptText('tier'), _displayTierToken(_detailText('tier'))),
                     _optionalReceiptRow(_receiptText('passengers'), _detailText('passengers')),
                     _optionalReceiptRow(_receiptText('bags'), _detailText('luggage_count')),
                     _optionalReceiptRow(_receiptText('bookedWaitingTime'), _minutesText('booked_wait_minutes')),
                     _optionalReceiptRow(_receiptText('extraStops'), _detailText('stops')),
-                    _optionalReceiptRow(_receiptText('extras'), _detailText('extras')),
+                    _receiptRow(
+                      _receiptText('extras'),
+                      _displayToken(_detailText('extras')) ??
+                          _tr(
+                            nl: 'Geen extra opties',
+                            en: 'No extra options',
+                            fr: 'Aucune option supplementaire',
+                            es: 'Sin opciones extra',
+                          ),
+                    ),
                     _optionalReceiptRow(_receiptText('notes'), _detailText('notes')),
                     _sectionTitle(_receiptText('routeAndPrices')),
                     _optionalReceiptRow(_receiptText('routeDetails'), _routeSegmentsText()),
