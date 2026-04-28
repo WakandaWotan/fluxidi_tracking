@@ -30,6 +30,8 @@ dependencies:
   wakelock_plus: ^1.4.0
   app_links: ^6.4.1
   flutter_email_sender: ^6.0.3
+  file_picker: ^11.0.2
+  open_filex: ^4.7.0
 
 dev_dependencies:
   flutter_test:

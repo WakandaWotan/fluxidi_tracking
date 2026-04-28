@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:open_filex/open_filex.dart';
 
 class VehicleManagementPage extends StatefulWidget {
   const VehicleManagementPage({super.key});
@@ -18,6 +21,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   final ImagePicker _imagePicker = ImagePicker();
   static const int _maxPhotosPerVehicle = 5;
   AppLanguage get _lang => appConfig.currentLanguage;
+
+  @override
+  void initState() {
+    super.initState();
+    DriverDocumentsStore.instance.load();
+  }
 
   String _t({
     required String nl,
@@ -1047,7 +1056,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 updateVehicle(existing.id, vehicle);
                               }
                               await _syncFleetOrShowError();
-                              if (!mounted) return;
+                              if (!ctx.mounted) return;
                               Navigator.pop(ctx);
                             },
                             style: FilledButton.styleFrom(
@@ -1075,11 +1084,253 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  Widget _txt(TextEditingController ctrl, String label) {
+  static String _fileBasename(String path) {
+    final s = path.replaceAll('\\', '/');
+    final i = s.lastIndexOf('/');
+    return i >= 0 ? s.substring(i + 1) : s;
+  }
+
+  static bool _isLikelyImagePath(String path) {
+    final lower = path.toLowerCase().trim();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.heic') ||
+        lower.endsWith('.bmp');
+  }
+
+  static bool _isLikelyPdfPath(String path) {
+    return path.toLowerCase().trim().endsWith('.pdf');
+  }
+
+  Widget _driverDocAttachmentPreview(String rawPath) {
+    final path = rawPath.trim();
+    if (path.isEmpty) return const SizedBox.shrink();
+    final name = _fileBasename(path);
+    if (!kIsWeb && !File(path).existsSync()) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(
+                nl: 'Bestand niet gevonden op dit toestel',
+                en: 'File not found on this device',
+                fr: 'Fichier introuvable sur cet appareil',
+                es: 'Archivo no encontrado en este dispositivo',
+              ),
+              style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              name,
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final showThumb = !kIsWeb && _isLikelyImagePath(path);
+
+    Widget leading;
+    if (showThumb) {
+      leading = ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 56,
+          height: 56,
+          child: Image.file(
+            File(path),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => SizedBox(
+              width: 56,
+              height: 56,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.white38,
+                  size: 28,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    } else if (_isLikelyPdfPath(path)) {
+      leading = SizedBox(
+        width: 56,
+        height: 56,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.red.shade900.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.picture_as_pdf,
+            color: Colors.white70,
+            size: 32,
+          ),
+        ),
+      );
+    } else {
+      leading = SizedBox(
+        width: 56,
+        height: 56,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.insert_drive_file_outlined,
+            color: Colors.white54,
+            size: 30,
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          leading,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              name,
+              style: const TextStyle(fontSize: 11, color: Colors.white60),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _tryOpenDriverDocumentFile(
+    BuildContext context,
+    String rawPath,
+  ) async {
+    final p = rawPath.trim();
+    if (p.isEmpty) return;
+    if (!File(p).existsSync()) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bestand niet gevonden op dit toestel',
+              en: 'File not found on this device',
+              fr: 'Fichier introuvable sur cet appareil',
+              es: 'Archivo no encontrado en este dispositivo',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final result = await OpenFilex.open(p);
+    if (!context.mounted) return;
+    if (result.type != ResultType.done) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kon bestand niet openen.',
+              en: 'Could not open the file.',
+              fr: 'Impossible d ouvrir le fichier.',
+              es: 'No se pudo abrir el archivo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickDriverDocCamera(
+    BuildContext sheetCtx,
+    void Function(VoidCallback fn) setLocal,
+    TextEditingController pathCtrl,
+  ) async {
+    try {
+      final x = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 88,
+      );
+      if (!sheetCtx.mounted) return;
+      if (x == null) return;
+      setLocal(() => pathCtrl.text = x.path);
+    } catch (_) {}
+  }
+
+  Future<void> _pickDriverDocGallery(
+    BuildContext sheetCtx,
+    void Function(VoidCallback fn) setLocal,
+    TextEditingController pathCtrl,
+  ) async {
+    try {
+      final x = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 88,
+      );
+      if (!sheetCtx.mounted) return;
+      if (x == null) return;
+      setLocal(() => pathCtrl.text = x.path);
+    } catch (_) {}
+  }
+
+  Future<void> _pickDriverDocFile(
+    BuildContext sheetCtx,
+    void Function(VoidCallback fn) setLocal,
+    TextEditingController pathCtrl,
+  ) async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const [
+          'pdf',
+          'jpg',
+          'jpeg',
+          'png',
+          'gif',
+          'webp',
+          'heic',
+          'bmp',
+        ],
+      );
+      if (!sheetCtx.mounted) return;
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.single.path;
+      if (path != null && path.trim().isNotEmpty) {
+        setLocal(() => pathCtrl.text = path);
+      }
+    } catch (_) {}
+  }
+
+  Widget _txt(
+    TextEditingController ctrl,
+    String label, {
+    VoidCallback? onChanged,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
         controller: ctrl,
+        onChanged: onChanged == null ? null : (_) => onChanged(),
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           labelText: label,
@@ -1095,6 +1346,701 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             borderSide: const BorderSide(color: Color(0x22FFFFFF)),
           ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteDocument(DriverDocument doc) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        title: Text(
+          _t(
+            nl: 'Document verwijderen?',
+            en: 'Delete document?',
+            fr: 'Supprimer le document?',
+            es: 'Eliminar documento?',
+          ),
+        ),
+        content: Text(
+          doc.title.trim().isEmpty ? doc.documentId : doc.title.trim(),
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Delete',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+    }
+  }
+
+  Future<void> _openDocumentEditor(
+    DriverProfile driver, {
+    DriverDocument? existing,
+  }) async {
+    var selectedType = existing?.documentType ?? DriverDocumentTypes.other;
+    final titleCtrl = TextEditingController(text: existing?.title ?? '');
+    final pathCtrl = TextEditingController(text: existing?.filePath ?? '');
+    final expiryCtrl = TextEditingController(text: existing?.expiryDate ?? '');
+    var selectedStatus =
+        existing?.status ?? DriverDocumentStatuses.pendingReview;
+    final notesCtrl = TextEditingController(text: existing?.notes ?? '');
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF141B2F),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 12,
+                right: 12,
+                top: 12,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 14,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      existing == null
+                          ? _t(
+                              nl: 'Document toevoegen',
+                              en: 'Add document',
+                              fr: 'Ajouter document',
+                              es: 'Agregar documento',
+                            )
+                          : _t(
+                              nl: 'Document bewerken',
+                              en: 'Edit document',
+                              fr: 'Modifier document',
+                              es: 'Editar documento',
+                            ),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedType,
+                      isExpanded: true,
+                      items: DriverDocumentTypes.all
+                          .map(
+                            (t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(
+                                driverDocumentTypeLabel(t, _lang),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setLocal(() => selectedType = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Documenttype',
+                          en: 'Document type',
+                          fr: 'Type',
+                          es: 'Tipo',
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF0B0B0B),
+                      ),
+                      dropdownColor: const Color(0xFF111111),
+                    ),
+                    const SizedBox(height: 8),
+                    _txt(
+                      titleCtrl,
+                      _t(nl: 'Titel', en: 'Title', fr: 'Titre', es: 'Titulo'),
+                    ),
+                    Text(
+                      _t(
+                        nl: 'Bijlage',
+                        en: 'Attachment',
+                        fr: 'Piece jointe',
+                        es: 'Adjunto',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.88),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () =>
+                                _pickDriverDocCamera(ctx, setLocal, pathCtrl),
+                            icon: const Icon(
+                              Icons.photo_camera_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _t(
+                                nl: 'Foto nemen',
+                                en: 'Take photo',
+                                fr: 'Prendre une photo',
+                                es: 'Tomar foto',
+                              ),
+                              style: const TextStyle(fontSize: 11),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () =>
+                                _pickDriverDocGallery(ctx, setLocal, pathCtrl),
+                            icon: const Icon(
+                              Icons.photo_library_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _t(
+                                nl: 'Kies uit galerij',
+                                en: 'Choose from gallery',
+                                fr: 'Choisir dans la galerie',
+                                es: 'Elegir de galeria',
+                              ),
+                              style: const TextStyle(fontSize: 11),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            _pickDriverDocFile(ctx, setLocal, pathCtrl),
+                        icon: const Icon(Icons.attach_file, size: 18),
+                        label: Text(
+                          _t(
+                            nl: 'Bestand/PDF kiezen',
+                            en: 'Choose file/PDF',
+                            fr: 'Choisir fichier/PDF',
+                            es: 'Elegir archivo/PDF',
+                          ),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                    Builder(
+                      builder: (_) =>
+                          _driverDocAttachmentPreview(pathCtrl.text),
+                    ),
+                    _txt(
+                      pathCtrl,
+                      _t(
+                        nl: 'Handmatig pad / referentie (optioneel)',
+                        en: 'Manual path / reference (optional)',
+                        fr: 'Chemin manuel (optionnel)',
+                        es: 'Ruta manual (opcional)',
+                      ),
+                      onChanged: () => setLocal(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _txt(
+                            expiryCtrl,
+                            _t(
+                              nl: 'Vervaldatum (yyyy-mm-dd)',
+                              en: 'Expiry (yyyy-mm-dd)',
+                              fr: 'Expiration',
+                              es: 'Caducidad',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: _t(
+                            nl: 'Kies datum',
+                            en: 'Pick date',
+                            fr: 'Date',
+                            es: 'Fecha',
+                          ),
+                          onPressed: () async {
+                            final now = DateTime.now();
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: now.add(const Duration(days: 365)),
+                              firstDate: DateTime(now.year - 10),
+                              lastDate: DateTime(now.year + 20),
+                            );
+                            if (d == null) return;
+                            if (!ctx.mounted) return;
+                            setLocal(
+                              () => expiryCtrl.text =
+                                  '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
+                            );
+                          },
+                          icon: const Icon(Icons.calendar_today_outlined),
+                        ),
+                      ],
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: selectedStatus,
+                      isExpanded: true,
+                      items: DriverDocumentStatuses.all
+                          .map(
+                            (s) => DropdownMenuItem(
+                              value: s,
+                              child: Text(driverDocumentStatusLabel(s, _lang)),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setLocal(() => selectedStatus = v);
+                      },
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Status',
+                          en: 'Status',
+                          fr: 'Statut',
+                          es: 'Estado',
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF0B0B0B),
+                      ),
+                      dropdownColor: const Color(0xFF111111),
+                    ),
+                    const SizedBox(height: 8),
+                    _txt(
+                      notesCtrl,
+                      _t(nl: 'Notities', en: 'Notes', fr: 'Notes', es: 'Notas'),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: Text(
+                              _t(
+                                nl: 'Annuleren',
+                                en: 'Cancel',
+                                fr: 'Annuler',
+                                es: 'Cancelar',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () async {
+                              if (driver.id.trim().isEmpty) return;
+                              final company = DriverDocumentsStore.instance
+                                  .resolvedCompanyIdForNewDoc();
+                              final resolvedDocId =
+                                  existing?.documentId ??
+                                  DriverDocumentsStore.newDocumentId();
+
+                              var path = pathCtrl.text.trim();
+                              if (path.isNotEmpty) {
+                                final beforePath = path;
+                                final persisted = await DriverDocumentsStore
+                                    .instance
+                                    .persistPickedFileIfNeeded(
+                                      sourcePath: path,
+                                      documentId: resolvedDocId,
+                                      driverId: driver.id,
+                                      companyId: company,
+                                    );
+                                if (persisted != null) {
+                                  path = persisted;
+                                } else if (await File(beforePath).exists() &&
+                                    !DriverDocumentsStore.isPersistedManagedPath(
+                                      beforePath,
+                                      resolvedDocId,
+                                    )) {
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          _t(
+                                            nl: 'Kon bestand niet naar permanente opslag kopiëren.',
+                                            en: 'Could not copy file to persistent storage.',
+                                            fr: 'Impossible de copier le fichier vers le stockage permanent.',
+                                            es: 'No se pudo copiar el archivo al almacenamiento persistente.',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+                              }
+
+                              if (existing == null) {
+                                final doc = DriverDocumentsStore.buildNew(
+                                  driverId: driver.id,
+                                  documentType: selectedType,
+                                  title: titleCtrl.text,
+                                  filePath: path,
+                                  expiryDate: expiryCtrl.text,
+                                  status: selectedStatus,
+                                  notes: notesCtrl.text,
+                                  companyId: company,
+                                  documentId: resolvedDocId,
+                                );
+                                await DriverDocumentsStore.instance.addDocument(
+                                  doc,
+                                );
+                              } else {
+                                final doc = DriverDocumentsStore.mergeEdit(
+                                  existing: existing,
+                                  documentType: selectedType,
+                                  title: titleCtrl.text,
+                                  filePath: path,
+                                  expiryDate: expiryCtrl.text,
+                                  status: selectedStatus,
+                                  notes: notesCtrl.text,
+                                );
+                                await DriverDocumentsStore.instance
+                                    .updateDocument(doc);
+                              }
+                              if (!ctx.mounted) return;
+                              Navigator.pop(ctx);
+                            },
+                            child: Text(
+                              _t(
+                                nl: 'Opslaan',
+                                en: 'Save',
+                                fr: 'Enregistrer',
+                                es: 'Guardar',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDriversDocumentsBlock() {
+    return ValueListenableBuilder<List<DriverDocument>>(
+      valueListenable: driverDocumentsNotifier,
+      builder: (context, _, __) {
+        return ValueListenableBuilder<List<DriverProfile>>(
+          valueListenable: driversNotifier,
+          builder: (context, drivers, _) {
+            final filtered = drivers
+                .where(
+                  (d) => fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
+                )
+                .toList(growable: false);
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Documenten',
+                      en: 'Documents',
+                      fr: 'Documents',
+                      es: 'Documentos',
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(
+                      nl: 'Lokale documentopslag voor test/MVP. In productie moeten gevoelige documenten veilig en versleuteld worden opgeslagen met passend toegangsbeheer.',
+                      en: 'Local document storage for test/MVP. In production, sensitive documents must be stored on a secure encrypted backend with appropriate access control.',
+                      fr: 'Stockage local pour test/MVP. En production, les documents sensibles doivent etre stockes sur un backend securise et chiffre avec un controle d acces adapte.',
+                      es: 'Almacenamiento local para prueba/MVP. En produccion, los documentos sensibles deben almacenarse en un backend seguro y cifrado con control de acceso adecuado.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.62),
+                      fontSize: 11,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (filtered.isEmpty)
+                    Text(
+                      _t(
+                        nl: 'Geen chauffeurs.',
+                        en: 'No drivers.',
+                        fr: 'Aucun chauffeur.',
+                        es: 'Sin conductores.',
+                      ),
+                      style: const TextStyle(color: Colors.white54),
+                    )
+                  else
+                    ...filtered.map(_driverDocumentsExpansion),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _driverDocumentsExpansion(DriverProfile driver) {
+    final docs = DriverDocumentsStore.instance.documentsVisibleForDriver(
+      driver.id,
+    );
+    final count = docs.length;
+    final gap = DriverDocumentsStore.instance.hasCoreDocumentGapForDriver(
+      driver.id,
+    );
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      color: const Color(0xFF141B2F),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Colors.white12),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        title: Text(
+          driver.fullName.isEmpty
+              ? _t(
+                  nl: 'Naamloze chauffeur',
+                  en: 'Unnamed driver',
+                  fr: 'Chauffeur sans nom',
+                  es: 'Conductor sin nombre',
+                )
+              : driver.fullName,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+        ),
+        subtitle: Text(
+          '$count ${_t(nl: 'documenten', en: 'documents', fr: 'documents', es: 'documentos')}'
+          '${gap ? ' • ${_t(nl: 'Controleer kern-documenten', en: 'Check core documents', fr: 'Verifier documents', es: 'Revise documentos')}' : ''}',
+          style: TextStyle(
+            color: gap ? Colors.orangeAccent : Colors.white54,
+            fontSize: 12,
+          ),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (docs.isEmpty)
+                  Text(
+                    _t(
+                      nl: 'Nog geen documenten.',
+                      en: 'No documents yet.',
+                      fr: 'Aucun document.',
+                      es: 'Sin documentos.',
+                    ),
+                    style: const TextStyle(color: Colors.white54),
+                  )
+                else
+                  ...docs.map(_driverDocumentTile),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _openDocumentEditor(driver),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(
+                    _t(
+                      nl: 'Document toevoegen',
+                      en: 'Add document',
+                      fr: 'Ajouter',
+                      es: 'Agregar',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _driverDocumentTile(DriverDocument doc) {
+    final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
+    final expiredVisual =
+        doc.isExpiredByDate || doc.status == DriverDocumentStatuses.expired;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: expiredVisual
+              ? Colors.orange.withOpacity(0.6)
+              : Colors.white24,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            typeLabel,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (doc.title.trim().isNotEmpty)
+            Text(
+              doc.title,
+              style: const TextStyle(fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          const SizedBox(height: 4),
+          Text(
+            '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${driverDocumentStatusLabel(doc.status, _lang)}'
+            '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_t(nl: 'datum verlopen', en: 'date expired', fr: 'date expiree', es: 'fecha caducada')})' : ''}',
+            style: TextStyle(
+              color: expiredVisual ? Colors.orangeAccent : Colors.white70,
+              fontSize: 12,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (doc.expiryDate.trim().isNotEmpty)
+            Text(
+              '${_t(nl: 'Vervaldatum', en: 'Expiry', fr: 'Expiration', es: 'Caducidad')}: ${doc.expiryDate}',
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (doc.filePath.trim().isNotEmpty) ...[
+            Text(
+              '${_t(nl: 'Bestand', en: 'File', fr: 'Fichier', es: 'Archivo')}',
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            _driverDocAttachmentPreview(doc.filePath),
+            SizedBox(
+              width: double.infinity,
+              child: Text(
+                doc.filePath,
+                style: const TextStyle(fontSize: 10, color: Colors.white38),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+          if (doc.notes.trim().isNotEmpty)
+            Text(
+              '${_t(nl: 'Notities', en: 'Notes', fr: 'Notes', es: 'Notas')}: ${doc.notes}',
+              style: const TextStyle(fontSize: 11, color: Colors.white60),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            alignment: WrapAlignment.start,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: doc.filePath.trim().isEmpty
+                    ? null
+                    : () => _tryOpenDriverDocumentFile(context, doc.filePath),
+                child: Text(
+                  _t(nl: 'Openen', en: 'Open', fr: 'Ouvrir', es: 'Abrir'),
+                ),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () {
+                  DriverProfile? dr;
+                  for (final x in driversNotifier.value) {
+                    if (x.id == doc.driverId) {
+                      dr = x;
+                      break;
+                    }
+                  }
+                  if (dr == null) return;
+                  _openDocumentEditor(dr, existing: doc);
+                },
+                child: Text(
+                  _t(nl: 'Bewerken', en: 'Edit', fr: 'Modifier', es: 'Editar'),
+                ),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () => _confirmDeleteDocument(doc),
+                child: Text(
+                  _t(
+                    nl: 'Verwijderen',
+                    en: 'Delete',
+                    fr: 'Supprimer',
+                    es: 'Eliminar',
+                  ),
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1162,195 +2108,220 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   (v) => fleetRecordBelongsToActiveCompanyOrLegacy(v.companyId),
                 )
                 .toList(growable: false);
-            if (visible.isEmpty) {
-              return Center(
-                child: Text(
-                  _t(
-                    nl: 'Nog geen voertuigen.',
-                    en: 'No vehicles yet.',
-                    fr: 'Aucun vehicule.',
-                    es: 'Sin vehiculos.',
-                  ),
-                  style: const TextStyle(color: Colors.white70),
-                ),
-              );
-            }
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: visible.length,
-              itemBuilder: (context, i) {
-                final v = visible[i];
-                final linkedDriver = _driverById(v.driverId);
-                final status = v.isActive
-                    ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
-                    : _t(
-                        nl: 'Inactief',
-                        en: 'Inactive',
-                        fr: 'Inactif',
-                        es: 'Inactivo',
-                      );
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF141B2F),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.white12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              v.vehicleName.isEmpty
-                                  ? _t(
-                                      nl: 'Naamloos voertuig',
-                                      en: 'Unnamed vehicle',
-                                      fr: 'Vehicule sans nom',
-                                      es: 'Vehiculo sin nombre',
-                                    )
-                                  : v.vehicleName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            status,
-                            style: TextStyle(
-                              color: v.isActive
-                                  ? Colors.greenAccent
-                                  : Colors.white54,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
-                        '${(v.companyId?.trim().isNotEmpty ?? false) ? v.companyId!.trim() : _t(nl: '(legacy)', en: '(legacy)', fr: '(ancien)', es: '(legacy)')}',
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                      Text(
-                        '${_t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}',
-                      ),
-                      Text(
-                        '${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
-                      ),
-                      Text(
-                        '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}',
-                      ),
-                      Text(
-                        '${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacite', es: 'Capacidad')}: ${v.passengerCapacity} pax • ${v.luggageCapacity} bags',
-                      ),
-                      Text(
-                        '${_t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria')}: ${_tierLabel(v.tierId)}',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${_t(nl: 'Gekoppelde chauffeur', en: 'Linked driver', fr: 'Chauffeur lie', es: 'Conductor vinculado')}: '
-                        '${linkedDriver == null ? '—' : linkedDriver.fullName}',
-                      ),
-                      if (linkedDriver != null) ...[
-                        Text(
-                          '${_t(nl: 'Chauffeur-ID', en: 'Driver ID', fr: 'ID chauffeur', es: 'ID conductor')}: ${linkedDriver.employeeNumber}',
-                        ),
-                        Text(
-                          '${_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono')}: ${linkedDriver.phone.isEmpty ? '—' : linkedDriver.phone}',
-                        ),
-                      ],
-                      const SizedBox(height: 6),
-                      _photoPreviewBox(
-                        photoRef: v.primaryPhotoRef,
-                        height: 140,
-                        onTap: null,
-                        placeholderText: _t(
-                          nl: 'Geen foto ingesteld',
-                          en: 'No photo set',
-                          fr: 'Aucune photo definie',
-                          es: 'Sin foto configurada',
-                        ),
-                      ),
-                      if (v.galleryPhotoRefs.length > 1) ...[
-                        const SizedBox(height: 6),
-                        Text(
+            return CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _buildDriversDocumentsBlock()),
+                if (visible.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
                           _t(
-                            nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
-                            en: '+${v.galleryPhotoRefs.length - 1} extra photos',
-                            fr: '+${v.galleryPhotoRefs.length - 1} photos en plus',
-                            es: '+${v.galleryPhotoRefs.length - 1} fotos extra',
+                            nl: 'Nog geen voertuigen.',
+                            en: 'No vehicles yet.',
+                            fr: 'Aucun vehicule.',
+                            es: 'Sin vehiculos.',
                           ),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
+                          style: const TextStyle(color: Colors.white70),
+                          textAlign: TextAlign.center,
                         ),
-                      ],
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () => _openVehicleEditor(existing: v),
-                              icon: const Icon(Icons.edit_outlined, size: 16),
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 10,
-                                ),
-                              ),
-                              label: Text(
-                                _t(
-                                  nl: 'Bewerken',
-                                  en: 'Edit',
-                                  fr: 'Modifier',
-                                  es: 'Editar',
-                                ),
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                deleteVehicle(v.id);
-                                await _syncFleetOrShowError();
-                              },
-                              icon: const Icon(Icons.delete_outline, size: 16),
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 10,
-                                ),
-                              ),
-                              label: Text(
-                                _t(
-                                  nl: 'Verwijder',
-                                  en: 'Delete',
-                                  fr: 'Supprimer',
-                                  es: 'Eliminar',
-                                ),
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                        ],
                       ),
-                    ],
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, i) {
+                        final v = visible[i];
+                        final linkedDriver = _driverById(v.driverId);
+                        final status = v.isActive
+                            ? _t(
+                                nl: 'Actief',
+                                en: 'Active',
+                                fr: 'Actif',
+                                es: 'Activo',
+                              )
+                            : _t(
+                                nl: 'Inactief',
+                                en: 'Inactive',
+                                fr: 'Inactif',
+                                es: 'Inactivo',
+                              );
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF141B2F),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      v.vehicleName.isEmpty
+                                          ? _t(
+                                              nl: 'Naamloos voertuig',
+                                              en: 'Unnamed vehicle',
+                                              fr: 'Vehicule sans nom',
+                                              es: 'Vehiculo sin nombre',
+                                            )
+                                          : v.vehicleName,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    status,
+                                    style: TextStyle(
+                                      color: v.isActive
+                                          ? Colors.greenAccent
+                                          : Colors.white54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
+                                '${(v.companyId?.trim().isNotEmpty ?? false) ? v.companyId!.trim() : _t(nl: '(legacy)', en: '(legacy)', fr: '(ancien)', es: '(legacy)')}',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              Text(
+                                '${_t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}',
+                              ),
+                              Text(
+                                '${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
+                              ),
+                              Text(
+                                '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}',
+                              ),
+                              Text(
+                                '${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacite', es: 'Capacidad')}: ${v.passengerCapacity} pax • ${v.luggageCapacity} bags',
+                              ),
+                              Text(
+                                '${_t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria')}: ${_tierLabel(v.tierId)}',
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_t(nl: 'Gekoppelde chauffeur', en: 'Linked driver', fr: 'Chauffeur lie', es: 'Conductor vinculado')}: '
+                                '${linkedDriver == null ? '—' : linkedDriver.fullName}',
+                              ),
+                              if (linkedDriver != null) ...[
+                                Text(
+                                  '${_t(nl: 'Chauffeur-ID', en: 'Driver ID', fr: 'ID chauffeur', es: 'ID conductor')}: ${linkedDriver.employeeNumber}',
+                                ),
+                                Text(
+                                  '${_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono')}: ${linkedDriver.phone.isEmpty ? '—' : linkedDriver.phone}',
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              _photoPreviewBox(
+                                photoRef: v.primaryPhotoRef,
+                                height: 140,
+                                onTap: null,
+                                placeholderText: _t(
+                                  nl: 'Geen foto ingesteld',
+                                  en: 'No photo set',
+                                  fr: 'Aucune photo definie',
+                                  es: 'Sin foto configurada',
+                                ),
+                              ),
+                              if (v.galleryPhotoRefs.length > 1) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  _t(
+                                    nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
+                                    en: '+${v.galleryPhotoRefs.length - 1} extra photos',
+                                    fr: '+${v.galleryPhotoRefs.length - 1} photos en plus',
+                                    es: '+${v.galleryPhotoRefs.length - 1} fotos extra',
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: () =>
+                                          _openVehicleEditor(existing: v),
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 16,
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 10,
+                                        ),
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Bewerken',
+                                          en: 'Edit',
+                                          fr: 'Modifier',
+                                          es: 'Editar',
+                                        ),
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: () async {
+                                        deleteVehicle(v.id);
+                                        await _syncFleetOrShowError();
+                                      },
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 16,
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 10,
+                                        ),
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Verwijder',
+                                          en: 'Delete',
+                                          fr: 'Supprimer',
+                                          es: 'Eliminar',
+                                        ),
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }, childCount: visible.length),
+                    ),
                   ),
-                );
-              },
+              ],
             );
           },
         ),
