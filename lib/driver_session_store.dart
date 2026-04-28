@@ -1,0 +1,189 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'package:fluxidi_tracking/app_config.dart';
+
+/// Persisted chauffeur session (local-first). Not a security credential.
+class ActiveDriverSession {
+  const ActiveDriverSession({
+    required this.driverId,
+    required this.employeeNumber,
+    required this.fullName,
+    required this.phone,
+    required this.loggedInAt,
+    required this.updatedAt,
+  });
+
+  final String driverId;
+  final String employeeNumber;
+  final String fullName;
+  final String phone;
+  final String loggedInAt;
+  final String updatedAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'driverId': driverId,
+    'employeeNumber': employeeNumber,
+    'fullName': fullName,
+    'phone': phone,
+    'loggedInAt': loggedInAt,
+    'updatedAt': updatedAt,
+  };
+
+  factory ActiveDriverSession.fromJson(Map<String, dynamic> json) {
+    String read(String key) => (json[key] ?? '').toString().trim();
+    return ActiveDriverSession(
+      driverId: read('driverId'),
+      employeeNumber: read('employeeNumber'),
+      fullName: read('fullName'),
+      phone: read('phone'),
+      loggedInAt: read('loggedInAt'),
+      updatedAt: read('updatedAt'),
+    );
+  }
+}
+
+/// Mirrors on-disk chauffeur session for API driver_id resolution.
+final ValueNotifier<ActiveDriverSession?> activeDriverSessionNotifier =
+    ValueNotifier<ActiveDriverSession?>(null);
+
+/// Default tracking id when no chauffeur session (e.g. company preview driver view).
+const String kFallbackDriverTrackingId = 'fluxidi_driver_01';
+
+/// Worker `driver_id` payloads: chauffeur session [DriverProfile.id] when present.
+String get resolvedDriverTrackingId {
+  final id = activeDriverSessionNotifier.value?.driverId.trim();
+  if (id != null && id.isNotEmpty) return id;
+  return kFallbackDriverTrackingId;
+}
+
+String _maskIdForLog(String id) {
+  final t = id.trim();
+  if (t.length <= 4) return t.isEmpty ? '—' : '…${t.substring(t.length - 1)}';
+  return '${t.substring(0, 2)}…${t.substring(t.length - 2)}';
+}
+
+/// Local JSON: `<documents>/driver_session/active_driver_session_v1.json`
+class DriverSessionStore {
+  DriverSessionStore._();
+  static final DriverSessionStore instance = DriverSessionStore._();
+
+  static const String _fileName = 'active_driver_session_v1.json';
+
+  ActiveDriverSession? _cache;
+
+  Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}driver_session',
+    );
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return File('${dir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  /// Load parsed session without validation (may be stale).
+  Future<ActiveDriverSession?> load() async {
+    try {
+      if (_cache != null) return _cache;
+      final file = await _file();
+      if (!await file.exists()) return null;
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final m = Map<String, dynamic>.from(decoded);
+      final s = ActiveDriverSession.fromJson(m);
+      if (s.driverId.isEmpty) return null;
+      _cache = s;
+      return s;
+    } catch (e) {
+      debugPrint('[DRIVER_LOGIN][WARN] corrupt_session reason=parse_failed');
+      return null;
+    }
+  }
+
+  /// Call after tenant drivers are loaded. Clears stale sessions.
+  Future<void> bootstrap(List<DriverProfile> drivers) async {
+    final s = await load();
+    if (s == null) {
+      activeDriverSessionNotifier.value = null;
+      return;
+    }
+    if (_isStillValid(drivers, s)) {
+      _cache = s;
+      activeDriverSessionNotifier.value = s;
+      return;
+    }
+    debugPrint('[DRIVER_LOGIN][SESSION_CLEAR] reason=inactive_or_missing');
+    await clear();
+  }
+
+  static bool _isStillValid(
+    List<DriverProfile> drivers,
+    ActiveDriverSession s,
+  ) {
+    for (final d in drivers) {
+      if (d.id != s.driverId) continue;
+      if (!d.isActive) return false;
+      final de = d.employeeNumber.trim();
+      final se = s.employeeNumber.trim();
+      if (de.isEmpty || se.isEmpty) return false;
+      if (de.toLowerCase() != se.toLowerCase()) return false;
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> saveFromDriverProfile(
+    DriverProfile driver, {
+    ActiveDriverSession? previous,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final session = ActiveDriverSession(
+      driverId: driver.id.trim(),
+      employeeNumber: driver.employeeNumber.trim(),
+      fullName: driver.fullName,
+      phone: driver.phone,
+      loggedInAt: previous?.loggedInAt ?? now,
+      updatedAt: now,
+    );
+    try {
+      final file = await _file();
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _cache = session;
+      activeDriverSessionNotifier.value = session;
+    } catch (e) {
+      debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
+    }
+  }
+
+  Future<void> clear() async {
+    try {
+      final file = await _file();
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+    _cache = null;
+    activeDriverSessionNotifier.value = null;
+  }
+
+  DriverProfile? findDriverByEnteredId(
+    List<DriverProfile> drivers,
+    String entered,
+  ) {
+    final n = entered.trim().toLowerCase();
+    if (n.isEmpty) return null;
+    for (final d in drivers) {
+      final en = d.employeeNumber.trim();
+      if (en.isEmpty) continue;
+      if (en.toLowerCase() == n && d.isActive) return d;
+    }
+    return null;
+  }
+
+  void logOk(String driverId) {
+    debugPrint('[DRIVER_LOGIN][OK] driverId=${_maskIdForLog(driverId)}');
+  }
+}

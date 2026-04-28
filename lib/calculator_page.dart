@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -1322,6 +1323,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           paymentBookingId: ownId,
         ),
       );
+      if (bookingId.isNotEmpty) {
+        unawaited(
+          CustomerBookingStore.instance.markPaid(
+            bookingId: bookingId,
+            bookingStatus: 'CONFIRMED',
+          ),
+        );
+      }
       if (!_postPaymentNavigated) {
         _postPaymentNavigated = true;
         final messenger = ScaffoldMessenger.maybeOf(context);
@@ -1748,6 +1757,60 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 vatNumber.trim().isNotEmpty || companyName.trim().isNotEmpty,
           );
       await CustomerBookingsStore.instance.upsert(storedBooking);
+      try {
+        final customerProfile = await CustomerProfileStore.instance.load();
+        final customerId = customerProfile?.customerId.trim() ?? '';
+        final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)
+            .trim();
+        if (localBookingId.isEmpty) {
+          debugPrint(
+            '[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=missing_booking_id',
+          );
+        } else {
+          final nowIso = DateTime.now().toIso8601String();
+          await CustomerBookingStore.instance.upsert(
+            CustomerSavedBooking(
+              bookingId: localBookingId,
+              customerId: customerId,
+              createdAt: nowIso,
+              pickupIso: (payload['pickup_iso'] ?? '').toString().trim(),
+              from: (payload['from'] ?? '').toString().trim(),
+              to: (payload['to'] ?? '').toString().trim(),
+              price: _toNum(
+                body['price_incl_vat'] ??
+                    body['priceInclVat'] ??
+                    body['amount'] ??
+                    body['total'] ??
+                    widget.quote['price_incl_vat'],
+              ),
+              currency: (body['currency'] ?? widget.quote['currency'] ?? 'EUR')
+                  .toString()
+                  .trim(),
+              paymentStatus: paymentFlow
+                  ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
+                  : 'unpaid',
+              bookingStatus: paymentFlow ? 'PENDING' : 'CONFIRMED',
+              publicReference: publicRef,
+              rawSnapshot: <String, dynamic>{
+                'booking_id': localBookingId,
+                'public_reference': publicRef,
+                'price_incl_vat':
+                    body['price_incl_vat'] ?? body['priceInclVat'],
+                'currency':
+                    body['currency'] ?? widget.quote['currency'] ?? 'EUR',
+                'payment_status': paymentFlow
+                    ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
+                    : 'unpaid',
+                'booking_status': paymentFlow ? 'PENDING' : 'CONFIRMED',
+              },
+            ),
+          );
+          debugPrint('[CUSTOMER_BOOKINGS][SAVE][OK] booking=$localBookingId');
+        }
+      } catch (saveErr) {
+        debugPrint('[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=local_store_error');
+        debugPrint('[CUSTOMER_BOOKINGS][SAVE][ERROR] $saveErr');
+      }
       final finalPricing = bookingRef.isNotEmpty
           ? await _fetchFinalAuthoritativePricing(bookingRef)
           : null;

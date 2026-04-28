@@ -21,6 +21,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
@@ -40,6 +41,7 @@ import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/route_marquee.dart';
@@ -135,6 +137,7 @@ Map<String, String> _adminHeaders() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadLocalTenantState();
+  await DriverSessionStore.instance.bootstrap(driversNotifier.value);
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
   if (kMapboxToken.trim().isEmpty) {
@@ -187,8 +190,9 @@ String get kWorkerBaseUrl {
   return kWorkerBaseUrlDefault;
 }
 
-/// Driver id (keep simple for now)
-const String kDriverId = 'fluxidi_driver_01';
+/// Driver id for Worker `driver_id` fields — chauffeur session [DriverProfile.id] when logged in,
+/// otherwise [kFallbackDriverTrackingId] for legacy/company-preview driver view.
+String get kDriverId => resolvedDriverTrackingId;
 
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
@@ -1385,11 +1389,19 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
-  void _goDriver(BuildContext context) {
-    setAppRole(AppRole.driver);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
-    );
+  Future<void> _goDriver(BuildContext context) async {
+    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    if (!context.mounted) return;
+    if (activeDriverSessionNotifier.value != null) {
+      setAppRole(AppRole.driver);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DriverHomePage()),
+      );
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()),
+      );
+    }
   }
 
   @override
@@ -1601,6 +1613,243 @@ class RoleEntryPage extends StatelessWidget {
                   ),
                 );
               },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ChauffeurLoginPage extends StatefulWidget {
+  const ChauffeurLoginPage({super.key});
+
+  @override
+  State<ChauffeurLoginPage> createState() => _ChauffeurLoginPageState();
+}
+
+class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _idCtrl = TextEditingController();
+  bool _busy = false;
+  String? _lookupError;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    _idCtrl.addListener(() {
+      if (_lookupError != null) setState(() => _lookupError = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _idCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _lookupError = null);
+    FocusScope.of(context).unfocus();
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _busy = true);
+    final drivers = driversNotifier.value;
+    final match = DriverSessionStore.instance.findDriverByEnteredId(
+      drivers,
+      _idCtrl.text,
+    );
+    if (match == null) {
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=not_found');
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _lookupError = _t(
+            nl: 'Geen actieve chauffeur gevonden met deze ID.',
+            en: 'No active driver found with this ID.',
+            fr: 'Aucun chauffeur actif trouvé avec cet ID.',
+            es: 'No se encontró ningún conductor activo con este ID.',
+          );
+        });
+      }
+      return;
+    }
+    final prev = await DriverSessionStore.instance.load();
+    await DriverSessionStore.instance.saveFromDriverProfile(
+      match,
+      previous: prev,
+    );
+    DriverSessionStore.instance.logOk(match.id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    setAppRole(AppRole.driver);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: kFluxidiBlack,
+        appBar: AppBar(
+          backgroundColor: kFluxidiBlack,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _busy
+                ? null
+                : () {
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+                    );
+                  },
+          ),
+          title: Text(
+            _t(
+              nl: 'Chauffeur login',
+              en: 'Driver login',
+              fr: 'Connexion chauffeur',
+              es: 'Acceso conductor',
+            ),
+          ),
+        ),
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121A2E),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: const Color(0xFFE5B641).withOpacity(0.3),
+                    ),
+                  ),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Vul je chauffeur-ID in om je ritten te openen.',
+                            en: 'Enter your driver ID to open your rides.',
+                            fr: 'Saisissez votre ID chauffeur pour ouvrir vos courses.',
+                            es: 'Introduce tu ID de conductor para abrir tus viajes.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.85),
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _idCtrl,
+                          enabled: !_busy,
+                          style: const TextStyle(color: Colors.white),
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) {
+                            if (!_busy) unawaited(_submit());
+                          },
+                          decoration: InputDecoration(
+                            labelText: _t(
+                              nl: 'Chauffeur-ID',
+                              en: 'Driver ID',
+                              fr: 'ID chauffeur',
+                              es: 'ID de conductor',
+                            ),
+                            labelStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF141B2F),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 14,
+                            ),
+                          ),
+                          validator: (v) {
+                            if ((v ?? '').trim().isEmpty) {
+                              return _t(
+                                nl: 'Vul je chauffeur-ID in.',
+                                en: 'Enter your driver ID.',
+                                fr: 'Saisissez votre ID chauffeur.',
+                                es: 'Introduce tu ID de conductor.',
+                              );
+                            }
+                            return null;
+                          },
+                        ),
+                        if (_lookupError != null) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            _lookupError!,
+                            style: const TextStyle(
+                              color: Color(0xFFFF8A8A),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        FilledButton(
+                          onPressed: _busy
+                              ? null
+                              : () {
+                                  unawaited(_submit());
+                                },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFE5B641),
+                            foregroundColor: Colors.black,
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: _busy
+                              ? const SizedBox(
+                                  height: 22,
+                                  width: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black54,
+                                  ),
+                                )
+                              : Text(
+                                  _t(
+                                    nl: 'Inloggen',
+                                    en: 'Log in',
+                                    fr: 'Se connecter',
+                                    es: 'Iniciar sesión',
+                                  ),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -2587,7 +2836,7 @@ class CustomerHomePage extends StatelessWidget {
                 ),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => const CustomerBookingsPage(),
+                    builder: (_) => const CustomerSavedBookingsPage(),
                   ),
                 ),
               ),
@@ -2633,6 +2882,347 @@ class CustomerHomePage extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               const FluxidiBackToStartButton(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CustomerSavedBookingsPage extends StatefulWidget {
+  const CustomerSavedBookingsPage({super.key});
+
+  @override
+  State<CustomerSavedBookingsPage> createState() =>
+      _CustomerSavedBookingsPageState();
+}
+
+class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
+  bool _loading = true;
+  String? _error;
+  List<CustomerSavedBooking> _bookings = const <CustomerSavedBooking>[];
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLocal());
+  }
+
+  Future<void> _loadLocal() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await CustomerBookingStore.instance.loadAll();
+      if (!mounted) return;
+      setState(() {
+        _bookings = items;
+        _loading = false;
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = _t(
+          nl: 'Laden mislukt.',
+          en: 'Loading failed.',
+          fr: 'Chargement echoue.',
+          es: 'Error al cargar.',
+        );
+      });
+    }
+  }
+
+  String _formatPickup(String iso) {
+    if (iso.trim().isEmpty) return '-';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return iso;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final local = dt.toLocal();
+    return '${two(local.day)}/${two(local.month)}/${local.year} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _formatPrice(CustomerSavedBooking booking) {
+    final amount = booking.price;
+    if (amount == null) return '-';
+    final currency = booking.currency.toUpperCase().trim();
+    final symbol = currency.isEmpty || currency == 'EUR' ? '€' : '$currency ';
+    return '$symbol${amount.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  String _paymentLabel(CustomerSavedBooking booking) {
+    final p = booking.paymentStatus.toLowerCase().trim();
+    if (p == 'paid' || p == 'confirmed' || p == 'completed' || p == 'success') {
+      return _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado');
+    }
+    if (p == 'pending' || p == 'unpaid' || p == 'pay_in_car') {
+      return _t(
+        nl: 'Te betalen in de wagen',
+        en: 'To pay in the vehicle',
+        fr: 'A payer dans le vehicule',
+        es: 'A pagar en el vehiculo',
+      );
+    }
+    return p.isEmpty ? '-' : p;
+  }
+
+  String _bookingStatusLabel(CustomerSavedBooking booking) {
+    final status = booking.bookingStatus.toUpperCase().trim();
+    if (status == 'PENDING') {
+      return _t(
+        nl: 'In behandeling',
+        en: 'Pending',
+        fr: 'En cours',
+        es: 'Pendiente',
+      );
+    }
+    if (status == 'CONFIRMED') {
+      return _t(
+        nl: 'Bevestigd',
+        en: 'Confirmed',
+        fr: 'Confirmee',
+        es: 'Confirmada',
+      );
+    }
+    if (status == 'COMPLETED') {
+      return _t(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Terminee',
+        es: 'Finalizada',
+      );
+    }
+    if (status == 'CANCELLED') {
+      return _t(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annulee',
+        es: 'Cancelada',
+      );
+    }
+    return status.isEmpty ? '-' : status;
+  }
+
+  Future<void> _openSavedBooking(CustomerSavedBooking booking) async {
+    final id = booking.bookingId.trim();
+    if (id.isEmpty) return;
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
+          final view = CustomerBookingView.fromResponse(id, decoded);
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => CustomerBookingDetailPage(
+                bookingId: id,
+                initialView: view,
+                startsFromLocalCache: false,
+              ),
+            ),
+          );
+          return;
+        }
+      }
+    } catch (_) {
+      // fall back to local-safe minimal view
+    }
+
+    final fallback = StoredCustomerBooking(
+      bookingId: id,
+      publicBookingId: booking.publicReference.trim().isNotEmpty
+          ? booking.publicReference.trim()
+          : id,
+      customerName: '',
+      customerPhone: '',
+      customerEmail: '',
+      from: booking.from,
+      to: booking.to,
+      pickupIso: booking.pickupIso,
+      price: booking.price,
+      currency: booking.currency,
+      paymentStatus: booking.paymentStatus,
+      status: booking.bookingStatus,
+      createdAt: booking.createdAt,
+      updatedAt: booking.createdAt,
+    );
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CustomerBookingDetailPage(
+          bookingId: id,
+          initialView: CustomerBookingView.fromStored(fallback),
+          startsFromLocalCache: true,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: const Color(0xFF0B1020),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0B1020),
+          title: Text(
+            _t(
+              nl: 'Mijn boekingen',
+              en: 'My bookings',
+              fr: 'Mes reservations',
+              es: 'Mis reservas',
+            ),
+          ),
+          actions: [
+            IconButton(
+              tooltip: _t(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Actualiser',
+                es: 'Actualizar',
+              ),
+              onPressed: _loadLocal,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (_error != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Color(0xFFFFB4B4)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (_loading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (_bookings.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141B2F),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Nog geen boekingen op dit toestel.',
+                      en: 'No bookings on this device yet.',
+                      fr: 'Aucune réservation sur cet appareil pour le moment.',
+                      es: 'Aún no hay reservas en este dispositivo.',
+                    ),
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                )
+              else
+                ..._bookings.map(
+                  (booking) => Card(
+                    color: const Color(0xFF141B2F),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => _openSavedBooking(booking),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${booking.from.trim().isEmpty ? '-' : booking.from} → ${booking.to.trim().isEmpty ? '-' : booking.to}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${_t(nl: 'Ophaal', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${_formatPickup(booking.pickupIso)}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.82),
+                              ),
+                            ),
+                            Text(
+                              '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.82),
+                              ),
+                            ),
+                            Text(
+                              '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.82),
+                              ),
+                            ),
+                            Text(
+                              '${_t(nl: 'Boekingsstatus', en: 'Booking status', fr: 'Statut de réservation', es: 'Estado de la reserva')}: ${_bookingStatusLabel(booking)}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.82),
+                              ),
+                            ),
+                            Text(
+                              '${_t(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia')}: ${(booking.publicReference.trim().isNotEmpty ? booking.publicReference.trim() : booking.bookingId.trim())}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.82),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.search_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const CustomerBookingLookupPage(),
+                    ),
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Boeking handmatig zoeken',
+                      en: 'Find booking manually',
+                      fr: 'Rechercher une réservation manuellement',
+                      es: 'Buscar reserva manualmente',
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -13314,6 +13904,51 @@ class _DriverHomePageState extends State<DriverHomePage>
             const SizedBox(height: 16),
             const Divider(color: Colors.white12),
             const SizedBox(height: 8),
+            ValueListenableBuilder<ActiveDriverSession?>(
+              valueListenable: activeDriverSessionNotifier,
+              builder: (context, session, _) {
+                if (!(isDriver && session != null)) {
+                  return const SizedBox.shrink();
+                }
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    leading: const Icon(Icons.swap_horiz_rounded),
+                    title: Text(
+                      _tr(
+                        nl: 'Andere chauffeur',
+                        en: 'Switch driver',
+                        fr: 'Changer de chauffeur',
+                        es: 'Cambiar conductor',
+                      ),
+                    ),
+                    subtitle: Text(
+                      _tr(
+                        nl: 'Afmelden en opnieuw inloggen met een ander ID.',
+                        en: 'Sign out and log in with a different ID.',
+                        fr: 'Se déconnecter et se reconnecter avec un autre ID.',
+                        es: 'Cerrar sesión e iniciar con otro ID.',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.65),
+                        fontSize: 12,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await DriverSessionStore.instance.clear();
+                      if (!context.mounted) return;
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (_) => const ChauffeurLoginPage(),
+                        ),
+                        (route) => false,
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
             // === Menu: Bookings hub ===
             if (canSeeDriverOps)
               ListTile(
