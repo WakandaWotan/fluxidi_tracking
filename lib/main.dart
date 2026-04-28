@@ -41,6 +41,8 @@ import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 
 import 'widgets/cockpit_widget.dart';
@@ -137,6 +139,7 @@ Map<String, String> _adminHeaders() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadLocalTenantState();
+  await CompanySessionStore.instance.bootstrap();
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
@@ -1382,11 +1385,30 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
-  void _goBusiness(BuildContext context) {
-    setAppRole(AppRole.companyAdmin);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const BusinessHomePage()),
-    );
+  Future<void> _goBusiness(BuildContext context) async {
+    await CompanySessionStore.instance.bootstrap();
+    if (!context.mounted) return;
+    if (CompanySessionStore.instance.hasValidCompanyContext) {
+      setAppRole(AppRole.companyAdmin);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const BusinessHomePage()),
+      );
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => CompanyOnboardingPage(
+            onCompleted: (ctx) {
+              setAppRole(AppRole.companyAdmin);
+              Navigator.of(ctx).pushReplacement(
+                MaterialPageRoute<void>(
+                  builder: (_) => const BusinessHomePage(),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _goDriver(BuildContext context) async {
@@ -1590,7 +1612,7 @@ class RoleEntryPage extends StatelessWidget {
                                 ),
                                 icon: Icons.business_center_rounded,
                                 height: buttonHeight,
-                                onTap: () => _goBusiness(context),
+                                onTap: () => unawaited(_goBusiness(context)),
                               ),
                               SizedBox(height: buttonGap),
                               _roleButton(
@@ -2527,6 +2549,116 @@ class BusinessHomePage extends StatelessWidget {
                 style: TextStyle(color: Colors.white.withOpacity(0.72)),
               ),
               const SizedBox(height: 16),
+              ValueListenableBuilder<CompanyProfile?>(
+                valueListenable: companyProfileNotifier,
+                builder: (context, profile, _) {
+                  if (profile == null) return const SizedBox.shrink();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Card(
+                        color: const Color(0xFF141B2F),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                profile.companyName,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 18,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_t(nl: 'Bedrijfs-ID:', en: 'Company ID:', fr: 'ID entreprise :', es: 'ID de empresa:')} ${profile.companyId}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.85),
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_t(nl: 'Contact:', en: 'Contact:', fr: 'Contact :', es: 'Contacto:')} ${profile.email}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(
+                                          0xFFE5B641,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Color(0xFFE5B641),
+                                        ),
+                                      ),
+                                      onPressed: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) =>
+                                                const CompanyProfileEditPage(),
+                                          ),
+                                        );
+                                      },
+                                      child: Text(
+                                        _t(
+                                          nl: 'Mijn bedrijfsgegevens',
+                                          en: 'Company details',
+                                          fr: 'Mes informations entreprise',
+                                          es: 'Datos de empresa',
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: TextButton(
+                                      onPressed: () async {
+                                        await CompanySessionStore.instance
+                                            .clearLocalCompanyState();
+                                        if (!context.mounted) return;
+                                        Navigator.of(
+                                          context,
+                                        ).pushAndRemoveUntil(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) =>
+                                                const RoleEntryPage(),
+                                          ),
+                                          (route) => false,
+                                        );
+                                      },
+                                      child: Text(
+                                        _t(
+                                          nl: 'Ander bedrijf',
+                                          en: 'Switch company',
+                                          fr: 'Changer entreprise',
+                                          es: 'Cambiar empresa',
+                                        ),
+                                        style: TextStyle(
+                                          color: Colors.redAccent.shade100,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  );
+                },
+              ),
               Card(
                 color: const Color(0xFF141B2F),
                 child: ListTile(

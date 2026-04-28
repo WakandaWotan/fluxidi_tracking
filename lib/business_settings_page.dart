@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:image_picker/image_picker.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
@@ -105,8 +107,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   void initState() {
     super.initState();
     _hydrateFromSettings(businessSettingsNotifier.value);
-    _hydrateBackendBusinessProfile(BackendBusinessProfile.defaults());
+    _hydrateBackendBusinessProfile(
+      mergeLocalIntoBackendPreview(
+        BackendBusinessProfile.defaults(),
+        companyProfileNotifier.value,
+      ),
+    );
     _hydrateBackendTaxProfile(BackendTaxProfile.defaults());
+    _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
   }
 
@@ -234,6 +242,60 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendVatLabelEsCtrl.text = p.vatLabels['es'] ?? 'IVA';
   }
 
+  void _mergeLocalIntoGeneralControllersIfEligible() {
+    final local = companyProfileNotifier.value;
+    if (local == null) return;
+    final appCompany = appConfig.companyName.trim();
+    final appEmail = appConfig.supportEmail.trim();
+    final appPhone = appConfig.supportPhone.trim();
+
+    void replaceIfEmptyOrAppDefault(
+      TextEditingController ctrl,
+      String val,
+      String appDefault,
+    ) {
+      final t = ctrl.text.trim();
+      final v = val.trim();
+      if (v.isEmpty) return;
+      final ad = appDefault.trim();
+      if (t.isEmpty || t == ad) ctrl.text = v;
+    }
+
+    replaceIfEmptyOrAppDefault(_companyCtrl, local.companyName, appCompany);
+    final supportFill = local.supportEmail.trim().isNotEmpty
+        ? local.supportEmail.trim()
+        : primaryContactEmailFromCompany(local);
+    replaceIfEmptyOrAppDefault(_supportEmailCtrl, supportFill, appEmail);
+    replaceIfEmptyOrAppDefault(_supportPhoneCtrl, local.phone, appPhone);
+    replaceIfEmptyOrAppDefault(_vatCtrl, local.vatNumber, '');
+
+    final addrCombined = <String>[
+      if (local.addressLine.trim().isNotEmpty) local.addressLine.trim(),
+      if (local.postalCode.trim().isNotEmpty || local.city.trim().isNotEmpty)
+        '${local.postalCode.trim()} ${local.city.trim()}'.trim(),
+      if (local.countryCode.trim().isNotEmpty) local.countryCode.trim(),
+    ].join('\n');
+    if (_addressCtrl.text.trim().isEmpty && addrCombined.trim().isNotEmpty) {
+      _addressCtrl.text = addrCombined;
+    }
+
+    final booking = local.bookingEmail.trim().isNotEmpty
+        ? local.bookingEmail.trim()
+        : '';
+    final bookingFill = booking.isNotEmpty
+        ? booking
+        : primaryContactEmailFromCompany(local);
+    replaceIfEmptyOrAppDefault(_senderCtrl, bookingFill, appEmail);
+
+    final reply = local.notificationEmail.trim().isNotEmpty
+        ? local.notificationEmail.trim()
+        : '';
+    final replyFill = reply.isNotEmpty
+        ? reply
+        : primaryContactEmailFromCompany(local);
+    replaceIfEmptyOrAppDefault(_replyToCtrl, replyFill, appEmail);
+  }
+
   Future<void> _loadBackendProfiles() async {
     setState(() {
       _backendProfilesLoading = true;
@@ -246,9 +308,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         fetchBackendTaxProfile(),
       ]);
       if (!mounted) return;
+      final rawBiz = results[0] as BackendBusinessProfile;
+      final rawTax = results[1] as BackendTaxProfile;
       setState(() {
-        _hydrateBackendBusinessProfile(results[0] as BackendBusinessProfile);
-        _hydrateBackendTaxProfile(results[1] as BackendTaxProfile);
+        _hydrateBackendBusinessProfile(
+          mergeLocalIntoBackendPreview(rawBiz, companyProfileNotifier.value),
+        );
+        _hydrateBackendTaxProfile(rawTax);
+        _mergeLocalIntoGeneralControllersIfEligible();
         _backendProfilesStatus = _t(
           nl: 'Instellingen geladen.',
           en: 'Settings loaded.',
@@ -259,12 +326,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _backendProfilesError = _t(
-          nl: 'Instellingen konden niet worden geladen. Standaardwaarden blijven zichtbaar.',
-          en: 'Settings could not be loaded. Defaults remain visible.',
-          fr: 'Impossible de charger les parametres. Les valeurs par defaut restent visibles.',
-          es: 'No se pudo cargar la configuracion. Se muestran valores predeterminados.',
+        _hydrateBackendBusinessProfile(
+          mergeLocalIntoBackendPreview(
+            BackendBusinessProfile.defaults(),
+            companyProfileNotifier.value,
+          ),
         );
+        _mergeLocalIntoGeneralControllersIfEligible();
+        final hasLocal = companyProfileNotifier.value != null;
+        _backendProfilesError = hasLocal
+            ? _t(
+                nl: 'Online bedrijfsinstellingen niet geladen. Lokale bedrijfsgegevens blijven beschikbaar.',
+                en: 'Online business settings could not be loaded. Local company details remain available.',
+                fr: 'Les parametres en ligne n ont pas pu etre charges. Les informations locales restent disponibles.',
+                es: 'No se pudieron cargar los ajustes online. Los datos locales siguen disponibles.',
+              )
+            : _t(
+                nl: 'Instellingen konden niet worden geladen. Standaardwaarden blijven zichtbaar.',
+                en: 'Settings could not be loaded. Defaults remain visible.',
+                fr: 'Impossible de charger les parametres. Les valeurs par defaut restent visibles.',
+                es: 'No se pudo cargar la configuracion. Se muestran valores predeterminados.',
+              );
       });
     } finally {
       if (mounted) {
@@ -872,6 +954,80 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _notice(_backendProfilesStatus!),
               const SizedBox(height: 10),
             ],
+            _card(
+              title: _t(
+                nl: 'Lokaal bedrijf (dit toestel)',
+                en: 'Local company (this device)',
+                fr: 'Entreprise locale (cet appareil)',
+                es: 'Empresa local (este dispositivo)',
+              ),
+              child: ValueListenableBuilder<CompanyProfile?>(
+                valueListenable: companyProfileNotifier,
+                builder: (context, _, __) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
+                                en: 'Company / tenant ID (read-only)',
+                                fr: 'ID entreprise / tenant (lecture seule)',
+                                es: 'ID de empresa / tenant (solo lectura)',
+                              ),
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SelectableText(
+                              resolvedCompanyId,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _t(
+                          nl: 'ID kopiëren',
+                          en: 'Copy ID',
+                          fr: 'Copier l ID',
+                          es: 'Copiar ID',
+                        ),
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: resolvedCompanyId),
+                          );
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                _t(
+                                  nl: 'Bedrijfs-ID gekopieerd.',
+                                  en: 'Company ID copied.',
+                                  fr: 'ID entreprise copie.',
+                                  es: 'ID de empresa copiado.',
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.copy, color: Colors.white54),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
             _card(
               title: _t(
                 nl: 'Officiële bedrijfsgegevens',
