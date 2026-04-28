@@ -264,6 +264,7 @@ class BackendBusinessProfile {
   final String phone;
   final String email;
   final String website;
+  final String bookingEmail;
   final String invoiceEmail;
   final String iban;
   final String paymentReferencePrefix;
@@ -281,6 +282,7 @@ class BackendBusinessProfile {
     required this.phone,
     required this.email,
     required this.website,
+    required this.bookingEmail,
     required this.invoiceEmail,
     required this.iban,
     required this.paymentReferencePrefix,
@@ -299,6 +301,7 @@ class BackendBusinessProfile {
         phone: appConfig.supportPhone,
         email: appConfig.supportEmail,
         website: '',
+        bookingEmail: '',
         invoiceEmail: appConfig.supportEmail,
         iban: '',
         paymentReferencePrefix: 'FLX',
@@ -324,6 +327,7 @@ class BackendBusinessProfile {
       phone: text('phone', fallback.phone),
       email: text('email', fallback.email),
       website: text('website', fallback.website),
+      bookingEmail: text('bookingEmail', fallback.bookingEmail),
       invoiceEmail: text('invoiceEmail', fallback.invoiceEmail),
       iban: text('iban', fallback.iban),
       paymentReferencePrefix:
@@ -345,6 +349,7 @@ class BackendBusinessProfile {
         'phone': phone,
         'email': email,
         'website': website,
+        'bookingEmail': bookingEmail,
         'invoiceEmail': invoiceEmail,
         'iban': iban,
         'paymentReferencePrefix': paymentReferencePrefix,

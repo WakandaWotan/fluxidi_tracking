@@ -51,6 +51,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _backendPhoneCtrl = TextEditingController();
   final _backendEmailCtrl = TextEditingController();
   final _backendWebsiteCtrl = TextEditingController();
+  final _backendBookingEmailCtrl = TextEditingController();
   final _backendInvoiceEmailCtrl = TextEditingController();
   final _backendIbanCtrl = TextEditingController();
   final _backendPaymentPrefixCtrl = TextEditingController();
@@ -148,6 +149,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendPhoneCtrl.dispose();
     _backendEmailCtrl.dispose();
     _backendWebsiteCtrl.dispose();
+    _backendBookingEmailCtrl.dispose();
     _backendInvoiceEmailCtrl.dispose();
     _backendIbanCtrl.dispose();
     _backendPaymentPrefixCtrl.dispose();
@@ -212,6 +214,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendPhoneCtrl.text = p.phone;
     _backendEmailCtrl.text = p.email;
     _backendWebsiteCtrl.text = p.website;
+    _backendBookingEmailCtrl.text = p.bookingEmail;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
     _backendIbanCtrl.text = p.iban;
     _backendPaymentPrefixCtrl.text = p.paymentReferencePrefix;
@@ -283,6 +286,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       phone: _backendPhoneCtrl.text.trim(),
       email: _backendEmailCtrl.text.trim(),
       website: _backendWebsiteCtrl.text.trim(),
+      bookingEmail: _backendBookingEmailCtrl.text.trim(),
       invoiceEmail: _backendInvoiceEmailCtrl.text.trim(),
       iban: _backendIbanCtrl.text.trim(),
       paymentReferencePrefix: _backendPaymentPrefixCtrl.text.trim(),
@@ -960,6 +964,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _txt(
                     _backendEmailCtrl,
                     _t(nl: 'E-mail', en: 'Email', fr: 'E-mail', es: 'Correo'),
+                  ),
+                  _txt(
+                    _backendBookingEmailCtrl,
+                    _t(
+                      nl: 'Boekingen e-mail',
+                      en: 'Bookings email',
+                      fr: 'E-mail des reservations',
+                      es: 'Correo de reservas',
+                    ),
                   ),
                   _txt(
                     _backendInvoiceEmailCtrl,
