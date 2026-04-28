@@ -223,7 +223,8 @@ class BusinessSettingsState {
       use24HourTime: use24HourTime ?? this.use24HourTime,
       enabledServiceIds: enabledServiceIds ?? this.enabledServiceIds,
       enabledTierIds: enabledTierIds ?? this.enabledTierIds,
-      enabledExtraOptionIds: enabledExtraOptionIds ?? this.enabledExtraOptionIds,
+      enabledExtraOptionIds:
+          enabledExtraOptionIds ?? this.enabledExtraOptionIds,
       bookingSender: bookingSender ?? this.bookingSender,
       bookingReplyTo: bookingReplyTo ?? this.bookingReplyTo,
       whatsappNumber: whatsappNumber ?? this.whatsappNumber,
@@ -239,9 +240,12 @@ class BusinessSettingsState {
       pricingVatMode: pricingVatMode ?? this.pricingVatMode,
       pricingBagFeeEach: pricingBagFeeEach ?? this.pricingBagFeeEach,
       pricingStopFeeEach: pricingStopFeeEach ?? this.pricingStopFeeEach,
-      pricingTierFeeComfort: pricingTierFeeComfort ?? this.pricingTierFeeComfort,
-      pricingTierFeePrivate: pricingTierFeePrivate ?? this.pricingTierFeePrivate,
-      pricingTierFeePremium: pricingTierFeePremium ?? this.pricingTierFeePremium,
+      pricingTierFeeComfort:
+          pricingTierFeeComfort ?? this.pricingTierFeeComfort,
+      pricingTierFeePrivate:
+          pricingTierFeePrivate ?? this.pricingTierFeePrivate,
+      pricingTierFeePremium:
+          pricingTierFeePremium ?? this.pricingTierFeePremium,
       pricingNightSurchargeRate:
           pricingNightSurchargeRate ?? this.pricingNightSurchargeRate,
       pricingWeekendSurchargeRate:
@@ -290,23 +294,23 @@ class BackendBusinessProfile {
   });
 
   factory BackendBusinessProfile.defaults() => BackendBusinessProfile(
-        companyName: appConfig.companyName,
-        legalName: appConfig.companyName,
-        vatNumber: '',
-        companyRegistrationNumber: '',
-        address: '',
-        postcode: '',
-        city: '',
-        country: 'BE',
-        phone: appConfig.supportPhone,
-        email: appConfig.supportEmail,
-        website: '',
-        bookingEmail: '',
-        invoiceEmail: appConfig.supportEmail,
-        iban: '',
-        paymentReferencePrefix: 'FLX',
-        invoiceReceiptFooterText: '',
-      );
+    companyName: appConfig.companyName,
+    legalName: appConfig.companyName,
+    vatNumber: '',
+    companyRegistrationNumber: '',
+    address: '',
+    postcode: '',
+    city: '',
+    country: 'BE',
+    phone: appConfig.supportPhone,
+    email: appConfig.supportEmail,
+    website: '',
+    bookingEmail: '',
+    invoiceEmail: appConfig.supportEmail,
+    iban: '',
+    paymentReferencePrefix: 'FLX',
+    invoiceReceiptFooterText: '',
+  );
 
   factory BackendBusinessProfile.fromJson(Map<String, dynamic> json) {
     final fallback = BackendBusinessProfile.defaults();
@@ -330,31 +334,35 @@ class BackendBusinessProfile {
       bookingEmail: text('bookingEmail', fallback.bookingEmail),
       invoiceEmail: text('invoiceEmail', fallback.invoiceEmail),
       iban: text('iban', fallback.iban),
-      paymentReferencePrefix:
-          text('paymentReferencePrefix', fallback.paymentReferencePrefix),
-      invoiceReceiptFooterText:
-          text('invoiceReceiptFooterText', fallback.invoiceReceiptFooterText),
+      paymentReferencePrefix: text(
+        'paymentReferencePrefix',
+        fallback.paymentReferencePrefix,
+      ),
+      invoiceReceiptFooterText: text(
+        'invoiceReceiptFooterText',
+        fallback.invoiceReceiptFooterText,
+      ),
     );
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'companyName': companyName,
-        'legalName': legalName,
-        'vatNumber': vatNumber,
-        'companyRegistrationNumber': companyRegistrationNumber,
-        'address': address,
-        'postcode': postcode,
-        'city': city,
-        'country': country,
-        'phone': phone,
-        'email': email,
-        'website': website,
-        'bookingEmail': bookingEmail,
-        'invoiceEmail': invoiceEmail,
-        'iban': iban,
-        'paymentReferencePrefix': paymentReferencePrefix,
-        'invoiceReceiptFooterText': invoiceReceiptFooterText,
-      };
+    'companyName': companyName,
+    'legalName': legalName,
+    'vatNumber': vatNumber,
+    'companyRegistrationNumber': companyRegistrationNumber,
+    'address': address,
+    'postcode': postcode,
+    'city': city,
+    'country': country,
+    'phone': phone,
+    'email': email,
+    'website': website,
+    'bookingEmail': bookingEmail,
+    'invoiceEmail': invoiceEmail,
+    'iban': iban,
+    'paymentReferencePrefix': paymentReferencePrefix,
+    'invoiceReceiptFooterText': invoiceReceiptFooterText,
+  };
 }
 
 class BackendTaxProfile {
@@ -371,16 +379,16 @@ class BackendTaxProfile {
   });
 
   factory BackendTaxProfile.defaults() => BackendTaxProfile(
-        vatEnabled: true,
-        vatRate: appConfig.defaultVatRate,
-        vatDisplayMode: 'excl',
-        vatLabels: const <String, String>{
-          'nl': 'BTW',
-          'en': 'VAT',
-          'fr': 'TVA',
-          'es': 'IVA',
-        },
-      );
+    vatEnabled: true,
+    vatRate: appConfig.defaultVatRate,
+    vatDisplayMode: 'excl',
+    vatLabels: const <String, String>{
+      'nl': 'BTW',
+      'en': 'VAT',
+      'fr': 'TVA',
+      'es': 'IVA',
+    },
+  );
 
   factory BackendTaxProfile.fromJson(Map<String, dynamic> json) {
     final fallback = BackendTaxProfile.defaults();
@@ -393,13 +401,15 @@ class BackendTaxProfile {
         : const <String, dynamic>{};
     String label(String key) =>
         (labels[key] ?? fallback.vatLabels[key] ?? '').toString();
-    final mode = (json['vatDisplayMode'] ?? json['vat_mode'] ?? fallback.vatDisplayMode)
-        .toString()
-        .trim()
-        .toLowerCase();
+    final mode =
+        (json['vatDisplayMode'] ?? json['vat_mode'] ?? fallback.vatDisplayMode)
+            .toString()
+            .trim()
+            .toLowerCase();
     return BackendTaxProfile(
-      vatEnabled:
-          json['vatEnabled'] is bool ? json['vatEnabled'] as bool : fallback.vatEnabled,
+      vatEnabled: json['vatEnabled'] is bool
+          ? json['vatEnabled'] as bool
+          : fallback.vatEnabled,
       vatRate: parsedRate == null || !parsedRate.isFinite
           ? fallback.vatRate
           : parsedRate.clamp(0.0, 1.0).toDouble(),
@@ -414,11 +424,11 @@ class BackendTaxProfile {
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'vatEnabled': vatEnabled,
-        'vatRate': vatRate,
-        'vatDisplayMode': vatDisplayMode,
-        'vatLabels': vatLabels,
-      };
+    'vatEnabled': vatEnabled,
+    'vatRate': vatRate,
+    'vatDisplayMode': vatDisplayMode,
+    'vatLabels': vatLabels,
+  };
 }
 
 class VehicleProfile {
@@ -432,10 +442,16 @@ class VehicleProfile {
   final String tierId;
   final bool isActive;
   final String? driverId;
+
+  /// Local tenant ownership (nullable = legacy MVP rows before this field existed).
+  /// TODO(backend): authoritative tenant id comes from the server; never trust client-side ids alone.
+  final String? companyId;
   final String primaryPhotoRef;
   final List<String> galleryPhotoRefs;
   // Backward-compatible alias for legacy UI/code paths.
   String get photoRef => primaryPhotoRef;
+
+  String? get tenantId => companyId;
 
   const VehicleProfile({
     required this.id,
@@ -448,6 +464,7 @@ class VehicleProfile {
     required this.tierId,
     required this.isActive,
     required this.driverId,
+    this.companyId,
     required this.primaryPhotoRef,
     required this.galleryPhotoRefs,
   });
@@ -463,6 +480,7 @@ class VehicleProfile {
     String? tierId,
     bool? isActive,
     String? driverId,
+    String? companyId,
     String? primaryPhotoRef,
     List<String>? galleryPhotoRefs,
   }) {
@@ -477,6 +495,7 @@ class VehicleProfile {
       tierId: tierId ?? this.tierId,
       isActive: isActive ?? this.isActive,
       driverId: driverId ?? this.driverId,
+      companyId: companyId ?? this.companyId,
       primaryPhotoRef: primaryPhotoRef ?? this.primaryPhotoRef,
       galleryPhotoRefs: galleryPhotoRefs ?? this.galleryPhotoRefs,
     );
@@ -490,12 +509,18 @@ class DriverProfile {
   final String phone;
   final bool isActive;
 
+  /// See [VehicleProfile.companyId].
+  final String? companyId;
+
+  String? get tenantId => companyId;
+
   const DriverProfile({
     required this.id,
     required this.fullName,
     required this.employeeNumber,
     required this.phone,
     required this.isActive,
+    this.companyId,
   });
 
   DriverProfile copyWith({
@@ -504,6 +529,7 @@ class DriverProfile {
     String? employeeNumber,
     String? phone,
     bool? isActive,
+    String? companyId,
   }) {
     return DriverProfile(
       id: id ?? this.id,
@@ -511,6 +537,7 @@ class DriverProfile {
       employeeNumber: employeeNumber ?? this.employeeNumber,
       phone: phone ?? this.phone,
       isActive: isActive ?? this.isActive,
+      companyId: companyId ?? this.companyId,
     );
   }
 }
@@ -588,8 +615,9 @@ const String kCompanyId = kTenantId;
 
 enum AppRole { customer, driver, companyAdmin, dispatcher }
 
-final ValueNotifier<AppRole> appRoleNotifier =
-    ValueNotifier<AppRole>(AppRole.driver);
+final ValueNotifier<AppRole> appRoleNotifier = ValueNotifier<AppRole>(
+  AppRole.driver,
+);
 
 void setAppRole(AppRole role) {
   if (appRoleNotifier.value == role) return;
@@ -635,43 +663,45 @@ void setAppLanguageByCode(String code) {
 
 final ValueNotifier<BusinessSettingsState> businessSettingsNotifier =
     ValueNotifier<BusinessSettingsState>(
-  BusinessSettingsState(
-    companyName: appConfig.companyName,
-    supportEmail: appConfig.supportEmail,
-    supportPhone: appConfig.supportPhone,
-    address: '',
-    vatCompanyNumber: '',
-    logoAssetPath: appConfig.logoAsset,
-    defaultLanguage: appConfig.defaultLanguage,
-    defaultCurrency: appConfig.defaultCurrency,
-    taxLabel: appConfig.taxDisplayLabel,
-    use24HourTime: appConfig.use24HourTime,
-    enabledServiceIds: appConfig.enabledServices.map((o) => o.id).toSet(),
-    enabledTierIds: appConfig.enabledTiers.map((o) => o.id).toSet(),
-    enabledExtraOptionIds: appConfig.enabledExtraOptions.map((o) => o.id).toSet(),
-    bookingSender: appConfig.supportEmail,
-    bookingReplyTo: appConfig.supportEmail,
-    whatsappNumber: appConfig.supportPhone,
-    pricingBaseFare: 3.0,
-    pricingPerKm: 1.50,
-    pricingPerMinute: 0.0,
-    pricingMinimumFare: 3.0,
-    pricingWaitPerMinute: 40.0 / 60.0,
-    pricingReturnEnabled: true,
-    pricingReturnFee: 0.0,
-    pricingFuelSurcharge: 0.0,
-    pricingVatRate: appConfig.defaultVatRate,
-    pricingVatMode: 'excl',
-    pricingBagFeeEach: 5.0,
-    pricingStopFeeEach: 7.5,
-    pricingTierFeeComfort: 0.0,
-    pricingTierFeePrivate: 5.0,
-    pricingTierFeePremium: 10.0,
-    pricingNightSurchargeRate: 0.12,
-    pricingWeekendSurchargeRate: 0.08,
-    pricingSurchargeCapRate: 0.20,
-  ),
-);
+      BusinessSettingsState(
+        companyName: appConfig.companyName,
+        supportEmail: appConfig.supportEmail,
+        supportPhone: appConfig.supportPhone,
+        address: '',
+        vatCompanyNumber: '',
+        logoAssetPath: appConfig.logoAsset,
+        defaultLanguage: appConfig.defaultLanguage,
+        defaultCurrency: appConfig.defaultCurrency,
+        taxLabel: appConfig.taxDisplayLabel,
+        use24HourTime: appConfig.use24HourTime,
+        enabledServiceIds: appConfig.enabledServices.map((o) => o.id).toSet(),
+        enabledTierIds: appConfig.enabledTiers.map((o) => o.id).toSet(),
+        enabledExtraOptionIds: appConfig.enabledExtraOptions
+            .map((o) => o.id)
+            .toSet(),
+        bookingSender: appConfig.supportEmail,
+        bookingReplyTo: appConfig.supportEmail,
+        whatsappNumber: appConfig.supportPhone,
+        pricingBaseFare: 3.0,
+        pricingPerKm: 1.50,
+        pricingPerMinute: 0.0,
+        pricingMinimumFare: 3.0,
+        pricingWaitPerMinute: 40.0 / 60.0,
+        pricingReturnEnabled: true,
+        pricingReturnFee: 0.0,
+        pricingFuelSurcharge: 0.0,
+        pricingVatRate: appConfig.defaultVatRate,
+        pricingVatMode: 'excl',
+        pricingBagFeeEach: 5.0,
+        pricingStopFeeEach: 7.5,
+        pricingTierFeeComfort: 0.0,
+        pricingTierFeePrivate: 5.0,
+        pricingTierFeePremium: 10.0,
+        pricingNightSurchargeRate: 0.12,
+        pricingWeekendSurchargeRate: 0.08,
+        pricingSurchargeCapRate: 0.20,
+      ),
+    );
 
 void updateBusinessSettings(BusinessSettingsState next) {
   businessSettingsNotifier.value = next;
@@ -680,37 +710,35 @@ void updateBusinessSettings(BusinessSettingsState next) {
 }
 
 final ValueNotifier<List<VehicleProfile>> vehiclesNotifier =
-    ValueNotifier<List<VehicleProfile>>(
-  <VehicleProfile>[
-    const VehicleProfile(
-      id: 'vh_1',
-      vehicleName: 'Hoofdwagen',
-      brandModel: 'Tesla Model 3',
-      licensePlate: '1-ABC-123',
-      color: 'Zwart',
-      passengerCapacity: 3,
-      luggageCapacity: 3,
-      tierId: 'premium',
-      isActive: true,
-      driverId: null,
-      primaryPhotoRef: '',
-      galleryPhotoRefs: <String>[],
-    ),
-  ],
-);
+    ValueNotifier<List<VehicleProfile>>(<VehicleProfile>[
+      const VehicleProfile(
+        id: 'vh_1',
+        vehicleName: 'Hoofdwagen',
+        brandModel: 'Tesla Model 3',
+        licensePlate: '1-ABC-123',
+        color: 'Zwart',
+        passengerCapacity: 3,
+        luggageCapacity: 3,
+        tierId: 'premium',
+        isActive: true,
+        driverId: null,
+        companyId: null,
+        primaryPhotoRef: '',
+        galleryPhotoRefs: <String>[],
+      ),
+    ]);
 
 final ValueNotifier<List<DriverProfile>> driversNotifier =
-    ValueNotifier<List<DriverProfile>>(
-  <DriverProfile>[
-    const DriverProfile(
-      id: 'drv_1',
-      fullName: 'Standaard chauffeur',
-      employeeNumber: 'DRV-001',
-      phone: '+32 000 00 00 01',
-      isActive: true,
-    ),
-  ],
-);
+    ValueNotifier<List<DriverProfile>>(<DriverProfile>[
+      const DriverProfile(
+        id: 'drv_1',
+        fullName: 'Standaard chauffeur',
+        employeeNumber: 'DRV-001',
+        phone: '+32 000 00 00 01',
+        isActive: true,
+        companyId: null,
+      ),
+    ]);
 
 const FleetSubscriptionPolicy fleetSubscriptionPolicy = FleetSubscriptionPolicy(
   includedVehicles: 1,
@@ -854,43 +882,78 @@ BusinessSettingsState _decodeBusinessSettings(
     supportEmail: (m['supportEmail'] ?? fallback.supportEmail).toString(),
     supportPhone: (m['supportPhone'] ?? fallback.supportPhone).toString(),
     address: (m['address'] ?? fallback.address).toString(),
-    vatCompanyNumber: (m['vatCompanyNumber'] ?? fallback.vatCompanyNumber).toString(),
+    vatCompanyNumber: (m['vatCompanyNumber'] ?? fallback.vatCompanyNumber)
+        .toString(),
     logoAssetPath: (m['logoAssetPath'] ?? fallback.logoAssetPath).toString(),
     defaultLanguage: _languageFromCode(
-      (m['defaultLanguage'] ?? _languageCode(fallback.defaultLanguage)).toString(),
+      (m['defaultLanguage'] ?? _languageCode(fallback.defaultLanguage))
+          .toString(),
     ),
-    defaultCurrency: (m['defaultCurrency'] ?? fallback.defaultCurrency).toString(),
+    defaultCurrency: (m['defaultCurrency'] ?? fallback.defaultCurrency)
+        .toString(),
     taxLabel: (m['taxLabel'] ?? fallback.taxLabel).toString(),
     use24HourTime: (m['use24HourTime'] is bool)
         ? m['use24HourTime'] as bool
         : fallback.use24HourTime,
-    enabledServiceIds: _setOf(m['enabledServiceIds'], fallback.enabledServiceIds),
+    enabledServiceIds: _setOf(
+      m['enabledServiceIds'],
+      fallback.enabledServiceIds,
+    ),
     enabledTierIds: _setOf(m['enabledTierIds'], fallback.enabledTierIds),
-    enabledExtraOptionIds:
-        _setOf(m['enabledExtraOptionIds'], fallback.enabledExtraOptionIds),
+    enabledExtraOptionIds: _setOf(
+      m['enabledExtraOptionIds'],
+      fallback.enabledExtraOptionIds,
+    ),
     bookingSender: (m['bookingSender'] ?? fallback.bookingSender).toString(),
     bookingReplyTo: (m['bookingReplyTo'] ?? fallback.bookingReplyTo).toString(),
     whatsappNumber: (m['whatsappNumber'] ?? fallback.whatsappNumber).toString(),
     pricingBaseFare: _toDouble(m['pricingBaseFare'], fallback.pricingBaseFare),
     pricingPerKm: _toDouble(m['pricingPerKm'], fallback.pricingPerKm),
-    pricingPerMinute: _toDouble(m['pricingPerMinute'], fallback.pricingPerMinute),
-    pricingMinimumFare: _toDouble(m['pricingMinimumFare'], fallback.pricingMinimumFare),
-    pricingWaitPerMinute: _toDouble(m['pricingWaitPerMinute'], fallback.pricingWaitPerMinute),
+    pricingPerMinute: _toDouble(
+      m['pricingPerMinute'],
+      fallback.pricingPerMinute,
+    ),
+    pricingMinimumFare: _toDouble(
+      m['pricingMinimumFare'],
+      fallback.pricingMinimumFare,
+    ),
+    pricingWaitPerMinute: _toDouble(
+      m['pricingWaitPerMinute'],
+      fallback.pricingWaitPerMinute,
+    ),
     pricingReturnEnabled: (m['pricingReturnEnabled'] is bool)
         ? m['pricingReturnEnabled'] as bool
         : fallback.pricingReturnEnabled,
-    pricingReturnFee: _toDouble(m['pricingReturnFee'], fallback.pricingReturnFee),
-    pricingFuelSurcharge: _toDouble(m['pricingFuelSurcharge'], fallback.pricingFuelSurcharge),
+    pricingReturnFee: _toDouble(
+      m['pricingReturnFee'],
+      fallback.pricingReturnFee,
+    ),
+    pricingFuelSurcharge: _toDouble(
+      m['pricingFuelSurcharge'],
+      fallback.pricingFuelSurcharge,
+    ),
     pricingVatRate: _toDouble(m['pricingVatRate'], fallback.pricingVatRate),
     pricingVatMode: (m['pricingVatMode'] ?? fallback.pricingVatMode).toString(),
-    pricingBagFeeEach: _toDouble(m['pricingBagFeeEach'], fallback.pricingBagFeeEach),
-    pricingStopFeeEach: _toDouble(m['pricingStopFeeEach'], fallback.pricingStopFeeEach),
-    pricingTierFeeComfort:
-        _toDouble(m['pricingTierFeeComfort'], fallback.pricingTierFeeComfort),
-    pricingTierFeePrivate:
-        _toDouble(m['pricingTierFeePrivate'], fallback.pricingTierFeePrivate),
-    pricingTierFeePremium:
-        _toDouble(m['pricingTierFeePremium'], fallback.pricingTierFeePremium),
+    pricingBagFeeEach: _toDouble(
+      m['pricingBagFeeEach'],
+      fallback.pricingBagFeeEach,
+    ),
+    pricingStopFeeEach: _toDouble(
+      m['pricingStopFeeEach'],
+      fallback.pricingStopFeeEach,
+    ),
+    pricingTierFeeComfort: _toDouble(
+      m['pricingTierFeeComfort'],
+      fallback.pricingTierFeeComfort,
+    ),
+    pricingTierFeePrivate: _toDouble(
+      m['pricingTierFeePrivate'],
+      fallback.pricingTierFeePrivate,
+    ),
+    pricingTierFeePremium: _toDouble(
+      m['pricingTierFeePremium'],
+      fallback.pricingTierFeePremium,
+    ),
     pricingNightSurchargeRate: _toDouble(
       m['pricingNightSurchargeRate'],
       fallback.pricingNightSurchargeRate,
@@ -918,6 +981,7 @@ Map<String, dynamic> _encodeVehicle(VehicleProfile v) {
     'tierId': v.tierId,
     'isActive': v.isActive,
     'driverId': v.driverId,
+    'companyId': v.companyId,
     'primaryPhotoRef': v.primaryPhotoRef,
     'galleryPhotoRefs': v.galleryPhotoRefs,
     // Keep legacy key for backward readability/debug
@@ -932,6 +996,7 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'employeeNumber': d.employeeNumber,
     'phone': d.phone,
     'isActive': d.isActive,
+    'companyId': d.companyId,
   };
 }
 
@@ -946,7 +1011,10 @@ VehicleProfile _decodeVehicle(
 
   List<String> _toStringList(dynamic v) {
     if (v is List) {
-      return v.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList(growable: false);
+      return v
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
+          .toList(growable: false);
     }
     return const <String>[];
   }
@@ -958,17 +1026,31 @@ VehicleProfile _decodeVehicle(
   final primaryPhoto = (m['primaryPhotoRef'] ?? legacyPhoto).toString();
   final gallery = _toStringList(m['galleryPhotoRefs']);
 
+  final cidRaw = m['companyId'] ?? m['tenantId'];
+  final String? companyId = cidRaw == null
+      ? fallback.companyId
+      : () {
+          final s = cidRaw.toString().trim();
+          return s.isEmpty ? fallback.companyId : s;
+        }();
+
   return fallback.copyWith(
     id: (m['id'] ?? fallback.id).toString(),
     vehicleName: (m['vehicleName'] ?? fallback.vehicleName).toString(),
     brandModel: (m['brandModel'] ?? fallback.brandModel).toString(),
     licensePlate: (m['licensePlate'] ?? fallback.licensePlate).toString(),
     color: (m['color'] ?? fallback.color).toString(),
-    passengerCapacity: _toInt(m['passengerCapacity'], fallback.passengerCapacity),
+    passengerCapacity: _toInt(
+      m['passengerCapacity'],
+      fallback.passengerCapacity,
+    ),
     luggageCapacity: _toInt(m['luggageCapacity'], fallback.luggageCapacity),
     tierId: (m['tierId'] ?? fallback.tierId).toString(),
-    isActive: (m['isActive'] is bool) ? m['isActive'] as bool : fallback.isActive,
+    isActive: (m['isActive'] is bool)
+        ? m['isActive'] as bool
+        : fallback.isActive,
     driverId: m['driverId']?.toString(),
+    companyId: companyId,
     primaryPhotoRef: primaryPhoto,
     galleryPhotoRefs: gallery,
   );
@@ -978,12 +1060,23 @@ DriverProfile _decodeDriver(
   Map<String, dynamic> m, {
   required DriverProfile fallback,
 }) {
+  final cidRaw = m['companyId'] ?? m['tenantId'];
+  final String? companyId = cidRaw == null
+      ? fallback.companyId
+      : () {
+          final s = cidRaw.toString().trim();
+          return s.isEmpty ? fallback.companyId : s;
+        }();
+
   return fallback.copyWith(
     id: (m['id'] ?? fallback.id).toString(),
     fullName: (m['fullName'] ?? fallback.fullName).toString(),
     employeeNumber: (m['employeeNumber'] ?? fallback.employeeNumber).toString(),
     phone: (m['phone'] ?? fallback.phone).toString(),
-    isActive: (m['isActive'] is bool) ? m['isActive'] as bool : fallback.isActive,
+    isActive: (m['isActive'] is bool)
+        ? m['isActive'] as bool
+        : fallback.isActive,
+    companyId: companyId,
   );
 }
 
@@ -1006,11 +1099,15 @@ Future<void> _persistLocalTenantState() async {
     final file = await _tenantStateFile();
     final payload = <String, dynamic>{
       'version': 1,
-      'businessSettings': _encodeBusinessSettings(businessSettingsNotifier.value),
+      'businessSettings': _encodeBusinessSettings(
+        businessSettingsNotifier.value,
+      ),
       'vehicles': vehiclesNotifier.value
           .map(_encodeVehicle)
           .toList(growable: false),
-      'drivers': driversNotifier.value.map(_encodeDriver).toList(growable: false),
+      'drivers': driversNotifier.value
+          .map(_encodeDriver)
+          .toList(growable: false),
     };
     await file.writeAsString(jsonEncode(payload));
     debugPrint(
@@ -1021,13 +1118,13 @@ Future<void> _persistLocalTenantState() async {
   }
 }
 
-const String _fleetSyncAdminToken =
-    String.fromEnvironment('ADMIN_TOKEN', defaultValue: '');
+const String _fleetSyncAdminToken = String.fromEnvironment(
+  'ADMIN_TOKEN',
+  defaultValue: '',
+);
 
 Map<String, String> _adminJsonHeaders() {
-  final headers = <String, String>{
-    'Content-Type': 'application/json',
-  };
+  final headers = <String, String>{'Content-Type': 'application/json'};
   final token = _fleetSyncAdminToken.trim();
   if (token.isNotEmpty) {
     headers['Authorization'] = 'Bearer $token';
@@ -1086,7 +1183,9 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(VehicleProfile v) {
 
 Future<bool> syncPricingProfileToBackend() async {
   try {
-    final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/profile');
+    final endpoint = Uri.parse(
+      '${appConfig.bookingBaseUrl}/admin/pricing/profile',
+    );
     final profilePayload = _encodePricingProfileForBackend(
       businessSettingsNotifier.value,
     );
@@ -1094,7 +1193,9 @@ Future<bool> syncPricingProfileToBackend() async {
         .post(
           endpoint,
           headers: _adminJsonHeaders(),
-          body: jsonEncode(<String, dynamic>{'pricing_profile': profilePayload}),
+          body: jsonEncode(<String, dynamic>{
+            'pricing_profile': profilePayload,
+          }),
         )
         .timeout(const Duration(seconds: 12));
     return true;
@@ -1105,7 +1206,9 @@ Future<bool> syncPricingProfileToBackend() async {
 
 Future<bool> syncFleetInventoryToBackend() async {
   try {
-    final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles');
+    final endpoint = Uri.parse(
+      '${appConfig.bookingBaseUrl}/admin/fleet/vehicles',
+    );
     final fleetPayload = vehiclesNotifier.value
         .map(_encodeVehicleForBackendFleet)
         .where((e) => (e['vehicle_id'] as String).isNotEmpty)
@@ -1125,7 +1228,9 @@ Future<bool> syncFleetInventoryToBackend() async {
 }
 
 Future<BackendBusinessProfile> fetchBackendBusinessProfile() async {
-  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile');
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/admin/business/profile',
+  );
   final res = await http
       .get(endpoint, headers: _adminJsonHeaders())
       .timeout(const Duration(seconds: 12));
@@ -1142,7 +1247,9 @@ Future<BackendBusinessProfile> fetchBackendBusinessProfile() async {
 Future<BackendBusinessProfile> saveBackendBusinessProfile(
   BackendBusinessProfile profile,
 ) async {
-  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile');
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/admin/business/profile',
+  );
   final res = await http
       .post(
         endpoint,
@@ -1185,9 +1292,7 @@ Future<BackendTaxProfile> saveBackendTaxProfile(
       .post(
         endpoint,
         headers: _adminJsonHeaders(),
-        body: jsonEncode(<String, dynamic>{
-          'tax_profile': profile.toJson(),
-        }),
+        body: jsonEncode(<String, dynamic>{'tax_profile': profile.toJson()}),
       )
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -1244,15 +1349,18 @@ Future<void> loadLocalTenantState() async {
               tierId: 'comfort',
               isActive: true,
               driverId: null,
+              companyId: null,
               primaryPhotoRef: '',
               galleryPhotoRefs: <String>[],
             );
       final loaded = vehiclesRaw
           .whereType<Map>()
-          .map((e) => _decodeVehicle(
-                Map<String, dynamic>.from(e),
-                fallback: fallbackVehicle,
-              ))
+          .map(
+            (e) => _decodeVehicle(
+              Map<String, dynamic>.from(e),
+              fallback: fallbackVehicle,
+            ),
+          )
           .toList(growable: false);
       if (loaded.isNotEmpty) {
         vehiclesNotifier.value = loaded;
@@ -1268,13 +1376,16 @@ Future<void> loadLocalTenantState() async {
               employeeNumber: '',
               phone: '',
               isActive: true,
+              companyId: null,
             );
       final loadedDrivers = driversRaw
           .whereType<Map>()
-          .map((e) => _decodeDriver(
-                Map<String, dynamic>.from(e),
-                fallback: fallbackDriver,
-              ))
+          .map(
+            (e) => _decodeDriver(
+              Map<String, dynamic>.from(e),
+              fallback: fallbackDriver,
+            ),
+          )
           .toList(growable: false);
       if (loadedDrivers.isNotEmpty) {
         driversNotifier.value = loadedDrivers;
@@ -1606,7 +1717,8 @@ const AppConfig appConfig = AppConfig(
     calculatorSuggestionTapHint: 'Tik om te selecteren',
     calculatorChoosePickupTimeLabel: 'Kies…',
     calculatorWaitStepHint: 'In stappen van 5 min.',
-    calculatorQuoteTipText: 'Tip: de Worker blijft de source-of-truth. Deze UI is puur input + weergave.',
+    calculatorQuoteTipText:
+        'Tip: de Worker blijft de source-of-truth. Deze UI is puur input + weergave.',
     calculatorPriceInclVatLabel: 'Prijs incl. btw',
     calculatorPriceExVatLabel: 'Prijs excl. btw',
     calculatorVatLabel: 'BTW',

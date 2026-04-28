@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:image_picker/image_picker.dart';
 
 class VehicleManagementPage extends StatefulWidget {
@@ -60,7 +61,17 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  bool _isAssetRef(String value) => value.trim().toLowerCase().startsWith('assets/');
+  bool _isAssetRef(String value) =>
+      value.trim().toLowerCase().startsWith('assets/');
+
+  /// Vehicle row scoped to current local tenant when present; preserves stored id on edit.
+  String? _scopedVehicleCompanyId(VehicleProfile? existing) {
+    if (existing != null) {
+      final t = existing.companyId?.trim();
+      if (t != null && t.isNotEmpty) return t;
+    }
+    return companyProfileNotifier.value != null ? resolvedCompanyId : null;
+  }
 
   DriverProfile? _driverById(String? driverId) {
     if (driverId == null || driverId.trim().isEmpty) return null;
@@ -76,26 +87,39 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(_t(
-          nl: 'Extra voertuig',
-          en: 'Additional vehicle',
-          fr: 'Vehicule supplementaire',
-          es: 'Vehiculo adicional',
-        )),
-        content: Text(_t(
-          nl: 'Je abonnement bevat 1 voertuig. Extra voertuigen vallen onder een upsell van €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per voertuig per maand.',
-          en: 'Your subscription includes 1 vehicle. Additional vehicles use an upsell of €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per vehicle per month.',
-          fr: 'Votre abonnement inclut 1 vehicule. Les vehicules supplementaires utilisent un supplement de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} par vehicule et par mois.',
-          es: 'Tu suscripcion incluye 1 vehiculo. Los vehiculos adicionales aplican un cargo de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} por vehiculo al mes.',
-        )),
+        title: Text(
+          _t(
+            nl: 'Extra voertuig',
+            en: 'Additional vehicle',
+            fr: 'Vehicule supplementaire',
+            es: 'Vehiculo adicional',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Je abonnement bevat 1 voertuig. Extra voertuigen vallen onder een upsell van €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per voertuig per maand.',
+            en: 'Your subscription includes 1 vehicle. Additional vehicles use an upsell of €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per vehicle per month.',
+            fr: 'Votre abonnement inclut 1 vehicule. Les vehicules supplementaires utilisent un supplement de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} par vehicule et par mois.',
+            es: 'Tu suscripcion incluye 1 vehiculo. Los vehiculos adicionales aplican un cargo de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} por vehiculo al mes.',
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(_t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar')),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text(_t(nl: 'Doorgaan', en: 'Continue', fr: 'Continuer', es: 'Continuar')),
+            child: Text(
+              _t(
+                nl: 'Doorgaan',
+                en: 'Continue',
+                fr: 'Continuer',
+                es: 'Continuar',
+              ),
+            ),
           ),
         ],
       ),
@@ -113,19 +137,37 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF141B2F),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(_t(
-          nl: 'Chauffeur toevoegen',
-          en: 'New driver',
-          fr: 'Ajouter un chauffeur',
-          es: 'Agregar conductor',
-        )),
+        title: Text(
+          _t(
+            nl: 'Chauffeur toevoegen',
+            en: 'New driver',
+            fr: 'Ajouter un chauffeur',
+            es: 'Agregar conductor',
+          ),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _txt(nameCtrl, _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre')),
-            _txt(idCtrl, _t(nl: 'Chauffeur-ID', en: 'Driver ID', fr: 'ID chauffeur', es: 'ID conductor')),
-            _txt(phoneCtrl, _t(nl: 'Telefoonnummer', en: 'Phone number', fr: 'Numero de telephone', es: 'Numero de telefono')),
+            _txt(
+              idCtrl,
+              _t(
+                nl: 'Chauffeur-ID',
+                en: 'Driver ID',
+                fr: 'ID chauffeur',
+                es: 'ID conductor',
+              ),
+            ),
+            _txt(
+              phoneCtrl,
+              _t(
+                nl: 'Telefoonnummer',
+                en: 'Phone number',
+                fr: 'Numero de telephone',
+                es: 'Numero de telefono',
+              ),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -133,10 +175,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   child: OutlinedButton(
                     onPressed: () => Navigator.pop(ctx),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 12,
+                      ),
                     ),
                     child: Text(
-                      _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+                      _t(
+                        nl: 'Annuleren',
+                        en: 'Cancel',
+                        fr: 'Annuler',
+                        es: 'Cancelar',
+                      ),
                       maxLines: 1,
                       softWrap: false,
                       overflow: TextOverflow.ellipsis,
@@ -156,15 +206,26 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         employeeNumber: employeeNumber,
                         phone: phoneCtrl.text.trim(),
                         isActive: true,
+                        companyId: companyProfileNotifier.value != null
+                            ? resolvedCompanyId
+                            : null,
                       );
                       addDriver(created!);
                       Navigator.pop(ctx);
                     },
                     style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 12,
+                      ),
                     ),
                     child: Text(
-                      _t(nl: 'Toevoegen', en: 'Add', fr: 'Ajouter', es: 'Agregar'),
+                      _t(
+                        nl: 'Toevoegen',
+                        en: 'Add',
+                        fr: 'Ajouter',
+                        es: 'Agregar',
+                      ),
                       maxLines: 1,
                       softWrap: false,
                       overflow: TextOverflow.ellipsis,
@@ -213,7 +274,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     try {
       final picked = await _imagePicker.pickMultiImage(imageQuality: 90);
       if (picked.isEmpty) return const <String>[];
-      return picked.map((x) => x.path).where((p) => p.trim().isNotEmpty).toList(growable: false);
+      return picked
+          .map((x) => x.path)
+          .where((p) => p.trim().isNotEmpty)
+          .toList(growable: false);
     } catch (_) {
       if (!mounted) return const <String>[];
       ScaffoldMessenger.of(context).showSnackBar(
@@ -258,25 +322,28 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                 child: Image.asset(
                   clean,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _photoPlaceholder(placeholderText),
+                  errorBuilder: (_, __, ___) =>
+                      _photoPlaceholder(placeholderText),
                 ),
               )
             : (hasRef
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(9),
-                    child: kIsWeb
-                        ? Image.network(
-                            clean,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _photoPlaceholder(placeholderText),
-                          )
-                        : Image.file(
-                            File(clean),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _photoPlaceholder(placeholderText),
-                          ),
-                  )
-                : _photoPlaceholder(placeholderText)),
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      child: kIsWeb
+                          ? Image.network(
+                              clean,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  _photoPlaceholder(placeholderText),
+                            )
+                          : Image.file(
+                              File(clean),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  _photoPlaceholder(placeholderText),
+                            ),
+                    )
+                  : _photoPlaceholder(placeholderText)),
       ),
     );
   }
@@ -304,13 +371,24 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     final plateCtrl = TextEditingController(text: existing?.licensePlate ?? '');
     final colorCtrl = TextEditingController(text: existing?.color ?? '');
     var primaryPhotoRef = existing?.primaryPhotoRef ?? '';
-    var galleryPhotoRefs = List<String>.from(existing?.galleryPhotoRefs ?? const <String>[]);
-    final paxCtrl =
-        TextEditingController(text: (existing?.passengerCapacity ?? 3).toString());
-    final bagsCtrl =
-        TextEditingController(text: (existing?.luggageCapacity ?? 3).toString());
+    var galleryPhotoRefs = List<String>.from(
+      existing?.galleryPhotoRefs ?? const <String>[],
+    );
+    final paxCtrl = TextEditingController(
+      text: (existing?.passengerCapacity ?? 3).toString(),
+    );
+    final bagsCtrl = TextEditingController(
+      text: (existing?.luggageCapacity ?? 3).toString(),
+    );
     var tierId = existing?.tierId ?? appConfig.enabledTiers.first.id;
     String? linkedDriverId = existing?.driverId;
+    {
+      final cid = _scopedVehicleCompanyId(existing);
+      final dr0 = _driverById(linkedDriverId);
+      if (dr0 != null && !canAssignDriverToVehicleCompany(dr0, cid)) {
+        linkedDriverId = null;
+      }
+    }
     var active = existing?.isActive ?? true;
 
     await showModalBottomSheet<void>(
@@ -334,20 +412,80 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                   children: [
                     Text(
                       existing == null
-                          ? _t(nl: 'Voertuig toevoegen', en: 'Add vehicle', fr: 'Ajouter vehicule', es: 'Agregar vehiculo')
-                          : _t(nl: 'Voertuig bewerken', en: 'Edit vehicle', fr: 'Modifier vehicule', es: 'Editar vehiculo'),
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                          ? _t(
+                              nl: 'Voertuig toevoegen',
+                              en: 'Add vehicle',
+                              fr: 'Ajouter vehicule',
+                              es: 'Agregar vehiculo',
+                            )
+                          : _t(
+                              nl: 'Voertuig bewerken',
+                              en: 'Edit vehicle',
+                              fr: 'Modifier vehicule',
+                              es: 'Editar vehiculo',
+                            ),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
                     ),
                     const SizedBox(height: 12),
-                    _txt(nameCtrl, _t(nl: 'Voertuignaam', en: 'Vehicle name', fr: 'Nom vehicule', es: 'Nombre del vehiculo')),
-                    _txt(modelCtrl, _t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')),
-                    _txt(plateCtrl, _t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')),
-                    _txt(colorCtrl, _t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')),
+                    _txt(
+                      nameCtrl,
+                      _t(
+                        nl: 'Voertuignaam',
+                        en: 'Vehicle name',
+                        fr: 'Nom vehicule',
+                        es: 'Nombre del vehiculo',
+                      ),
+                    ),
+                    _txt(
+                      modelCtrl,
+                      _t(
+                        nl: 'Merk/model',
+                        en: 'Brand/model',
+                        fr: 'Marque/modele',
+                        es: 'Marca/modelo',
+                      ),
+                    ),
+                    _txt(
+                      plateCtrl,
+                      _t(
+                        nl: 'Nummerplaat',
+                        en: 'License plate',
+                        fr: 'Plaque',
+                        es: 'Matricula',
+                      ),
+                    ),
+                    _txt(
+                      colorCtrl,
+                      _t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color'),
+                    ),
                     Row(
                       children: [
-                        Expanded(child: _txt(paxCtrl, _t(nl: 'Passagierscapaciteit', en: 'Passenger capacity', fr: 'Capacite passagers', es: 'Capacidad pasajeros'))),
+                        Expanded(
+                          child: _txt(
+                            paxCtrl,
+                            _t(
+                              nl: 'Passagierscapaciteit',
+                              en: 'Passenger capacity',
+                              fr: 'Capacite passagers',
+                              es: 'Capacidad pasajeros',
+                            ),
+                          ),
+                        ),
                         const SizedBox(width: 8),
-                        Expanded(child: _txt(bagsCtrl, _t(nl: 'Bagagecapaciteit', en: 'Luggage capacity', fr: 'Capacite bagages', es: 'Capacidad equipaje'))),
+                        Expanded(
+                          child: _txt(
+                            bagsCtrl,
+                            _t(
+                              nl: 'Bagagecapaciteit',
+                              en: 'Luggage capacity',
+                              fr: 'Capacite bagages',
+                              es: 'Capacidad equipaje',
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -355,20 +493,30 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       value: tierId,
                       isExpanded: true,
                       items: appConfig.enabledTiers
-                          .map((t) => DropdownMenuItem(
-                                value: t.id,
-                                child: Text(t.labelFor(_lang)),
-                              ))
+                          .map(
+                            (t) => DropdownMenuItem(
+                              value: t.id,
+                              child: Text(t.labelFor(_lang)),
+                            ),
+                          )
                           .toList(growable: false),
                       onChanged: (v) {
                         if (v == null) return;
                         setLocalState(() => tierId = v);
                       },
                       decoration: InputDecoration(
-                        labelText: _t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria'),
+                        labelText: _t(
+                          nl: 'Tier/klasse',
+                          en: 'Tier/class',
+                          fr: 'Categorie',
+                          es: 'Categoria',
+                        ),
                         filled: true,
                         fillColor: const Color(0xFF0B0B0B),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
                       ),
                       dropdownColor: const Color(0xFF111111),
                     ),
@@ -379,8 +527,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         children: [
                           Expanded(
                             child: Text(
-                              _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
-                              style: const TextStyle(fontWeight: FontWeight.w600),
+                              _t(
+                                nl: 'Actief',
+                                en: 'Active',
+                                fr: 'Actif',
+                                es: 'Activo',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                           Switch(
@@ -407,23 +562,36 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       items: <DropdownMenuItem<String>>[
                         DropdownMenuItem<String>(
                           value: null,
-                          child: Text(_t(
-                            nl: 'Geen chauffeur',
-                            en: 'No driver',
-                            fr: 'Aucun chauffeur',
-                            es: 'Sin conductor',
-                          )),
-                        ),
-                        ...driversNotifier.value.map(
-                          (d) => DropdownMenuItem<String>(
-                            value: d.id,
-                            child: Text(
-                              '${d.fullName} (${d.employeeNumber})',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          child: Text(
+                            _t(
+                              nl: 'Geen chauffeur',
+                              en: 'No driver',
+                              fr: 'Aucun chauffeur',
+                              es: 'Sin conductor',
                             ),
                           ),
                         ),
+                        ...driversNotifier.value
+                            .where(
+                              (d) =>
+                                  fleetRecordBelongsToActiveCompanyOrLegacy(
+                                    d.companyId,
+                                  ) &&
+                                  !fleetExplicitCompanyMismatch(
+                                    d.companyId,
+                                    _scopedVehicleCompanyId(existing),
+                                  ),
+                            )
+                            .map(
+                              (d) => DropdownMenuItem<String>(
+                                value: d.id,
+                                child: Text(
+                                  '${d.fullName} (${d.employeeNumber})',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
                       ],
                       onChanged: (v) => setLocalState(() => linkedDriverId = v),
                       decoration: InputDecoration(
@@ -435,7 +603,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         ),
                         filled: true,
                         fillColor: const Color(0xFF0B0B0B),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
                       ),
                       dropdownColor: const Color(0xFF111111),
                     ),
@@ -447,7 +618,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         setLocalState(() => linkedDriverId = created.id);
                       },
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.max,
@@ -473,7 +647,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       const SizedBox(height: 12),
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.05),
                           border: Border.all(color: const Color(0x33FFD400)),
@@ -499,17 +676,32 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 ),
                                 const SizedBox(height: 8),
                                 _driverInfoLine(
-                                  _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                                  _t(
+                                    nl: 'Naam',
+                                    en: 'Name',
+                                    fr: 'Nom',
+                                    es: 'Nombre',
+                                  ),
                                   d.fullName,
                                 ),
                                 const SizedBox(height: 4),
                                 _driverInfoLine(
-                                  _t(nl: 'Chauffeur-ID', en: 'Driver ID', fr: 'ID chauffeur', es: 'ID conductor'),
+                                  _t(
+                                    nl: 'Chauffeur-ID',
+                                    en: 'Driver ID',
+                                    fr: 'ID chauffeur',
+                                    es: 'ID conductor',
+                                  ),
                                   d.employeeNumber,
                                 ),
                                 const SizedBox(height: 4),
                                 _driverInfoLine(
-                                  _t(nl: 'Telefoonnummer', en: 'Phone number', fr: 'Numero de telephone', es: 'Numero de telefono'),
+                                  _t(
+                                    nl: 'Telefoonnummer',
+                                    en: 'Phone number',
+                                    fr: 'Numero de telephone',
+                                    es: 'Numero de telefono',
+                                  ),
                                   d.phone,
                                 ),
                               ],
@@ -527,13 +719,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           currentRef: primaryPhotoRef,
                           onPicked: (ref) => setLocalState(() {
                             primaryPhotoRef = ref;
-                            if (ref.trim().isNotEmpty && !galleryPhotoRefs.contains(ref)) {
-                              galleryPhotoRefs = <String>[ref, ...galleryPhotoRefs]
-                                  .where((e) => e.trim().isNotEmpty)
-                                  .toSet()
-                                  .toList(growable: false);
-                              if (galleryPhotoRefs.length > _maxPhotosPerVehicle) {
-                                galleryPhotoRefs = galleryPhotoRefs.take(_maxPhotosPerVehicle).toList(growable: false);
+                            if (ref.trim().isNotEmpty &&
+                                !galleryPhotoRefs.contains(ref)) {
+                              galleryPhotoRefs =
+                                  <String>[ref, ...galleryPhotoRefs]
+                                      .where((e) => e.trim().isNotEmpty)
+                                      .toSet()
+                                      .toList(growable: false);
+                              if (galleryPhotoRefs.length >
+                                  _maxPhotosPerVehicle) {
+                                galleryPhotoRefs = galleryPhotoRefs
+                                    .take(_maxPhotosPerVehicle)
+                                    .toList(growable: false);
                               }
                             }
                           }),
@@ -574,7 +771,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(10),
                                     border: Border.all(
-                                      color: isMain ? Colors.amberAccent : Colors.white24,
+                                      color: isMain
+                                          ? Colors.amberAccent
+                                          : Colors.white24,
                                       width: isMain ? 2 : 1,
                                     ),
                                   ),
@@ -583,7 +782,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     child: _photoPreviewBox(
                                       photoRef: ref,
                                       height: 80,
-                                      onTap: () => setLocalState(() => primaryPhotoRef = ref),
+                                      onTap: () => setLocalState(
+                                        () => primaryPhotoRef = ref,
+                                      ),
                                       placeholderText: _t(
                                         nl: 'Geen foto',
                                         en: 'No photo',
@@ -598,18 +799,23 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   top: 2,
                                   child: InkWell(
                                     onTap: () => setLocalState(() {
-                                      galleryPhotoRefs = List<String>.from(galleryPhotoRefs)
-                                        ..remove(ref);
+                                      galleryPhotoRefs = List<String>.from(
+                                        galleryPhotoRefs,
+                                      )..remove(ref);
                                       if (primaryPhotoRef == ref) {
                                         primaryPhotoRef =
-                                            galleryPhotoRefs.isNotEmpty ? galleryPhotoRefs.first : '';
+                                            galleryPhotoRefs.isNotEmpty
+                                            ? galleryPhotoRefs.first
+                                            : '';
                                       }
                                     }),
                                     child: Container(
                                       padding: const EdgeInsets.all(2),
                                       decoration: BoxDecoration(
                                         color: Colors.black54,
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
                                       ),
                                       child: const Icon(Icons.close, size: 14),
                                     ),
@@ -620,13 +826,23 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     left: 4,
                                     bottom: 4,
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: Colors.black54,
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
                                       ),
                                       child: Text(
-                                        _t(nl: 'Hoofd', en: 'Main', fr: 'Principale', es: 'Principal'),
+                                        _t(
+                                          nl: 'Hoofd',
+                                          en: 'Main',
+                                          fr: 'Principale',
+                                          es: 'Principal',
+                                        ),
                                         style: const TextStyle(fontSize: 10),
                                       ),
                                     ),
@@ -642,30 +858,36 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       spacing: 8,
                       children: [
                         FilledButton.icon(
-                          onPressed: galleryPhotoRefs.length >= _maxPhotosPerVehicle
+                          onPressed:
+                              galleryPhotoRefs.length >= _maxPhotosPerVehicle
                               ? null
                               : () async {
                                   final pickedRefs = await _pickVehiclePhotos();
                                   if (pickedRefs.isEmpty) return;
                                   final freeSlots =
-                                      _maxPhotosPerVehicle - galleryPhotoRefs.length;
-                                  final accepted = pickedRefs.take(freeSlots).toList(growable: false);
+                                      _maxPhotosPerVehicle -
+                                      galleryPhotoRefs.length;
+                                  final accepted = pickedRefs
+                                      .take(freeSlots)
+                                      .toList(growable: false);
                                   if (accepted.isEmpty) return;
                                   setLocalState(() {
-                                    galleryPhotoRefs = <String>[
-                                      ...galleryPhotoRefs,
-                                      ...accepted,
-                                    ]
-                                        .where((e) => e.trim().isNotEmpty)
-                                        .toSet()
-                                        .take(_maxPhotosPerVehicle)
-                                        .toList(growable: false);
+                                    galleryPhotoRefs =
+                                        <String>[
+                                              ...galleryPhotoRefs,
+                                              ...accepted,
+                                            ]
+                                            .where((e) => e.trim().isNotEmpty)
+                                            .toSet()
+                                            .take(_maxPhotosPerVehicle)
+                                            .toList(growable: false);
                                     if (primaryPhotoRef.trim().isEmpty &&
                                         galleryPhotoRefs.isNotEmpty) {
                                       primaryPhotoRef = galleryPhotoRefs.first;
                                     }
                                   });
-                                  if (pickedRefs.length > accepted.length && mounted) {
+                                  if (pickedRefs.length > accepted.length &&
+                                      mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
@@ -681,39 +903,47 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   }
                                 },
                           icon: const Icon(Icons.upload_file),
-                          label: Text(_t(
-                            nl: 'Foto\'s toevoegen',
-                            en: 'Add photos',
-                            fr: 'Ajouter des photos',
-                            es: 'Agregar fotos',
-                          )),
+                          label: Text(
+                            _t(
+                              nl: 'Foto\'s toevoegen',
+                              en: 'Add photos',
+                              fr: 'Ajouter des photos',
+                              es: 'Agregar fotos',
+                            ),
+                          ),
                         ),
                         OutlinedButton.icon(
                           onPressed: primaryPhotoRef.trim().isEmpty
                               ? null
                               : () => _pickVehiclePhoto(
-                                    currentRef: primaryPhotoRef,
-                                    onPicked: (ref) => setLocalState(() {
-                                      if (ref.trim().isEmpty) return;
-                                      primaryPhotoRef = ref;
-                                      if (!galleryPhotoRefs.contains(ref)) {
-                                        galleryPhotoRefs = <String>[ref, ...galleryPhotoRefs]
-                                            .where((e) => e.trim().isNotEmpty)
-                                            .toSet()
+                                  currentRef: primaryPhotoRef,
+                                  onPicked: (ref) => setLocalState(() {
+                                    if (ref.trim().isEmpty) return;
+                                    primaryPhotoRef = ref;
+                                    if (!galleryPhotoRefs.contains(ref)) {
+                                      galleryPhotoRefs =
+                                          <String>[ref, ...galleryPhotoRefs]
+                                              .where((e) => e.trim().isNotEmpty)
+                                              .toSet()
+                                              .toList(growable: false);
+                                      if (galleryPhotoRefs.length >
+                                          _maxPhotosPerVehicle) {
+                                        galleryPhotoRefs = galleryPhotoRefs
+                                            .take(_maxPhotosPerVehicle)
                                             .toList(growable: false);
-                                        if (galleryPhotoRefs.length > _maxPhotosPerVehicle) {
-                                          galleryPhotoRefs = galleryPhotoRefs.take(_maxPhotosPerVehicle).toList(growable: false);
-                                        }
                                       }
-                                    }),
-                                  ),
+                                    }
+                                  }),
+                                ),
                           icon: const Icon(Icons.edit_outlined),
-                          label: Text(_t(
-                            nl: 'Hoofdfoto wijzigen',
-                            en: 'Change main photo',
-                            fr: 'Changer photo principale',
-                            es: 'Cambiar foto principal',
-                          )),
+                          label: Text(
+                            _t(
+                              nl: 'Hoofdfoto wijzigen',
+                              en: 'Change main photo',
+                              fr: 'Changer photo principale',
+                              es: 'Cambiar foto principal',
+                            ),
+                          ),
                         ),
                         OutlinedButton.icon(
                           onPressed: () => setLocalState(() {
@@ -721,12 +951,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             galleryPhotoRefs = <String>[];
                           }),
                           icon: const Icon(Icons.delete_outline),
-                          label: Text(_t(
-                            nl: 'Alle foto\'s verwijderen',
-                            en: 'Remove all photos',
-                            fr: 'Supprimer toutes les photos',
-                            es: 'Eliminar todas las fotos',
-                          )),
+                          label: Text(
+                            _t(
+                              nl: 'Alle foto\'s verwijderen',
+                              en: 'Remove all photos',
+                              fr: 'Supprimer toutes les photos',
+                              es: 'Eliminar todas las fotos',
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -738,7 +970,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         fr: 'Maximum 5 photos par vehicule',
                         es: 'Maximo 5 fotos por vehiculo',
                       ),
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     Row(
@@ -749,15 +984,44 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             style: OutlinedButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 13),
                             ),
-                            child: Text(_t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar')),
+                            child: Text(
+                              _t(
+                                nl: 'Annuleren',
+                                en: 'Cancel',
+                                fr: 'Annuler',
+                                es: 'Cancelar',
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: FilledButton(
                             onPressed: () async {
+                              final cid = _scopedVehicleCompanyId(existing);
+                              if (linkedDriverId != null) {
+                                final dr = _driverById(linkedDriverId);
+                                if (dr != null &&
+                                    !canAssignDriverToVehicleCompany(dr, cid)) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        _t(
+                                          nl: 'Deze chauffeur hoort niet bij dit bedrijf.',
+                                          en: 'This driver does not belong to this company.',
+                                          fr: 'Ce chauffeur n appartient pas a cette entreprise.',
+                                          es: 'Este conductor no pertenece a esta empresa.',
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                              }
                               final vehicle = VehicleProfile(
-                                id: existing?.id ??
+                                id:
+                                    existing?.id ??
                                     'vh_${DateTime.now().millisecondsSinceEpoch}',
                                 vehicleName: nameCtrl.text.trim(),
                                 brandModel: modelCtrl.text.trim(),
@@ -770,6 +1034,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 tierId: tierId,
                                 isActive: active,
                                 driverId: linkedDriverId,
+                                companyId: cid,
                                 primaryPhotoRef: primaryPhotoRef.trim(),
                                 galleryPhotoRefs: galleryPhotoRefs
                                     .where((e) => e.trim().isNotEmpty)
@@ -788,7 +1053,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             style: FilledButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 13),
                             ),
-                            child: Text(_t(nl: 'Opslaan', en: 'Save', fr: 'Enregistrer', es: 'Guardar')),
+                            child: Text(
+                              _t(
+                                nl: 'Opslaan',
+                                en: 'Save',
+                                fr: 'Enregistrer',
+                                es: 'Guardar',
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -858,15 +1130,22 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         backgroundColor: const Color(0xFF0B1020),
         appBar: AppBar(
           backgroundColor: const Color(0xFF0B1020),
-          title: Text(_t(
-            nl: 'Voertuigen',
-            en: 'Vehicles',
-            fr: 'Vehicules',
-            es: 'Vehiculos',
-          )),
+          title: Text(
+            _t(
+              nl: 'Voertuigen',
+              en: 'Vehicles',
+              fr: 'Vehicules',
+              es: 'Vehiculos',
+            ),
+          ),
           actions: [
             IconButton(
-              tooltip: _t(nl: 'Voertuig toevoegen', en: 'Add vehicle', fr: 'Ajouter vehicule', es: 'Agregar vehiculo'),
+              tooltip: _t(
+                nl: 'Voertuig toevoegen',
+                en: 'Add vehicle',
+                fr: 'Ajouter vehicule',
+                es: 'Agregar vehiculo',
+              ),
               onPressed: () async {
                 if (!await _confirmVehicleUpsellIfNeeded()) return;
                 await _openVehicleEditor();
@@ -878,23 +1157,38 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         body: ValueListenableBuilder<List<VehicleProfile>>(
           valueListenable: vehiclesNotifier,
           builder: (context, vehicles, _) {
-            if (vehicles.isEmpty) {
+            final visible = vehicles
+                .where(
+                  (v) => fleetRecordBelongsToActiveCompanyOrLegacy(v.companyId),
+                )
+                .toList(growable: false);
+            if (visible.isEmpty) {
               return Center(
                 child: Text(
-                  _t(nl: 'Nog geen voertuigen.', en: 'No vehicles yet.', fr: 'Aucun vehicule.', es: 'Sin vehiculos.'),
+                  _t(
+                    nl: 'Nog geen voertuigen.',
+                    en: 'No vehicles yet.',
+                    fr: 'Aucun vehicule.',
+                    es: 'Sin vehiculos.',
+                  ),
                   style: const TextStyle(color: Colors.white70),
                 ),
               );
             }
             return ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: vehicles.length,
+              itemCount: visible.length,
               itemBuilder: (context, i) {
-                final v = vehicles[i];
+                final v = visible[i];
                 final linkedDriver = _driverById(v.driverId);
                 final status = v.isActive
                     ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
-                    : _t(nl: 'Inactief', en: 'Inactive', fr: 'Inactif', es: 'Inactivo');
+                    : _t(
+                        nl: 'Inactief',
+                        en: 'Inactive',
+                        fr: 'Inactif',
+                        es: 'Inactivo',
+                      );
                 return Container(
                   margin: const EdgeInsets.only(bottom: 10),
                   padding: const EdgeInsets.all(12),
@@ -911,25 +1205,53 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           Expanded(
                             child: Text(
                               v.vehicleName.isEmpty
-                                  ? _t(nl: 'Naamloos voertuig', en: 'Unnamed vehicle', fr: 'Vehicule sans nom', es: 'Vehiculo sin nombre')
+                                  ? _t(
+                                      nl: 'Naamloos voertuig',
+                                      en: 'Unnamed vehicle',
+                                      fr: 'Vehicule sans nom',
+                                      es: 'Vehiculo sin nombre',
+                                    )
                                   : v.vehicleName,
                               style: const TextStyle(
-                                  fontWeight: FontWeight.w800, fontSize: 16),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
-                          Text(status,
-                              style: TextStyle(
-                                  color: v.isActive
-                                      ? Colors.greenAccent
-                                      : Colors.white54)),
+                          Text(
+                            status,
+                            style: TextStyle(
+                              color: v.isActive
+                                  ? Colors.greenAccent
+                                  : Colors.white54,
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 6),
-                      Text('${_t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}'),
-                      Text('${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}'),
-                      Text('${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}'),
-                      Text('${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacite', es: 'Capacidad')}: ${v.passengerCapacity} pax • ${v.luggageCapacity} bags'),
-                      Text('${_t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria')}: ${_tierLabel(v.tierId)}'),
+                      Text(
+                        '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
+                        '${(v.companyId?.trim().isNotEmpty ?? false) ? v.companyId!.trim() : _t(nl: '(legacy)', en: '(legacy)', fr: '(ancien)', es: '(legacy)')}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                      Text(
+                        '${_t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}',
+                      ),
+                      Text(
+                        '${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
+                      ),
+                      Text(
+                        '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}',
+                      ),
+                      Text(
+                        '${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacite', es: 'Capacidad')}: ${v.passengerCapacity} pax • ${v.luggageCapacity} bags',
+                      ),
+                      Text(
+                        '${_t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria')}: ${_tierLabel(v.tierId)}',
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         '${_t(nl: 'Gekoppelde chauffeur', en: 'Linked driver', fr: 'Chauffeur lie', es: 'Conductor vinculado')}: '
@@ -964,7 +1286,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             fr: '+${v.galleryPhotoRefs.length - 1} photos en plus',
                             es: '+${v.galleryPhotoRefs.length - 1} fotos extra',
                           ),
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -975,10 +1300,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                               onPressed: () => _openVehicleEditor(existing: v),
                               icon: const Icon(Icons.edit_outlined, size: 16),
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 10,
+                                ),
                               ),
                               label: Text(
-                                _t(nl: 'Bewerken', en: 'Edit', fr: 'Modifier', es: 'Editar'),
+                                _t(
+                                  nl: 'Bewerken',
+                                  en: 'Edit',
+                                  fr: 'Modifier',
+                                  es: 'Editar',
+                                ),
                                 maxLines: 1,
                                 softWrap: false,
                                 overflow: TextOverflow.ellipsis,
@@ -994,10 +1327,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                               },
                               icon: const Icon(Icons.delete_outline, size: 16),
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 10,
+                                ),
                               ),
                               label: Text(
-                                _t(nl: 'Verwijder', en: 'Delete', fr: 'Supprimer', es: 'Eliminar'),
+                                _t(
+                                  nl: 'Verwijder',
+                                  en: 'Delete',
+                                  fr: 'Supprimer',
+                                  es: 'Eliminar',
+                                ),
                                 maxLines: 1,
                                 softWrap: false,
                                 overflow: TextOverflow.ellipsis,

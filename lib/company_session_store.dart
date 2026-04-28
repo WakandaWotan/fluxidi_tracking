@@ -587,6 +587,52 @@ class CompanySessionStore {
   }
 }
 
+/// Local fleet rows without [VehicleProfile.companyId] / [DriverProfile.companyId] are legacy MVP data.
+/// TODO(backend): enforce tenant ownership server-side; production must not trust client-side ids without auth.
+
+bool isLegacyCompanylessFleetRecord(String? companyId) =>
+    companyId == null || companyId.trim().isEmpty;
+
+bool fleetRecordBelongsToActiveCompanyOrLegacy(String? companyId) {
+  if (isLegacyCompanylessFleetRecord(companyId)) return true;
+  return companyId!.trim() == resolvedCompanyId.trim();
+}
+
+bool fleetExplicitCompanyMismatch(String? a, String? b) {
+  final ta = a?.trim() ?? '';
+  final tb = b?.trim() ?? '';
+  if (ta.isEmpty || tb.isEmpty) return false;
+  return ta != tb;
+}
+
+bool canAssignDriverToVehicleFleet(
+  DriverProfile driver,
+  VehicleProfile vehicle,
+) {
+  if (!fleetRecordBelongsToActiveCompanyOrLegacy(driver.companyId))
+    return false;
+  if (!fleetRecordBelongsToActiveCompanyOrLegacy(vehicle.companyId))
+    return false;
+  if (fleetExplicitCompanyMismatch(driver.companyId, vehicle.companyId)) {
+    return false;
+  }
+  return true;
+}
+
+bool canAssignDriverToVehicleCompany(
+  DriverProfile driver,
+  String? vehicleCompanyId,
+) {
+  if (!fleetRecordBelongsToActiveCompanyOrLegacy(driver.companyId))
+    return false;
+  if (!fleetRecordBelongsToActiveCompanyOrLegacy(vehicleCompanyId))
+    return false;
+  if (fleetExplicitCompanyMismatch(driver.companyId, vehicleCompanyId)) {
+    return false;
+  }
+  return true;
+}
+
 /// Prefer company email, then owner/contact email, then support email.
 String primaryContactEmailFromCompany(CompanyProfile local) {
   if (local.companyEmail.trim().isNotEmpty) return local.companyEmail.trim();
@@ -633,5 +679,4 @@ BackendBusinessProfile mergeLocalIntoBackendPreview(
   );
 }
 
-// TODO(backlink): Optionally add nullable tenantId/crosswalk on [VehicleProfile]/[DriverProfile]
-// and persist alongside fleet JSON when syncing to backend tenant APIs.
+// TODO(backlink): Sync fleet companyId with backend tenant APIs when auth lands.
