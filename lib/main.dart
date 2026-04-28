@@ -1292,28 +1292,86 @@ class RoleEntryPage extends StatelessWidget {
   Widget _roleButton({
     required BuildContext context,
     required String label,
+    required String subtitle,
     required VoidCallback onTap,
     required IconData icon,
   }) {
-    return SizedBox(
-      height: 62,
-      child: FilledButton(
-        onPressed: onTap,
-        style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFFE5B641),
-          foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: const Color(0xFFE5B641).withOpacity(0.55),
+            ),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF1A2238), Color(0xFF10182D)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFE5B641).withOpacity(0.12),
+                blurRadius: 16,
+                spreadRadius: 0.5,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 20),
-            const SizedBox(width: 10),
-            Text(label),
-          ],
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5B641),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, size: 24, color: Colors.black),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.78),
+                        fontSize: 12.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: const Color(0xFFE5B641).withOpacity(0.95),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1487,6 +1545,38 @@ class RoleEntryPage extends StatelessWidget {
                         ),
                       ),
                       const Spacer(flex: 1),
+                      Text(
+                        _t(
+                          nl: 'Wie ben je?',
+                          en: 'Who are you?',
+                          fr: 'Qui etes-vous ?',
+                          es: 'Quien eres?',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _t(
+                          nl: 'Kies je rol om Fluxidi op de juiste manier te starten.',
+                          en: 'Choose your role to start Fluxidi the right way.',
+                          fr: 'Choisissez votre role pour demarrer Fluxidi correctement.',
+                          es: 'Elige tu rol para iniciar Fluxidi de la manera correcta.',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.78),
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       _roleButton(
                         context: context,
                         label: _t(
@@ -1495,7 +1585,13 @@ class RoleEntryPage extends StatelessWidget {
                           fr: 'Client',
                           es: 'Cliente',
                         ),
-                        icon: Icons.person_outline,
+                        subtitle: _t(
+                          nl: 'Boek en volg je rit.',
+                          en: 'Book and track your ride.',
+                          fr: 'Reservez et suivez votre trajet.',
+                          es: 'Reserva y sigue tu viaje.',
+                        ),
+                        icon: Icons.person_outline_rounded,
                         onTap: () => _goCustomer(context),
                       ),
                       const SizedBox(height: 12),
@@ -1507,7 +1603,13 @@ class RoleEntryPage extends StatelessWidget {
                           fr: 'Independant / Entreprise',
                           es: 'Autonomo / Empresa',
                         ),
-                        icon: Icons.business_center_outlined,
+                        subtitle: _t(
+                          nl: 'Beheer boekingen, voertuigen en betalingen.',
+                          en: 'Manage bookings, vehicles, and payments.',
+                          fr: 'Gerez reservations, vehicules et paiements.',
+                          es: 'Gestiona reservas, vehiculos y pagos.',
+                        ),
+                        icon: Icons.business_center_rounded,
                         onTap: () => _goBusiness(context),
                       ),
                       const SizedBox(height: 12),
@@ -1519,7 +1621,13 @@ class RoleEntryPage extends StatelessWidget {
                           fr: 'Chauffeur',
                           es: 'Conductor',
                         ),
-                        icon: Icons.local_taxi_outlined,
+                        subtitle: _t(
+                          nl: 'Start ritten en volg opdrachten.',
+                          en: 'Start rides and follow assignments.',
+                          fr: 'Demarrez des trajets et suivez les missions.',
+                          es: 'Inicia viajes y sigue asignaciones.',
+                        ),
+                        icon: Icons.local_taxi_rounded,
                         onTap: () => _goDriver(context),
                       ),
                       const Spacer(flex: 4),
