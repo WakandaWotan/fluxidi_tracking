@@ -2571,6 +2571,62 @@ class BusinessHomePage extends StatelessWidget {
                                   fontSize: 18,
                                 ),
                               ),
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: profile.isSuspended
+                                        ? const Color(0xFF3A1010)
+                                        : profile.isVerified
+                                        ? const Color(0xFF12331F)
+                                        : const Color(0xFF2A2410),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: profile.isSuspended
+                                          ? Colors.red.withOpacity(0.45)
+                                          : profile.isVerified
+                                          ? const Color(
+                                              0xFF4ADE80,
+                                            ).withOpacity(0.45)
+                                          : const Color(
+                                              0xFFE5B641,
+                                            ).withOpacity(0.55),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    profile.verificationBadgeLabel(
+                                      appConfig.currentLanguage,
+                                    ),
+                                    style: TextStyle(
+                                      color: profile.isSuspended
+                                          ? const Color(0xFFFFB4B4)
+                                          : profile.isVerified
+                                          ? const Color(0xFFB8F5C8)
+                                          : const Color(0xFFE5D4A1),
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (profile.showsPendingVerificationNotice) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  profile.verificationPendingNotice(
+                                    appConfig.currentLanguage,
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.62),
+                                    fontSize: 12,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 6),
                               Text(
                                 '${_t(nl: 'Bedrijfs-ID:', en: 'Company ID:', fr: 'ID entreprise :', es: 'ID de empresa:')} ${profile.companyId}',

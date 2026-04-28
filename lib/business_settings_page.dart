@@ -1056,65 +1056,135 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               child: ValueListenableBuilder<CompanyProfile?>(
                 valueListenable: companyProfileNotifier,
                 builder: (context, _, __) {
-                  return Row(
+                  final p = companyProfileNotifier.value;
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _t(
-                                nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
-                                en: 'Company / tenant ID (read-only)',
-                                fr: 'ID entreprise / tenant (lecture seule)',
-                                es: 'ID de empresa / tenant (solo lectura)',
-                              ),
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            SelectableText(
-                              resolvedCompanyId,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: _t(
-                          nl: 'ID kopiëren',
-                          en: 'Copy ID',
-                          fr: 'Copier l ID',
-                          es: 'Copiar ID',
-                        ),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: resolvedCompanyId),
-                          );
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                _t(
-                                  nl: 'Bedrijfs-ID gekopieerd.',
-                                  en: 'Company ID copied.',
-                                  fr: 'ID entreprise copie.',
-                                  es: 'ID de empresa copiado.',
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _t(
+                                    nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
+                                    en: 'Company / tenant ID (read-only)',
+                                    fr: 'ID entreprise / tenant (lecture seule)',
+                                    es: 'ID de empresa / tenant (solo lectura)',
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
+                                const SizedBox(height: 8),
+                                SelectableText(
+                                  resolvedCompanyId,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontFamily: 'monospace',
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: _t(
+                              nl: 'ID kopiëren',
+                              en: 'Copy ID',
+                              fr: 'Copier l ID',
+                              es: 'Copiar ID',
+                            ),
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: resolvedCompanyId),
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _t(
+                                      nl: 'Bedrijfs-ID gekopieerd.',
+                                      en: 'Company ID copied.',
+                                      fr: 'ID entreprise copie.',
+                                      es: 'ID de empresa copiado.',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.copy, color: Colors.white54),
+                          ),
+                        ],
+                      ),
+                      if (p != null) ...[
+                        const SizedBox(height: 14),
+                        Text(
+                          _t(
+                            nl: 'Bedrijfsstatus',
+                            en: 'Company status',
+                            fr: 'Statut de l entreprise',
+                            es: 'Estado de la empresa',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: p.isSuspended
+                                  ? const Color(0xFF3A1010)
+                                  : p.isVerified
+                                  ? const Color(0xFF12331F)
+                                  : const Color(0xFF2A2410),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: p.isSuspended
+                                    ? Colors.red.withOpacity(0.45)
+                                    : p.isVerified
+                                    ? const Color(0xFF4ADE80).withOpacity(0.45)
+                                    : const Color(0xFFE5B641).withOpacity(0.55),
                               ),
                             ),
-                          );
-                        },
-                        icon: const Icon(Icons.copy, color: Colors.white54),
-                      ),
+                            child: Text(
+                              p.verificationBadgeLabel(_lang),
+                              style: TextStyle(
+                                color: p.isSuspended
+                                    ? const Color(0xFFFFB4B4)
+                                    : p.isVerified
+                                    ? const Color(0xFFB8F5C8)
+                                    : const Color(0xFFE5D4A1),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (p.showsPendingVerificationNotice) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            p.verificationPendingNotice(_lang),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.62),
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   );
                 },

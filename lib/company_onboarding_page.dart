@@ -6,10 +6,7 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 
 /// Collects mandatory company identifiers before entering the admin/business hub.
 class CompanyOnboardingPage extends StatefulWidget {
-  const CompanyOnboardingPage({
-    super.key,
-    required this.onCompleted,
-  });
+  const CompanyOnboardingPage({super.key, required this.onCompleted});
 
   /// Called after local profile + session are saved. Should replace with [BusinessHomePage].
   final void Function(BuildContext context) onCompleted;
@@ -29,10 +26,7 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
   String _country = 'BE';
   bool _saving = false;
 
-  String _t({
-    required String nl,
-    required String en,
-  }) {
+  String _t({required String nl, required String en}) {
     final lang = appConfig.currentLanguage;
     if (lang == AppLanguage.en) return en;
     return nl;
@@ -76,12 +70,7 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
       backgroundColor: const Color(0xFF0B1020),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0B1020),
-        title: Text(
-          _t(
-            nl: 'Bedrijf instellen',
-            en: 'Set up your business',
-          ),
-        ),
+        title: Text(_t(nl: 'Bedrijf instellen', en: 'Set up your business')),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: _saving
@@ -113,10 +102,8 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                     children: [
                       Text(
                         _t(
-                          nl:
-                              'Vul je bedrijfsgegevens in. Je krijgt een vaste bedrijfs-ID op dit toestel.',
-                          en:
-                              'Enter your business details. You will receive a stable company ID on this device.',
+                          nl: 'Vul je bedrijfsgegevens in. Je krijgt een vaste bedrijfs-ID op dit toestel.',
+                          en: 'Enter your business details. You will receive a stable company ID on this device.',
                         ),
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.85),
@@ -156,9 +143,7 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                         controller: _emailCtrl,
                         keyboardType: TextInputType.emailAddress,
                         style: const TextStyle(color: Colors.white),
-                        decoration: _decoration(
-                          _t(nl: 'E-mail', en: 'Email'),
-                        ),
+                        decoration: _decoration(_t(nl: 'E-mail', en: 'Email')),
                         validator: (v) {
                           final t = (v ?? '').trim();
                           if (t.isEmpty) {
@@ -215,9 +200,7 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                         value: _country,
                         dropdownColor: const Color(0xFF111111),
                         style: const TextStyle(color: Colors.white),
-                        decoration: _decoration(
-                          _t(nl: 'Land', en: 'Country'),
-                        ),
+                        decoration: _decoration(_t(nl: 'Land', en: 'Country')),
                         items: const [
                           DropdownMenuItem(value: 'BE', child: Text('BE')),
                           DropdownMenuItem(value: 'NL', child: Text('NL')),
@@ -252,8 +235,13 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
                                 ),
                               )
                             : Text(
-                                _t(nl: 'Opslaan en verder', en: 'Save and continue'),
-                                style: const TextStyle(fontWeight: FontWeight.w800),
+                                _t(
+                                  nl: 'Opslaan en verder',
+                                  en: 'Save and continue',
+                                ),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                       ),
                     ],
@@ -310,11 +298,9 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
   bool _saving = false;
   String? _companyId;
   String? _createdAt;
+  String _verificationStatus = CompanyVerificationStatus.pendingVerification;
 
-  String _t({
-    required String nl,
-    required String en,
-  }) {
+  String _t({required String nl, required String en}) {
     final lang = appConfig.currentLanguage;
     if (lang == AppLanguage.en) return en;
     return nl;
@@ -335,6 +321,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     }
     _companyId = p.companyId;
     _createdAt = p.createdAt;
+    _verificationStatus = p.verificationStatus;
     _companyCtrl.text = p.companyName;
     _ownerCtrl.text = p.ownerName;
     _emailCtrl.text = p.email;
@@ -393,6 +380,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
       createdAt: _createdAt!,
       updatedAt: DateTime.now().toUtc().toIso8601String(),
       isActive: true,
+      verificationStatus: _verificationStatus,
     );
     await CompanySessionStore.instance.updateSavedProfile(
       next,
@@ -403,9 +391,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          _t(nl: 'Opgeslagen.', en: 'Saved.'),
-        ),
+        content: Text(_t(nl: 'Opgeslagen.', en: 'Saved.')),
       ),
     );
     Navigator.of(context).pop();
@@ -442,12 +428,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
       backgroundColor: const Color(0xFF0B1020),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0B1020),
-        title: Text(
-          _t(
-            nl: 'Mijn bedrijfsgegevens',
-            en: 'Company details',
-          ),
-        ),
+        title: Text(_t(nl: 'Mijn bedrijfsgegevens', en: 'Company details')),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -465,11 +446,10 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                 TextFormField(
                   controller: _companyCtrl,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inp(
-                    _t(nl: 'Bedrijfsnaam', en: 'Company name'),
-                  ),
-                  validator: (v) =>
-                      (v ?? '').trim().isEmpty ? _t(nl: 'Verplicht', en: 'Required') : null,
+                  decoration: _inp(_t(nl: 'Bedrijfsnaam', en: 'Company name')),
+                  validator: (v) => (v ?? '').trim().isEmpty
+                      ? _t(nl: 'Verplicht', en: 'Required')
+                      : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
@@ -484,32 +464,30 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                   controller: _emailCtrl,
                   style: const TextStyle(color: Colors.white),
                   decoration: _inp(_t(nl: 'E-mail', en: 'Email')),
-                  validator: (v) =>
-                      (v ?? '').trim().isEmpty ? _t(nl: 'Verplicht', en: 'Required') : null,
+                  validator: (v) => (v ?? '').trim().isEmpty
+                      ? _t(nl: 'Verplicht', en: 'Required')
+                      : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _phoneCtrl,
                   style: const TextStyle(color: Colors.white),
                   decoration: _inp(_t(nl: 'Telefoon', en: 'Phone')),
-                  validator: (v) =>
-                      (v ?? '').trim().isEmpty ? _t(nl: 'Verplicht', en: 'Required') : null,
+                  validator: (v) => (v ?? '').trim().isEmpty
+                      ? _t(nl: 'Verplicht', en: 'Required')
+                      : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _vatCtrl,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inp(
-                    _t(nl: 'BTW-nummer', en: 'VAT number'),
-                  ),
+                  decoration: _inp(_t(nl: 'BTW-nummer', en: 'VAT number')),
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _addressCtrl,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inp(
-                    _t(nl: 'Adres', en: 'Address'),
-                  ),
+                  decoration: _inp(_t(nl: 'Adres', en: 'Address')),
                 ),
                 const SizedBox(height: 10),
                 Row(
@@ -518,9 +496,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                       child: TextFormField(
                         controller: _postalCtrl,
                         style: const TextStyle(color: Colors.white),
-                        decoration: _inp(
-                          _t(nl: 'Postcode', en: 'Postal code'),
-                        ),
+                        decoration: _inp(_t(nl: 'Postcode', en: 'Postal code')),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -528,9 +504,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                       child: TextFormField(
                         controller: _cityCtrl,
                         style: const TextStyle(color: Colors.white),
-                        decoration: _inp(
-                          _t(nl: 'Stad', en: 'City'),
-                        ),
+                        decoration: _inp(_t(nl: 'Stad', en: 'City')),
                       ),
                     ),
                   ],
@@ -540,9 +514,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                   value: _country,
                   dropdownColor: const Color(0xFF111111),
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inp(
-                    _t(nl: 'Land', en: 'Country'),
-                  ),
+                  decoration: _inp(_t(nl: 'Land', en: 'Country')),
                   items: const [
                     DropdownMenuItem(value: 'BE', child: Text('BE')),
                     DropdownMenuItem(value: 'NL', child: Text('NL')),
@@ -556,7 +528,10 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  _t(nl: 'E-mailroutes (optioneel)', en: 'Email routing (optional)'),
+                  _t(
+                    nl: 'E-mailroutes (optioneel)',
+                    en: 'Email routing (optional)',
+                  ),
                   style: const TextStyle(
                     color: Colors.white54,
                     fontWeight: FontWeight.w600,

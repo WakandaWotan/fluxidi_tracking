@@ -6,6 +6,36 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+
+/// Values persisted in [CompanyProfile.verificationStatus] (JSON string).
+///
+/// TODO(backend): Backend issues authoritative tenantId/companyId and owns verification state.
+/// Local [CompanyProfile.companyId] is provisional until the backend confirms or replaces it.
+/// Company admin access must later require an authenticated account plus verified role.
+abstract final class CompanyVerificationStatus {
+  CompanyVerificationStatus._();
+
+  static const String draft = 'draft';
+  static const String pendingVerification = 'pending_verification';
+  static const String verified = 'verified';
+  static const String suspended = 'suspended';
+}
+
+String _normalizeImportedVerificationStatus(String? raw) {
+  switch ((raw ?? '').trim().toLowerCase()) {
+    case CompanyVerificationStatus.draft:
+      return CompanyVerificationStatus.draft;
+    case CompanyVerificationStatus.pendingVerification:
+      return CompanyVerificationStatus.pendingVerification;
+    case CompanyVerificationStatus.verified:
+      return CompanyVerificationStatus.verified;
+    case CompanyVerificationStatus.suspended:
+      return CompanyVerificationStatus.suspended;
+    default:
+      return CompanyVerificationStatus.pendingVerification;
+  }
+}
 
 /// Fallback tenant id when no local company profile exists (aligned with Worker `tenant_id`).
 const String kFallbackCompanyId = kTenantId;
@@ -24,6 +54,9 @@ String get resolvedCompanyId {
 }
 
 /// Local company profile (sync-ready with future backend tenant endpoints).
+///
+/// TODO(backend): Backend issues authoritative tenantId/companyId and owns [verificationStatus].
+/// Local company data (VAT, address, etc.) is **not** proof of ownership until verified.
 class CompanyProfile {
   const CompanyProfile({
     required this.companyId,
@@ -44,10 +77,14 @@ class CompanyProfile {
     required this.createdAt,
     required this.updatedAt,
     required this.isActive,
+    this.verificationStatus = CompanyVerificationStatus.pendingVerification,
   });
 
   final String companyId;
   String get tenantId => companyId;
+
+  /// See [CompanyVerificationStatus]. Missing key in older JSON defaults to [pendingVerification].
+  final String verificationStatus;
 
   final String companyName;
   final String ownerName;
@@ -66,6 +103,71 @@ class CompanyProfile {
   final String createdAt;
   final String updatedAt;
   final bool isActive;
+
+  bool get isVerified =>
+      verificationStatus == CompanyVerificationStatus.verified;
+
+  bool get isSuspended =>
+      verificationStatus == CompanyVerificationStatus.suspended;
+
+  bool get isDraft => verificationStatus == CompanyVerificationStatus.draft;
+
+  bool get isPendingVerification =>
+      verificationStatus == CompanyVerificationStatus.pendingVerification;
+
+  /// Short label for dashboard/settings badges (not proof of legal verification).
+  String verificationBadgeLabel(AppLanguage lang) {
+    if (isSuspended) {
+      switch (lang) {
+        case AppLanguage.nl:
+          return 'Geblokkeerd';
+        case AppLanguage.en:
+          return 'Suspended';
+        case AppLanguage.fr:
+          return 'Suspendu';
+        case AppLanguage.es:
+          return 'Suspendido';
+      }
+    }
+    if (isVerified) {
+      switch (lang) {
+        case AppLanguage.nl:
+          return 'Geverifieerd';
+        case AppLanguage.en:
+          return 'Verified';
+        case AppLanguage.fr:
+          return 'Vérifié';
+        case AppLanguage.es:
+          return 'Verificado';
+      }
+    }
+    switch (lang) {
+      case AppLanguage.nl:
+        return 'Niet geverifieerd';
+      case AppLanguage.en:
+        return 'Not verified';
+      case AppLanguage.fr:
+        return 'Non vérifié';
+      case AppLanguage.es:
+        return 'No verificado';
+    }
+  }
+
+  /// Shown under the badge for provisional tenants ([draft] / [pendingVerification] / unknown non-terminal).
+  bool get showsPendingVerificationNotice => !isVerified && !isSuspended;
+
+  String verificationPendingNotice(AppLanguage lang) {
+    switch (lang) {
+      case AppLanguage.nl:
+        return 'Dit bedrijf is lokaal aangemaakt. Volledige live-functies worden later geactiveerd na verificatie.';
+      case AppLanguage.en:
+        return 'This company was created locally. Full live features will be activated later after verification.';
+      case AppLanguage.fr:
+        return 'Cette entreprise a été créée localement. Les fonctions en ligne complètes seront activées après vérification.';
+      case AppLanguage.es:
+        return 'Esta empresa se creó localmente. Las funciones en vivo completas se activarán después de la verificación.';
+    }
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'companyId': companyId,
@@ -87,6 +189,7 @@ class CompanyProfile {
     'createdAt': createdAt,
     'updatedAt': updatedAt,
     'isActive': isActive,
+    'verificationStatus': verificationStatus,
   };
 
   factory CompanyProfile.fromJson(Map<String, dynamic> json) {
@@ -94,6 +197,11 @@ class CompanyProfile {
     final id = (read('companyId').isNotEmpty
         ? read('companyId')
         : read('tenantId'));
+    final vs = json.containsKey('verificationStatus')
+        ? _normalizeImportedVerificationStatus(
+            json['verificationStatus']?.toString(),
+          )
+        : CompanyVerificationStatus.pendingVerification;
     return CompanyProfile(
       companyId: id,
       companyName: read('companyName'),
@@ -115,6 +223,7 @@ class CompanyProfile {
       isActive: json['isActive'] is bool
           ? json['isActive'] as bool
           : read('isActive') != 'false',
+      verificationStatus: vs,
     );
   }
 
@@ -137,6 +246,7 @@ class CompanyProfile {
     String? createdAt,
     String? updatedAt,
     bool? isActive,
+    String? verificationStatus,
   }) {
     return CompanyProfile(
       companyId: companyId ?? this.companyId,
@@ -157,6 +267,7 @@ class CompanyProfile {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isActive: isActive ?? this.isActive,
+      verificationStatus: verificationStatus ?? this.verificationStatus,
     );
   }
 }
@@ -282,6 +393,10 @@ class CompanySessionStore {
       companyProfileNotifier.value!.companyId ==
           activeCompanySessionNotifier.value!.companyId;
 
+  /// Prepared for future gated flows; do not use to block MVP navigation yet.
+  bool get hasVerifiedCompanyContext =>
+      hasValidCompanyContext && companyProfileNotifier.value!.isVerified;
+
   /// Call after tenant state load — reconciles disk + sets notifiers; does not overwrite pricing fields.
   Future<void> bootstrap() async {
     _profileMemory = null;
@@ -395,6 +510,7 @@ class CompanySessionStore {
       createdAt: now,
       updatedAt: now,
       isActive: true,
+      verificationStatus: CompanyVerificationStatus.pendingVerification,
     );
     await persistProfile(profile);
     await _writeSessionForProfile(profile);
