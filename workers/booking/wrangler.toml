@@ -1,0 +1,34 @@
+name = "fluxidi-booking-api"
+main = "fluxidi_booking_worker.js"
+compatibility_date = "2026-04-23"
+
+# Bundle from entrypoint only; avoid auto-attaching local text/binary snapshots.
+find_additional_modules = false
+
+[vars]
+GOOGLE_CALENDAR_ID = "primary"
+FLEET_AVAILABILITY_MODE = "multi_vehicle"
+
+[observability.logs]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "FLEET_ALLOCATOR"
+class_name = "FleetAllocatorDO"
+
+# REQUIRED KV bindings used by this worker code.
+[[kv_namespaces]]
+binding = "BOOKING_KV"
+id = "6805da1ffefe4a3982b4c419250c59b1"
+
+[[kv_namespaces]]
+binding = "FLUXIDI_TRACKING"
+id = "e457c0f51cfe44bca031250a0485b31e"
+
+[[kv_namespaces]]
+binding = "INVOICE_KV"
+id = "c945929b64a743fdb10e09059d835746"
+
+[[migrations]]
+tag = "fleet-allocator-v1"
+new_sqlite_classes = ["FleetAllocatorDO"]

@@ -1,0 +1,7 @@
+name = "fluxidi-tracking-api"
+main = "fluxidi_tracking_api_worker_V2_1_with_route_index.js"
+compatibility_date = "2026-04-23"
+
+[[kv_namespaces]]
+binding = "FLUXIDI_TRACKING"
+id = "e457c0f51cfe44bca031250a0485b31e"
