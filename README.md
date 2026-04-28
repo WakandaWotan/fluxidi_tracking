@@ -1,16 +1,45 @@
-# fluxidi_tracking
+# Fluxidi Tracking
 
-A new Flutter project.
+Fluxidi mobile + worker backups repository.
 
-## Getting Started
+## Single Source Of Truth
 
-This project is a starting point for a Flutter application.
+The canonical repository path is:
 
-A few resources to get you started if this is your first Flutter project:
+`C:\_flutter_work\fluxidi_tracking`
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+All active work must happen from this path.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Project Overview
+
+- Flutter app source lives in `lib/`.
+- Active Booking Worker backup lives in `workers/booking/`.
+- Active Tracking Worker backup lives in `workers/tracking/`.
+- Operational scripts live in `scripts/`.
+- Operational docs live in `docs/ops/`.
+
+## Quick Start Commands
+
+From repository root:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check-flutter.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\status-all.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\deploy-booking-worker.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\deploy-tracking-worker.ps1`
+
+## Operations Documentation
+
+- [Project Structure](docs/ops/PROJECT_STRUCTURE.md)
+- [Deployment](docs/ops/DEPLOYMENT.md)
+
+## Do / Don't
+
+Do:
+
+- Use this repository as the only active source.
+- Use scripts in `scripts/` for checks and deployment steps.
+
+Don't:
+
+- Do not deploy from old Desktop Codes folders (legacy/archive only).
+- Do not copy terminal prompt text such as `PS C:\...>` into commands.
