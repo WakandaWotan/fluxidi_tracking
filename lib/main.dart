@@ -1290,88 +1290,35 @@ class RoleEntryPage extends StatelessWidget {
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   Widget _roleButton({
-    required BuildContext context,
     required String label,
-    required String subtitle,
     required VoidCallback onTap,
     required IconData icon,
+    required double height,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: const Color(0xFFE5B641).withOpacity(0.55),
-            ),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF1A2238), Color(0xFF10182D)],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFFE5B641).withOpacity(0.12),
-                blurRadius: 16,
-                spreadRadius: 0.5,
-                offset: const Offset(0, 6),
-              ),
-            ],
+    return SizedBox(
+      height: height,
+      child: FilledButton(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          elevation: 2,
+          shadowColor: const Color(0xFFE5B641).withOpacity(0.35),
+          backgroundColor: const Color(0xFFE5B641),
+          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE5B641),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                alignment: Alignment.center,
-                child: Icon(icon, size: 24, color: Colors.black),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.78),
-                        fontSize: 12.5,
-                        height: 1.2,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 16,
-                color: const Color(0xFFE5B641).withOpacity(0.95),
-              ),
-            ],
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          ],
         ),
       ),
     );
@@ -1455,186 +1402,197 @@ class RoleEntryPage extends StatelessWidget {
                 ],
               ),
             ),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 28,
-                  ),
-                  child: Column(
-                    children: [
-                      const Spacer(flex: 4),
-                      Image.asset(
-                        kFluxidiLogoAsset,
-                        height: 228,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Text(
-                          'FLUXIDI',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 38,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.0,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxHeight < 780;
+                final veryCompact = constraints.maxHeight < 720;
+
+                final logoHeight = veryCompact
+                    ? 160.0
+                    : (compact ? 188.0 : 228.0);
+                final buttonHeight = veryCompact
+                    ? 62.0
+                    : (compact ? 66.0 : 72.0);
+                final buttonGap = veryCompact ? 10.0 : (compact ? 12.0 : 16.0);
+                final verticalPadding = veryCompact
+                    ? 16.0
+                    : (compact ? 20.0 : 28.0);
+                final titleTopGap = veryCompact
+                    ? 12.0
+                    : (compact ? 16.0 : 20.0);
+                final sectionGap = veryCompact ? 12.0 : (compact ? 14.0 : 18.0);
+                final estimatedContentHeight =
+                    logoHeight +
+                    6 +
+                    92 +
+                    titleTopGap +
+                    34 +
+                    6 +
+                    20 +
+                    sectionGap +
+                    (buttonHeight * 3) +
+                    (buttonGap * 2);
+                final topOffset = math.max(
+                  0.0,
+                  (constraints.maxHeight - estimatedContentHeight) / 2,
+                );
+
+                return SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 560),
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 22,
+                            vertical: verticalPadding,
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Column(
-                        children: [
-                          Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Expanded(
-                                child: _languageChip(
-                                  code: 'en',
-                                  flag: '🇬🇧',
-                                  label: 'EN',
-                                  selected: currentLanguageCode == 'en',
+                              SizedBox(height: topOffset),
+                              Image.asset(
+                                kFluxidiLogoAsset,
+                                height: logoHeight,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => const Text(
+                                  'FLUXIDI',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 38,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.0,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _languageChip(
-                                  code: 'nl',
-                                  flag: '🇳🇱',
-                                  label: 'NL',
-                                  selected: currentLanguageCode == 'nl',
+                              SizedBox(height: veryCompact ? 4 : 6),
+                              Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _languageChip(
+                                          code: 'en',
+                                          flag: '🇬🇧',
+                                          label: 'EN',
+                                          selected: currentLanguageCode == 'en',
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: _languageChip(
+                                          code: 'nl',
+                                          flag: '🇳🇱',
+                                          label: 'NL',
+                                          selected: currentLanguageCode == 'nl',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _languageChip(
+                                          code: 'fr',
+                                          flag: '🇫🇷',
+                                          label: 'FR',
+                                          selected: currentLanguageCode == 'fr',
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: _languageChip(
+                                          code: 'es',
+                                          flag: '🇪🇸',
+                                          label: 'ES',
+                                          selected: currentLanguageCode == 'es',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: titleTopGap),
+                              Text(
+                                _t(
+                                  nl: 'Wie ben je?',
+                                  en: 'Who are you?',
+                                  fr: 'Qui êtes-vous ?',
+                                  es: '¿Quién eres?',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.2,
                                 ),
                               ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _t(
+                                  nl: 'Kies hoe je Fluxidi wilt gebruiken.',
+                                  en: 'Choose how you want to use Fluxidi.',
+                                  fr: 'Choisissez comment vous souhaitez utiliser Fluxidi.',
+                                  es: 'Elige cómo quieres usar Fluxidi.',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white.withOpacity(0.82),
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              SizedBox(height: sectionGap),
+                              _roleButton(
+                                label: _t(
+                                  nl: 'Klant',
+                                  en: 'Customer',
+                                  fr: 'Client',
+                                  es: 'Cliente',
+                                ),
+                                icon: Icons.person_outline_rounded,
+                                height: buttonHeight,
+                                onTap: () => _goCustomer(context),
+                              ),
+                              SizedBox(height: buttonGap),
+                              _roleButton(
+                                label: _t(
+                                  nl: 'Zelfstandige / Bedrijf',
+                                  en: 'Self-employed / Business',
+                                  fr: 'Independant / Entreprise',
+                                  es: 'Autonomo / Empresa',
+                                ),
+                                icon: Icons.business_center_rounded,
+                                height: buttonHeight,
+                                onTap: () => _goBusiness(context),
+                              ),
+                              SizedBox(height: buttonGap),
+                              _roleButton(
+                                label: _t(
+                                  nl: 'Chauffeur',
+                                  en: 'Driver',
+                                  fr: 'Chauffeur',
+                                  es: 'Conductor',
+                                ),
+                                icon: Icons.local_taxi_rounded,
+                                height: buttonHeight,
+                                onTap: () => _goDriver(context),
+                              ),
+                              SizedBox(height: verticalPadding),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _languageChip(
-                                  code: 'fr',
-                                  flag: '🇫🇷',
-                                  label: 'FR',
-                                  selected: currentLanguageCode == 'fr',
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _languageChip(
-                                  code: 'es',
-                                  flag: '🇪🇸',
-                                  label: 'ES',
-                                  selected: currentLanguageCode == 'es',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _t(
-                          nl: 'Kies hoe je Fluxidi wilt gebruiken',
-                          en: 'Choose how you want to use Fluxidi',
-                          fr: 'Choisissez comment vous voulez utiliser Fluxidi',
-                          es: 'Elige como quieres usar Fluxidi',
-                        ),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.82),
-                          letterSpacing: 0.2,
                         ),
                       ),
-                      const Spacer(flex: 1),
-                      Text(
-                        _t(
-                          nl: 'Wie ben je?',
-                          en: 'Who are you?',
-                          fr: 'Qui etes-vous ?',
-                          es: 'Quien eres?',
-                        ),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _t(
-                          nl: 'Kies je rol om Fluxidi op de juiste manier te starten.',
-                          en: 'Choose your role to start Fluxidi the right way.',
-                          fr: 'Choisissez votre role pour demarrer Fluxidi correctement.',
-                          es: 'Elige tu rol para iniciar Fluxidi de la manera correcta.',
-                        ),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.78),
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          height: 1.25,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _roleButton(
-                        context: context,
-                        label: _t(
-                          nl: 'Klant',
-                          en: 'Customer',
-                          fr: 'Client',
-                          es: 'Cliente',
-                        ),
-                        subtitle: _t(
-                          nl: 'Boek en volg je rit.',
-                          en: 'Book and track your ride.',
-                          fr: 'Reservez et suivez votre trajet.',
-                          es: 'Reserva y sigue tu viaje.',
-                        ),
-                        icon: Icons.person_outline_rounded,
-                        onTap: () => _goCustomer(context),
-                      ),
-                      const SizedBox(height: 12),
-                      _roleButton(
-                        context: context,
-                        label: _t(
-                          nl: 'Zelfstandige / Bedrijf',
-                          en: 'Self-employed / Business',
-                          fr: 'Independant / Entreprise',
-                          es: 'Autonomo / Empresa',
-                        ),
-                        subtitle: _t(
-                          nl: 'Beheer boekingen, voertuigen en betalingen.',
-                          en: 'Manage bookings, vehicles, and payments.',
-                          fr: 'Gerez reservations, vehicules et paiements.',
-                          es: 'Gestiona reservas, vehiculos y pagos.',
-                        ),
-                        icon: Icons.business_center_rounded,
-                        onTap: () => _goBusiness(context),
-                      ),
-                      const SizedBox(height: 12),
-                      _roleButton(
-                        context: context,
-                        label: _t(
-                          nl: 'Chauffeur',
-                          en: 'Driver',
-                          fr: 'Chauffeur',
-                          es: 'Conductor',
-                        ),
-                        subtitle: _t(
-                          nl: 'Start ritten en volg opdrachten.',
-                          en: 'Start rides and follow assignments.',
-                          fr: 'Demarrez des trajets et suivez les missions.',
-                          es: 'Inicia viajes y sigue asignaciones.',
-                        ),
-                        icon: Icons.local_taxi_rounded,
-                        onTap: () => _goDriver(context),
-                      ),
-                      const Spacer(flex: 4),
-                    ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         ),
