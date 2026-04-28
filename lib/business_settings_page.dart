@@ -83,6 +83,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Set<String> _tierIds = <String>{};
   Set<String> _extraIds = <String>{};
 
+  void _onLogoSanitizationListeners() {
+    _syncLocalTenantLogoFromNotifier();
+  }
+
   AppLanguage get _lang => appConfig.currentLanguage;
 
   String _t({
@@ -106,6 +110,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   @override
   void initState() {
     super.initState();
+    companyProfileNotifier.addListener(_onLogoSanitizationListeners);
+    businessSettingsNotifier.addListener(_onLogoSanitizationListeners);
     _hydrateFromSettings(businessSettingsNotifier.value);
     _hydrateBackendBusinessProfile(
       mergeLocalIntoBackendPreview(
@@ -116,10 +122,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _hydrateBackendTaxProfile(BackendTaxProfile.defaults());
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncLocalTenantLogoFromNotifier();
+      _maybeNormalizeStoredLogoInNotifier();
+    });
   }
 
   @override
   void dispose() {
+    companyProfileNotifier.removeListener(_onLogoSanitizationListeners);
+    businessSettingsNotifier.removeListener(_onLogoSanitizationListeners);
     _companyCtrl.dispose();
     _supportEmailCtrl.dispose();
     _supportPhoneCtrl.dispose();
@@ -176,8 +189,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _supportPhoneCtrl.text = s.supportPhone;
     _addressCtrl.text = s.address;
     _vatCtrl.text = s.vatCompanyNumber;
-    _logoPathCtrl.text = s.logoAssetPath;
-    _logoAdvancedCtrl.text = s.logoAssetPath;
+    final logoForUi = _storedLogoPathForLocalTenant(s.logoAssetPath);
+    _logoPathCtrl.text = logoForUi;
+    _logoAdvancedCtrl.text = logoForUi;
     _senderCtrl.text = s.bookingSender;
     _replyToCtrl.text = s.bookingReplyTo;
     _whatsAppCtrl.text = s.whatsappNumber;
@@ -472,7 +486,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         supportPhone: _supportPhoneCtrl.text.trim(),
         address: _addressCtrl.text.trim(),
         vatCompanyNumber: _vatCtrl.text.trim(),
-        logoAssetPath: _logoPathCtrl.text.trim(),
+        logoAssetPath: _storedLogoPathForLocalTenant(_logoPathCtrl.text.trim()),
         defaultLanguage: _defaultLanguage,
         defaultCurrency: _defaultCurrency,
         taxLabel: _taxLabel,
@@ -559,6 +573,70 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   bool _isAssetRef(String value) =>
       value.trim().toLowerCase().startsWith('assets/');
+
+  /// Normalizes logo paths for comparing default Fluxidi branding references.
+  String _normalizeLogoRefForCompare(String raw) {
+    return raw.trim().replaceAll('\\', '/').toLowerCase();
+  }
+
+  /// True for empty paths and any known packaged/default Fluxidi logo reference.
+  bool _isDefaultFluxidiLogoRef(String raw) {
+    final norm = _normalizeLogoRefForCompare(raw);
+    if (norm.isEmpty) return true;
+    final config = _normalizeLogoRefForCompare(appConfig.logoAsset);
+    if (norm == config) return true;
+    if (norm == 'assets/fluxidi/fluxidi_logo.png') return true;
+    if (norm == 'fluxidi_logo.png') return true;
+    if (norm.endsWith('/fluxidi_logo.png')) return true;
+    if (norm.contains('assets/fluxidi/fluxidi_logo.png')) return true;
+    return false;
+  }
+
+  /// Values persisted and shown in logo controllers: never store Fluxidi pack logo as tenant logo.
+  String _storedLogoPathForLocalTenant(String raw) {
+    if (companyProfileNotifier.value == null) return raw.trim();
+    if (_isDefaultFluxidiLogoRef(raw)) return '';
+    return raw.trim();
+  }
+
+  void _maybeNormalizeStoredLogoInNotifier() {
+    if (companyProfileNotifier.value == null) return;
+    final cur = businessSettingsNotifier.value;
+    final next = _storedLogoPathForLocalTenant(cur.logoAssetPath);
+    if (next == cur.logoAssetPath) return;
+    updateBusinessSettings(cur.copyWith(logoAssetPath: next));
+  }
+
+  /// When tenant profile/settings load or update, clear Fluxidi defaults from controllers — but do not
+  /// clobber an unsaved non-default logo path the user already picked.
+  void _syncLocalTenantLogoFromNotifier() {
+    if (!mounted) return;
+    if (companyProfileNotifier.value == null) return;
+    final sanitized = _storedLogoPathForLocalTenant(
+      businessSettingsNotifier.value.logoAssetPath,
+    );
+    final ctrl = _logoPathCtrl.text.trim();
+    final adv = _logoAdvancedCtrl.text.trim();
+    if (sanitized == ctrl && sanitized == adv) {
+      _maybeNormalizeStoredLogoInNotifier();
+      return;
+    }
+    if (!_isDefaultFluxidiLogoRef(ctrl) && ctrl.isNotEmpty) {
+      _maybeNormalizeStoredLogoInNotifier();
+      return;
+    }
+    setState(() {
+      _logoPathCtrl.text = sanitized;
+      _logoAdvancedCtrl.text = sanitized;
+    });
+    _maybeNormalizeStoredLogoInNotifier();
+  }
+
+  /// Logo path for company branding preview ([ValueListenableBuilder] uses controllers).
+  String? _effectiveCompanyLogoRef(String? raw) {
+    final s = _storedLogoPathForLocalTenant(raw ?? '');
+    return s.isEmpty ? null : s;
+  }
 
   Future<void> _pickLogoImage() async {
     try {
@@ -665,122 +743,135 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Widget _logoPreviewBlock() {
-    final logoRef = _logoPathCtrl.text.trim();
-    final hasRef = logoRef.isNotEmpty;
-    final isAsset = _isAssetRef(logoRef);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          onTap: _pickLogoImage,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            width: double.infinity,
-            height: 120,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0B0B0B),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white24),
+    return ValueListenableBuilder<CompanyProfile?>(
+      valueListenable: companyProfileNotifier,
+      builder: (context, _, __) {
+        final effectiveRef = _effectiveCompanyLogoRef(_logoPathCtrl.text);
+        final ref = effectiveRef ?? '';
+        final showImage = ref.isNotEmpty;
+        final logoUnsetForPreview = !showImage;
+
+        Widget previewChild;
+        if (!showImage) {
+          previewChild = _logoPlaceholder();
+        } else if (_isAssetRef(ref)) {
+          previewChild = ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: Image.asset(
+              ref,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => _logoPlaceholder(),
             ),
-            child: isAsset
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(11),
-                    child: Image.asset(
-                      logoRef,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => _logoPlaceholder(),
-                    ),
+          );
+        } else {
+          previewChild = ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: kIsWeb
+                ? Image.network(
+                    ref,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => _logoPlaceholder(),
                   )
-                : (hasRef
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(11),
-                          child: kIsWeb
-                              ? Image.network(
-                                  logoRef,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (_, __, ___) =>
-                                      _logoPlaceholder(),
-                                )
-                              : Image.file(
-                                  File(logoRef),
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (_, __, ___) =>
-                                      _logoPlaceholder(),
-                                ),
-                        )
-                      : _logoPlaceholder()),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
+                : Image.file(
+                    File(ref),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => _logoPlaceholder(),
+                  ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            FilledButton.icon(
-              onPressed: _pickLogoImage,
-              icon: const Icon(Icons.upload_file),
+            InkWell(
+              onTap: _pickLogoImage,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: double.infinity,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B0B0B),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: previewChild,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _pickLogoImage,
+                  icon: const Icon(Icons.upload_file),
+                  label: Text(
+                    _t(
+                      nl: 'Upload logo',
+                      en: 'Upload logo',
+                      fr: 'Televerser logo',
+                      es: 'Subir logo',
+                    ),
+                  ),
+                ),
+                if (!logoUnsetForPreview) ...[
+                  OutlinedButton.icon(
+                    onPressed: _pickLogoImage,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: Text(
+                      _t(
+                        nl: 'Logo wijzigen',
+                        en: 'Change logo',
+                        fr: 'Modifier logo',
+                        es: 'Cambiar logo',
+                      ),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _setLogoRef(''),
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text(
+                      _t(
+                        nl: 'Logo verwijderen',
+                        en: 'Remove logo',
+                        fr: 'Supprimer logo',
+                        es: 'Quitar logo',
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: () => setState(
+                () => _showAdvancedLogoPath = !_showAdvancedLogoPath,
+              ),
+              icon: Icon(
+                _showAdvancedLogoPath ? Icons.expand_less : Icons.expand_more,
+              ),
               label: Text(
                 _t(
-                  nl: 'Upload logo',
-                  en: 'Upload logo',
-                  fr: 'Televerser logo',
-                  es: 'Subir logo',
+                  nl: 'Geavanceerd: handmatige referentie',
+                  en: 'Advanced: manual reference',
+                  fr: 'Avance: reference manuelle',
+                  es: 'Avanzado: referencia manual',
                 ),
               ),
             ),
-            OutlinedButton.icon(
-              onPressed: _pickLogoImage,
-              icon: const Icon(Icons.edit_outlined),
-              label: Text(
+            if (_showAdvancedLogoPath)
+              _txt(
+                _logoAdvancedCtrl,
                 _t(
-                  nl: 'Logo wijzigen',
-                  en: 'Change logo',
-                  fr: 'Modifier logo',
-                  es: 'Cambiar logo',
+                  nl: 'Logo pad/referentie',
+                  en: 'Logo path/reference',
+                  fr: 'Chemin/reference logo',
+                  es: 'Ruta/referencia logo',
                 ),
+                onChanged: (v) => _setLogoRef(v),
               ),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _setLogoRef(''),
-              icon: const Icon(Icons.delete_outline),
-              label: Text(
-                _t(
-                  nl: 'Logo verwijderen',
-                  en: 'Remove logo',
-                  fr: 'Supprimer logo',
-                  es: 'Quitar logo',
-                ),
-              ),
-            ),
           ],
-        ),
-        const SizedBox(height: 6),
-        TextButton.icon(
-          onPressed: () =>
-              setState(() => _showAdvancedLogoPath = !_showAdvancedLogoPath),
-          icon: Icon(
-            _showAdvancedLogoPath ? Icons.expand_less : Icons.expand_more,
-          ),
-          label: Text(
-            _t(
-              nl: 'Geavanceerd: handmatige referentie',
-              en: 'Advanced: manual reference',
-              fr: 'Avance: reference manuelle',
-              es: 'Avanzado: referencia manual',
-            ),
-          ),
-        ),
-        if (_showAdvancedLogoPath)
-          _txt(
-            _logoAdvancedCtrl,
-            _t(
-              nl: 'Logo pad/referentie',
-              en: 'Logo path/reference',
-              fr: 'Chemin/reference logo',
-              es: 'Ruta/referencia logo',
-            ),
-            onChanged: (v) => _setLogoRef(v),
-          ),
-      ],
+        );
+      },
     );
   }
 
@@ -793,11 +884,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           const SizedBox(height: 6),
           Text(
             _t(
-              nl: 'Geen logo preview',
-              en: 'No logo preview',
-              fr: 'Pas de preview logo',
-              es: 'Sin vista previa de logo',
+              nl: 'Geen bedrijfslogo ingesteld',
+              en: 'No company logo set',
+              fr: 'Aucun logo d’entreprise défini',
+              es: 'No hay logotipo de empresa configurado',
             ),
+            textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
         ],
