@@ -1,0 +1,696 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:open_filex/open_filex.dart';
+
+String _ddT(
+  AppLanguage lang, {
+  required String nl,
+  required String en,
+  required String fr,
+  required String es,
+}) {
+  switch (lang) {
+    case AppLanguage.nl:
+      return nl;
+    case AppLanguage.en:
+      return en;
+    case AppLanguage.fr:
+      return fr;
+    case AppLanguage.es:
+      return es;
+  }
+}
+
+String _ddBasename(String path) {
+  final s = path.replaceAll('\\', '/');
+  final i = s.lastIndexOf('/');
+  return i >= 0 ? s.substring(i + 1) : s;
+}
+
+bool _ddIsLikelyImagePath(String path) {
+  final lower = path.toLowerCase().trim();
+  return lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.png') ||
+      lower.endsWith('.gif') ||
+      lower.endsWith('.webp') ||
+      lower.endsWith('.heic') ||
+      lower.endsWith('.bmp');
+}
+
+bool _ddIsLikelyPdfPath(String path) {
+  return path.toLowerCase().trim().endsWith('.pdf');
+}
+
+/// Shared attachment preview (admin + driver UI).
+Widget driverDocAttachmentPreview(String rawPath, AppLanguage lang) {
+  final path = rawPath.trim();
+  if (path.isEmpty) return const SizedBox.shrink();
+  final name = _ddBasename(path);
+  if (!kIsWeb && !File(path).existsSync()) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _ddT(
+              lang,
+              nl: 'Bestand niet gevonden op dit toestel',
+              en: 'File not found on this device',
+              fr: 'Fichier introuvable sur cet appareil',
+              es: 'Archivo no encontrado en este dispositivo',
+            ),
+            style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            name,
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  final showThumb = !kIsWeb && _ddIsLikelyImagePath(path);
+
+  Widget leading;
+  if (showThumb) {
+    leading = ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 56,
+        height: 56,
+        child: Image.file(
+          File(path),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => SizedBox(
+            width: 56,
+            height: 56,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.broken_image_outlined,
+                color: Colors.white38,
+                size: 28,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  } else if (_ddIsLikelyPdfPath(path)) {
+    leading = SizedBox(
+      width: 56,
+      height: 56,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.red.shade900.withOpacity(0.35),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Icon(
+          Icons.picture_as_pdf,
+          color: Colors.white70,
+          size: 32,
+        ),
+      ),
+    );
+  } else {
+    leading = SizedBox(
+      width: 56,
+      height: 56,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Icon(
+          Icons.insert_drive_file_outlined,
+          color: Colors.white54,
+          size: 30,
+        ),
+      ),
+    );
+  }
+
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        leading,
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            name,
+            style: const TextStyle(fontSize: 11, color: Colors.white60),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> openDriverDocumentFile(
+  BuildContext context,
+  String rawPath,
+  AppLanguage lang,
+) async {
+  final p = rawPath.trim();
+  if (p.isEmpty) return;
+  if (!await File(p).exists()) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _ddT(
+            lang,
+            nl: 'Bestand niet gevonden op dit toestel',
+            en: 'File not found on this device',
+            fr: 'Fichier introuvable sur cet appareil',
+            es: 'Archivo no encontrado en este dispositivo',
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+  final result = await OpenFilex.open(p);
+  if (!context.mounted) return;
+  if (result.type != ResultType.done) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _ddT(
+            lang,
+            nl: 'Kon bestand niet openen.',
+            en: 'Could not open the file.',
+            fr: 'Impossible d ouvrir le fichier.',
+            es: 'No se pudo abrir el archivo.',
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Widget _sheetField(
+  TextEditingController ctrl,
+  String label, {
+  VoidCallback? onChanged,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: TextField(
+      controller: ctrl,
+      onChanged: onChanged == null ? null : (_) => onChanged(),
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70),
+        filled: true,
+        fillColor: const Color(0xFF0B0B0B),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _pickCamera(
+  ImagePicker picker,
+  BuildContext sheetCtx,
+  void Function(VoidCallback fn) setLocal,
+  TextEditingController pathCtrl,
+) async {
+  try {
+    final x = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 88,
+    );
+    if (!sheetCtx.mounted) return;
+    if (x == null) return;
+    setLocal(() => pathCtrl.text = x.path);
+  } catch (_) {}
+}
+
+Future<void> _pickGallery(
+  ImagePicker picker,
+  BuildContext sheetCtx,
+  void Function(VoidCallback fn) setLocal,
+  TextEditingController pathCtrl,
+) async {
+  try {
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+    );
+    if (!sheetCtx.mounted) return;
+    if (x == null) return;
+    setLocal(() => pathCtrl.text = x.path);
+  } catch (_) {}
+}
+
+Future<void> _pickFile(
+  BuildContext sheetCtx,
+  void Function(VoidCallback fn) setLocal,
+  TextEditingController pathCtrl,
+) async {
+  try {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const [
+        'pdf',
+        'jpg',
+        'jpeg',
+        'png',
+        'gif',
+        'webp',
+        'heic',
+        'bmp',
+      ],
+    );
+    if (!sheetCtx.mounted) return;
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path != null && path.trim().isNotEmpty) {
+      setLocal(() => pathCtrl.text = path);
+    }
+  } catch (_) {}
+}
+
+/// Shared document editor (company admin + chauffeur self-service).
+///
+/// When [driverSelfService] is true, status is not editable; new docs use
+/// [DriverDocumentStatuses.pendingReview]; edits keep the existing status.
+Future<void> showDriverDocumentEditorSheet(
+  BuildContext context, {
+  required DriverProfile driver,
+  DriverDocument? existing,
+  bool driverSelfService = false,
+}) async {
+  final picker = ImagePicker();
+  var selectedType = existing?.documentType ?? DriverDocumentTypes.other;
+  final titleCtrl = TextEditingController(text: existing?.title ?? '');
+  final pathCtrl = TextEditingController(text: existing?.filePath ?? '');
+  final expiryCtrl = TextEditingController(text: existing?.expiryDate ?? '');
+  var selectedStatus = existing?.status ?? DriverDocumentStatuses.pendingReview;
+  final notesCtrl = TextEditingController(text: existing?.notes ?? '');
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFF141B2F),
+    builder: (ctx) {
+      return ValueListenableBuilder<AppLanguage>(
+        valueListenable: appLanguageNotifier,
+        builder: (context, lang, _) {
+          return StatefulBuilder(
+            builder: (ctx, setLocal) {
+              String t({
+                required String nl,
+                required String en,
+                required String fr,
+                required String es,
+              }) => _ddT(lang, nl: nl, en: en, fr: fr, es: es);
+
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: 12,
+                  right: 12,
+                  top: 12,
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom + 14,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        existing == null
+                            ? t(
+                                nl: 'Document toevoegen',
+                                en: 'Add document',
+                                fr: 'Ajouter un document',
+                                es: 'Añadir documento',
+                              )
+                            : t(
+                                nl: 'Document bewerken',
+                                en: 'Edit document',
+                                fr: 'Modifier document',
+                                es: 'Editar documento',
+                              ),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: selectedType,
+                        isExpanded: true,
+                        items: DriverDocumentTypes.all
+                            .map(
+                              (ty) => DropdownMenuItem(
+                                value: ty,
+                                child: Text(
+                                  driverDocumentTypeLabel(ty, lang),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setLocal(() => selectedType = v);
+                        },
+                        decoration: InputDecoration(
+                          labelText: t(
+                            nl: 'Documenttype',
+                            en: 'Document type',
+                            fr: 'Type',
+                            es: 'Tipo',
+                          ),
+                          filled: true,
+                          fillColor: const Color(0xFF0B0B0B),
+                        ),
+                        dropdownColor: const Color(0xFF111111),
+                      ),
+                      const SizedBox(height: 8),
+                      _sheetField(
+                        titleCtrl,
+                        t(nl: 'Titel', en: 'Title', fr: 'Titre', es: 'Titulo'),
+                      ),
+                      Text(
+                        t(
+                          nl: 'Bijlage',
+                          en: 'Attachment',
+                          fr: 'Piece jointe',
+                          es: 'Adjunto',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.88),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () =>
+                                  _pickCamera(picker, ctx, setLocal, pathCtrl),
+                              icon: const Icon(
+                                Icons.photo_camera_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                t(
+                                  nl: 'Foto nemen',
+                                  en: 'Take photo',
+                                  fr: 'Prendre une photo',
+                                  es: 'Tomar foto',
+                                ),
+                                style: const TextStyle(fontSize: 11),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () =>
+                                  _pickGallery(picker, ctx, setLocal, pathCtrl),
+                              icon: const Icon(
+                                Icons.photo_library_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                t(
+                                  nl: 'Kies uit galerij',
+                                  en: 'Choose from gallery',
+                                  fr: 'Choisir dans la galerie',
+                                  es: 'Elegir de galeria',
+                                ),
+                                style: const TextStyle(fontSize: 11),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _pickFile(ctx, setLocal, pathCtrl),
+                          icon: const Icon(Icons.attach_file, size: 18),
+                          label: Text(
+                            t(
+                              nl: 'Bestand/PDF kiezen',
+                              en: 'Choose file/PDF',
+                              fr: 'Choisir fichier/PDF',
+                              es: 'Elegir archivo/PDF',
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                      Builder(
+                        builder: (_) =>
+                            driverDocAttachmentPreview(pathCtrl.text, lang),
+                      ),
+                      _sheetField(
+                        pathCtrl,
+                        t(
+                          nl: 'Handmatig pad / referentie (optioneel)',
+                          en: 'Manual path / reference (optional)',
+                          fr: 'Chemin manuel (optionnel)',
+                          es: 'Ruta manual (opcional)',
+                        ),
+                        onChanged: () => setLocal(() {}),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _sheetField(
+                              expiryCtrl,
+                              t(
+                                nl: 'Vervaldatum (yyyy-mm-dd)',
+                                en: 'Expiry (yyyy-mm-dd)',
+                                fr: 'Expiration',
+                                es: 'Caducidad',
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: t(
+                              nl: 'Kies datum',
+                              en: 'Pick date',
+                              fr: 'Date',
+                              es: 'Fecha',
+                            ),
+                            onPressed: () async {
+                              final now = DateTime.now();
+                              final d = await showDatePicker(
+                                context: ctx,
+                                initialDate: now.add(const Duration(days: 365)),
+                                firstDate: DateTime(now.year - 10),
+                                lastDate: DateTime(now.year + 20),
+                              );
+                              if (d == null) return;
+                              if (!ctx.mounted) return;
+                              setLocal(
+                                () => expiryCtrl.text =
+                                    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
+                              );
+                            },
+                            icon: const Icon(Icons.calendar_today_outlined),
+                          ),
+                        ],
+                      ),
+                      if (!driverSelfService)
+                        DropdownButtonFormField<String>(
+                          value: selectedStatus,
+                          isExpanded: true,
+                          items: DriverDocumentStatuses.all
+                              .map(
+                                (s) => DropdownMenuItem(
+                                  value: s,
+                                  child: Text(
+                                    driverDocumentStatusLabel(s, lang),
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setLocal(() => selectedStatus = v);
+                          },
+                          decoration: InputDecoration(
+                            labelText: t(
+                              nl: 'Status',
+                              en: 'Status',
+                              fr: 'Statut',
+                              es: 'Estado',
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF0B0B0B),
+                          ),
+                          dropdownColor: const Color(0xFF111111),
+                        ),
+                      if (!driverSelfService) const SizedBox(height: 8),
+                      _sheetField(
+                        notesCtrl,
+                        t(
+                          nl: 'Notities',
+                          en: 'Notes',
+                          fr: 'Notes',
+                          es: 'Notas',
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: Text(
+                                t(
+                                  nl: 'Annuleren',
+                                  en: 'Cancel',
+                                  fr: 'Annuler',
+                                  es: 'Cancelar',
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () async {
+                                if (driver.id.trim().isEmpty) return;
+                                final company = DriverDocumentsStore.instance
+                                    .resolvedCompanyIdForNewDoc();
+                                final resolvedDocId =
+                                    existing?.documentId ??
+                                    DriverDocumentsStore.newDocumentId();
+
+                                final effectiveStatus = driverSelfService
+                                    ? (existing?.status ??
+                                          DriverDocumentStatuses.pendingReview)
+                                    : selectedStatus;
+
+                                var path = pathCtrl.text.trim();
+                                if (path.isNotEmpty) {
+                                  final beforePath = path;
+                                  final persisted = await DriverDocumentsStore
+                                      .instance
+                                      .persistPickedFileIfNeeded(
+                                        sourcePath: path,
+                                        documentId: resolvedDocId,
+                                        driverId: driver.id,
+                                        companyId: company,
+                                      );
+                                  if (persisted != null) {
+                                    path = persisted;
+                                  } else if (await File(beforePath).exists() &&
+                                      !DriverDocumentsStore.isPersistedManagedPath(
+                                        beforePath,
+                                        resolvedDocId,
+                                      )) {
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            t(
+                                              nl: 'Kon bestand niet naar permanente opslag kopiëren.',
+                                              en: 'Could not copy file to persistent storage.',
+                                              fr: 'Impossible de copier le fichier vers le stockage permanent.',
+                                              es: 'No se pudo copiar el archivo al almacenamiento persistente.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                }
+
+                                if (existing == null) {
+                                  final doc = DriverDocumentsStore.buildNew(
+                                    driverId: driver.id,
+                                    documentType: selectedType,
+                                    title: titleCtrl.text,
+                                    filePath: path,
+                                    expiryDate: expiryCtrl.text,
+                                    status: effectiveStatus,
+                                    notes: notesCtrl.text,
+                                    companyId: company,
+                                    documentId: resolvedDocId,
+                                  );
+                                  await DriverDocumentsStore.instance
+                                      .addDocument(doc);
+                                } else {
+                                  final doc = DriverDocumentsStore.mergeEdit(
+                                    existing: existing,
+                                    documentType: selectedType,
+                                    title: titleCtrl.text,
+                                    filePath: path,
+                                    expiryDate: expiryCtrl.text,
+                                    status: effectiveStatus,
+                                    notes: notesCtrl.text,
+                                  );
+                                  await DriverDocumentsStore.instance
+                                      .updateDocument(doc);
+                                }
+                                if (!ctx.mounted) return;
+                                Navigator.pop(ctx);
+                              },
+                              child: Text(
+                                t(
+                                  nl: 'Opslaan',
+                                  en: 'Save',
+                                  fr: 'Enregistrer',
+                                  es: 'Guardar',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    },
+  );
+}

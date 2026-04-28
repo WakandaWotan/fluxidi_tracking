@@ -43,6 +43,8 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
+import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 
 import 'widgets/cockpit_widget.dart';
@@ -141,6 +143,7 @@ Future<void> main() async {
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+  await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
   if (kMapboxToken.trim().isEmpty) {
@@ -1413,6 +1416,7 @@ class RoleEntryPage extends StatelessWidget {
 
   Future<void> _goDriver(BuildContext context) async {
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    await DriverDocumentsStore.instance.load();
     if (!context.mounted) return;
     if (activeDriverSessionNotifier.value != null) {
       setAppRole(AppRole.driver);
@@ -14100,39 +14104,64 @@ class _DriverHomePageState extends State<DriverHomePage>
                 }
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: const Icon(Icons.swap_horiz_rounded),
-                    title: Text(
-                      _tr(
-                        nl: 'Andere chauffeur',
-                        en: 'Switch driver',
-                        fr: 'Changer de chauffeur',
-                        es: 'Cambiar conductor',
-                      ),
-                    ),
-                    subtitle: Text(
-                      _tr(
-                        nl: 'Afmelden en opnieuw inloggen met een ander ID.',
-                        en: 'Sign out and log in with a different ID.',
-                        fr: 'Se déconnecter et se reconnecter avec un autre ID.',
-                        es: 'Cerrar sesión e iniciar con otro ID.',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.65),
-                        fontSize: 12,
-                      ),
-                    ),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      await DriverSessionStore.instance.clear();
-                      if (!context.mounted) return;
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (_) => const ChauffeurLoginPage(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.folder_copy_outlined),
+                        title: Text(
+                          _tr(
+                            nl: 'Mijn documenten',
+                            en: 'My documents',
+                            fr: 'Mes documents',
+                            es: 'Mis documentos',
+                          ),
                         ),
-                        (route) => false,
-                      );
-                    },
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const DriverMyDocumentsPage(),
+                            ),
+                          );
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.swap_horiz_rounded),
+                        title: Text(
+                          _tr(
+                            nl: 'Andere chauffeur',
+                            en: 'Switch driver',
+                            fr: 'Changer de chauffeur',
+                            es: 'Cambiar conductor',
+                          ),
+                        ),
+                        subtitle: Text(
+                          _tr(
+                            nl: 'Afmelden en opnieuw inloggen met een ander ID.',
+                            en: 'Sign out and log in with a different ID.',
+                            fr: 'Se déconnecter et se reconnecter avec un autre ID.',
+                            es: 'Cerrar sesión e iniciar con otro ID.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.65),
+                            fontSize: 12,
+                          ),
+                        ),
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await DriverSessionStore.instance.clear();
+                          if (!context.mounted) return;
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(
+                              builder: (_) => const ChauffeurLoginPage(),
+                            ),
+                            (route) => false,
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 );
               },
