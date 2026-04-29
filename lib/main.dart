@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'dart:convert';
-import 'dart:io' show Directory, File, Platform;
+import 'dart:io' show Directory, File, FileMode, Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
@@ -255,6 +255,31 @@ const String kTripsArchivePath = '/trips/archive';
 /// Optional: Worker route endpoint (recommended, avoids exposing Mapbox token)
 /// Implement later in Worker: POST { from, to } -> { coords:[[lon,lat],...], distance_m, duration_s }
 const String kWorkerRoutePath = '/track/route';
+
+/// Phase 0b local-only compliance ledger sink (append-only JSONL).
+/// Best-effort by design: write failures must never break ride UX.
+class _ComplianceRideLedgerStore {
+  static const String _fileName = 'compliance_ledger_v1.jsonl';
+
+  static Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    return File('${base.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<void> append(Map<String, dynamic> record) async {
+    if (kIsWeb) return;
+    try {
+      final file = await _file();
+      if (!await file.exists()) {
+        await file.create(recursive: true);
+      }
+      final line = '${jsonEncode(record)}\n';
+      await file.writeAsString(line, mode: FileMode.append, flush: true);
+    } catch (_) {
+      // Keep stop-flow resilient; caller handles logging.
+    }
+  }
+}
 
 /// ===============================
 /// BRANDING (Fluxidi Taxi UI)
@@ -7643,6 +7668,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _activeDirectTripId;
   BookingItem? _activeBooking;
   bool _directRideActive = false;
+  bool _directTripStartWorkerOk = false;
+  bool _directTripStopWorkerOk = false;
   String? _directRideDestinationText;
   _LonLat? _directRideDestinationPoint;
 
@@ -9683,7 +9710,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       final tripId = (decoded['trip_id'] ?? '').toString().trim();
       if (tripId.isEmpty) throw Exception('No trip_id returned');
       if (!mounted || !_directRideActive) return;
-      setState(() => _activeDirectTripId = tripId);
+      setState(() {
+        _activeDirectTripId = tripId;
+        _directTripStartWorkerOk = true;
+        _directTripStopWorkerOk = false;
+      });
       debugPrint('[DIRECT_TRIP][START][OK] trip_id=$tripId');
     } catch (e) {
       debugPrint('[DIRECT_TRIP][START][WARN] local-only direct ride: $e');
@@ -9718,9 +9749,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       final totals = decoded['totals'];
       final total = totals is Map ? totals['total_eur'] : null;
+      _directTripStopWorkerOk = true;
       if (total is num) return total.toDouble();
       return double.tryParse((total ?? '').toString().replaceAll(',', '.'));
     } catch (e) {
+      _directTripStopWorkerOk = false;
       debugPrint('[DIRECT_TRIP][STOP][WARN] using local total: $e');
       return null;
     }
@@ -9823,6 +9856,209 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  String _complianceRideId({
+    required String rideType,
+    String? bookingId,
+    String? tripId,
+    required DateTime stoppedAt,
+  }) {
+    final seed = (bookingId ?? tripId ?? '').trim();
+    final ts = stoppedAt.toUtc().millisecondsSinceEpoch;
+    if (seed.isNotEmpty) return 'rlg_${rideType}_${seed}_$ts';
+    return 'rlg_${rideType}_$ts';
+  }
+
+  String _complianceReceiptReference({
+    String? bookingId,
+    String? tripId,
+    required String rideId,
+  }) {
+    final booking = (bookingId ?? '').trim();
+    if (booking.isNotEmpty) return booking;
+    final trip = (tripId ?? '').trim();
+    if (trip.isNotEmpty) return 'TRIP-$trip';
+    return rideId.trim();
+  }
+
+  String _complianceValidationState({
+    required String rideType,
+    required bool backendConfirmed,
+    required String driverId,
+    required String receiptReference,
+    required DateTime? startedAt,
+    required DateTime stoppedAt,
+    String? bookingId,
+  }) {
+    if (driverId.trim().isEmpty ||
+        driverId.trim() == kFallbackDriverTrackingId.trim()) {
+      return 'blocked';
+    }
+    if (startedAt == null || startedAt.isAfter(stoppedAt)) return 'blocked';
+    if (receiptReference.trim().isEmpty) return 'blocked';
+    if (rideType == 'direct' && !backendConfirmed) return 'blocked';
+    if (rideType == 'planned' && (bookingId ?? '').trim().isEmpty) {
+      return 'incomplete';
+    }
+    return 'exportable';
+  }
+
+  Future<void> _writeComplianceLedgerRecord({
+    required Map<String, dynamic> record,
+  }) async {
+    try {
+      await _ComplianceRideLedgerStore.append(record);
+      debugPrint(
+        '[COMPLIANCE_LEDGER][WRITE] ride_id=${record['ride_id']} ride_type=${record['ride_type']} validation_state=${record['provenance']?['validation_state']} backend_confirmed=${record['provenance']?['backend_confirmed']}',
+      );
+    } catch (e) {
+      debugPrint('[COMPLIANCE_LEDGER][WARN] write_failed reason=$e');
+    }
+  }
+
+  Map<String, dynamic> _buildCompliancePlannedLedgerRecord({
+    required BookingItem booking,
+    required DateTime? startedAt,
+    required DateTime stoppedAt,
+    required double kmTotal,
+    required int waitSecondsTotal,
+    required bool backendConfirmed,
+  }) {
+    final bookingId = booking.bookingId.trim();
+    final driverId = kDriverId.trim();
+    final vehicleId = _directRideVehicleId().trim();
+    final rideId = _complianceRideId(
+      rideType: 'planned',
+      bookingId: bookingId,
+      stoppedAt: stoppedAt,
+    );
+    final receiptReference = _complianceReceiptReference(
+      bookingId: bookingId,
+      rideId: rideId,
+    );
+    final total = booking.price?.toDouble();
+    final validationState = _complianceValidationState(
+      rideType: 'planned',
+      backendConfirmed: backendConfirmed,
+      driverId: driverId,
+      receiptReference: receiptReference,
+      startedAt: startedAt,
+      stoppedAt: stoppedAt,
+      bookingId: bookingId,
+    );
+
+    return <String, dynamic>{
+      'ledger_version': '1.0',
+      'ride_id': rideId,
+      'ride_type': 'planned',
+      'lifecycle_status': 'completed',
+      'tenant_id': kOutboundTenantId,
+      'company_id': resolvedCompanyId,
+      'driver_id': driverId,
+      'vehicle_id': vehicleId,
+      'booking_id': bookingId,
+      'trip_id': null,
+      'session_id': _activeTripId,
+      'started_at_utc': startedAt?.toUtc().toIso8601String(),
+      'ended_at_utc': stoppedAt.toUtc().toIso8601String(),
+      'duration_seconds': startedAt == null
+          ? null
+          : stoppedAt.difference(startedAt).inSeconds,
+      'pickup': <String, dynamic>{'label': (booking.from ?? '').trim()},
+      'dropoff': <String, dynamic>{'label': (booking.to ?? '').trim()},
+      'distance_km': kmTotal,
+      'wait_seconds_total': waitSecondsTotal,
+      'fare': <String, dynamic>{
+        'total_eur': total,
+        'currency': booking.currency ?? kDefaultCurrency,
+      },
+      'payment': <String, dynamic>{'status': 'unknown'},
+      'references': <String, dynamic>{
+        'receipt_reference': receiptReference,
+        'invoice_reference': null,
+      },
+      'provenance': <String, dynamic>{
+        'backend_confirmed': backendConfirmed,
+        'validation_state': validationState,
+      },
+      'created_at_utc': DateTime.now().toUtc().toIso8601String(),
+      'finalized_at_utc': stoppedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  Map<String, dynamic> _buildComplianceDirectLedgerRecord({
+    required String? tripId,
+    required DateTime? startedAt,
+    required DateTime stoppedAt,
+    required double kmTotal,
+    required int waitSecondsTotal,
+    required double totalEur,
+    required bool backendConfirmed,
+  }) {
+    final driverId = kDriverId.trim();
+    final vehicleId = _directRideVehicleId().trim();
+    final rideId = _complianceRideId(
+      rideType: 'direct',
+      tripId: tripId,
+      stoppedAt: stoppedAt,
+    );
+    final receiptReference = _complianceReceiptReference(
+      tripId: tripId,
+      rideId: rideId,
+    );
+    final validationState = _complianceValidationState(
+      rideType: 'direct',
+      backendConfirmed: backendConfirmed,
+      driverId: driverId,
+      receiptReference: receiptReference,
+      startedAt: startedAt,
+      stoppedAt: stoppedAt,
+    );
+
+    return <String, dynamic>{
+      'ledger_version': '1.0',
+      'ride_id': rideId,
+      'ride_type': 'direct',
+      'lifecycle_status': 'completed',
+      'tenant_id': kOutboundTenantId,
+      'company_id': resolvedCompanyId,
+      'driver_id': driverId,
+      'vehicle_id': vehicleId,
+      'booking_id': null,
+      'trip_id': (tripId ?? '').trim().isEmpty ? null : tripId!.trim(),
+      'session_id': null,
+      'started_at_utc': startedAt?.toUtc().toIso8601String(),
+      'ended_at_utc': stoppedAt.toUtc().toIso8601String(),
+      'duration_seconds': startedAt == null
+          ? null
+          : stoppedAt.difference(startedAt).inSeconds,
+      'pickup': _currentOriginPayload(_startPos ?? _lastPos),
+      'dropoff': <String, dynamic>{
+        'label': (_directRideDestinationText ?? '').trim(),
+        if (_directRideDestinationPoint != null)
+          'lat': _directRideDestinationPoint!.lat,
+        if (_directRideDestinationPoint != null)
+          'lon': _directRideDestinationPoint!.lon,
+      },
+      'distance_km': kmTotal,
+      'wait_seconds_total': waitSecondsTotal,
+      'fare': <String, dynamic>{
+        'total_eur': totalEur,
+        'currency': kDefaultCurrency,
+      },
+      'payment': <String, dynamic>{'status': 'unknown'},
+      'references': <String, dynamic>{
+        'receipt_reference': receiptReference,
+        'invoice_reference': null,
+      },
+      'provenance': <String, dynamic>{
+        'backend_confirmed': backendConfirmed,
+        'validation_state': validationState,
+      },
+      'created_at_utc': DateTime.now().toUtc().toIso8601String(),
+      'finalized_at_utc': stoppedAt.toUtc().toIso8601String(),
+    };
+  }
+
   Future<void> _stopTrip() async {
     final trip = _activeTripId;
     if (trip == null && !_directRideActive) return;
@@ -9883,6 +10119,33 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (stoppedBooking != null) {
       await _completeStoppedBooking(stoppedBooking);
+    }
+    if (!wasDirectRide && stoppedBooking != null) {
+      final plannedLedger = _buildCompliancePlannedLedgerRecord(
+        booking: stoppedBooking,
+        startedAt: startedAt,
+        stoppedAt: stoppedAt,
+        kmTotal: kmAtStop,
+        waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+        backendConfirmed: plannedSessionStopOk,
+      );
+      unawaited(_writeComplianceLedgerRecord(record: plannedLedger));
+    }
+    if (wasDirectRide) {
+      final directBackendConfirmed =
+          _directTripStartWorkerOk && _directTripStopWorkerOk;
+      final directLedger = _buildComplianceDirectLedgerRecord(
+        tripId: directTripId,
+        startedAt: startedAt,
+        stoppedAt: stoppedAt,
+        kmTotal: _kmDriven,
+        waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+        totalEur: serverDirectTotal ?? finalTotal,
+        backendConfirmed: directBackendConfirmed,
+      );
+      unawaited(_writeComplianceLedgerRecord(record: directLedger));
+      _directTripStartWorkerOk = false;
+      _directTripStopWorkerOk = false;
     }
     await _clearActiveRouteAndNavigationState(
       reason: 'stop',
@@ -10179,6 +10442,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _activeTripId = null;
       _activeDirectTripId = null;
       _directRideActive = false;
+      _directTripStartWorkerOk = false;
+      _directTripStopWorkerOk = false;
       _directRideDestinationText = destination.label.trim();
       _directRideDestinationPoint = selectedPoint;
       _kmDriven = 0.0;
@@ -10223,6 +10488,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _directRideActive = true;
       _activeTripId = null;
       _activeDirectTripId = null;
+      _directTripStartWorkerOk = false;
+      _directTripStopWorkerOk = false;
       _activeBooking = null;
       _cameraMode = _CameraMode.follow;
       _hasSwitchedToFollow = true;
