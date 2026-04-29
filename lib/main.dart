@@ -2801,22 +2801,27 @@ class BusinessHomePage extends StatelessWidget {
                   leading: const Icon(Icons.local_taxi_outlined),
                   title: Text(
                     _t(
-                      nl: 'Open chauffeurweergave',
-                      en: 'Open driver view',
-                      fr: 'Ouvrir la vue chauffeur',
-                      es: 'Abrir vista de conductor',
+                      nl: 'Chauffeurs beheren',
+                      en: 'Manage drivers',
+                      fr: 'Gérer les chauffeurs',
+                      es: 'Gestionar conductores',
+                    ),
+                  ),
+                  subtitle: Text(
+                    _t(
+                      nl: 'Beheer chauffeurs en beschikbaarheid',
+                      en: 'Manage drivers and availability',
+                      fr: 'Gérez les chauffeurs et disponibilités',
+                      es: 'Gestiona conductores y disponibilidad',
                     ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    final previousRole = appRoleNotifier.value;
-                    setAppRole(AppRole.driver);
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const CompanyDriverManagementPage(),
+                      ),
                     );
-                    if (context.mounted) {
-                      setAppRole(previousRole);
-                    }
                   },
                 ),
               ),
@@ -2824,6 +2829,352 @@ class BusinessHomePage extends StatelessWidget {
               const FluxidiBackToStartButton(),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class CompanyDriverManagementPage extends StatelessWidget {
+  const CompanyDriverManagementPage({super.key});
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  Widget _driverField(
+    TextEditingController ctrl,
+    String label, {
+    bool enabled = true,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextField(
+        controller: ctrl,
+        enabled: enabled,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white70),
+          filled: true,
+          fillColor: const Color(0xFF0B0B0B),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openEditDriverDialog(
+    BuildContext context,
+    DriverProfile existing,
+  ) async {
+    final nameCtrl = TextEditingController(text: existing.fullName);
+    final idCtrl = TextEditingController(text: existing.employeeNumber);
+    final phoneCtrl = TextEditingController(text: existing.phone);
+    final taxiCardNumberCtrl = TextEditingController(
+      text: existing.taxiDriverCardNumber,
+    );
+    final taxiCardExpiryCtrl = TextEditingController(
+      text: existing.taxiDriverCardExpiry,
+    );
+    var active = existing.isActive;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          backgroundColor: const Color(0xFF141B2F),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            _t(
+              nl: 'Chauffeur bewerken',
+              en: 'Edit driver',
+              fr: 'Modifier chauffeur',
+              es: 'Editar conductor',
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _driverField(
+                  nameCtrl,
+                  _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                ),
+                _driverField(
+                  idCtrl,
+                  _t(
+                    nl: 'Chauffeur-ID',
+                    en: 'Driver ID',
+                    fr: 'ID chauffeur',
+                    es: 'ID conductor',
+                  ),
+                  enabled: false,
+                ),
+                _driverField(
+                  phoneCtrl,
+                  _t(
+                    nl: 'Telefoonnummer',
+                    en: 'Phone number',
+                    fr: 'Numero de telephone',
+                    es: 'Numero de telefono',
+                  ),
+                ),
+                _driverField(
+                  taxiCardNumberCtrl,
+                  _t(
+                    nl: 'Kaartnummer',
+                    en: 'Card number',
+                    fr: 'N° carte',
+                    es: 'N.º tarjeta',
+                  ),
+                ),
+                _driverField(
+                  taxiCardExpiryCtrl,
+                  _t(
+                    nl: 'Vervaldatum kaart',
+                    en: 'Card expiry',
+                    fr: 'Expiration carte',
+                    es: 'Vencimiento tarjeta',
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: active,
+                  onChanged: (v) => setDialogState(() => active = v),
+                  title: Text(
+                    _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text(
+                          _t(
+                            nl: 'Annuleren',
+                            en: 'Cancel',
+                            fr: 'Annuler',
+                            es: 'Cancelar',
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          final updated = existing.copyWith(
+                            fullName: nameCtrl.text.trim(),
+                            phone: phoneCtrl.text.trim(),
+                            taxiDriverCardNumber: taxiCardNumberCtrl.text
+                                .trim(),
+                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
+                                .trim(),
+                            isActive: active,
+                          );
+                          updateDriver(existing.id, updated);
+                          Navigator.pop(ctx);
+                        },
+                        child: Text(
+                          _t(
+                            nl: 'Opslaan',
+                            en: 'Save',
+                            fr: 'Enregistrer',
+                            es: 'Guardar',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _line(String label, String value) {
+    final shown = value.trim().isEmpty ? '—' : value.trim();
+    return Text(
+      '$label: $shown',
+      style: const TextStyle(color: Colors.white70, fontSize: 12),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: const Color(0xFF0B1020),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0B1020),
+          title: Text(
+            _t(
+              nl: 'Chauffeurs beheren',
+              en: 'Manage drivers',
+              fr: 'Gérer les chauffeurs',
+              es: 'Gestionar conductores',
+            ),
+          ),
+        ),
+        body: ValueListenableBuilder<List<DriverProfile>>(
+          valueListenable: driversNotifier,
+          builder: (context, drivers, _) {
+            final visible = drivers
+                .where(
+                  (d) => fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
+                )
+                .toList(growable: false);
+            if (visible.isEmpty) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    _t(
+                      nl: 'Nog geen chauffeurs beschikbaar.',
+                      en: 'No drivers available yet.',
+                      fr: 'Aucun chauffeur disponible.',
+                      es: 'Todavía no hay conductores disponibles.',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ),
+              );
+            }
+            return ListView.separated(
+              padding: const EdgeInsets.all(14),
+              itemCount: visible.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, i) {
+                final d = visible[i];
+                final status = d.isActive
+                    ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
+                    : _t(
+                        nl: 'Inactief',
+                        en: 'Inactive',
+                        fr: 'Inactif',
+                        es: 'Inactivo',
+                      );
+                return Card(
+                  color: const Color(0xFF141B2F),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                d.fullName.trim().isEmpty
+                                    ? _t(
+                                        nl: 'Naamloze chauffeur',
+                                        en: 'Unnamed driver',
+                                        fr: 'Chauffeur sans nom',
+                                        es: 'Conductor sin nombre',
+                                      )
+                                    : d.fullName.trim(),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              status,
+                              style: TextStyle(
+                                color: d.isActive
+                                    ? Colors.greenAccent
+                                    : Colors.white54,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _line(
+                          _t(
+                            nl: 'Chauffeur-ID',
+                            en: 'Driver ID',
+                            fr: 'ID chauffeur',
+                            es: 'ID conductor',
+                          ),
+                          d.employeeNumber,
+                        ),
+                        _line(
+                          _t(
+                            nl: 'Telefoon',
+                            en: 'Phone',
+                            fr: 'Telephone',
+                            es: 'Telefono',
+                          ),
+                          d.phone,
+                        ),
+                        _line(
+                          _t(
+                            nl: 'Chauffeurskaartnummer',
+                            en: 'Taxi driver card number',
+                            fr: 'Numero carte chauffeur',
+                            es: 'Numero tarjeta conductor',
+                          ),
+                          d.taxiDriverCardNumber,
+                        ),
+                        _line(
+                          _t(
+                            nl: 'Vervaldatum chauffeurskaart',
+                            en: 'Taxi driver card expiry',
+                            fr: 'Expiration carte chauffeur',
+                            es: 'Vencimiento tarjeta conductor',
+                          ),
+                          d.taxiDriverCardExpiry,
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _openEditDriverDialog(context, d),
+                            icon: const Icon(Icons.edit_outlined, size: 16),
+                            label: Text(
+                              _t(
+                                nl: 'Bewerken',
+                                en: 'Edit',
+                                fr: 'Modifier',
+                                es: 'Editar',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
         ),
       ),
     );
