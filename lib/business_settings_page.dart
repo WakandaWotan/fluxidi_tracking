@@ -1548,14 +1548,28 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     value: _backendVatDisplayMode,
-                    items: const [
+                    items: [
                       DropdownMenuItem(
                         value: 'incl',
-                        child: Text('Prijzen inclusief BTW'),
+                        child: Text(
+                          _t(
+                            nl: 'Prijzen inclusief BTW',
+                            en: 'Prices including VAT',
+                            fr: 'Prix TVA incluse',
+                            es: 'Precios con IVA incluido',
+                          ),
+                        ),
                       ),
                       DropdownMenuItem(
                         value: 'excl',
-                        child: Text('Prijzen exclusief BTW'),
+                        child: Text(
+                          _t(
+                            nl: 'Prijzen exclusief BTW',
+                            en: 'Prices excluding VAT',
+                            fr: 'Prix hors TVA',
+                            es: 'Precios sin IVA',
+                          ),
+                        ),
                       ),
                     ],
                     onChanged: (v) {
