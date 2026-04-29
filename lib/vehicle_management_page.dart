@@ -136,140 +136,183 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return ok == true;
   }
 
-  Future<DriverProfile?> _openDriverCreator() async {
-    final nameCtrl = TextEditingController();
-    final idCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
-    final taxiCardNumberCtrl = TextEditingController();
-    final taxiCardExpiryCtrl = TextEditingController();
-    DriverProfile? created;
+  Future<DriverProfile?> _openDriverCreator({DriverProfile? existing}) async {
+    final isEdit = existing != null;
+    final nameCtrl = TextEditingController(text: existing?.fullName ?? '');
+    final idCtrl = TextEditingController(text: existing?.employeeNumber ?? '');
+    final phoneCtrl = TextEditingController(text: existing?.phone ?? '');
+    final taxiCardNumberCtrl = TextEditingController(
+      text: existing?.taxiDriverCardNumber ?? '',
+    );
+    final taxiCardExpiryCtrl = TextEditingController(
+      text: existing?.taxiDriverCardExpiry ?? '',
+    );
+    DriverProfile? saved;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         backgroundColor: const Color(0xFF141B2F),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
-          _t(
-            nl: 'Chauffeur toevoegen',
-            en: 'New driver',
-            fr: 'Ajouter un chauffeur',
-            es: 'Agregar conductor',
-          ),
+          isEdit
+              ? _t(
+                  nl: 'Chauffeur bewerken',
+                  en: 'Edit driver',
+                  fr: 'Modifier chauffeur',
+                  es: 'Editar conductor',
+                )
+              : _t(
+                  nl: 'Chauffeur toevoegen',
+                  en: 'New driver',
+                  fr: 'Ajouter un chauffeur',
+                  es: 'Agregar conductor',
+                ),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _txt(nameCtrl, _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre')),
-            _txt(
-              idCtrl,
-              _t(
-                nl: 'Chauffeur-ID',
-                en: 'Driver ID',
-                fr: 'ID chauffeur',
-                es: 'ID conductor',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _txt(
+                nameCtrl,
+                _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
               ),
-            ),
-            _txt(
-              phoneCtrl,
-              _t(
-                nl: 'Telefoonnummer',
-                en: 'Phone number',
-                fr: 'Numero de telephone',
-                es: 'Numero de telefono',
+              _txt(
+                idCtrl,
+                _t(
+                  nl: 'Chauffeur-ID',
+                  en: 'Driver ID',
+                  fr: 'ID chauffeur',
+                  es: 'ID conductor',
+                ),
+                enabled: !isEdit,
               ),
-            ),
-            _txt(
-              taxiCardNumberCtrl,
-              _t(
-                nl: 'Chauffeurskaartnummer',
-                en: 'Taxi driver card number',
-                fr: 'Numero de carte chauffeur',
-                es: 'Numero de tarjeta de conductor',
+              _txt(
+                phoneCtrl,
+                _t(
+                  nl: 'Telefoonnummer',
+                  en: 'Phone number',
+                  fr: 'Numero de telephone',
+                  es: 'Numero de telefono',
+                ),
               ),
-            ),
-            _txt(
-              taxiCardExpiryCtrl,
-              _t(
-                nl: 'Vervaldatum chauffeurskaart',
-                en: 'Taxi driver card expiry',
-                fr: 'Expiration carte chauffeur',
-                es: 'Vencimiento tarjeta de conductor',
+              _txt(
+                taxiCardNumberCtrl,
+                _t(
+                  nl: 'Kaartnummer',
+                  en: 'Card number',
+                  fr: 'N° carte',
+                  es: 'N.º tarjeta',
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 12,
+              _txt(
+                taxiCardExpiryCtrl,
+                _t(
+                  nl: 'Vervaldatum kaart',
+                  en: 'Card expiry',
+                  fr: 'Expiration carte',
+                  es: 'Vencimiento tarjeta',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 12,
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      _t(
-                        nl: 'Annuleren',
-                        en: 'Cancel',
-                        fr: 'Annuler',
-                        es: 'Cancelar',
+                      child: Text(
+                        _t(
+                          nl: 'Annuleren',
+                          en: 'Cancel',
+                          fr: 'Annuler',
+                          es: 'Cancelar',
+                        ),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () {
-                      final fullName = nameCtrl.text.trim();
-                      final employeeNumber = idCtrl.text.trim();
-                      if (fullName.isEmpty || employeeNumber.isEmpty) return;
-                      created = DriverProfile(
-                        id: 'drv_${DateTime.now().millisecondsSinceEpoch}',
-                        fullName: fullName,
-                        employeeNumber: employeeNumber,
-                        phone: phoneCtrl.text.trim(),
-                        taxiDriverCardNumber: taxiCardNumberCtrl.text.trim(),
-                        taxiDriverCardExpiry: taxiCardExpiryCtrl.text.trim(),
-                        isActive: true,
-                        companyId: companyProfileNotifier.value != null
-                            ? resolvedCompanyId
-                            : null,
-                      );
-                      addDriver(created!);
-                      Navigator.pop(ctx);
-                    },
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 12,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        final fullName = nameCtrl.text.trim();
+                        final employeeNumber = idCtrl.text.trim();
+                        if (!isEdit &&
+                            (fullName.isEmpty || employeeNumber.isEmpty)) {
+                          return;
+                        }
+                        if (isEdit) {
+                          saved = existing.copyWith(
+                            fullName: fullName,
+                            phone: phoneCtrl.text.trim(),
+                            taxiDriverCardNumber: taxiCardNumberCtrl.text
+                                .trim(),
+                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
+                                .trim(),
+                          );
+                          updateDriver(existing.id, saved!);
+                        } else {
+                          saved = DriverProfile(
+                            id: 'drv_${DateTime.now().millisecondsSinceEpoch}',
+                            fullName: fullName,
+                            employeeNumber: employeeNumber,
+                            phone: phoneCtrl.text.trim(),
+                            taxiDriverCardNumber: taxiCardNumberCtrl.text
+                                .trim(),
+                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
+                                .trim(),
+                            isActive: true,
+                            companyId: companyProfileNotifier.value != null
+                                ? resolvedCompanyId
+                                : null,
+                          );
+                          addDriver(saved!);
+                        }
+                        Navigator.pop(ctx);
+                      },
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 12,
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      _t(
-                        nl: 'Toevoegen',
-                        en: 'Add',
-                        fr: 'Ajouter',
-                        es: 'Agregar',
+                      child: Text(
+                        isEdit
+                            ? _t(
+                                nl: 'Opslaan',
+                                en: 'Save',
+                                fr: 'Enregistrer',
+                                es: 'Guardar',
+                              )
+                            : _t(
+                                nl: 'Toevoegen',
+                                en: 'Add',
+                                fr: 'Ajouter',
+                                es: 'Agregar',
+                              ),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
-    return created;
+    return saved;
   }
 
   Future<void> _pickVehiclePhoto({
@@ -834,6 +877,42 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   ),
                                   d.taxiDriverCardExpiry,
                                 ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final updated = await _openDriverCreator(
+                                        existing: d,
+                                      );
+                                      if (updated == null) return;
+                                      setLocalState(() {
+                                        linkedDriverId = updated.id;
+                                      });
+                                    },
+                                    icon: const Icon(
+                                      Icons.edit_outlined,
+                                      size: 16,
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 8,
+                                      ),
+                                    ),
+                                    label: Text(
+                                      _t(
+                                        nl: 'Chauffeur bewerken',
+                                        en: 'Edit driver',
+                                        fr: 'Modifier chauffeur',
+                                        es: 'Editar conductor',
+                                      ),
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
                               ],
                             );
                           },
@@ -1213,11 +1292,13 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     TextEditingController ctrl,
     String label, {
     VoidCallback? onChanged,
+    bool enabled = true,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
         controller: ctrl,
+        enabled: enabled,
         onChanged: onChanged == null ? null : (_) => onChanged(),
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
