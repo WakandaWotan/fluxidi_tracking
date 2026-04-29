@@ -200,6 +200,27 @@ String get kWorkerBaseUrl {
 /// otherwise [kFallbackDriverTrackingId] for legacy/company-preview driver view.
 String get kDriverId => resolvedDriverTrackingId;
 
+bool _outboundTenantFallbackLogged = false;
+
+/// Tenant id for outbound ride/trip Worker payloads.
+///
+/// Prefer local [CompanyProfile.companyId] ([resolvedCompanyId]) when available.
+/// This value is still MVP/provisional client state: backend must later issue
+/// the authoritative tenant id for production compliance (including Chiron).
+String get kOutboundTenantId {
+  final localCompanyId = companyProfileNotifier.value?.companyId.trim();
+  if (localCompanyId != null && localCompanyId.isNotEmpty) {
+    return localCompanyId;
+  }
+  if (!_outboundTenantFallbackLogged) {
+    _outboundTenantFallbackLogged = true;
+    debugPrint(
+      '[TENANT][OUTBOUND][FALLBACK] Using default tenant id (no local company profile id).',
+    );
+  }
+  return kTenantId;
+}
+
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
@@ -9279,7 +9300,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (point != null) 'lon': point.lon,
       };
       final payload = <String, dynamic>{
-        'tenant_id': kTenantId,
+        'tenant_id': kOutboundTenantId,
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': _currentOriginPayload(_lastPos),
@@ -9399,7 +9420,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
-        'tenant_id': kTenantId,
+        'tenant_id': kOutboundTenantId,
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': <String, dynamic>{
