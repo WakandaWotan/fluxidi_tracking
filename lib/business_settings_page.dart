@@ -1223,8 +1223,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               title: _t(
                 nl: 'Chiron readiness',
                 en: 'Chiron readiness',
-                fr: 'Preparation Chiron',
-                es: 'Preparacion Chiron',
+                fr: 'Préparation Chiron',
+                es: 'Preparación Chiron',
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1237,6 +1237,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       es: 'Esta lista no bloquea nada. Ayuda a preparar una futura integración con Chiron.',
                     ),
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Deze kaart is alleen informatief en slaat niets op.',
+                      en: 'This card is informational only and does not save anything.',
+                      fr: 'Cette carte est uniquement informative et n\'enregistre rien.',
+                      es: 'Esta tarjeta es solo informativa y no guarda nada.',
+                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const SizedBox(height: 14),
                   _chironReadinessSection(
@@ -1252,7 +1262,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'Officiële/juridische naam',
                           en: 'Official/legal name',
-                          fr: 'Nom officiel/legal',
+                          fr: 'Nom officiel/légal',
                           es: 'Nombre oficial/legal',
                         ),
                         value: companyNameReady
@@ -1274,8 +1284,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'KBO / ondernemingsnummer',
                           en: 'KBO / company registration number',
-                          fr: 'KBO / numero d entreprise',
-                          es: 'KBO / numero de empresa',
+                          fr: 'KBO / numéro d\'entreprise',
+                          es: 'KBO / número de empresa',
                         ),
                         value: kboReady
                             ? _backendRegistrationCtrl.text.trim()
@@ -1292,8 +1302,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'BTW-nummer',
                           en: 'VAT number',
-                          fr: 'Numero TVA',
-                          es: 'Numero IVA',
+                          fr: 'Numéro TVA',
+                          es: 'Número IVA',
                         ),
                         value: vatReady
                             ? _backendVatNumberCtrl.text.trim()
@@ -1301,7 +1311,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 nl: 'optioneel/nog leeg',
                                 en: 'optional/empty',
                                 fr: 'optionnel/vide',
-                                es: 'opcional/vacio',
+                                es: 'opcional/vacío',
                               ),
                       ),
                       _chironReadinessItem(
@@ -1310,7 +1320,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           nl: 'Adres + postcode + stad',
                           en: 'Address + postcode + city',
                           fr: 'Adresse + code postal + ville',
-                          es: 'Direccion + codigo postal + ciudad',
+                          es: 'Dirección + código postal + ciudad',
                         ),
                         value: addressReady
                             ? _t(
@@ -1333,8 +1343,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Voertuigen',
                       en: 'Vehicles',
-                      fr: 'Vehicules',
-                      es: 'Vehiculos',
+                      fr: 'Véhicules',
+                      es: 'Vehículos',
                     ),
                     [
                       _chironReadinessItem(
@@ -1342,8 +1352,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'Aantal voertuigen',
                           en: 'Total vehicles',
-                          fr: 'Nombre de vehicules',
-                          es: 'Total vehiculos',
+                          fr: 'Nombre de véhicules',
+                          es: 'Total vehículos',
                         ),
                         value: countText(vehicleCount),
                       ),
@@ -1355,7 +1365,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           nl: 'Met nummerplaat',
                           en: 'With license plate',
                           fr: 'Avec plaque',
-                          es: 'Con matricula',
+                          es: 'Con matrícula',
                         ),
                         value: ratioText(vehiclesWithPlate, vehicleCount),
                       ),
@@ -1366,8 +1376,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'Met exploitatievergunningnummer',
                           en: 'With exploitation license number',
-                          fr: 'Avec numero de licence',
-                          es: 'Con numero de licencia',
+                          fr: 'Avec numéro de licence',
+                          es: 'Con número de licencia',
                         ),
                         value: ratioText(
                           vehiclesWithExploitationLicense,
@@ -1381,8 +1391,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'Met chassisnummer',
                           en: 'With registration/VIN/chassis number',
-                          fr: 'Avec immatriculation/VIN/chassis',
-                          es: 'Con matricula/VIN/chasis',
+                          fr: 'Avec immatriculation/VIN/châssis',
+                          es: 'Con matrícula/VIN/chasis',
                         ),
                         value: ratioText(
                           vehiclesWithRegistration,
@@ -1427,8 +1437,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         label: _t(
                           nl: 'Met chauffeurskaartnummer',
                           en: 'With taxi driver card number',
-                          fr: 'Avec numero carte chauffeur',
-                          es: 'Con numero tarjeta conductor',
+                          fr: 'Avec numéro carte chauffeur',
+                          es: 'Con número tarjeta conductor',
                         ),
                         value: ratioText(
                           driversWithTaxiCardNumber,
@@ -1853,25 +1863,47 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _backendBusinessSaving
-                          ? null
-                          : _saveBackendBusinessProfile,
-                      icon: _backendBusinessSaving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.cloud_upload_outlined),
-                      label: Text(
-                        _t(
-                          nl: 'Bedrijfsgegevens opslaan',
-                          en: 'Save company details',
-                          fr: 'Enregistrer les informations',
-                          es: 'Guardar datos de empresa',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _backendBusinessSaving
+                              ? null
+                              : _saveBackendBusinessProfile,
+                          icon: _backendBusinessSaving
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.cloud_upload_outlined),
+                          label: Text(
+                            _t(
+                              nl: 'Bedrijfsgegevens opslaan',
+                              en: 'Save company details',
+                              fr: 'Enregistrer les informations',
+                              es: 'Guardar datos de empresa',
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _t(
+                            nl: 'Slaat alleen de officiële bedrijfsgegevens op.',
+                            en: 'Saves only the official company details.',
+                            fr: 'Enregistre uniquement les informations officielles de l’entreprise.',
+                            es: 'Guarda solo los datos oficiales de la empresa.',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11,
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -1960,25 +1992,47 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _backendTaxSaving
-                          ? null
-                          : _saveBackendTaxProfile,
-                      icon: _backendTaxSaving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.cloud_upload_outlined),
-                      label: Text(
-                        _t(
-                          nl: 'BTW-instellingen opslaan',
-                          en: 'Save VAT settings',
-                          fr: 'Enregistrer TVA',
-                          es: 'Guardar IVA',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _backendTaxSaving
+                              ? null
+                              : _saveBackendTaxProfile,
+                          icon: _backendTaxSaving
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.cloud_upload_outlined),
+                          label: Text(
+                            _t(
+                              nl: 'BTW-instellingen opslaan',
+                              en: 'Save VAT settings',
+                              fr: 'Enregistrer TVA',
+                              es: 'Guardar IVA',
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _t(
+                            nl: 'Slaat alleen de BTW-instellingen op.',
+                            en: 'Saves only the VAT settings.',
+                            fr: 'Enregistre uniquement les paramètres TVA.',
+                            es: 'Guarda solo la configuración de IVA.',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11,
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -2417,10 +2471,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               icon: const Icon(Icons.save),
               label: Text(
                 _t(
-                  nl: 'Instellingen opslaan',
-                  en: 'Save settings',
-                  fr: 'Enregistrer',
-                  es: 'Guardar configuracion',
+                  nl: 'Branding, support & prijsinstellingen opslaan',
+                  en: 'Save branding, support & pricing settings',
+                  fr: 'Enregistrer branding, support et tarifs',
+                  es: 'Guardar marca, soporte y precios',
                 ),
               ),
             ),
