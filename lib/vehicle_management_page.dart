@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 class VehicleManagementPage extends StatefulWidget {
   const VehicleManagementPage({super.key});
@@ -281,7 +282,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         imageQuality: 90,
       );
       if (picked == null) return;
-      onPicked(picked.path);
+      final persisted = await _persistPickedVehiclePhoto(picked.path);
+      // Persisted copy in app documents survives image_picker cache cleanup.
+      // Fallback to the original picker path on copy failure to preserve UX.
+      onPicked(persisted ?? picked.path);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -304,10 +308,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     try {
       final picked = await _imagePicker.pickMultiImage(imageQuality: 90);
       if (picked.isEmpty) return const <String>[];
-      return picked
-          .map((x) => x.path)
-          .where((p) => p.trim().isNotEmpty)
-          .toList(growable: false);
+      final refs = <String>[];
+      for (final x in picked) {
+        final raw = x.path.trim();
+        if (raw.isEmpty) continue;
+        final persisted = await _persistPickedVehiclePhoto(raw);
+        refs.add((persisted ?? raw).trim());
+      }
+      return refs.where((p) => p.trim().isNotEmpty).toList(growable: false);
     } catch (_) {
       if (!mounted) return const <String>[];
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,6 +332,54 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       );
       return const <String>[];
     }
+  }
+
+  Future<String?> _persistPickedVehiclePhoto(String sourcePath) async {
+    try {
+      final source = sourcePath.trim();
+      if (source.isEmpty) return null;
+      final src = File(source);
+      if (!await src.exists()) return null;
+
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        '${base.path}${Platform.pathSeparator}tenant_state'
+        '${Platform.pathSeparator}vehicle_photos',
+      );
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final ext = _vehiclePhotoFileExtension(source);
+      final fileName =
+          'vehicle_photo_${DateTime.now().millisecondsSinceEpoch}'
+          '${ext.isEmpty ? '' : '.$ext'}';
+      final target = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await src.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _vehiclePhotoFileExtension(String path) {
+    final lower = path.toLowerCase();
+    final slash = lower.lastIndexOf(Platform.pathSeparator);
+    final altSlash = lower.lastIndexOf('/');
+    final base = lower.substring((slash > altSlash ? slash : altSlash) + 1);
+    final dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot == base.length - 1) return '';
+    final raw = base.substring(dot + 1);
+    const allowed = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'heic',
+    };
+    return allowed.contains(raw) ? raw : '';
   }
 
   Widget _photoPreviewBox({
