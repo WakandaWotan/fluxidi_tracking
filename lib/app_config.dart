@@ -1094,14 +1094,39 @@ Future<File> _tenantStateFile() async {
   return File('${dir.path}${Platform.pathSeparator}tenant_state_v1.json');
 }
 
+/// Local on-device cache for the "Officiële bedrijfsgegevens" backend profile.
+///
+/// Backed by [_persistLocalTenantState]/[loadLocalTenantState] so values typed
+/// in Business Settings survive app restarts even if the backend save fails or
+/// the device is offline. Backend remains preferred when it returns meaningful
+/// (non-empty) values; see merge logic in `business_settings_page.dart`.
+final ValueNotifier<BackendBusinessProfile?>
+localBackendBusinessProfileNotifier = ValueNotifier<BackendBusinessProfile?>(
+  null,
+);
+
+/// Update the local cache for [BackendBusinessProfile] and persist to disk.
+///
+/// Pass `null` to clear the cache. Persistence is best-effort and never throws.
+Future<void> updateLocalBackendBusinessProfileCache(
+  BackendBusinessProfile? profile,
+) async {
+  localBackendBusinessProfileNotifier.value = profile;
+  await _persistLocalTenantState();
+}
+
 Future<void> _persistLocalTenantState() async {
   try {
     final file = await _tenantStateFile();
+    final cachedBackendProfile = localBackendBusinessProfileNotifier.value
+        ?.toJson();
     final payload = <String, dynamic>{
       'version': 1,
       'businessSettings': _encodeBusinessSettings(
         businessSettingsNotifier.value,
       ),
+      if (cachedBackendProfile != null)
+        'backendBusinessProfile': cachedBackendProfile,
       'vehicles': vehiclesNotifier.value
           .map(_encodeVehicle)
           .toList(growable: false),
@@ -1331,6 +1356,20 @@ Future<void> loadLocalTenantState() async {
       // If no language key exists in saved data, keep app default.
       if (businessJson.containsKey('defaultLanguage')) {
         setAppLanguage(loadedBusiness.defaultLanguage);
+      }
+    }
+
+    // Backward-compatible: only present when the user already saved official
+    // company details locally. Older tenant_state_v1.json files load fine.
+    final backendProfileMap = map['backendBusinessProfile'];
+    if (backendProfileMap is Map) {
+      try {
+        localBackendBusinessProfileNotifier.value =
+            BackendBusinessProfile.fromJson(
+              Map<String, dynamic>.from(backendProfileMap),
+            );
+      } catch (_) {
+        // Ignore malformed cached profile; defaults remain.
       }
     }
 

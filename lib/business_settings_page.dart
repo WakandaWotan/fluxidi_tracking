@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -114,11 +115,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     companyProfileNotifier.addListener(_onLogoSanitizationListeners);
     businessSettingsNotifier.addListener(_onLogoSanitizationListeners);
     _hydrateFromSettings(businessSettingsNotifier.value);
+    // Prefer locally cached "Officiële bedrijfsgegevens" so user-entered values
+    // survive app restarts even when the backend is offline. Falls back to the
+    // existing defaults+local-CompanyProfile preview when no cache exists yet.
+    final cachedBackendProfile = localBackendBusinessProfileNotifier.value;
     _hydrateBackendBusinessProfile(
-      mergeLocalIntoBackendPreview(
-        BackendBusinessProfile.defaults(),
-        companyProfileNotifier.value,
-      ),
+      cachedBackendProfile ??
+          mergeLocalIntoBackendPreview(
+            BackendBusinessProfile.defaults(),
+            companyProfileNotifier.value,
+          ),
     );
     _hydrateBackendTaxProfile(BackendTaxProfile.defaults());
     _mergeLocalIntoGeneralControllersIfEligible();
@@ -311,6 +317,50 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     replaceIfEmptyOrAppDefault(_replyToCtrl, replyFill, appEmail);
   }
 
+  /// True when [value] looks "meaningful" (not empty after trim).
+  static bool _backendFieldHasValue(String value) => value.trim().isNotEmpty;
+
+  /// Non-destructive field-by-field merge of [server] over [local].
+  ///
+  /// For every [BackendBusinessProfile] field we keep the [local] (form/cached)
+  /// value when [server] returns an empty/whitespace value; otherwise we use
+  /// the server value. This prevents an empty/default backend response from
+  /// erasing fields the user already typed and saved locally.
+  BackendBusinessProfile _mergeBackendBusinessProfile({
+    required BackendBusinessProfile local,
+    required BackendBusinessProfile server,
+  }) {
+    String pick(String localValue, String serverValue) =>
+        _backendFieldHasValue(serverValue) ? serverValue : localValue;
+    return BackendBusinessProfile(
+      companyName: pick(local.companyName, server.companyName),
+      legalName: pick(local.legalName, server.legalName),
+      vatNumber: pick(local.vatNumber, server.vatNumber),
+      companyRegistrationNumber: pick(
+        local.companyRegistrationNumber,
+        server.companyRegistrationNumber,
+      ),
+      address: pick(local.address, server.address),
+      postcode: pick(local.postcode, server.postcode),
+      city: pick(local.city, server.city),
+      country: pick(local.country, server.country),
+      phone: pick(local.phone, server.phone),
+      email: pick(local.email, server.email),
+      website: pick(local.website, server.website),
+      bookingEmail: pick(local.bookingEmail, server.bookingEmail),
+      invoiceEmail: pick(local.invoiceEmail, server.invoiceEmail),
+      iban: pick(local.iban, server.iban),
+      paymentReferencePrefix: pick(
+        local.paymentReferencePrefix,
+        server.paymentReferencePrefix,
+      ),
+      invoiceReceiptFooterText: pick(
+        local.invoiceReceiptFooterText,
+        server.invoiceReceiptFooterText,
+      ),
+    );
+  }
+
   Future<void> _loadBackendProfiles() async {
     setState(() {
       _backendProfilesLoading = true;
@@ -325,10 +375,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
       final rawTax = results[1] as BackendTaxProfile;
+      // Merge server response over the locally cached profile so empty server
+      // fields do not wipe non-empty user-saved values.
+      final cached = localBackendBusinessProfileNotifier.value;
+      final localBase =
+          cached ??
+          mergeLocalIntoBackendPreview(
+            BackendBusinessProfile.defaults(),
+            companyProfileNotifier.value,
+          );
+      final merged = _mergeBackendBusinessProfile(
+        local: localBase,
+        server: rawBiz,
+      );
       setState(() {
-        _hydrateBackendBusinessProfile(
-          mergeLocalIntoBackendPreview(rawBiz, companyProfileNotifier.value),
-        );
+        _hydrateBackendBusinessProfile(merged);
         _hydrateBackendTaxProfile(rawTax);
         _mergeLocalIntoGeneralControllersIfEligible();
         _backendProfilesStatus = _t(
@@ -338,17 +399,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Configuracion cargada.',
         );
       });
+      // Refresh local cache with the merged result, best-effort.
+      unawaited(updateLocalBackendBusinessProfileCache(merged));
     } catch (e) {
       if (!mounted) return;
+      // Prefer the local cache when available; only fall back to defaults +
+      // local CompanyProfile preview when no cache exists yet.
+      final cached = localBackendBusinessProfileNotifier.value;
       setState(() {
         _hydrateBackendBusinessProfile(
-          mergeLocalIntoBackendPreview(
-            BackendBusinessProfile.defaults(),
-            companyProfileNotifier.value,
-          ),
+          cached ??
+              mergeLocalIntoBackendPreview(
+                BackendBusinessProfile.defaults(),
+                companyProfileNotifier.value,
+              ),
         );
         _mergeLocalIntoGeneralControllersIfEligible();
-        final hasLocal = companyProfileNotifier.value != null;
+        final hasLocal = cached != null || companyProfileNotifier.value != null;
         _backendProfilesError = hasLocal
             ? _t(
                 nl: 'Online bedrijfsinstellingen niet geladen. Lokale bedrijfsgegevens blijven beschikbaar.',
@@ -417,13 +484,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _backendProfilesError = null;
       _backendProfilesStatus = null;
     });
+    final formProfile = _backendBusinessProfileFromForm();
+    // Save to local cache first so user-entered values survive app restart
+    // even if the backend HTTP call fails or the device is offline.
+    await updateLocalBackendBusinessProfileCache(formProfile);
     try {
-      final saved = await saveBackendBusinessProfile(
-        _backendBusinessProfileFromForm(),
-      );
+      final saved = await saveBackendBusinessProfile(formProfile);
       if (!mounted) return;
+      // Merge so empty backend echo does not erase locally entered values.
+      final merged = _mergeBackendBusinessProfile(
+        local: formProfile,
+        server: saved,
+      );
       setState(() {
-        _hydrateBackendBusinessProfile(saved);
+        _hydrateBackendBusinessProfile(merged);
         _backendProfilesStatus = _t(
           nl: 'Bedrijfsprofiel opgeslagen.',
           en: 'Business profile saved.',
@@ -431,8 +505,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Perfil empresarial guardado.',
         );
       });
+      unawaited(updateLocalBackendBusinessProfileCache(merged));
     } catch (e) {
       if (!mounted) return;
+      // Local cache stays intact (saved above); just surface the existing
+      // error message so the UI behaviour remains the same as before.
       setState(
         () => _backendProfilesError =
             '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e',
