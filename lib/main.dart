@@ -13945,7 +13945,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       MaterialPageRoute(
         builder: (ctx) => _TripHistoryPage(
           workerBaseUrl: kWorkerBaseUrl,
-          tenantId: kTenantId,
+          tenantId: kOutboundTenantId,
           driverId: kDriverId,
           headers: _headers(admin: true),
         ),
