@@ -388,6 +388,26 @@ function summarizeTrip(trip) {
       : 0,
     total_eur: Number.isFinite(Number(trip?.total_eur)) ? Number(trip.total_eur) : null,
     currency: safeStr(trip?.currency ?? trip?.pricing_snapshot?.currency ?? "EUR", 8) ?? "EUR",
+    payment_status: safeStr(trip?.payment_status ?? trip?.paymentStatus ?? "", 32) ?? null,
+    paymentStatus: safeStr(trip?.paymentStatus ?? trip?.payment_status ?? "", 32) ?? null,
+    payment_method: safeStr(trip?.payment_method ?? trip?.paymentMethod ?? "", 32) ?? null,
+    paymentMethod: safeStr(trip?.paymentMethod ?? trip?.payment_method ?? "", 32) ?? null,
+    payment_source: safeStr(trip?.payment_source ?? trip?.paymentSource ?? "", 32) ?? null,
+    paymentSource: safeStr(trip?.paymentSource ?? trip?.payment_source ?? "", 32) ?? null,
+    paid_at: safeStr(trip?.paid_at ?? trip?.paidAt ?? "", 64) ?? null,
+    paidAt: safeStr(trip?.paidAt ?? trip?.paid_at ?? "", 64) ?? null,
+    paid_by_driver_id: safeStr(trip?.paid_by_driver_id ?? trip?.paidByDriverId ?? "", 96) ?? null,
+    paidByDriverId: safeStr(trip?.paidByDriverId ?? trip?.paid_by_driver_id ?? "", 96) ?? null,
+    payment_amount: Number.isFinite(Number(trip?.payment_amount))
+      ? Number(trip.payment_amount)
+      : Number.isFinite(Number(trip?.paymentAmount))
+      ? Number(trip.paymentAmount)
+      : null,
+    paymentAmount: Number.isFinite(Number(trip?.paymentAmount))
+      ? Number(trip.paymentAmount)
+      : Number.isFinite(Number(trip?.payment_amount))
+      ? Number(trip.payment_amount)
+      : null,
     booking_details: bookingDetails,
   };
 }
@@ -772,6 +792,114 @@ async function handleStopTrip(req, url, env, origin) {
   );
 }
 
+async function handleTripPayment(req, url, env, origin) {
+  requireAdmin(req, url, env);
+
+  const body = await readJson(req);
+  const trip_id = safeStr(body["trip_id"], 128);
+  if (!trip_id) throw new Error("trip_id is required");
+
+  const key = tripKey(trip_id);
+  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  if (!trip) throw new Error("Unknown trip_id");
+
+  const rawStatus = String(body["payment_status"] ?? body["paymentStatus"] ?? "")
+    .trim()
+    .toLowerCase();
+  const payment_status =
+    rawStatus === "paid" ||
+    rawStatus === "confirmed" ||
+    rawStatus === "completed" ||
+    rawStatus === "success" ||
+    rawStatus === "settled"
+      ? "paid"
+      : rawStatus === "pending" || rawStatus === "authorized" || rawStatus === "open"
+      ? "pending"
+      : rawStatus === "failed" || rawStatus === "cancelled" || rawStatus === "canceled"
+      ? "failed"
+      : "paid";
+
+  const payment_method = safeStr(
+    String(body["payment_method"] ?? body["paymentMethod"] ?? "").toLowerCase(),
+    32,
+  );
+  const payment_source =
+    safeStr(
+      String(body["payment_source"] ?? body["paymentSource"] ?? "in_car").toLowerCase(),
+      32,
+    ) ?? "in_car";
+  const paid_at = safeStr(body["paid_at"] ?? body["paidAt"], 64) ?? nowIso();
+  const currency =
+    (safeStr(body["currency"], 8) ??
+      safeStr(trip?.currency, 8) ??
+      safeStr(trip?.pricing_snapshot?.currency, 8) ??
+      "EUR").toUpperCase();
+  const amountRaw = body["amount"] ?? body["price"] ?? body["total"];
+  const amountNum = Number(amountRaw);
+  const amount = Number.isFinite(amountNum) ? amountNum : null;
+  const paid_by_driver_id = safeStr(
+    body["paid_by_driver_id"] ?? body["paidByDriverId"],
+    96,
+  );
+
+  trip.payment_status = payment_status;
+  trip.paymentStatus = payment_status;
+  trip.payment_source = payment_source;
+  trip.paymentSource = payment_source;
+  trip.paid_at = paid_at;
+  trip.paidAt = paid_at;
+  trip.currency = currency;
+  if (payment_method) {
+    trip.payment_method = payment_method;
+    trip.paymentMethod = payment_method;
+  }
+  if (amount !== null) {
+    trip.payment_amount = amount;
+    trip.paymentAmount = amount;
+  }
+  if (paid_by_driver_id) {
+    trip.paid_by_driver_id = paid_by_driver_id;
+    trip.paidByDriverId = paid_by_driver_id;
+  }
+
+  const timeline = Array.isArray(trip.timeline) ? trip.timeline : [];
+  timeline.push({
+    type: "payment_marked",
+    ts: paid_at,
+    source: "driver_app",
+    payment_status,
+    payment_method: payment_method ?? null,
+    payment_source,
+    currency,
+    amount,
+    paid_by_driver_id: paid_by_driver_id ?? null,
+  });
+  trip.timeline = timeline;
+
+  await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+
+  return withCors(
+    json(
+      {
+        ok: true,
+        trip_id,
+        payment: {
+          payment_status,
+          payment_method: payment_method ?? null,
+          payment_source,
+          paid_at,
+          currency,
+          amount,
+          paid_by_driver_id: paid_by_driver_id ?? null,
+        },
+        trip: summarizeTrip(trip),
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
+}
+
 async function handleStart(req, url, env, origin) {
   requireAdmin(req, url, env);
 
@@ -1153,6 +1281,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin);
 
       // core
       if (req.method === "POST" && url.pathname === "/track/session/start") return await handleStart(req, url, env, origin);

@@ -7031,6 +7031,18 @@ class _TripHistoryItem {
     final bookingDetails = json['booking_details'] is Map
         ? Map<String, dynamic>.from(json['booking_details'] as Map)
         : <String, dynamic>{};
+    if (bookingDetails.isEmpty) {
+      final fallbackBookingDetails =
+          _pathValue(json, 'record.booking_details') ??
+          _pathValue(json, 'record.bookingDetails') ??
+          _pathValue(json, 'record.payload.booking_details') ??
+          _pathValue(json, 'record.payload.bookingDetails');
+      if (fallbackBookingDetails is Map) {
+        bookingDetails.addAll(
+          Map<String, dynamic>.from(fallbackBookingDetails),
+        );
+      }
+    }
     final rawSource = Map<String, dynamic>.from(json);
     void copyRootDetail(String rootKey, String detailKey) {
       final value = json[rootKey];
@@ -7182,10 +7194,37 @@ class _TripHistoryItem {
       return int.tryParse((value ?? '').toString()) ?? 0;
     }
 
+    final resolvedBookingId = _resolveScalarLabel(json, const <String>[
+      'booking_id',
+      'bookingId',
+      'id',
+      'booking.booking_id',
+      'booking.bookingId',
+      'booking.id',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.booking_id',
+      'record.booking.bookingId',
+      'record.booking.id',
+      'payload.booking_id',
+      'payload.bookingId',
+      'payload.booking.booking_id',
+      'payload.booking.bookingId',
+      'public_reference',
+      'publicReference',
+      'receipt_reference',
+      'receiptReference',
+      'booking.public_reference',
+      'booking.publicReference',
+      'booking.receipt_reference',
+      'booking.receiptReference',
+    ]);
+    final rootKmTotal = asDouble(json['km_total']);
+
     return _TripHistoryItem(
       tripId: (json['trip_id'] ?? '').toString(),
       kind: (json['kind'] ?? 'direct').toString(),
-      bookingId: json['booking_id']?.toString(),
+      bookingId: resolvedBookingId,
       driverId: (json['driver_id'] ?? '').toString(),
       vehicleId: json['vehicle_id']?.toString(),
       startedAt: json['started_at']?.toString(),
@@ -7196,7 +7235,10 @@ class _TripHistoryItem {
       destination:
           toResolved.value ??
           ((label == null || label.trim().isEmpty) ? '—' : label.trim()),
-      kmTotal: asDouble(json['km_total']),
+      kmTotal:
+          rootKmTotal ??
+          asDouble(bookingDetails['km_total']) ??
+          asDouble(bookingDetails['distance_km']),
       waitSecondsTotal: asInt(json['wait_seconds_total']),
       totalEur: asDouble(json['total_eur']),
       status: (json['status'] ?? '—').toString(),
@@ -15658,7 +15700,35 @@ class _ReceiptPdfActionRunner {
     required String language,
     required String source,
   }) async {
-    final bookingId = (item.bookingId ?? '').trim();
+    final bookingId = (item.bookingId ?? '').trim().isNotEmpty
+        ? (item.bookingId ?? '').trim()
+        : (_firstPathText(item, const [
+                    ['booking_id'],
+                    ['bookingId'],
+                    ['id'],
+                    ['booking', 'booking_id'],
+                    ['booking', 'bookingId'],
+                    ['booking', 'id'],
+                    ['record', 'booking_id'],
+                    ['record', 'bookingId'],
+                    ['record', 'booking', 'booking_id'],
+                    ['record', 'booking', 'bookingId'],
+                    ['record', 'booking', 'id'],
+                    ['payload', 'booking_id'],
+                    ['payload', 'bookingId'],
+                    ['payload', 'booking', 'booking_id'],
+                    ['payload', 'booking', 'bookingId'],
+                    ['public_reference'],
+                    ['publicReference'],
+                    ['receipt_reference'],
+                    ['receiptReference'],
+                    ['booking', 'public_reference'],
+                    ['booking', 'publicReference'],
+                    ['booking', 'receipt_reference'],
+                    ['booking', 'receiptReference'],
+                  ]) ??
+                  '')
+              .trim();
     if (bookingId.isEmpty) {
       return <String, dynamic>{
         'ok': false,
@@ -19032,16 +19102,88 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     required String method,
   }) async {
     final bookingId = (item.bookingId ?? '').trim();
+    final normalizedMethod = method.toLowerCase().trim();
     if (bookingId.isEmpty) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_receiptText('bookingIdMissing'))));
+      final tripId = item.tripId.trim();
+      if (tripId.isEmpty) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('bookingIdMissing'))),
+        );
+        return;
+      }
+      final amount = _receiptTotalAmount();
+      final paidAtIso = DateTime.now().toUtc().toIso8601String();
+      final payload = <String, dynamic>{
+        'trip_id': tripId,
+        'payment_status': 'paid',
+        'payment_method': normalizedMethod,
+        'payment_source': 'in_car',
+        'currency': item.currency.trim().isEmpty
+            ? 'EUR'
+            : item.currency.trim().toUpperCase(),
+        'paid_by_driver_id': kDriverId,
+        'paid_at': paidAtIso,
+        if (amount != null) 'amount': amount,
+      };
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (kAdminToken.trim().isNotEmpty) {
+        headers['x-admin-token'] = kAdminToken.trim();
+      }
+      try {
+        final uri = Uri.parse('$kWorkerBaseUrl/trip/payment');
+        final res = await http
+            .post(uri, headers: headers, body: jsonEncode(payload))
+            .timeout(const Duration(seconds: 12));
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw Exception('HTTP ${res.statusCode}');
+        }
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        final root = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : <String, dynamic>{};
+        final payment = root['payment'] is Map
+            ? Map<String, dynamic>.from(root['payment'] as Map)
+            : <String, dynamic>{};
+        final extracted = <String, dynamic>{
+          'payment_status': (payment['payment_status'] ?? 'paid').toString(),
+          'paymentStatus': (payment['payment_status'] ?? 'paid').toString(),
+          'payment_method': (payment['payment_method'] ?? normalizedMethod)
+              .toString(),
+          'paymentMethod': (payment['payment_method'] ?? normalizedMethod)
+              .toString(),
+          'payment_source': (payment['payment_source'] ?? 'in_car').toString(),
+          'paymentSource': (payment['payment_source'] ?? 'in_car').toString(),
+          'paid_at': (payment['paid_at'] ?? paidAtIso).toString(),
+          'paidAt': (payment['paid_at'] ?? paidAtIso).toString(),
+          if (payment['paid_by_driver_id'] != null)
+            'paid_by_driver_id': payment['paid_by_driver_id'].toString(),
+          if (payment['paid_by_driver_id'] != null)
+            'paidByDriverId': payment['paid_by_driver_id'].toString(),
+          if (payment['amount'] != null) 'payment_amount': payment['amount'],
+          if (payment['amount'] != null) 'paymentAmount': payment['amount'],
+        };
+        _mergePaymentFieldsIntoReceiptDetails(extracted);
+        if (mounted) {
+          setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+        }
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentMarkedPaid'))),
+        );
+      } catch (err) {
+        debugPrint(
+          '[RECEIPT][TRIP_PAYMENT_MARK_FAILED] tripId=$tripId method=$method err=$err',
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+        );
+      }
       return;
     }
 
     final amount = _receiptTotalAmount();
-    final normalizedMethod = method.toLowerCase().trim();
     final payload = <String, dynamic>{
       'booking_id': bookingId,
       'payment_status': 'paid',
