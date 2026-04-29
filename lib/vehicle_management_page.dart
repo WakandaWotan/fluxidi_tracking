@@ -139,6 +139,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     final nameCtrl = TextEditingController();
     final idCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
+    final taxiCardNumberCtrl = TextEditingController();
+    final taxiCardExpiryCtrl = TextEditingController();
     DriverProfile? created;
     await showDialog<void>(
       context: context,
@@ -174,6 +176,24 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                 en: 'Phone number',
                 fr: 'Numero de telephone',
                 es: 'Numero de telefono',
+              ),
+            ),
+            _txt(
+              taxiCardNumberCtrl,
+              _t(
+                nl: 'Chauffeurskaartnummer',
+                en: 'Taxi driver card number',
+                fr: 'Numero de carte chauffeur',
+                es: 'Numero de tarjeta de conductor',
+              ),
+            ),
+            _txt(
+              taxiCardExpiryCtrl,
+              _t(
+                nl: 'Vervaldatum chauffeurskaart',
+                en: 'Taxi driver card expiry',
+                fr: 'Expiration carte chauffeur',
+                es: 'Vencimiento tarjeta de conductor',
               ),
             ),
             const SizedBox(height: 10),
@@ -213,6 +233,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         fullName: fullName,
                         employeeNumber: employeeNumber,
                         phone: phoneCtrl.text.trim(),
+                        taxiDriverCardNumber: taxiCardNumberCtrl.text.trim(),
+                        taxiDriverCardExpiry: taxiCardExpiryCtrl.text.trim(),
                         isActive: true,
                         companyId: companyProfileNotifier.value != null
                             ? resolvedCompanyId
@@ -377,6 +399,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     final nameCtrl = TextEditingController(text: existing?.vehicleName ?? '');
     final modelCtrl = TextEditingController(text: existing?.brandModel ?? '');
     final plateCtrl = TextEditingController(text: existing?.licensePlate ?? '');
+    final exploitationLicenseCtrl = TextEditingController(
+      text: existing?.exploitationLicenseNumber ?? '',
+    );
+    final vehicleRegistrationCtrl = TextEditingController(
+      text: existing?.vehicleRegistrationNumber ?? '',
+    );
     final colorCtrl = TextEditingController(text: existing?.color ?? '');
     var primaryPhotoRef = existing?.primaryPhotoRef ?? '';
     var galleryPhotoRefs = List<String>.from(
@@ -463,6 +491,24 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         en: 'License plate',
                         fr: 'Plaque',
                         es: 'Matricula',
+                      ),
+                    ),
+                    _txt(
+                      exploitationLicenseCtrl,
+                      _t(
+                        nl: 'Exploitatievergunningnummer',
+                        en: 'Exploitation license number',
+                        fr: 'Numero de licence d exploitation',
+                        es: 'Numero de licencia de explotacion',
+                      ),
+                    ),
+                    _txt(
+                      vehicleRegistrationCtrl,
+                      _t(
+                        nl: 'Chassisnummer',
+                        en: 'Vehicle registration/VIN/chassis number',
+                        fr: 'Numero d immatriculation/VIN/chassis',
+                        es: 'Numero de matricula/VIN/chasis',
                       ),
                     ),
                     _txt(
@@ -711,6 +757,26 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     es: 'Numero de telefono',
                                   ),
                                   d.phone,
+                                ),
+                                const SizedBox(height: 4),
+                                _driverInfoLine(
+                                  _t(
+                                    nl: 'Chauffeurskaartnummer',
+                                    en: 'Taxi driver card number',
+                                    fr: 'Numero carte chauffeur',
+                                    es: 'Numero tarjeta conductor',
+                                  ),
+                                  d.taxiDriverCardNumber,
+                                ),
+                                const SizedBox(height: 4),
+                                _driverInfoLine(
+                                  _t(
+                                    nl: 'Vervaldatum chauffeurskaart',
+                                    en: 'Taxi driver card expiry',
+                                    fr: 'Expiration carte chauffeur',
+                                    es: 'Vencimiento tarjeta conductor',
+                                  ),
+                                  d.taxiDriverCardExpiry,
                                 ),
                               ],
                             );
@@ -1034,6 +1100,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 vehicleName: nameCtrl.text.trim(),
                                 brandModel: modelCtrl.text.trim(),
                                 licensePlate: plateCtrl.text.trim(),
+                                exploitationLicenseNumber:
+                                    exploitationLicenseCtrl.text.trim(),
+                                vehicleRegistrationNumber:
+                                    vehicleRegistrationCtrl.text.trim(),
                                 color: colorCtrl.text.trim(),
                                 passengerCapacity:
                                     int.tryParse(paxCtrl.text.trim()) ?? 0,
@@ -1612,6 +1682,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 '${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
                               ),
                               Text(
+                                '${_t(nl: 'Exploitatievergunningnummer', en: 'Exploitation license number', fr: 'Numero licence exploitation', es: 'Numero licencia explotacion')}: ${v.exploitationLicenseNumber.isEmpty ? '—' : v.exploitationLicenseNumber}',
+                              ),
+                              Text(
+                                '${_t(nl: 'Chassisnummer', en: 'Vehicle registration/VIN/chassis number', fr: 'Immatriculation/VIN/chassis', es: 'Matricula/VIN/chasis')}: ${v.vehicleRegistrationNumber.isEmpty ? '—' : v.vehicleRegistrationNumber}',
+                              ),
+                              Text(
                                 '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}',
                               ),
                               Text(
@@ -1631,6 +1707,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 ),
                                 Text(
                                   '${_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono')}: ${linkedDriver.phone.isEmpty ? '—' : linkedDriver.phone}',
+                                ),
+                                Text(
+                                  '${_t(nl: 'Chauffeurskaartnummer', en: 'Taxi driver card number', fr: 'Numero carte chauffeur', es: 'Numero tarjeta conductor')}: ${linkedDriver.taxiDriverCardNumber.isEmpty ? '—' : linkedDriver.taxiDriverCardNumber}',
+                                ),
+                                Text(
+                                  '${_t(nl: 'Vervaldatum chauffeurskaart', en: 'Taxi driver card expiry', fr: 'Expiration carte chauffeur', es: 'Vencimiento tarjeta conductor')}: ${linkedDriver.taxiDriverCardExpiry.isEmpty ? '—' : linkedDriver.taxiDriverCardExpiry}',
                                 ),
                               ],
                               const SizedBox(height: 6),

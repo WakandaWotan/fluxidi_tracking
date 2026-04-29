@@ -436,6 +436,8 @@ class VehicleProfile {
   final String vehicleName;
   final String brandModel;
   final String licensePlate;
+  final String exploitationLicenseNumber;
+  final String vehicleRegistrationNumber;
   final String color;
   final int passengerCapacity;
   final int luggageCapacity;
@@ -458,6 +460,8 @@ class VehicleProfile {
     required this.vehicleName,
     required this.brandModel,
     required this.licensePlate,
+    this.exploitationLicenseNumber = '',
+    this.vehicleRegistrationNumber = '',
     required this.color,
     required this.passengerCapacity,
     required this.luggageCapacity,
@@ -474,6 +478,8 @@ class VehicleProfile {
     String? vehicleName,
     String? brandModel,
     String? licensePlate,
+    String? exploitationLicenseNumber,
+    String? vehicleRegistrationNumber,
     String? color,
     int? passengerCapacity,
     int? luggageCapacity,
@@ -489,6 +495,10 @@ class VehicleProfile {
       vehicleName: vehicleName ?? this.vehicleName,
       brandModel: brandModel ?? this.brandModel,
       licensePlate: licensePlate ?? this.licensePlate,
+      exploitationLicenseNumber:
+          exploitationLicenseNumber ?? this.exploitationLicenseNumber,
+      vehicleRegistrationNumber:
+          vehicleRegistrationNumber ?? this.vehicleRegistrationNumber,
       color: color ?? this.color,
       passengerCapacity: passengerCapacity ?? this.passengerCapacity,
       luggageCapacity: luggageCapacity ?? this.luggageCapacity,
@@ -507,6 +517,8 @@ class DriverProfile {
   final String fullName;
   final String employeeNumber;
   final String phone;
+  final String taxiDriverCardNumber;
+  final String taxiDriverCardExpiry;
   final bool isActive;
 
   /// See [VehicleProfile.companyId].
@@ -519,6 +531,8 @@ class DriverProfile {
     required this.fullName,
     required this.employeeNumber,
     required this.phone,
+    this.taxiDriverCardNumber = '',
+    this.taxiDriverCardExpiry = '',
     required this.isActive,
     this.companyId,
   });
@@ -528,6 +542,8 @@ class DriverProfile {
     String? fullName,
     String? employeeNumber,
     String? phone,
+    String? taxiDriverCardNumber,
+    String? taxiDriverCardExpiry,
     bool? isActive,
     String? companyId,
   }) {
@@ -536,6 +552,8 @@ class DriverProfile {
       fullName: fullName ?? this.fullName,
       employeeNumber: employeeNumber ?? this.employeeNumber,
       phone: phone ?? this.phone,
+      taxiDriverCardNumber: taxiDriverCardNumber ?? this.taxiDriverCardNumber,
+      taxiDriverCardExpiry: taxiDriverCardExpiry ?? this.taxiDriverCardExpiry,
       isActive: isActive ?? this.isActive,
       companyId: companyId ?? this.companyId,
     );
@@ -975,6 +993,8 @@ Map<String, dynamic> _encodeVehicle(VehicleProfile v) {
     'vehicleName': v.vehicleName,
     'brandModel': v.brandModel,
     'licensePlate': v.licensePlate,
+    'exploitationLicenseNumber': v.exploitationLicenseNumber,
+    'vehicleRegistrationNumber': v.vehicleRegistrationNumber,
     'color': v.color,
     'passengerCapacity': v.passengerCapacity,
     'luggageCapacity': v.luggageCapacity,
@@ -995,6 +1015,8 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'fullName': d.fullName,
     'employeeNumber': d.employeeNumber,
     'phone': d.phone,
+    'taxiDriverCardNumber': d.taxiDriverCardNumber,
+    'taxiDriverCardExpiry': d.taxiDriverCardExpiry,
     'isActive': d.isActive,
     'companyId': d.companyId,
   };
@@ -1039,6 +1061,12 @@ VehicleProfile _decodeVehicle(
     vehicleName: (m['vehicleName'] ?? fallback.vehicleName).toString(),
     brandModel: (m['brandModel'] ?? fallback.brandModel).toString(),
     licensePlate: (m['licensePlate'] ?? fallback.licensePlate).toString(),
+    exploitationLicenseNumber:
+        (m['exploitationLicenseNumber'] ?? fallback.exploitationLicenseNumber)
+            .toString(),
+    vehicleRegistrationNumber:
+        (m['vehicleRegistrationNumber'] ?? fallback.vehicleRegistrationNumber)
+            .toString(),
     color: (m['color'] ?? fallback.color).toString(),
     passengerCapacity: _toInt(
       m['passengerCapacity'],
@@ -1073,6 +1101,10 @@ DriverProfile _decodeDriver(
     fullName: (m['fullName'] ?? fallback.fullName).toString(),
     employeeNumber: (m['employeeNumber'] ?? fallback.employeeNumber).toString(),
     phone: (m['phone'] ?? fallback.phone).toString(),
+    taxiDriverCardNumber:
+        (m['taxiDriverCardNumber'] ?? fallback.taxiDriverCardNumber).toString(),
+    taxiDriverCardExpiry:
+        (m['taxiDriverCardExpiry'] ?? fallback.taxiDriverCardExpiry).toString(),
     isActive: (m['isActive'] is bool)
         ? m['isActive'] as bool
         : fallback.isActive,
