@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -645,7 +646,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         imageQuality: 92,
       );
       if (picked == null) return;
-      _setLogoRef(picked.path);
+      final persisted = await _persistPickedLogo(picked.path);
+      // Persisted copy in app documents survives image_picker cache cleanup.
+      // Fallback to the original picker path on copy failure to preserve UX.
+      _setLogoRef(persisted ?? picked.path);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -661,6 +665,53 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ),
       );
     }
+  }
+
+  Future<String?> _persistPickedLogo(String sourcePath) async {
+    try {
+      final source = sourcePath.trim();
+      if (source.isEmpty) return null;
+      final src = File(source);
+      if (!await src.exists()) return null;
+
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        '${base.path}${Platform.pathSeparator}tenant_state'
+        '${Platform.pathSeparator}company_logo',
+      );
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final ext = _logoFileExtension(source);
+      final fileName =
+          'logo_${DateTime.now().millisecondsSinceEpoch}${ext.isEmpty ? '' : '.$ext'}';
+      final target = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await src.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _logoFileExtension(String path) {
+    final lower = path.toLowerCase();
+    final slash = lower.lastIndexOf(Platform.pathSeparator);
+    final altSlash = lower.lastIndexOf('/');
+    final base = lower.substring((slash > altSlash ? slash : altSlash) + 1);
+    final dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot == base.length - 1) return '';
+    final raw = base.substring(dot + 1);
+    const allowed = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'heic',
+    };
+    return allowed.contains(raw) ? raw : '';
   }
 
   void _setLogoRef(String ref) {
