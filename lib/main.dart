@@ -16200,7 +16200,10 @@ class _ReceiptPdfActionRunner {
     } catch (_) {
       backendProfile = null;
     }
-    final profile = backendProfile ?? BackendBusinessProfile.defaults();
+    final profile =
+        backendProfile ??
+        localBackendBusinessProfileNotifier.value ??
+        BackendBusinessProfile.defaults();
     final postcodeCity = [
       profile.postcode.trim(),
       profile.city.trim(),
@@ -17889,7 +17892,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       backendProfile = null;
     }
 
-    final profile = backendProfile ?? BackendBusinessProfile.defaults();
+    final profile =
+        backendProfile ??
+        localBackendBusinessProfileNotifier.value ??
+        BackendBusinessProfile.defaults();
     final postcodeCity = [
       profile.postcode.trim(),
       profile.city.trim(),
