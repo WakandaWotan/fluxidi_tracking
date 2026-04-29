@@ -1115,11 +1115,33 @@ Future<void> updateLocalBackendBusinessProfileCache(
   await _persistLocalTenantState();
 }
 
+/// Local on-device cache for the "BTW-instellingen" backend tax profile.
+///
+/// Backed by [_persistLocalTenantState]/[loadLocalTenantState] so the VAT
+/// rate/mode/labels typed in Business Settings survive app restarts even when
+/// the backend tax endpoint is offline. Backend remains preferred for the
+/// initial first-time hydrate when no cache exists yet; once the user has a
+/// cached profile we keep it as the source of truth for the form to avoid
+/// backend defaults silently overwriting saved values.
+final ValueNotifier<BackendTaxProfile?> localBackendTaxProfileNotifier =
+    ValueNotifier<BackendTaxProfile?>(null);
+
+/// Update the local cache for [BackendTaxProfile] and persist to disk.
+///
+/// Pass `null` to clear the cache. Persistence is best-effort and never throws.
+Future<void> updateLocalBackendTaxProfileCache(
+  BackendTaxProfile? profile,
+) async {
+  localBackendTaxProfileNotifier.value = profile;
+  await _persistLocalTenantState();
+}
+
 Future<void> _persistLocalTenantState() async {
   try {
     final file = await _tenantStateFile();
     final cachedBackendProfile = localBackendBusinessProfileNotifier.value
         ?.toJson();
+    final cachedTaxProfile = localBackendTaxProfileNotifier.value?.toJson();
     final payload = <String, dynamic>{
       'version': 1,
       'businessSettings': _encodeBusinessSettings(
@@ -1127,6 +1149,7 @@ Future<void> _persistLocalTenantState() async {
       ),
       if (cachedBackendProfile != null)
         'backendBusinessProfile': cachedBackendProfile,
+      if (cachedTaxProfile != null) 'backendTaxProfile': cachedTaxProfile,
       'vehicles': vehiclesNotifier.value
           .map(_encodeVehicle)
           .toList(growable: false),
@@ -1370,6 +1393,19 @@ Future<void> loadLocalTenantState() async {
             );
       } catch (_) {
         // Ignore malformed cached profile; defaults remain.
+      }
+    }
+
+    // Backward-compatible: only present when the user already saved BTW
+    // settings locally. Older tenant_state_v1.json files load fine.
+    final backendTaxProfileMap = map['backendTaxProfile'];
+    if (backendTaxProfileMap is Map) {
+      try {
+        localBackendTaxProfileNotifier.value = BackendTaxProfile.fromJson(
+          Map<String, dynamic>.from(backendTaxProfileMap),
+        );
+      } catch (_) {
+        // Ignore malformed cached tax profile; defaults remain.
       }
     }
 

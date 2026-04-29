@@ -126,7 +126,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             companyProfileNotifier.value,
           ),
     );
-    _hydrateBackendTaxProfile(BackendTaxProfile.defaults());
+    // Prefer locally cached "BTW-instellingen" so a user's saved VAT rate /
+    // mode / labels survive app restarts and offline launches. Falls back to
+    // BackendTaxProfile.defaults() when no cache exists yet.
+    _hydrateBackendTaxProfile(
+      localBackendTaxProfileNotifier.value ?? BackendTaxProfile.defaults(),
+    );
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -388,9 +393,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         local: localBase,
         server: rawBiz,
       );
+      // Prefer the locally cached BTW profile when present so backend defaults
+      // never silently overwrite the user's saved VAT rate / mode / labels.
+      // Only adopt the backend tax profile when no cache exists yet.
+      final cachedTax = localBackendTaxProfileNotifier.value;
+      final taxForUi = cachedTax ?? rawTax;
       setState(() {
         _hydrateBackendBusinessProfile(merged);
-        _hydrateBackendTaxProfile(rawTax);
+        _hydrateBackendTaxProfile(taxForUi);
         _mergeLocalIntoGeneralControllersIfEligible();
         _backendProfilesStatus = _t(
           nl: 'Instellingen geladen.',
@@ -399,13 +409,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Configuracion cargada.',
         );
       });
-      // Refresh local cache with the merged result, best-effort.
+      // Refresh local caches with the merged/initial results, best-effort.
       unawaited(updateLocalBackendBusinessProfileCache(merged));
+      if (cachedTax == null) {
+        unawaited(updateLocalBackendTaxProfileCache(rawTax));
+      }
     } catch (e) {
       if (!mounted) return;
       // Prefer the local cache when available; only fall back to defaults +
       // local CompanyProfile preview when no cache exists yet.
       final cached = localBackendBusinessProfileNotifier.value;
+      final cachedTax = localBackendTaxProfileNotifier.value;
       setState(() {
         _hydrateBackendBusinessProfile(
           cached ??
@@ -414,8 +428,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 companyProfileNotifier.value,
               ),
         );
+        _hydrateBackendTaxProfile(cachedTax ?? BackendTaxProfile.defaults());
         _mergeLocalIntoGeneralControllersIfEligible();
-        final hasLocal = cached != null || companyProfileNotifier.value != null;
+        final hasLocal =
+            cached != null ||
+            cachedTax != null ||
+            companyProfileNotifier.value != null;
         _backendProfilesError = hasLocal
             ? _t(
                 nl: 'Online bedrijfsinstellingen niet geladen. Lokale bedrijfsgegevens blijven beschikbaar.',
@@ -525,8 +543,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _backendProfilesError = null;
       _backendProfilesStatus = null;
     });
+    final formProfile = _backendTaxProfileFromForm();
+    // Save to local cache first so user-entered VAT settings survive app
+    // restart even if the backend HTTP call fails or the device is offline.
+    await updateLocalBackendTaxProfileCache(formProfile);
     try {
-      final saved = await saveBackendTaxProfile(_backendTaxProfileFromForm());
+      final saved = await saveBackendTaxProfile(formProfile);
       if (!mounted) return;
       setState(() {
         _hydrateBackendTaxProfile(saved);
@@ -537,8 +559,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Perfil IVA guardado.',
         );
       });
+      // Refresh local cache with the server-confirmed result, best-effort.
+      unawaited(updateLocalBackendTaxProfileCache(saved));
     } catch (e) {
       if (!mounted) return;
+      // Local cache stays intact (saved above); just surface the existing
+      // error message so the UI behaviour remains the same as before.
       setState(
         () => _backendProfilesError =
             '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e',
