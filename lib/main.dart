@@ -8066,6 +8066,49 @@ Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
   };
 }
 
+bool _isPaidForReceiptPaymentFallback(String? rawStatus) {
+  final normalized = (rawStatus ?? '')
+      .trim()
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_');
+  return normalized == 'paid' ||
+      normalized == 'settled' ||
+      normalized == 'confirmed' ||
+      normalized == 'completed' ||
+      normalized == 'succeeded' ||
+      normalized == 'success';
+}
+
+bool _isMissingOrUnknownReceiptPaymentField(String? value) {
+  final normalized = (value ?? '')
+      .trim()
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_');
+  return normalized.isEmpty || normalized == 'unknown';
+}
+
+String? _paymentFieldWithMolliePaidFallback({
+  required String? value,
+  required String? paymentStatus,
+  required String? paymentProvider,
+}) {
+  if (!_isMissingOrUnknownReceiptPaymentField(value)) {
+    return value?.trim();
+  }
+  final providerNormalized = (paymentProvider ?? '')
+      .trim()
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_');
+  if (providerNormalized == 'mollie' &&
+      _isPaidForReceiptPaymentFallback(paymentStatus)) {
+    return 'mollie';
+  }
+  return value?.trim();
+}
+
 class _DirectRideDestinationDialog extends StatefulWidget {
   final String initialText;
   final Future<List<_PlaceSuggestion>> Function(String query) search;
@@ -17305,21 +17348,45 @@ class _ReceiptPdfActionRunner {
       final baseFont = await PdfGoogleFonts.notoSansRegular();
       final boldFont = await PdfGoogleFonts.notoSansBold();
       final amounts = _resolvedReceiptAmounts(item);
+      final paymentStatusRaw = _firstPathText(item, const [
+        ['payment_status'],
+        ['paymentStatus'],
+        ['booking', 'payment_status'],
+        ['booking', 'paymentStatus'],
+        ['mollie', 'status'],
+        ['record', 'mollie', 'status'],
+      ]);
+      final paymentProviderRaw = _firstPathText(item, const [
+        ['payment_provider'],
+        ['paymentProvider'],
+        ['booking', 'payment_provider'],
+        ['booking', 'paymentProvider'],
+      ]);
+      final paymentMethodRaw = _firstPathText(item, const [
+        ['payment_method'],
+        ['paymentMethod'],
+        ['booking', 'payment_method'],
+        ['booking', 'paymentMethod'],
+      ]);
+      final paymentSourceRaw = _firstPathText(item, const [
+        ['payment_source'],
+        ['paymentSource'],
+        ['booking', 'payment_source'],
+        ['booking', 'paymentSource'],
+      ]);
       final paymentMethod = _localizedPaymentMethodValue(
-        _firstPathText(item, const [
-          ['payment_method'],
-          ['paymentMethod'],
-          ['booking', 'payment_method'],
-          ['booking', 'paymentMethod'],
-        ]),
+        _paymentFieldWithMolliePaidFallback(
+          value: paymentMethodRaw,
+          paymentStatus: paymentStatusRaw,
+          paymentProvider: paymentProviderRaw,
+        ),
       );
       final paymentSource = _localizedPaymentSourceValue(
-        _firstPathText(item, const [
-          ['payment_source'],
-          ['paymentSource'],
-          ['booking', 'payment_source'],
-          ['booking', 'paymentSource'],
-        ]),
+        _paymentFieldWithMolliePaidFallback(
+          value: paymentSourceRaw,
+          paymentStatus: paymentStatusRaw,
+          paymentProvider: paymentProviderRaw,
+        ),
       );
       final rideDateText =
           _firstPathText(item, const [
@@ -18084,12 +18151,7 @@ class _ReceiptPdfActionRunner {
           es: 'Enlace de pago',
         );
       case 'mollie':
-        return _tr(
-          nl: 'Online betaling',
-          en: 'Online payment',
-          fr: 'Paiement en ligne',
-          es: 'Pago en línea',
-        );
+        return _tr(nl: 'Mollie', en: 'Mollie', fr: 'Mollie', es: 'Mollie');
       default:
         return _titleCaseToken(value);
     }
@@ -19685,12 +19747,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           es: 'Enlace de pago',
         );
       case 'mollie':
-        return _tr(
-          nl: 'Online betaling',
-          en: 'Online payment',
-          fr: 'Paiement en ligne',
-          es: 'Pago en línea',
-        );
+        return _tr(nl: 'Mollie', en: 'Mollie', fr: 'Mollie', es: 'Mollie');
       default:
         return _displayToken(value) ?? value.replaceAll('_', ' ');
     }
@@ -20079,11 +20136,33 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       final baseFont = await PdfGoogleFonts.notoSansRegular();
       final boldFont = await PdfGoogleFonts.notoSansBold();
       final amounts = _resolvedReceiptAmounts();
+      final paymentStatusRaw = _firstDetailPathText(const [
+        ['payment_status'],
+        ['paymentStatus'],
+        ['booking', 'payment_status'],
+        ['booking', 'paymentStatus'],
+        ['mollie', 'status'],
+        ['record', 'mollie', 'status'],
+      ]);
+      final paymentProviderRaw = _firstDetailPathText(const [
+        ['payment_provider'],
+        ['paymentProvider'],
+        ['booking', 'payment_provider'],
+        ['booking', 'paymentProvider'],
+      ]);
       final paymentMethod = _localizedPaymentMethodValue(
-        _paymentMethodFromDetails(),
+        _paymentFieldWithMolliePaidFallback(
+          value: _paymentMethodFromDetails(),
+          paymentStatus: paymentStatusRaw,
+          paymentProvider: paymentProviderRaw,
+        ),
       );
       final paymentSource = _localizedPaymentSourceValue(
-        _paymentSourceFromDetails(),
+        _paymentFieldWithMolliePaidFallback(
+          value: _paymentSourceFromDetails(),
+          paymentStatus: paymentStatusRaw,
+          paymentProvider: paymentProviderRaw,
+        ),
       );
       final rideDateText = _detailText('scheduled_pickup_at') != null
           ? _formatDate(_detailText('scheduled_pickup_at'))
