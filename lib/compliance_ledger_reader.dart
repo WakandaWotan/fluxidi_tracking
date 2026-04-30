@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 
 class ComplianceLedgerEntry {
   const ComplianceLedgerEntry({
+    required this.eventType,
+    required this.eventId,
     required this.rideId,
     required this.rideType,
     required this.lifecycleStatus,
@@ -41,6 +43,8 @@ class ComplianceLedgerEntry {
     required this.sourceLineIndex,
   });
 
+  final String eventType;
+  final String eventId;
   final String rideId;
   final String rideType;
   final String lifecycleStatus;
@@ -75,6 +79,9 @@ class ComplianceLedgerEntry {
   final Map<String, dynamic> raw;
   final int sourceLineIndex;
 
+  bool get isPaymentUpdate =>
+      eventType.toLowerCase().trim() == 'payment_update';
+
   factory ComplianceLedgerEntry.fromRaw(
     Map<String, dynamic> raw, {
     required int sourceLineIndex,
@@ -88,6 +95,8 @@ class ComplianceLedgerEntry {
     final provenance = _asMap(raw['provenance']);
 
     return ComplianceLedgerEntry(
+      eventType: readText('event_type'),
+      eventId: readText('event_id'),
       rideId: readText('ride_id'),
       rideType: readText('ride_type'),
       lifecycleStatus: readText('lifecycle_status'),

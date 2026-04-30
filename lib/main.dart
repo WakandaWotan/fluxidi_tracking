@@ -283,6 +283,19 @@ class _ComplianceRideLedgerStore {
   }
 }
 
+Future<void> _writeComplianceLedgerRecord({
+  required Map<String, dynamic> record,
+}) async {
+  try {
+    await _ComplianceRideLedgerStore.append(record);
+    debugPrint(
+      '[COMPLIANCE_LEDGER][WRITE] event_type=${record['event_type']} ride_type=${record['ride_type']} validation_state=${record['provenance']?['validation_state']} backend_confirmed=${record['provenance']?['backend_confirmed']}',
+    );
+  } catch (e) {
+    debugPrint('[COMPLIANCE_LEDGER][WARN] write_failed reason=$e');
+  }
+}
+
 /// Local fallback store for direct rides that stayed local-only (no backend trip).
 /// Kept isolated from backend history to avoid changing server behavior.
 class _LocalDirectTripHistoryStore {
@@ -7855,6 +7868,204 @@ class _TripHistoryItem {
   }
 }
 
+String? _paymentUpdateText(dynamic value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+    return null;
+  }
+  return text;
+}
+
+String _normalizePaymentUpdateStatus(dynamic value) {
+  final raw = _paymentUpdateText(value);
+  if (raw == null) return 'unknown';
+  final normalized = raw
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_')
+      .trim();
+  switch (normalized) {
+    case 'paid':
+    case 'succeeded':
+    case 'success':
+    case 'completed':
+    case 'settled':
+    case 'confirmed':
+      return 'paid';
+    case 'pending':
+    case 'open':
+    case 'authorized':
+    case 'authorised':
+    case 'processing':
+      return 'pending';
+    case 'failed':
+    case 'error':
+    case 'declined':
+      return 'failed';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
+    case 'unpaid':
+    case 'not_paid':
+      return 'unpaid';
+    default:
+      return 'unknown';
+  }
+}
+
+String _normalizePaymentUpdateMethod(dynamic value) {
+  final raw = _paymentUpdateText(value);
+  if (raw == null) return 'unknown';
+  final normalized = raw
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_')
+      .trim();
+  switch (normalized) {
+    case 'cash':
+    case 'contant':
+      return 'cash';
+    case 'qr':
+    case 'qr_code':
+      return 'qr';
+    case 'bancontact':
+      return 'bancontact';
+    case 'card':
+    case 'terminal':
+    case 'card_terminal':
+      return 'card_terminal';
+    case 'payment_link':
+    case 'link':
+    case 'online':
+      return 'payment_link';
+    case 'mollie':
+      return 'mollie';
+    default:
+      return 'unknown';
+  }
+}
+
+String? _paymentUpdateField(Map<String, dynamic> fields, List<String> keys) {
+  for (final key in keys) {
+    final text = _paymentUpdateText(fields[key]);
+    if (text != null) return text;
+  }
+  return null;
+}
+
+String? _paymentUpdatePaidAtUtc(Map<String, dynamic> fields) {
+  final raw = _paymentUpdateField(fields, const [
+    'paid_at_utc',
+    'paidAtUtc',
+    'paid_at',
+    'paidAt',
+  ]);
+  if (raw == null) return null;
+  final parsed = DateTime.tryParse(raw);
+  return parsed == null ? raw : parsed.toUtc().toIso8601String();
+}
+
+bool _isPaidPaymentUpdate(Map<String, dynamic> fields) {
+  return _normalizePaymentUpdateStatus(
+        _paymentUpdateField(fields, const ['payment_status', 'paymentStatus']),
+      ) ==
+      'paid';
+}
+
+Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
+  required _TripHistoryItem item,
+  required Map<String, dynamic> paymentFields,
+  required String method,
+  required String source,
+  required DateTime eventAt,
+  bool? backendConfirmed,
+}) {
+  final bookingId = (item.bookingId ?? '').trim();
+  final tripId = item.tripId.trim();
+  final normalizedRideType = item.kind.trim().toLowerCase();
+  final rideType =
+      normalizedRideType == 'direct' || normalizedRideType == 'planned'
+      ? normalizedRideType
+      : (bookingId.isNotEmpty
+            ? 'planned'
+            : (tripId.isNotEmpty ? 'direct' : 'unknown'));
+  final paidAtUtc =
+      _paymentUpdatePaidAtUtc(paymentFields) ??
+      eventAt.toUtc().toIso8601String();
+  final status = _normalizePaymentUpdateStatus(
+    _paymentUpdateField(paymentFields, const [
+      'payment_status',
+      'paymentStatus',
+    ]),
+  );
+  final normalizedMethod = _normalizePaymentUpdateMethod(
+    _paymentUpdateField(paymentFields, const [
+          'payment_method',
+          'paymentMethod',
+        ]) ??
+        method,
+  );
+  final paymentSource =
+      _paymentUpdateField(paymentFields, const [
+        'payment_source',
+        'paymentSource',
+      ]) ??
+      source;
+  final provider = _paymentUpdateField(paymentFields, const [
+    'payment_provider',
+    'paymentProvider',
+  ]);
+  final paymentId = _paymentUpdateField(paymentFields, const [
+    'payment_id',
+    'paymentId',
+  ]);
+  final reference = bookingId.isNotEmpty
+      ? bookingId
+      : (tripId.isNotEmpty ? tripId : item.receiptNumber.trim());
+  final eventKey = reference.isEmpty
+      ? eventAt.toUtc().millisecondsSinceEpoch
+      : reference;
+
+  return <String, dynamic>{
+    'ledger_version': '1.0',
+    'event_type': 'payment_update',
+    'event_id': 'payment_update_${eventKey}_${normalizedMethod}_$paidAtUtc',
+    'ride_id': null,
+    'ride_type': rideType,
+    'lifecycle_status': 'payment_updated',
+    'tenant_id': kOutboundTenantId,
+    'company_id': resolvedCompanyId,
+    'driver_id': item.driverId.trim().isNotEmpty
+        ? item.driverId.trim()
+        : kDriverId,
+    'vehicle_id': (item.vehicleId ?? '').trim().isEmpty
+        ? null
+        : item.vehicleId!.trim(),
+    'booking_id': bookingId.isEmpty ? null : bookingId,
+    'trip_id': tripId.isEmpty ? null : tripId,
+    'session_id': null,
+    'payment': <String, dynamic>{
+      'status': status,
+      if (normalizedMethod != 'unknown') 'method': normalizedMethod,
+      if (paymentSource.trim().isNotEmpty) 'source': paymentSource.trim(),
+      if (provider != null) 'provider': provider,
+      if (paymentId != null) 'payment_id': paymentId,
+      'paid_at_utc': paidAtUtc,
+    },
+    'references': <String, dynamic>{
+      'receipt_reference': reference.isEmpty ? null : reference,
+      'invoice_reference': null,
+    },
+    'provenance': <String, dynamic>{
+      'backend_confirmed': backendConfirmed,
+      'validation_state': 'payment_update',
+      'source': 'in_car_payment_mark',
+    },
+    'created_at_utc': eventAt.toUtc().toIso8601String(),
+    'finalized_at_utc': eventAt.toUtc().toIso8601String(),
+  };
+}
+
 class _DirectRideDestinationDialog extends StatefulWidget {
   final String initialText;
   final Future<List<_PlaceSuggestion>> Function(String query) search;
@@ -10578,19 +10789,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       else if (paidAtText != null)
         'paid_at_utc': paidAtText,
     };
-  }
-
-  Future<void> _writeComplianceLedgerRecord({
-    required Map<String, dynamic> record,
-  }) async {
-    try {
-      await _ComplianceRideLedgerStore.append(record);
-      debugPrint(
-        '[COMPLIANCE_LEDGER][WRITE] ride_id=${record['ride_id']} ride_type=${record['ride_type']} validation_state=${record['provenance']?['validation_state']} backend_confirmed=${record['provenance']?['backend_confirmed']}',
-      );
-    } catch (e) {
-      debugPrint('[COMPLIANCE_LEDGER][WARN] write_failed reason=$e');
-    }
   }
 
   Map<String, dynamic> _buildCompliancePlannedLedgerRecord({
@@ -18325,6 +18523,24 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
   }
 
+  void _appendPaymentUpdateLedgerIfPaid({
+    required Map<String, dynamic> fields,
+    required String method,
+    required String source,
+    bool? backendConfirmed,
+  }) {
+    if (!_isPaidPaymentUpdate(fields)) return;
+    final record = _buildCompliancePaymentUpdateLedgerRecord(
+      item: item,
+      paymentFields: fields,
+      method: method,
+      source: source,
+      eventAt: DateTime.now(),
+      backendConfirmed: backendConfirmed,
+    );
+    unawaited(_writeComplianceLedgerRecord(record: record));
+  }
+
   Map<String, dynamic>? _extractAuthoritativePaymentFields(
     Map<String, dynamic> root,
   ) {
@@ -20328,6 +20544,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           if (payment['amount'] != null) 'paymentAmount': payment['amount'],
         };
         _mergePaymentFieldsIntoReceiptDetails(extracted);
+        _appendPaymentUpdateLedgerIfPaid(
+          fields: extracted,
+          method: normalizedMethod,
+          source: 'in_car',
+          backendConfirmed: true,
+        );
         if (mounted) {
           setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
         }
@@ -20387,6 +20609,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       extracted['paymentMethod'] = normalizedMethod;
       extracted['payment_source'] = 'in_car';
       extracted['paymentSource'] = 'in_car';
+      extracted['paid_at'] ??= payload['paid_at'];
+      extracted['paidAt'] ??= payload['paid_at'];
       _mergePaymentFieldsIntoReceiptDetails(extracted);
 
       if (mounted) {
@@ -20406,6 +20630,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       await CustomerBookingsStore.instance.markPaid(
         bookingId: bookingId,
         paymentBookingId: paymentBookingId,
+      );
+      _appendPaymentUpdateLedgerIfPaid(
+        fields: extracted,
+        method: normalizedMethod,
+        source: 'in_car',
+        backendConfirmed: true,
       );
 
       if (!context.mounted) return;

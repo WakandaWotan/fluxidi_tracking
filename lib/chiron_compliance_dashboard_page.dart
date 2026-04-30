@@ -36,7 +36,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
         backgroundColor: const Color(0xFF0B1020),
         title: Text(
           _t(
-            nl: 'Chiron Compliance',
+            nl: 'Chiron-compliance',
             en: 'Chiron Compliance',
             fr: 'Conformité Chiron',
             es: 'Cumplimiento Chiron',
@@ -65,7 +65,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           ),
           _HubActionCard(
             title: _t(
-              nl: 'Checklist & readiness',
+              nl: 'Checklist & voorbereiding',
               en: 'Checklist & readiness',
               fr: 'Checklist et préparation',
               es: 'Checklist y preparación',
@@ -73,7 +73,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             subtitle: _t(
               nl: 'Controleer bedrijf, chauffeurs, voertuigen en documenten.',
               en: 'Check company, drivers, vehicles and documents.',
-              fr: 'Contrôlez l entreprise, les chauffeurs, les véhicules et les documents.',
+              fr: 'Vérifiez l’entreprise, les chauffeurs, les véhicules et les documents.',
               es: 'Revisa empresa, conductores, vehículos y documentos.',
             ),
             trailingIcon: Icons.fact_check_outlined,
@@ -87,19 +87,19 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           ),
           _HubActionCard(
             title: _t(
-              nl: 'Lokale rittenledger',
-              en: 'Local ride ledger',
-              fr: 'Ledger local des trajets',
-              es: 'Ledger local de trayectos',
+              nl: 'Lokaal rittenregister',
+              en: 'Local ride register',
+              fr: 'Registre local des courses',
+              es: 'Registro local de viajes',
             ),
             subtitle: _t(
-              nl: 'Bekijk lokale compliance-records van afgeronde ritten.',
+              nl: 'Bekijk lokale ritregistraties van afgeronde ritten.',
               en: 'View local compliance records of completed rides.',
-              fr: 'Consultez les enregistrements locaux de conformité des trajets terminés.',
-              es: 'Consulta registros locales de cumplimiento de trayectos completados.',
+              fr: 'Consultez les enregistrements locaux de conformité des courses terminées.',
+              es: 'Consulta registros locales de cumplimiento de viajes completados.',
             ),
             note: _t(
-              nl: 'Read-only',
+              nl: 'Alleen lezen',
               en: 'Read-only',
               fr: 'Lecture seule',
               es: 'Solo lectura',
@@ -1307,10 +1307,10 @@ class _ChironLocalLedgerPage extends StatelessWidget {
         backgroundColor: const Color(0xFF0B1020),
         title: Text(
           _t(
-            nl: 'Lokale rittenledger',
-            en: 'Local ride ledger',
-            fr: 'Ledger local des trajets',
-            es: 'Ledger local de trayectos',
+            nl: 'Lokaal rittenregister',
+            en: 'Local ride register',
+            fr: 'Registre local des courses',
+            es: 'Registro local de viajes',
           ),
         ),
       ),
@@ -1318,7 +1318,12 @@ class _ChironLocalLedgerPage extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         children: [
           _baseCard(
-            title: _t(nl: 'Ledger', en: 'Ledger', fr: 'Ledger', es: 'Ledger'),
+            title: _t(
+              nl: 'Lokaal rittenregister',
+              en: 'Local ride register',
+              fr: 'Registre local des courses',
+              es: 'Registro local de viajes',
+            ),
             subtitle: _t(
               nl: 'Laatste lokale compliance-records in read-only modus.',
               en: 'Latest local compliance records in read-only mode.',
@@ -1385,32 +1390,193 @@ class _LocalComplianceLedgerSectionState
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
   }
 
-  String _backendLabel(bool? value) {
+  String _ledgerToken(String raw) {
+    return raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+  }
+
+  String _backendChipLabel(bool? value) {
     if (value == true) {
       return _t(
-        nl: 'bevestigd',
-        en: 'confirmed',
-        fr: 'confirmé',
-        es: 'confirmado',
+        nl: 'Backend: bevestigd',
+        en: 'Backend: confirmed',
+        fr: 'Backend: confirmé',
+        es: 'Backend: confirmado',
       );
     }
     if (value == false) {
       return _t(
-        nl: 'niet bevestigd',
-        en: 'not confirmed',
-        fr: 'non confirmé',
-        es: 'no confirmado',
+        nl: 'Backend: niet bevestigd',
+        en: 'Backend: not confirmed',
+        fr: 'Backend: non confirmé',
+        es: 'Backend: no confirmado',
       );
     }
-    return _t(nl: 'onbekend', en: 'unknown', fr: 'inconnu', es: 'desconocido');
+    return _t(
+      nl: 'Backend: onbekend',
+      en: 'Backend: unknown',
+      fr: 'Backend: inconnu',
+      es: 'Backend: desconocido',
+    );
   }
 
-  String _normalizedRideType(String type) {
-    final t = type.trim().toLowerCase();
-    if (t == 'planned') return 'PLANNED';
-    if (t == 'direct') return 'DIRECT';
-    if (t.isEmpty) return 'UNKNOWN';
-    return t.toUpperCase();
+  String _rideTypeLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'direct':
+        return _t(
+          nl: 'Straatrit',
+          en: 'Direct ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
+        );
+      case 'planned':
+        return _t(
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Course planifiée',
+          es: 'Viaje planificado',
+        );
+      default:
+        return raw.trim().isEmpty
+            ? _t(
+                nl: 'Onbekende rit',
+                en: 'Unknown ride',
+                fr: 'Course inconnue',
+                es: 'Viaje desconocido',
+              )
+            : raw.trim();
+    }
+  }
+
+  String _validationStateLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'exportable':
+        return _t(
+          nl: 'Exporteerbaar',
+          en: 'Exportable',
+          fr: 'Exportable',
+          es: 'Exportable',
+        );
+      case 'blocked':
+        return _t(
+          nl: 'Geblokkeerd',
+          en: 'Blocked',
+          fr: 'Bloqué',
+          es: 'Bloqueado',
+        );
+      case 'payment_update':
+        return _t(
+          nl: 'Betaling bijgewerkt',
+          en: 'Payment updated',
+          fr: 'Paiement mis à jour',
+          es: 'Pago actualizado',
+        );
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _paymentStatusLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'paid':
+      case 'succeeded':
+      case 'success':
+      case 'completed':
+      case 'settled':
+      case 'confirmed':
+        return _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+      case 'unpaid':
+      case 'not_paid':
+        return _t(
+          nl: 'Onbetaald',
+          en: 'Unpaid',
+          fr: 'Non payé',
+          es: 'No pagado',
+        );
+      case 'pending':
+      case 'open':
+      case 'authorized':
+      case 'authorised':
+      case 'processing':
+        return _t(
+          nl: 'In afwachting',
+          en: 'Pending',
+          fr: 'En attente',
+          es: 'Pendiente',
+        );
+      case 'failed':
+      case 'error':
+      case 'declined':
+        return _t(nl: 'Mislukt', en: 'Failed', fr: 'Échec', es: 'Fallido');
+      case 'unknown':
+      case '':
+        return _t(
+          nl: 'Onbekend',
+          en: 'Unknown',
+          fr: 'Inconnu',
+          es: 'Desconocido',
+        );
+      default:
+        return raw.trim();
+    }
+  }
+
+  String _paymentMethodLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'cash':
+      case 'contant':
+        return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+      case 'bancontact':
+        return 'Bancontact';
+      case 'card':
+      case 'card_terminal':
+      case 'terminal':
+        return _t(nl: 'Kaart', en: 'Card', fr: 'Carte', es: 'Tarjeta');
+      case 'qr':
+      case 'qr_code':
+        return 'QR';
+      case 'mollie':
+        return 'Mollie';
+      default:
+        return raw.trim();
+    }
+  }
+
+  String _paymentSourceLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'in_car':
+        return _t(
+          nl: 'In de wagen',
+          en: 'In car',
+          fr: 'Dans le véhicule',
+          es: 'En el vehículo',
+        );
+      case 'payment_link':
+        return _t(
+          nl: 'Betaallink',
+          en: 'Payment link',
+          fr: 'Lien de paiement',
+          es: 'Enlace de pago',
+        );
+      case 'app':
+        return 'App';
+      case 'backend':
+        return 'Backend';
+      default:
+        return raw.trim();
+    }
+  }
+
+  String _paymentUpdatedLabel() {
+    return _t(
+      nl: 'Betaling bijgewerkt',
+      en: 'Payment updated',
+      fr: 'Paiement mis à jour',
+      es: 'Pago actualizado',
+    );
+  }
+
+  String _receiptLabel() {
+    return _t(nl: 'Bon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
   }
 
   Widget _chip(String label) {
@@ -1428,10 +1594,99 @@ class _LocalComplianceLedgerSectionState
     );
   }
 
-  Widget _recordTile(ComplianceLedgerEntry e) {
+  String? _ledgerKeyPart(String prefix, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized == '—') return null;
+    return '$prefix:${normalized.toLowerCase()}';
+  }
+
+  List<String> _ledgerMatchKeys(
+    ComplianceLedgerEntry e, {
+    bool includeFallback = false,
+  }) {
+    final keys = <String>[
+      if (_ledgerKeyPart('booking', e.bookingId) != null)
+        _ledgerKeyPart('booking', e.bookingId)!,
+      if (_ledgerKeyPart('trip', e.tripId) != null)
+        _ledgerKeyPart('trip', e.tripId)!,
+      if (_ledgerKeyPart('receipt', e.receiptReference) != null)
+        _ledgerKeyPart('receipt', e.receiptReference)!,
+    ];
+    if (keys.isEmpty && includeFallback) {
+      final fallback =
+          _ledgerKeyPart('ride', e.rideId) ??
+          _ledgerKeyPart('event', e.eventId);
+      if (fallback != null) keys.add(fallback);
+    }
+    return keys;
+  }
+
+  DateTime? _ledgerSortTime(ComplianceLedgerEntry e) {
+    return e.finalizedAtUtc ?? e.createdAtUtc ?? e.paidAtUtc ?? e.endedAtUtc;
+  }
+
+  bool _isNewerLedgerEntry(
+    ComplianceLedgerEntry candidate,
+    ComplianceLedgerEntry existing,
+  ) {
+    final candidateTime = _ledgerSortTime(candidate);
+    final existingTime = _ledgerSortTime(existing);
+    if (candidateTime != null && existingTime != null) {
+      final byTime = candidateTime.compareTo(existingTime);
+      if (byTime != 0) return byTime > 0;
+    } else if (candidateTime != null) {
+      return true;
+    } else if (existingTime != null) {
+      return false;
+    }
+    return candidate.sourceLineIndex > existing.sourceLineIndex;
+  }
+
+  Map<String, ComplianceLedgerEntry> _latestPaymentUpdatesByKey(
+    List<ComplianceLedgerEntry> entries,
+  ) {
+    final latest = <String, ComplianceLedgerEntry>{};
+    for (final entry in entries.where((e) => e.isPaymentUpdate)) {
+      for (final key in _ledgerMatchKeys(entry, includeFallback: true)) {
+        final existing = latest[key];
+        if (existing == null || _isNewerLedgerEntry(entry, existing)) {
+          latest[key] = entry;
+        }
+      }
+    }
+    return latest;
+  }
+
+  ComplianceLedgerEntry? _effectivePaymentUpdateFor(
+    ComplianceLedgerEntry e,
+    Map<String, ComplianceLedgerEntry> latestPaymentUpdates,
+  ) {
+    ComplianceLedgerEntry? best;
+    for (final key in _ledgerMatchKeys(e)) {
+      final update = latestPaymentUpdates[key];
+      if (update == null) continue;
+      if (best == null || _isNewerLedgerEntry(update, best)) {
+        best = update;
+      }
+    }
+    return best;
+  }
+
+  Widget _recordTile(
+    ComplianceLedgerEntry e,
+    Map<String, ComplianceLedgerEntry> latestPaymentUpdates,
+  ) {
+    final effectivePaymentUpdate = e.isPaymentUpdate
+        ? null
+        : _effectivePaymentUpdateFor(e, latestPaymentUpdates);
+    final effectivePayment = effectivePaymentUpdate ?? e;
     final reference = e.receiptReference.trim().isNotEmpty
-        ? 'Bon ${e.receiptReference.trim()}'
-        : (e.rideId.trim().isNotEmpty ? e.rideId.trim() : '—');
+        ? '${_receiptLabel()} ${e.receiptReference.trim()}'
+        : (e.bookingId.trim().isNotEmpty
+              ? e.bookingId.trim()
+              : (e.tripId.trim().isNotEmpty
+                    ? e.tripId.trim()
+                    : (e.rideId.trim().isNotEmpty ? e.rideId.trim() : '—')));
     final pickup = e.pickupLabel.trim();
     final dropoff = e.dropoffLabel.trim();
     final route = pickup.isNotEmpty && dropoff.isNotEmpty
@@ -1445,11 +1700,14 @@ class _LocalComplianceLedgerSectionState
         : '€ ${e.fareTotalEur!.toStringAsFixed(2)}${e.currency.trim().isNotEmpty ? ' ${e.currency.trim()}' : ''}';
     final started = _fmtDateTime(e.startedAtUtc);
     final finalized = _fmtDateTime(e.finalizedAtUtc ?? e.createdAtUtc);
+    final title = e.isPaymentUpdate
+        ? 'AUDIT • ${_paymentUpdatedLabel()} • $reference'
+        : '${_rideTypeLabel(e.rideType)} • $reference';
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.black26,
+        color: e.isPaymentUpdate ? Colors.black12 : Colors.black26,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0x22FFFFFF)),
       ),
@@ -1457,7 +1715,7 @@ class _LocalComplianceLedgerSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${_normalizedRideType(e.rideType)} • $reference',
+            title,
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w700,
@@ -1468,7 +1726,7 @@ class _LocalComplianceLedgerSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            '$started  →  $finalized',
+            e.isPaymentUpdate ? finalized : '$started  →  $finalized',
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
           const SizedBox(height: 6),
@@ -1477,30 +1735,38 @@ class _LocalComplianceLedgerSectionState
             runSpacing: 6,
             children: [
               _chip(
-                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${e.validationState.trim().isEmpty ? '—' : e.validationState.trim()}',
+                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(e.validationState)}',
               ),
+              _chip(_backendChipLabel(e.backendConfirmed)),
               _chip(
-                '${_t(nl: 'Backend', en: 'Backend', fr: 'Backend', es: 'Backend')}: ${_backendLabel(e.backendConfirmed)}',
+                '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_paymentStatusLabel(effectivePayment.paymentStatus)}',
               ),
-              _chip(
-                '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${e.paymentStatus.trim().isEmpty ? '—' : e.paymentStatus.trim()}',
-              ),
-              if (e.paymentMethod.trim().isNotEmpty &&
-                  e.paymentMethod.trim().toLowerCase() != 'unknown')
+              if (effectivePayment.paymentMethod.trim().isNotEmpty &&
+                  effectivePayment.paymentMethod.trim().toLowerCase() !=
+                      'unknown')
                 _chip(
-                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${e.paymentMethod.trim()}',
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_paymentMethodLabel(effectivePayment.paymentMethod)}',
                 ),
+              if (effectivePayment.paymentSource.trim().isNotEmpty &&
+                  effectivePayment.paymentSource.trim().toLowerCase() !=
+                      'unknown')
+                _chip(
+                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(effectivePayment.paymentSource)}',
+                ),
+              if (effectivePaymentUpdate != null) _chip(_paymentUpdatedLabel()),
               if (distance != null) _chip(distance),
               if (fare != null) _chip(fare),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            route,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
+          if (!e.isPaymentUpdate) ...[
+            const SizedBox(height: 6),
+            Text(
+              route,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ],
       ),
     );
@@ -1525,10 +1791,10 @@ class _LocalComplianceLedgerSectionState
                 Expanded(
                   child: Text(
                     _t(
-                      nl: 'Lokale compliance ledger',
-                      en: 'Local compliance ledger',
-                      fr: 'Ledger conformité local',
-                      es: 'Ledger de cumplimiento local',
+                      nl: 'Lokaal rittenregister',
+                      en: 'Local ride register',
+                      fr: 'Registre local des courses',
+                      es: 'Registro local de viajes',
                     ),
                     style: const TextStyle(
                       color: Color(0xFFFFD54F),
@@ -1620,6 +1886,9 @@ class _LocalComplianceLedgerSectionState
                   );
                 }
 
+                final latestPaymentUpdates = _latestPaymentUpdatesByKey(
+                  result.entries,
+                );
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1634,7 +1903,9 @@ class _LocalComplianceLedgerSectionState
                           ),
                         ),
                       ),
-                    ...result.entries.map(_recordTile),
+                    ...result.entries.map(
+                      (entry) => _recordTile(entry, latestPaymentUpdates),
+                    ),
                   ],
                 );
               },
