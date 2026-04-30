@@ -45,6 +45,11 @@ class ChironComplianceDashboardPage extends StatelessWidget {
   }) {
     return Card(
       color: const Color(0xFF141B2F),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0x22FFFFFF)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -55,7 +60,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
               style: const TextStyle(
                 color: Color(0xFFFFD54F),
                 fontWeight: FontWeight.w800,
-                fontSize: 14,
+                fontSize: 15,
               ),
             ),
             if (subtitle != null && subtitle.trim().isNotEmpty) ...[
@@ -65,7 +70,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ],
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             child,
           ],
         ),
@@ -77,15 +82,19 @@ class ChironComplianceDashboardPage extends StatelessWidget {
     required String label,
     required String value,
     required bool ready,
+    Color? accent,
   }) {
+    final resolvedAccent =
+        accent ?? (ready ? Colors.greenAccent : Colors.orangeAccent);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
             ready ? Icons.check_circle_outline : Icons.warning_amber_outlined,
             size: 16,
-            color: ready ? Colors.greenAccent : Colors.orangeAccent,
+            color: resolvedAccent,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -112,6 +121,119 @@ class ChironComplianceDashboardPage extends StatelessWidget {
     if (checks.isEmpty) return 0;
     final ok = checks.where((v) => v).length;
     return ((ok * 100) / checks.length).round();
+  }
+
+  Widget _emptyState(String text) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: Colors.white60, fontSize: 12),
+      ),
+    );
+  }
+
+  ({String label, Color color, IconData icon}) _overallStatus({
+    required int score,
+    required int criticalCount,
+    required int attentionCount,
+  }) {
+    if (criticalCount > 0 || score < 50) {
+      return (
+        label: _t(nl: 'Kritiek', en: 'Critical', fr: 'Critique', es: 'Crítico'),
+        color: Colors.redAccent,
+        icon: Icons.error_outline,
+      );
+    }
+    if (attentionCount > 0 || score < 80) {
+      return (
+        label: _t(
+          nl: 'Aandacht nodig',
+          en: 'Attention needed',
+          fr: 'Attention requise',
+          es: 'Atención requerida',
+        ),
+        color: Colors.orangeAccent,
+        icon: Icons.warning_amber_rounded,
+      );
+    }
+    return (
+      label: _t(nl: 'In orde', en: 'Healthy', fr: 'En ordre', es: 'En orden'),
+      color: Colors.greenAccent,
+      icon: Icons.check_circle_outline,
+    );
+  }
+
+  Widget _attentionGroup({
+    required String title,
+    required List<({String text, bool critical})> items,
+  }) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFFFFD54F),
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...items.map((item) {
+            final critical = item.critical;
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: critical
+                    ? const Color(0x33FF5A5A)
+                    : Colors.orange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: critical
+                      ? Colors.redAccent.withOpacity(0.5)
+                      : Colors.orangeAccent.withOpacity(0.45),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    critical
+                        ? Icons.priority_high_rounded
+                        : Icons.warning_amber_rounded,
+                    size: 16,
+                    color: critical ? Colors.redAccent : Colors.orangeAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      item.text,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
   }
 
   @override
@@ -274,46 +396,65 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             ((companyScore + driverScore + vehicleScore + docScore) / 4)
                 .round();
 
-        final attention = <String>[];
+        final companyAttention = <({String text, bool critical})>[];
+        final driverAttention = <({String text, bool critical})>[];
+        final vehicleAttention = <({String text, bool critical})>[];
+        final docAttention = <({String text, bool critical})>[];
+
         if (!hasCompanyName) {
-          attention.add(
-            _t(
+          companyAttention.add((
+            text: _t(
               nl: 'Bedrijfsnaam/juridische naam ontbreekt.',
               en: 'Company/legal name is missing.',
               fr: 'Le nom de l entreprise est manquant.',
               es: 'Falta el nombre de la empresa/legal.',
             ),
-          );
+            critical: true,
+          ));
         }
         if (!hasRegistration) {
-          attention.add(
-            _t(
+          companyAttention.add((
+            text: _t(
               nl: 'Registratie/KBO/ondernemingsnummer ontbreekt.',
               en: 'Registration/KBO/company number is missing.',
               fr: 'Le numéro d entreprise est manquant.',
               es: 'Falta el número de registro/empresa.',
             ),
-          );
+            critical: true,
+          ));
         }
         if (!hasAddress) {
-          attention.add(
-            _t(
+          companyAttention.add((
+            text: _t(
               nl: 'Bedrijfsadres is onvolledig.',
               en: 'Company address is incomplete.',
               fr: 'L adresse de l entreprise est incomplète.',
               es: 'La dirección de la empresa está incompleta.',
             ),
-          );
+            critical: true,
+          ));
+        }
+        if (!hasContactEmails) {
+          companyAttention.add((
+            text: _t(
+              nl: 'Contact-/e-mailvelden zijn onvolledig.',
+              en: 'Contact/email fields are incomplete.',
+              fr: 'Les champs contact/e-mail sont incomplets.',
+              es: 'Los campos de contacto/correo están incompletos.',
+            ),
+            critical: false,
+          ));
         }
         if (driversMissingCardInfo > 0) {
-          attention.add(
-            _t(
+          driverAttention.add((
+            text: _t(
               nl: '$driversMissingCardInfo chauffeur(s) missen kaartnummer en/of vervaldatum.',
               en: '$driversMissingCardInfo driver(s) missing card number and/or expiry.',
               fr: '$driversMissingCardInfo chauffeur(s) sans numéro et/ou expiration de carte.',
               es: '$driversMissingCardInfo conductor(es) sin número y/o vencimiento de tarjeta.',
             ),
-          );
+            critical: false,
+          ));
         }
         final vehiclesMissingRequired = visibleVehicles.where((v) {
           return !_hasText(v.licensePlate) ||
@@ -322,35 +463,53 @@ class ChironComplianceDashboardPage extends StatelessWidget {
               !_hasText(v.driverId);
         }).length;
         if (vehiclesMissingRequired > 0) {
-          attention.add(
-            _t(
+          vehicleAttention.add((
+            text: _t(
               nl: '$vehiclesMissingRequired voertuig(en) missen verplichte Chiron-velden.',
               en: '$vehiclesMissingRequired vehicle(s) missing required Chiron fields.',
               fr: '$vehiclesMissingRequired véhicule(s) sans champs Chiron requis.',
               es: '$vehiclesMissingRequired vehículo(s) sin campos Chiron requeridos.',
             ),
-          );
+            critical: false,
+          ));
         }
         if (coreGapCount > 0) {
-          attention.add(
-            _t(
+          docAttention.add((
+            text: _t(
               nl: '$coreGapCount chauffeur(s) hebben een kern-documentkloof.',
               en: '$coreGapCount driver(s) have a core document gap.',
               fr: '$coreGapCount chauffeur(s) ont un manque de documents clés.',
               es: '$coreGapCount conductor(es) tienen faltantes de documentos clave.',
             ),
-          );
+            critical: false,
+          ));
         }
         if (expiredDocs > 0 || rejectedDocs > 0) {
-          attention.add(
-            _t(
+          docAttention.add((
+            text: _t(
               nl: 'Er zijn verlopen of afgewezen documenten.',
               en: 'There are expired or rejected documents.',
               fr: 'Il y a des documents expirés ou rejetés.',
               es: 'Hay documentos caducados o rechazados.',
             ),
-          );
+            critical: true,
+          ));
         }
+
+        final allAttention = <({String text, bool critical})>[
+          ...companyAttention,
+          ...driverAttention,
+          ...vehicleAttention,
+          ...docAttention,
+        ];
+        final criticalAttentionCount = allAttention
+            .where((x) => x.critical)
+            .length;
+        final status = _overallStatus(
+          score: overallScore,
+          criticalCount: criticalAttentionCount,
+          attentionCount: allAttention.length,
+        );
 
         return Scaffold(
           backgroundColor: const Color(0xFF0B1020),
@@ -407,6 +566,54 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: status.color.withOpacity(0.16),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: status.color.withOpacity(0.55),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(status.icon, size: 14, color: status.color),
+                              const SizedBox(width: 6),
+                              Text(
+                                status.label,
+                                style: TextStyle(
+                                  color: status.color,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          _t(
+                            nl: 'Bedrijf $companyScore% • Chauffeurs $driverScore% • Voertuigen $vehicleScore% • Documenten $docScore%',
+                            en: 'Company $companyScore% • Drivers $driverScore% • Vehicles $vehicleScore% • Documents $docScore%',
+                            fr: 'Entreprise $companyScore% • Chauffeurs $driverScore% • Véhicules $vehicleScore% • Documents $docScore%',
+                            es: 'Empresa $companyScore% • Conductores $driverScore% • Vehículos $vehicleScore% • Documentos $docScore%',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     LinearProgressIndicator(
                       value: overallScore / 100,
@@ -428,8 +635,9 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                         fr: 'Points d attention',
                         es: 'Atención requerida',
                       ),
-                      value: attention.length.toString(),
-                      ready: attention.isEmpty,
+                      value: allAttention.length.toString(),
+                      ready: allAttention.isEmpty,
+                      accent: status.color,
                     ),
                   ],
                 ),
@@ -531,6 +739,18 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                       value: hasContactEmails ? '1/1' : '0/1',
                       ready: hasContactEmails,
                     ),
+                    if (profile == null && backendBiz == null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: _emptyState(
+                          _t(
+                            nl: 'Geen lokaal bedrijfsprofiel gevonden. Vul gegevens in via Bedrijfsinstellingen.',
+                            en: 'No local company profile found. Fill details in Business settings.',
+                            fr: 'Aucun profil entreprise local trouvé. Complétez les paramètres entreprise.',
+                            es: 'No se encontró perfil local de empresa. Completa la configuración de empresa.',
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -600,16 +820,12 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     if (driverCount == 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
-                        child: Text(
+                        child: _emptyState(
                           _t(
                             nl: 'Nog geen chauffeurs gevonden voor dit bedrijf.',
                             en: 'No drivers found for this company yet.',
                             fr: 'Aucun chauffeur trouvé pour cette entreprise.',
                             es: 'No se encontraron conductores para esta empresa.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
                           ),
                         ),
                       ),
@@ -685,16 +901,12 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     if (vehicleCount == 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
-                        child: Text(
+                        child: _emptyState(
                           _t(
                             nl: 'Nog geen voertuigen gevonden voor dit bedrijf.',
                             en: 'No vehicles found for this company yet.',
                             fr: 'Aucun véhicule trouvé pour cette entreprise.',
                             es: 'No se encontraron vehículos para esta empresa.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
                           ),
                         ),
                       ),
@@ -783,16 +995,12 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                     if (totalDocs == 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
-                        child: Text(
+                        child: _emptyState(
                           _t(
                             nl: 'Nog geen documenten gevonden. Beheer documenten via Chauffeurs beheren.',
                             en: 'No documents found yet. Manage documents in Manage drivers.',
                             fr: 'Aucun document trouvé. Gérez les documents dans Gérer les chauffeurs.',
                             es: 'No se encontraron documentos. Gestiona documentos en Gestionar conductores.',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
                           ),
                         ),
                       ),
@@ -823,52 +1031,55 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   fr: 'Attention requise',
                   es: 'Atención requerida',
                 ),
-                child: attention.isEmpty
-                    ? Text(
+                child: allAttention.isEmpty
+                    ? _emptyState(
                         _t(
                           nl: 'Geen directe aandachtspunten gevonden.',
                           en: 'No immediate attention items found.',
                           fr: 'Aucun point d attention immédiat.',
                           es: 'No se encontraron elementos urgentes.',
                         ),
-                        style: const TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 12,
-                        ),
                       )
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: attention
-                            .map(
-                              (item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Padding(
-                                      padding: EdgeInsets.only(top: 2),
-                                      child: Icon(
-                                        Icons.warning_amber_rounded,
-                                        color: Colors.orangeAccent,
-                                        size: 16,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        item,
-                                        style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 12,
-                                          height: 1.3,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                            .toList(growable: false),
+                        children: [
+                          _attentionGroup(
+                            title: _t(
+                              nl: 'Bedrijf',
+                              en: 'Company',
+                              fr: 'Entreprise',
+                              es: 'Empresa',
+                            ),
+                            items: companyAttention,
+                          ),
+                          _attentionGroup(
+                            title: _t(
+                              nl: 'Chauffeurs',
+                              en: 'Drivers',
+                              fr: 'Chauffeurs',
+                              es: 'Conductores',
+                            ),
+                            items: driverAttention,
+                          ),
+                          _attentionGroup(
+                            title: _t(
+                              nl: 'Voertuigen',
+                              en: 'Vehicles',
+                              fr: 'Véhicules',
+                              es: 'Vehículos',
+                            ),
+                            items: vehicleAttention,
+                          ),
+                          _attentionGroup(
+                            title: _t(
+                              nl: 'Documenten',
+                              en: 'Documents',
+                              fr: 'Documents',
+                              es: 'Documentos',
+                            ),
+                            items: docAttention,
+                          ),
+                        ],
                       ),
               ),
             ],
