@@ -43,6 +43,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
+import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
@@ -2864,6 +2865,36 @@ class BusinessHomePage extends StatelessWidget {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const VehicleManagementPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
+                  leading: const Icon(Icons.fact_check_outlined),
+                  title: Text(
+                    _t(
+                      nl: 'Chiron Compliance Dashboard',
+                      en: 'Chiron Compliance Dashboard',
+                      fr: 'Tableau conformité Chiron',
+                      es: 'Panel de cumplimiento Chiron',
+                    ),
+                  ),
+                  subtitle: Text(
+                    _t(
+                      nl: 'Read-only compliance overzicht',
+                      en: 'Read-only compliance overview',
+                      fr: 'Aperçu conformité en lecture seule',
+                      es: 'Resumen de cumplimiento en solo lectura',
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ChironComplianceDashboardPage(),
                       ),
                     );
                   },
