@@ -1,0 +1,16 @@
+name = "fluxidi-compliance-api"
+main = "fluxidi_compliance_worker.js"
+compatibility_date = "2026-04-30"
+
+[observability.logs]
+enabled = true
+
+# Append-only compliance event storage.
+[[kv_namespaces]]
+binding = "COMPLIANCE_KV"
+id = "04313c4521454b909293208d738471a1"
+
+# Optional auth token (set as a secret in non-dev environments):
+#   wrangler secret put COMPLIANCE_ADMIN_TOKEN
+# or:
+#   wrangler secret put ADMIN_TOKEN
