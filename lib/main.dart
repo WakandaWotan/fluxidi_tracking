@@ -44,6 +44,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 
@@ -2918,6 +2919,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  AppLanguage get _lang => appConfig.currentLanguage;
+
   Widget _driverField(
     TextEditingController ctrl,
     String label, {
@@ -3097,6 +3100,201 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
+  Future<void> _confirmDeleteDocument(
+    BuildContext context,
+    DriverDocument doc,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        title: Text(
+          _t(
+            nl: 'Document verwijderen?',
+            en: 'Delete document?',
+            fr: 'Supprimer le document ?',
+            es: '¿Eliminar documento?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze actie kan niet ongedaan worden gemaakt.',
+            en: 'This action cannot be undone.',
+            fr: 'Cette action est irreversible.',
+            es: 'Esta acción no se puede deshacer.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Delete',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+    }
+  }
+
+  Future<void> _openDocumentEditor(
+    BuildContext context,
+    DriverProfile driver, {
+    DriverDocument? existing,
+  }) => showDriverDocumentEditorSheet(
+    context,
+    driver: driver,
+    existing: existing,
+  );
+
+  Widget _driverDocumentTile(
+    BuildContext context,
+    DriverProfile driver,
+    DriverDocument doc,
+  ) {
+    final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
+    final statusLabel = driverDocumentStatusLabel(doc.status, _lang);
+    final expiredVisual =
+        doc.isExpiredByDate || doc.status == DriverDocumentStatuses.expired;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: expiredVisual
+              ? Colors.orange.withOpacity(0.6)
+              : Colors.white24,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            typeLabel,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (doc.title.trim().isNotEmpty)
+            Text(
+              doc.title,
+              style: const TextStyle(fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          const SizedBox(height: 4),
+          Text(
+            '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: $statusLabel'
+            '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_t(nl: 'datum verlopen', en: 'date expired', fr: 'date expiree', es: 'fecha caducada')})' : ''}',
+            style: TextStyle(
+              color: expiredVisual ? Colors.orangeAccent : Colors.white70,
+              fontSize: 12,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (doc.expiryDate.trim().isNotEmpty)
+            Text(
+              '${_t(nl: 'Vervaldatum', en: 'Expiry', fr: 'Expiration', es: 'Caducidad')}: ${doc.expiryDate}',
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+          if (doc.filePath.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${_t(nl: 'Bestand', en: 'File', fr: 'Fichier', es: 'Archivo')}: ${doc.filePath}',
+              style: const TextStyle(fontSize: 10, color: Colors.white38),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (doc.notes.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${_t(nl: 'Notities', en: 'Notes', fr: 'Notes', es: 'Notas')}: ${doc.notes}',
+              style: const TextStyle(fontSize: 11, color: Colors.white60),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: doc.filePath.trim().isEmpty
+                    ? null
+                    : () =>
+                          openDriverDocumentFile(context, doc.filePath, _lang),
+                child: Text(
+                  _t(nl: 'Openen', en: 'Open', fr: 'Ouvrir', es: 'Abrir'),
+                ),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () =>
+                    _openDocumentEditor(context, driver, existing: doc),
+                child: Text(
+                  _t(nl: 'Bewerken', en: 'Edit', fr: 'Modifier', es: 'Editar'),
+                ),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: () => _confirmDeleteDocument(context, doc),
+                child: Text(
+                  _t(
+                    nl: 'Verwijderen',
+                    en: 'Delete',
+                    fr: 'Supprimer',
+                    es: 'Eliminar',
+                  ),
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
@@ -3114,140 +3312,280 @@ class CompanyDriverManagementPage extends StatelessWidget {
             ),
           ),
         ),
-        body: ValueListenableBuilder<List<DriverProfile>>(
-          valueListenable: driversNotifier,
-          builder: (context, drivers, _) {
-            final visible = drivers
-                .where(
-                  (d) => fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
-                )
-                .toList(growable: false);
-            if (visible.isEmpty) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    _t(
-                      nl: 'Nog geen chauffeurs beschikbaar.',
-                      en: 'No drivers available yet.',
-                      fr: 'Aucun chauffeur disponible.',
-                      es: 'Todavía no hay conductores disponibles.',
-                    ),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                ),
-              );
-            }
-            return ListView.separated(
-              padding: const EdgeInsets.all(14),
-              itemCount: visible.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (context, i) {
-                final d = visible[i];
-                final status = d.isActive
-                    ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
-                    : _t(
-                        nl: 'Inactief',
-                        en: 'Inactive',
-                        fr: 'Inactif',
-                        es: 'Inactivo',
-                      );
-                return Card(
-                  color: const Color(0xFF141B2F),
+        body: ValueListenableBuilder<List<DriverDocument>>(
+          valueListenable: driverDocumentsNotifier,
+          builder: (context, _, __) => ValueListenableBuilder<List<DriverProfile>>(
+            valueListenable: driversNotifier,
+            builder: (context, drivers, _) {
+              final visible = drivers
+                  .where(
+                    (d) =>
+                        fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
+                  )
+                  .toList(growable: false);
+              if (visible.isEmpty) {
+                return Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                d.fullName.trim().isEmpty
-                                    ? _t(
-                                        nl: 'Naamloze chauffeur',
-                                        en: 'Unnamed driver',
-                                        fr: 'Chauffeur sans nom',
-                                        es: 'Conductor sin nombre',
-                                      )
-                                    : d.fullName.trim(),
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              status,
-                              style: TextStyle(
-                                color: d.isActive
-                                    ? Colors.greenAccent
-                                    : Colors.white54,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        _line(
-                          _t(
-                            nl: 'Chauffeur-ID',
-                            en: 'Driver ID',
-                            fr: 'ID chauffeur',
-                            es: 'ID conductor',
-                          ),
-                          d.employeeNumber,
-                        ),
-                        _line(
-                          _t(
-                            nl: 'Telefoon',
-                            en: 'Phone',
-                            fr: 'Telephone',
-                            es: 'Telefono',
-                          ),
-                          d.phone,
-                        ),
-                        _line(
-                          _t(
-                            nl: 'Chauffeurskaartnummer',
-                            en: 'Taxi driver card number',
-                            fr: 'Numero carte chauffeur',
-                            es: 'Numero tarjeta conductor',
-                          ),
-                          d.taxiDriverCardNumber,
-                        ),
-                        _line(
-                          _t(
-                            nl: 'Vervaldatum chauffeurskaart',
-                            en: 'Taxi driver card expiry',
-                            fr: 'Expiration carte chauffeur',
-                            es: 'Vencimiento tarjeta conductor',
-                          ),
-                          d.taxiDriverCardExpiry,
-                        ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: OutlinedButton.icon(
-                            onPressed: () => _openEditDriverDialog(context, d),
-                            icon: const Icon(Icons.edit_outlined, size: 16),
-                            label: Text(
-                              _t(
-                                nl: 'Bewerken',
-                                en: 'Edit',
-                                fr: 'Modifier',
-                                es: 'Editar',
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      _t(
+                        nl: 'Nog geen chauffeurs beschikbaar.',
+                        en: 'No drivers available yet.',
+                        fr: 'Aucun chauffeur disponible.',
+                        es: 'Todavía no hay conductores disponibles.',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70),
                     ),
                   ),
                 );
-              },
-            );
-          },
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.all(14),
+                itemCount: visible.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, i) {
+                  final d = visible[i];
+                  final status = d.isActive
+                      ? _t(
+                          nl: 'Actief',
+                          en: 'Active',
+                          fr: 'Actif',
+                          es: 'Activo',
+                        )
+                      : _t(
+                          nl: 'Inactief',
+                          en: 'Inactive',
+                          fr: 'Inactif',
+                          es: 'Inactivo',
+                        );
+                  final docs = DriverDocumentsStore.instance
+                      .documentsVisibleForDriver(d.id);
+                  final count = docs.length;
+                  final gap = DriverDocumentsStore.instance
+                      .hasCoreDocumentGapForDriver(d.id);
+                  return Card(
+                    color: const Color(0xFF141B2F),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  d.fullName.trim().isEmpty
+                                      ? _t(
+                                          nl: 'Naamloze chauffeur',
+                                          en: 'Unnamed driver',
+                                          fr: 'Chauffeur sans nom',
+                                          es: 'Conductor sin nombre',
+                                        )
+                                      : d.fullName.trim(),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: d.isActive
+                                      ? Colors.green.withOpacity(0.18)
+                                      : Colors.white10,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  status,
+                                  style: TextStyle(
+                                    color: d.isActive
+                                        ? Colors.greenAccent
+                                        : Colors.white54,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          _line(
+                            _t(
+                              nl: 'Chauffeur-ID',
+                              en: 'Driver ID',
+                              fr: 'ID chauffeur',
+                              es: 'ID conductor',
+                            ),
+                            d.employeeNumber,
+                          ),
+                          _line(
+                            _t(
+                              nl: 'Telefoon',
+                              en: 'Phone',
+                              fr: 'Telephone',
+                              es: 'Telefono',
+                            ),
+                            d.phone,
+                          ),
+                          _line(
+                            _t(
+                              nl: 'Chauffeurskaartnummer',
+                              en: 'Taxi driver card number',
+                              fr: 'Numero carte chauffeur',
+                              es: 'Numero tarjeta conductor',
+                            ),
+                            d.taxiDriverCardNumber,
+                          ),
+                          _line(
+                            _t(
+                              nl: 'Vervaldatum chauffeurskaart',
+                              en: 'Taxi driver card expiry',
+                              fr: 'Expiration carte chauffeur',
+                              es: 'Vencimiento tarjeta conductor',
+                            ),
+                            d.taxiDriverCardExpiry,
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: gap
+                                    ? Colors.orange.withOpacity(0.5)
+                                    : Colors.white24,
+                              ),
+                            ),
+                            child: Text(
+                              '$count ${_t(nl: 'documenten', en: 'documents', fr: 'documents', es: 'documentos')}'
+                              '${gap ? ' • ${_t(nl: 'Controleer kern-documenten', en: 'Check core documents', fr: 'Verifier documents', es: 'Revise documentos')}' : ''}',
+                              style: TextStyle(
+                                color: gap
+                                    ? Colors.orangeAccent
+                                    : Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ExpansionTile(
+                            tilePadding: EdgeInsets.zero,
+                            title: Text(
+                              _t(
+                                nl: 'Documenten',
+                                en: 'Documents',
+                                fr: 'Documents',
+                                es: 'Documentos',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            subtitle: Text(
+                              docs.isEmpty
+                                  ? _t(
+                                      nl: 'Nog geen documenten.',
+                                      en: 'No documents yet.',
+                                      fr: 'Aucun document.',
+                                      es: 'Sin documentos.',
+                                    )
+                                  : _t(
+                                      nl: 'Tik om te bekijken en beheren',
+                                      en: 'Tap to view and manage',
+                                      fr: 'Touchez pour voir et gerer',
+                                      es: 'Toca para ver y gestionar',
+                                    ),
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                              ),
+                            ),
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (docs.isEmpty)
+                                      Text(
+                                        _t(
+                                          nl: 'Nog geen documenten.',
+                                          en: 'No documents yet.',
+                                          fr: 'Aucun document.',
+                                          es: 'Sin documentos.',
+                                        ),
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                        ),
+                                      )
+                                    else
+                                      ...docs.map(
+                                        (doc) => _driverDocumentTile(
+                                          context,
+                                          d,
+                                          doc,
+                                        ),
+                                      ),
+                                    const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: OutlinedButton.icon(
+                                        onPressed: () =>
+                                            _openDocumentEditor(context, d),
+                                        icon: const Icon(Icons.add, size: 18),
+                                        label: Text(
+                                          _t(
+                                            nl: 'Document toevoegen',
+                                            en: 'Add document',
+                                            fr: 'Ajouter',
+                                            es: 'Agregar',
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: OutlinedButton.icon(
+                              onPressed: () =>
+                                  _openEditDriverDialog(context, d),
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                              label: Text(
+                                _t(
+                                  nl: 'Bewerken',
+                                  en: 'Edit',
+                                  fr: 'Modifier',
+                                  es: 'Editar',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
     );
