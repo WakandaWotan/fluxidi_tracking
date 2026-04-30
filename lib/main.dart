@@ -10380,6 +10380,134 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 'exportable';
   }
 
+  String? _complianceText(dynamic value) {
+    final s = value?.toString().trim();
+    if (s == null || s.isEmpty || s.toLowerCase() == 'null') return null;
+    return s;
+  }
+
+  String? _compliancePathText(Map<String, dynamic> root, String path) {
+    dynamic cursor = root;
+    for (final part in path.split('.')) {
+      if (cursor is! Map) return null;
+      cursor = cursor[part];
+    }
+    return _complianceText(cursor);
+  }
+
+  String? _firstComplianceText(List<dynamic> candidates) {
+    for (final candidate in candidates) {
+      final text = _complianceText(candidate);
+      if (text != null) return text;
+    }
+    return null;
+  }
+
+  String _normalizeCompliancePaymentStatus(dynamic value) {
+    final raw = _complianceText(value);
+    if (raw == null) return 'unknown';
+    final normalized = raw
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_')
+        .trim();
+    switch (normalized) {
+      case 'paid':
+      case 'succeeded':
+      case 'success':
+      case 'completed':
+      case 'settled':
+      case 'confirmed':
+        return 'paid';
+      case 'pending':
+      case 'open':
+      case 'authorized':
+      case 'authorised':
+      case 'processing':
+        return 'pending';
+      case 'failed':
+      case 'error':
+      case 'declined':
+        return 'failed';
+      case 'cancelled':
+      case 'canceled':
+        return 'cancelled';
+      case 'unpaid':
+      case 'not_paid':
+        return 'unpaid';
+      case 'unknown':
+        return 'unknown';
+      default:
+        return 'unknown';
+    }
+  }
+
+  String _normalizeCompliancePaymentMethod(dynamic value) {
+    final raw = _complianceText(value);
+    if (raw == null) return 'unknown';
+    final normalized = raw
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_')
+        .trim();
+    switch (normalized) {
+      case 'cash':
+      case 'contant':
+        return 'cash';
+      case 'qr':
+      case 'qr_code':
+        return 'qr';
+      case 'bancontact':
+        return 'bancontact';
+      case 'card':
+      case 'terminal':
+      case 'card_terminal':
+        return 'card_terminal';
+      case 'payment_link':
+      case 'link':
+      case 'online':
+        return 'payment_link';
+      case 'mollie':
+        return 'mollie';
+      case 'in_car':
+      case 'unknown':
+        return 'unknown';
+      default:
+        return 'unknown';
+    }
+  }
+
+  Map<String, dynamic> _buildCompliancePaymentPayload({
+    dynamic status,
+    dynamic method,
+    dynamic source,
+    dynamic provider,
+    dynamic paymentId,
+    dynamic paidAtUtc,
+  }) {
+    final normalizedStatus = _normalizeCompliancePaymentStatus(status);
+    final normalizedMethod = _normalizeCompliancePaymentMethod(method);
+    final sourceText = _complianceText(source);
+    final providerText = _complianceText(provider);
+    final paymentIdText = _complianceText(paymentId);
+    final paidAtText = _complianceText(paidAtUtc);
+    final parsedPaidAt = paidAtText == null
+        ? null
+        : DateTime.tryParse(paidAtText);
+
+    return <String, dynamic>{
+      'status': normalizedStatus,
+      if (normalizedMethod != 'unknown') 'method': normalizedMethod,
+      if (sourceText != null) 'source': sourceText,
+      if (providerText != null) 'provider': providerText,
+      if (paymentIdText != null) 'payment_id': paymentIdText,
+      if (parsedPaidAt != null)
+        'paid_at_utc': parsedPaidAt.toUtc().toIso8601String()
+      else if (paidAtText != null)
+        'paid_at_utc': paidAtText,
+    };
+  }
+
   Future<void> _writeComplianceLedgerRecord({
     required Map<String, dynamic> record,
   }) async {
@@ -10414,6 +10542,45 @@ class _DriverHomePageState extends State<DriverHomePage>
       rideId: rideId,
     );
     final total = booking.price?.toDouble();
+    final details = booking.details;
+    final plannedPaymentStatus = _firstComplianceText([
+      details['payment_status'],
+      details['paymentStatus'],
+      _compliancePathText(details, 'booking.payment_status'),
+      _compliancePathText(details, 'booking.paymentStatus'),
+      _compliancePathText(details, 'mollie.status'),
+      _compliancePathText(details, 'record.mollie.status'),
+    ]);
+    final plannedPaymentMethod = _firstComplianceText([
+      details['payment_method'],
+      details['paymentMethod'],
+      _compliancePathText(details, 'booking.payment_method'),
+      _compliancePathText(details, 'booking.paymentMethod'),
+    ]);
+    final plannedPaymentSource = _firstComplianceText([
+      details['payment_source'],
+      details['paymentSource'],
+      _compliancePathText(details, 'booking.payment_source'),
+      _compliancePathText(details, 'booking.paymentSource'),
+    ]);
+    final plannedPaymentProvider = _firstComplianceText([
+      details['payment_provider'],
+      details['paymentProvider'],
+      _compliancePathText(details, 'booking.payment_provider'),
+      _compliancePathText(details, 'booking.paymentProvider'),
+    ]);
+    final plannedPaymentId = _firstComplianceText([
+      details['payment_id'],
+      details['paymentId'],
+      _compliancePathText(details, 'booking.payment_id'),
+      _compliancePathText(details, 'booking.paymentId'),
+    ]);
+    final plannedPaidAt = _firstComplianceText([
+      details['paid_at'],
+      details['paidAt'],
+      _compliancePathText(details, 'booking.paid_at'),
+      _compliancePathText(details, 'booking.paidAt'),
+    ]);
     final validationState = _complianceValidationState(
       rideType: 'planned',
       backendConfirmed: backendConfirmed,
@@ -10449,7 +10616,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         'total_eur': total,
         'currency': booking.currency ?? kDefaultCurrency,
       },
-      'payment': <String, dynamic>{'status': 'unknown'},
+      'payment': _buildCompliancePaymentPayload(
+        status: plannedPaymentStatus,
+        method: plannedPaymentMethod,
+        source: plannedPaymentSource,
+        provider: plannedPaymentProvider,
+        paymentId: plannedPaymentId,
+        paidAtUtc: plannedPaidAt,
+      ),
       'references': <String, dynamic>{
         'receipt_reference': receiptReference,
         'invoice_reference': null,
@@ -10523,7 +10697,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'total_eur': totalEur,
         'currency': kDefaultCurrency,
       },
-      'payment': <String, dynamic>{'status': 'unknown'},
+      'payment': _buildCompliancePaymentPayload(),
       'references': <String, dynamic>{
         'receipt_reference': receiptReference,
         'invoice_reference': null,

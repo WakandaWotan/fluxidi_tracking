@@ -1485,6 +1485,11 @@ class _LocalComplianceLedgerSectionState
               _chip(
                 '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${e.paymentStatus.trim().isEmpty ? '—' : e.paymentStatus.trim()}',
               ),
+              if (e.paymentMethod.trim().isNotEmpty &&
+                  e.paymentMethod.trim().toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${e.paymentMethod.trim()}',
+                ),
               if (distance != null) _chip(distance),
               if (fare != null) _chip(fare),
             ],

@@ -26,6 +26,11 @@ class ComplianceLedgerEntry {
     required this.fareTotalEur,
     required this.currency,
     required this.paymentStatus,
+    required this.paymentMethod,
+    required this.paymentSource,
+    required this.paymentProvider,
+    required this.paymentId,
+    required this.paidAtUtc,
     required this.receiptReference,
     required this.invoiceReference,
     required this.validationState,
@@ -56,6 +61,11 @@ class ComplianceLedgerEntry {
   final double? fareTotalEur;
   final String currency;
   final String paymentStatus;
+  final String paymentMethod;
+  final String paymentSource;
+  final String paymentProvider;
+  final String paymentId;
+  final DateTime? paidAtUtc;
   final String receiptReference;
   final String invoiceReference;
   final String validationState;
@@ -98,6 +108,11 @@ class ComplianceLedgerEntry {
       fareTotalEur: _toDouble(fare['total_eur']),
       currency: _toStringOrEmpty(fare['currency']),
       paymentStatus: _toStringOrEmpty(payment['status']),
+      paymentMethod: _toStringOrEmpty(payment['method']),
+      paymentSource: _toStringOrEmpty(payment['source']),
+      paymentProvider: _toStringOrEmpty(payment['provider']),
+      paymentId: _toStringOrEmpty(payment['payment_id']),
+      paidAtUtc: _toDateTime(payment['paid_at_utc']),
       receiptReference: _toStringOrEmpty(references['receipt_reference']),
       invoiceReference: _toStringOrEmpty(references['invoice_reference']),
       validationState: _toStringOrEmpty(provenance['validation_state']),
