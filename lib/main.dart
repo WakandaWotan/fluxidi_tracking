@@ -1274,6 +1274,54 @@ String _localizedRideStatus(String? raw) {
   return raw?.trim().isNotEmpty == true ? raw!.trim() : _receiptText('unknown');
 }
 
+bool _looksLikeCoordinatePair(String? value) {
+  final text = value?.trim();
+  if (text == null || text.isEmpty) return false;
+  final normalized = text.replaceAll(RegExp(r'\s+'), ' ');
+  final match = RegExp(
+    r'^([+-]?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{1,3}(?:\.\d+)?)$',
+  ).firstMatch(normalized);
+  if (match == null) return false;
+  final lat = double.tryParse(match.group(1)!);
+  final lon = double.tryParse(match.group(2)!);
+  if (lat == null || lon == null) return false;
+  return lat.abs() <= 90.0 && lon.abs() <= 180.0;
+}
+
+String _receiptStartPointFallback() {
+  return _tr(
+    nl: 'Straatrit startpunt',
+    en: 'Street ride start point',
+    fr: 'Point de départ',
+    es: 'Punto de inicio',
+  );
+}
+
+String _receiptStartLocationFallback() {
+  return _tr(
+    nl: 'Startlocatie',
+    en: 'Start location',
+    fr: 'Point de départ',
+    es: 'Punto de inicio',
+  );
+}
+
+String _sanitizeCustomerFacingRouteLabel(
+  String? raw, {
+  required bool isFromField,
+}) {
+  final fallback = isFromField
+      ? _receiptStartPointFallback()
+      : _receiptStartLocationFallback();
+  final text = raw?.trim() ?? '';
+  if (text.isEmpty || text == '-' || text == '—') return fallback;
+  if (text.toLowerCase() == _receiptText('currentLocation').toLowerCase()) {
+    return fallback;
+  }
+  if (_looksLikeCoordinatePair(text)) return fallback;
+  return text;
+}
+
 class FluxidiDriverApp extends StatelessWidget {
   const FluxidiDriverApp({super.key});
 
@@ -7782,6 +7830,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _navStepsLoading = false;
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
+  double? _lastMovementBearing;
+  bool _useMatchedVisual = false;
+  int _matchEnterHits = 0;
+  int _matchExitHits = 0;
+  double? _lastVisualProgressM;
+  bool _routeLineProgressTrimmed = false;
+  double _lastRouteLineTrimProgressM = 0.0;
+  DateTime? _lastRouteLineTrimAt;
+  double _lastMarkerLagM = 0.0;
+  final Map<String, DateTime> _lastNavDebugAt = <String, DateTime>{};
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
   int _routeCleanupEpoch = 0;
@@ -7803,6 +7861,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _nextNavType = null;
     _nextNavModifier = null;
     _lastRouteSnap = null;
+    _lastMovementBearing = null;
+    _useMatchedVisual = false;
+    _matchEnterHits = 0;
+    _matchExitHits = 0;
+    _lastVisualProgressM = null;
+    _routeLineProgressTrimmed = false;
+    _lastRouteLineTrimProgressM = 0.0;
+    _lastRouteLineTrimAt = null;
+    _lastMarkerLagM = 0.0;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
   }
@@ -10293,16 +10360,19 @@ class _DriverHomePageState extends State<DriverHomePage>
           pos.latitude,
           pos.longitude,
         );
-        if (movementBearing != null) {
-          _lastKnownBearing = movementBearing;
+        if (movementBearing != null && meters >= 1.8) {
+          _lastMovementBearing = movementBearing;
         }
       }
 
-      if (pos.heading.isFinite && pos.heading >= 0) {
+      if (pos.heading.isFinite &&
+          pos.heading >= 0 &&
+          _speedKmhFor(pos) >= 2.0) {
         _lastKnownBearing = pos.heading;
       }
 
       _updateRouteSnapState(pos);
+      await _syncVisibleRouteLineWithProgress(pos);
 
       if (_mapSupported && _map != null && _driverPointManager != null) {
         await _updateDriverMarker(pos);
@@ -10310,7 +10380,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           await _followCameraTesla(pos);
         }
       }
-      final uiBearing = _cameraBearingFor(pos);
+      final uiBearing = _adaptiveBearingFor(pos, snap: _lastRouteSnap).bearing;
       if (mounted && _cameraMode == _CameraMode.follow) {
         setState(() => _uiArrowBearing = uiBearing);
       } else {
@@ -10674,6 +10744,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _drawPins(_routeCoords.first, _routeCoords.last);
       }
       if (_lastPos != null) {
+        _updateRouteSnapState(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(_lastPos!);
         await _updateDriverMarker(_lastPos!);
       }
       debugPrint(
@@ -10709,9 +10781,61 @@ class _DriverHomePageState extends State<DriverHomePage>
     return math.max(35.0, math.min(90.0, accuracy * 1.8));
   }
 
+  double _speedKmhFor(geo.Position pos) {
+    if (!pos.speed.isFinite || pos.speed < 0) return 0.0;
+    return pos.speed * 3.6;
+  }
+
+  void _logNavBounded(String tag, String message, {int intervalMs = 900}) {
+    final now = DateTime.now();
+    final last = _lastNavDebugAt[tag];
+    if (last != null && now.difference(last).inMilliseconds < intervalMs)
+      return;
+    _lastNavDebugAt[tag] = now;
+    debugPrint('[$tag] $message');
+  }
+
+  ({double enterThresholdM, double exitThresholdM}) _matchThresholdsFor(
+    geo.Position pos,
+  ) {
+    final base = _snapThresholdFor(pos);
+    final speedKmh = _speedKmhFor(pos);
+    final navAgeSec = _trackingStartedAt == null
+        ? 999.0
+        : DateTime.now().difference(_trackingStartedAt!).inMilliseconds /
+              1000.0;
+    final justStarted = navAgeSec <= 18.0;
+    final movingFast = speedKmh >= 35.0;
+    final enter = justStarted
+        ? math.max(base, 70.0)
+        : (movingFast ? math.max(base, 48.0) : base);
+    final exit = enter + 18.0;
+    return (enterThresholdM: enter, exitThresholdM: exit);
+  }
+
+  bool _isProgressPlausible(_RouteSnap snap, geo.Position pos) {
+    final prev = _lastVisualProgressM;
+    if (prev == null) return true;
+    final speedKmh = _speedKmhFor(pos);
+    final backwardToleranceM = speedKmh < 6.0 ? 35.0 : 22.0;
+    if (snap.distanceAlongRouteM < prev - backwardToleranceM) {
+      return false;
+    }
+    final maxForwardJumpM = math.max(70.0, speedKmh * 2.8 + 38.0);
+    if (snap.distanceAlongRouteM > prev + maxForwardJumpM) {
+      return false;
+    }
+    return true;
+  }
+
   bool _canSnapToRoute(geo.Position pos, _RouteSnap? snap) {
     if (snap == null) return false;
-    return snap.distanceFromRouteM <= _snapThresholdFor(pos);
+    final thresholds = _matchThresholdsFor(pos);
+    final threshold = _useMatchedVisual
+        ? thresholds.exitThresholdM
+        : thresholds.enterThresholdM;
+    if (snap.distanceFromRouteM > threshold) return false;
+    return _isProgressPlausible(snap, pos);
   }
 
   _RouteSnap? _snapToRouteOn(List<_LonLat> routeCoords, _LonLat raw) {
@@ -10783,12 +10907,30 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _updateRouteSnapState(geo.Position pos) {
-    final snap = _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    final rawPoint = _LonLat(pos.longitude, pos.latitude);
+    final snap = _snapToRoute(rawPoint);
     _lastRouteSnap = snap;
-    if (snap == null) return;
+    final bool canUseMatched = _canSnapToRoute(pos, snap);
+    if (canUseMatched) {
+      _matchEnterHits += 1;
+      _matchExitHits = 0;
+      if (!_useMatchedVisual && _matchEnterHits >= 2) {
+        _useMatchedVisual = true;
+      }
+    } else {
+      _matchExitHits += 1;
+      _matchEnterHits = 0;
+      if (_useMatchedVisual && _matchExitHits >= 2) {
+        _useMatchedVisual = false;
+      }
+    }
+    if (_useMatchedVisual && snap != null) {
+      _lastVisualProgressM = snap.distanceAlongRouteM;
+    }
 
     final offRouteThreshold = math.max(70.0, _snapThresholdFor(pos) + 25.0);
-    if (snap.distanceFromRouteM > offRouteThreshold) {
+    final snapDistance = snap?.distanceFromRouteM ?? double.infinity;
+    if (snapDistance > offRouteThreshold) {
       _offRouteHitCount += 1;
     } else {
       _offRouteHitCount = 0;
@@ -10797,13 +10939,102 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
     }
+
+    final displayPoint = (_useMatchedVisual && snap != null)
+        ? snap.point
+        : rawPoint;
+    _lastMarkerLagM = geo.Geolocator.distanceBetween(
+      rawPoint.lat,
+      rawPoint.lon,
+      displayPoint.lat,
+      displayPoint.lon,
+    );
+
+    _logNavBounded(
+      'NAV_MATCH',
+      'rawLat=${rawPoint.lat.toStringAsFixed(6)} rawLon=${rawPoint.lon.toStringAsFixed(6)} '
+          'snapDistM=${snapDistance.isFinite ? snapDistance.toStringAsFixed(1) : 'inf'} '
+          'gpsAccuracyM=${(pos.accuracy.isFinite ? pos.accuracy : -1).toStringAsFixed(1)} '
+          'useMatchedVisual=$_useMatchedVisual reason=${canUseMatched ? 'confidence_ok' : 'confidence_low'}',
+    );
   }
 
   _LonLat _displayRoutePointFor(geo.Position pos) {
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    if (_canSnapToRoute(pos, snap)) return snap!.point;
+    if (_useMatchedVisual && snap != null) return snap.point;
     return _LonLat(pos.longitude, pos.latitude);
+  }
+
+  double? _effectiveRouteProgressM(geo.Position pos) {
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    if (_useMatchedVisual && snap != null) return snap.distanceAlongRouteM;
+    return null;
+  }
+
+  List<_LonLat> _routeCoordsFromSnap(_RouteSnap snap) {
+    if (_routeCoords.length < 2) return _routeCoords;
+    final i = snap.segmentIndex.clamp(0, _routeCoords.length - 2);
+    final out = <_LonLat>[snap.point, ..._routeCoords.sublist(i + 1)];
+    if (out.length < 2) {
+      out.add(_routeCoords.last);
+    }
+    return out;
+  }
+
+  Future<void> _syncVisibleRouteLineWithProgress(geo.Position pos) async {
+    if (_routeCoords.length < 2 || _routeLineManager == null) return;
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    final progressM = _effectiveRouteProgressM(pos);
+
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
+      if (_routeLineProgressTrimmed) {
+        _routeLineProgressTrimmed = false;
+        _lastRouteLineTrimProgressM = 0.0;
+        await _drawRouteLine(_routeCoords, force: true);
+      }
+      return;
+    }
+
+    if (!_useMatchedVisual || snap == null || progressM == null) {
+      if (_routeLineProgressTrimmed) {
+        _routeLineProgressTrimmed = false;
+        _lastRouteLineTrimProgressM = 0.0;
+        await _drawRouteLine(_routeCoords, force: true);
+      }
+      _logNavBounded(
+        'NAV_PROGRESS',
+        'progressM=-1 routeLineTrimmed=false markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
+      );
+      return;
+    }
+
+    final now = DateTime.now();
+    final deltaM = (progressM - _lastRouteLineTrimProgressM).abs();
+    final recentDraw =
+        _lastRouteLineTrimAt != null &&
+        now.difference(_lastRouteLineTrimAt!).inMilliseconds < 320;
+    if (_routeLineProgressTrimmed && deltaM < 12.0 && recentDraw) {
+      _logNavBounded(
+        'NAV_PROGRESS',
+        'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=true markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
+      );
+      return;
+    }
+
+    final trimmed = _routeCoordsFromSnap(snap);
+    if (trimmed.length >= 2) {
+      _routeLineProgressTrimmed = true;
+      _lastRouteLineTrimProgressM = progressM;
+      _lastRouteLineTrimAt = now;
+      await _drawRouteLine(trimmed, force: true);
+    }
+    _logNavBounded(
+      'NAV_PROGRESS',
+      'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=${trimmed.length >= 2} markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
+    );
   }
 
   double? _routeBearingAtSnap(_RouteSnap? snap) {
@@ -10821,11 +11052,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final mgr = _driverPointManager;
     if (mgr == null) return;
 
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final bearingData = _driverBearingFor(pos);
-    final markerBearing =
-        _routeBearingAtSnap(_lastRouteSnap) ?? bearingData.bearing;
+    final bearingData = _adaptiveBearingFor(pos, snap: snap);
+    final markerBearing = bearingData.bearing;
 
     if (_driverMarker == null) {
       try {
@@ -10871,16 +11103,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) async {
     final now = DateTime.now();
     final last = _lastFollowCameraAt;
-    if (!force && last != null && now.difference(last).inMilliseconds < 750) {
+    if (!force && last != null && now.difference(last).inMilliseconds < 320) {
       return;
     }
     if (!force && _followCameraInFlight) return;
     _lastFollowCameraAt = now;
     _followCameraInFlight = true;
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final displayPoint = _displayRoutePointFor(pos);
     final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final heading =
-        _routeBearingAtSnap(_lastRouteSnap) ?? _cameraBearingFor(pos);
+    final heading = _adaptiveBearingFor(pos, snap: snap).bearing;
 
     try {
       await _map?.flyTo(
@@ -10896,7 +11129,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             right: 24,
           ),
         ),
-        mb.MapAnimationOptions(duration: 500),
+        mb.MapAnimationOptions(duration: 280),
       );
     } finally {
       _followCameraInFlight = false;
@@ -10931,9 +11164,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final progressM = _canSnapToRoute(pos, snap)
-        ? snap!.distanceAlongRouteM
+    final progressM = (_useMatchedVisual && snap != null)
+        ? snap.distanceAlongRouteM
         : null;
+    final progressSource = progressM == null ? 'raw_fallback' : 'matched';
     while (_nextStepIndex < _routeSteps.length - 1) {
       final current = _routeSteps[_nextStepIndex];
       final straightLineM = geo.Geolocator.distanceBetween(
@@ -10960,6 +11194,10 @@ class _DriverHomePageState extends State<DriverHomePage>
             step.lon,
           )
         : math.max(0.0, step.distanceAlongRouteM - progressM);
+    _logNavBounded(
+      'NAV_STEP',
+      'progressSource=$progressSource nextDistanceM=${distanceM.toStringAsFixed(1)}',
+    );
 
     if (!mounted) {
       _nextNavInstruction = step.instruction;
@@ -11027,6 +11265,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(_lastPos!);
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -11094,6 +11333,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(_lastPos!);
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -11155,6 +11395,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(_lastPos!);
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -11193,18 +11434,108 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   double _cameraBearingFor(geo.Position pos) {
     if (pos.heading.isFinite && pos.heading >= 0) return pos.heading;
-    if (_lastKnownBearing.isFinite) return _lastKnownBearing;
+    if (_lastMovementBearing != null && _lastMovementBearing!.isFinite) {
+      return _lastMovementBearing!;
+    }
+    if (_lastKnownBearing.isFinite && _lastKnownBearing > 0)
+      return _lastKnownBearing;
     return 0.0;
   }
 
-  ({double bearing, String source}) _driverBearingFor(geo.Position pos) {
-    if (pos.heading.isFinite && pos.heading >= 0) {
-      return (bearing: pos.heading, source: 'gps_heading');
+  ({
+    double bearing,
+    String source,
+    double? gpsHeading,
+    double? movementBearing,
+    double? routeBearing,
+  })
+  _adaptiveBearingFor(geo.Position pos, {_RouteSnap? snap}) {
+    final speedKmh = _speedKmhFor(pos);
+    final gpsHeading = (pos.heading.isFinite && pos.heading >= 0)
+        ? pos.heading
+        : null;
+    final movementBearing = _lastMovementBearing;
+    final routeBearing = _routeBearingAtSnap(snap);
+
+    if (movementBearing != null &&
+        movementBearing.isFinite &&
+        (speedKmh >= 7.0 || (gpsHeading == null && speedKmh >= 3.0))) {
+      _lastKnownBearing = movementBearing;
+      _logNavBounded(
+        'NAV_BEARING',
+        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing.toStringAsFixed(1)} '
+            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${movementBearing.toStringAsFixed(1)} source=movement',
+      );
+      return (
+        bearing: movementBearing,
+        source: 'movement',
+        gpsHeading: gpsHeading,
+        movementBearing: movementBearing,
+        routeBearing: routeBearing,
+      );
     }
-    if (_lastKnownBearing.isFinite) {
-      return (bearing: _lastKnownBearing, source: 'movement_or_last');
+    if (gpsHeading != null && speedKmh >= 2.0) {
+      _lastKnownBearing = gpsHeading;
+      _logNavBounded(
+        'NAV_BEARING',
+        'gpsHeading=${gpsHeading.toStringAsFixed(1)} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
+            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${gpsHeading.toStringAsFixed(1)} source=gps_heading',
+      );
+      return (
+        bearing: gpsHeading,
+        source: 'gps_heading',
+        gpsHeading: gpsHeading,
+        movementBearing: movementBearing,
+        routeBearing: routeBearing,
+      );
     }
-    return (bearing: 0.0, source: 'default_0');
+    if (_useMatchedVisual && routeBearing != null && routeBearing.isFinite) {
+      _lastKnownBearing = routeBearing;
+      _logNavBounded(
+        'NAV_BEARING',
+        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
+            'routeBearing=${routeBearing.toStringAsFixed(1)} usedBearing=${routeBearing.toStringAsFixed(1)} source=route_segment',
+      );
+      return (
+        bearing: routeBearing,
+        source: 'route_segment',
+        gpsHeading: gpsHeading,
+        movementBearing: movementBearing,
+        routeBearing: routeBearing,
+      );
+    }
+    if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
+      _logNavBounded(
+        'NAV_BEARING',
+        'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
+            'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${_lastKnownBearing.toStringAsFixed(1)} source=last_stable',
+      );
+      return (
+        bearing: _lastKnownBearing,
+        source: 'last_stable',
+        gpsHeading: gpsHeading,
+        movementBearing: movementBearing,
+        routeBearing: routeBearing,
+      );
+    }
+    final safeFallback =
+        routeBearing ??
+        movementBearing ??
+        gpsHeading ??
+        (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
+    _lastKnownBearing = safeFallback;
+    _logNavBounded(
+      'NAV_BEARING',
+      'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} movementBearing=${movementBearing?.toStringAsFixed(1) ?? 'na'} '
+          'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} usedBearing=${safeFallback.toStringAsFixed(1)} source=safe_fallback',
+    );
+    return (
+      bearing: safeFallback,
+      source: 'safe_fallback',
+      gpsHeading: gpsHeading,
+      movementBearing: movementBearing,
+      routeBearing: routeBearing,
+    );
   }
 
   double? _bearingFromPoints(
@@ -11871,7 +12202,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Future<void> _drawRouteLine(List<_LonLat> coords) async {
+  Future<void> _drawRouteLine(
+    List<_LonLat> coords, {
+    bool force = false,
+  }) async {
     final mgr = _routeLineManager;
     if (mgr == null) return;
     if (coords.length < 2) return;
@@ -11881,7 +12215,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final signature =
         '${coords.length}:${first.lon.toStringAsFixed(5)},${first.lat.toStringAsFixed(5)}>${last.lon.toStringAsFixed(5)},${last.lat.toStringAsFixed(5)}';
     final lastRouteAt = _lastRouteDrawAt;
-    if (signature == _lastRouteDrawSignature &&
+    if (!force &&
+        signature == _lastRouteDrawSignature &&
         lastRouteAt != null &&
         now.difference(lastRouteAt) < _routeDrawDebounce) {
       return;
@@ -12948,6 +13283,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final instruction = (_nextNavInstruction ?? '').trim();
     final street = (_nextNavStreet ?? '').trim();
     final action = _shortNavAction(instruction, _nextNavType, _nextNavModifier);
+    final distanceText = _navDistanceText(dist);
     final line1 = _navTypeIsArrival(_nextNavType)
         ? action
         : _tr(
@@ -12959,76 +13295,79 @@ class _DriverHomePageState extends State<DriverHomePage>
     final icon = _maneuverIconData(_nextNavType, _nextNavModifier, instruction);
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 16 : 18),
+      borderRadius: BorderRadius.circular(compact ? 14 : 16),
       child: BackdropFilter(
         filter: ImageFilter.blur(
-          sigmaX: compact ? 8 : 12,
-          sigmaY: compact ? 8 : 12,
+          sigmaX: compact ? 7 : 9,
+          sigmaY: compact ? 7 : 9,
         ),
         child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 72 : 86),
+          constraints: BoxConstraints(maxHeight: compact ? 58 : 64),
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 10 : 14,
-            vertical: compact ? 8 : 10,
+            horizontal: compact ? 8 : 10,
+            vertical: compact ? 4 : 5,
           ),
           decoration: BoxDecoration(
             color: const Color(0xFF07142D).withOpacity(0.88),
-            borderRadius: BorderRadius.circular(compact ? 16 : 18),
+            borderRadius: BorderRadius.circular(compact ? 14 : 16),
             border: Border.all(color: const Color(0x662D8CFF), width: 1.2),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.30),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
           child: Row(
             children: [
               Container(
-                width: compact ? 46 : 58,
-                height: compact ? 46 : 58,
+                width: compact ? 34 : 38,
+                height: compact ? 34 : 38,
                 decoration: BoxDecoration(
                   color: const Color(0xFF2D8CFF),
-                  borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                  borderRadius: BorderRadius.circular(compact ? 10 : 12),
                   border: Border.all(
                     color: Colors.white.withOpacity(0.80),
-                    width: 1.5,
+                    width: 1.2,
                   ),
                 ),
-                child: Icon(icon, size: compact ? 32 : 40, color: Colors.white),
+                child: Icon(icon, size: compact ? 22 : 24, color: Colors.white),
               ),
-              SizedBox(width: compact ? 10 : 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      line1,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: compact ? 17 : 21,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                        height: 1.05,
-                      ),
+              SizedBox(width: compact ? 6 : 8),
+              if (!_navTypeIsArrival(_nextNavType))
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 6 : 7,
+                    vertical: compact ? 3 : 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0x332D8CFF),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.white.withOpacity(0.18)),
+                  ),
+                  child: Text(
+                    distanceText,
+                    style: TextStyle(
+                      fontSize: compact ? 10 : 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white.withOpacity(0.96),
                     ),
-                    if (street.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        street,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: compact ? 11 : 13,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white.withOpacity(0.74),
-                        ),
-                      ),
-                    ],
-                  ],
+                  ),
+                ),
+              if (!_navTypeIsArrival(_nextNavType))
+                SizedBox(width: compact ? 6 : 8),
+              Expanded(
+                child: Text(
+                  street.isNotEmpty ? '$line1 • $street' : line1,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 13 : 14,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    height: 1.12,
+                  ),
                 ),
               ),
             ],
@@ -13040,21 +13379,21 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _buildNavLoadingBanner({required bool compact}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 10 : 12),
+      borderRadius: BorderRadius.circular(compact ? 9 : 10),
       child: BackdropFilter(
         filter: ImageFilter.blur(
-          sigmaX: compact ? 8 : 10,
-          sigmaY: compact ? 8 : 10,
+          sigmaX: compact ? 7 : 8,
+          sigmaY: compact ? 7 : 8,
         ),
         child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 50 : 56),
+          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: compact ? 5 : 6,
+            horizontal: compact ? 8 : 9,
+            vertical: compact ? 3 : 4,
           ),
           decoration: BoxDecoration(
             color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 10 : 12),
+            borderRadius: BorderRadius.circular(compact ? 9 : 10),
             border: Border.all(color: const Color(0x332D8CFF)),
           ),
           child: Text(
@@ -13074,21 +13413,21 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _buildNoNavInstructionsBanner({required bool compact}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 10 : 12),
+      borderRadius: BorderRadius.circular(compact ? 9 : 10),
       child: BackdropFilter(
         filter: ImageFilter.blur(
-          sigmaX: compact ? 8 : 10,
-          sigmaY: compact ? 8 : 10,
+          sigmaX: compact ? 7 : 8,
+          sigmaY: compact ? 7 : 8,
         ),
         child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 50 : 56),
+          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: compact ? 5 : 6,
+            horizontal: compact ? 8 : 9,
+            vertical: compact ? 3 : 4,
           ),
           decoration: BoxDecoration(
             color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 10 : 12),
+            borderRadius: BorderRadius.circular(compact ? 9 : 10),
             border: Border.all(color: const Color(0x33FF8A80)),
           ),
           child: Text(
@@ -13179,14 +13518,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         : ((hasSelection || hasDirectDraft) ? 1 : 0);
     final bool showCockpit = liveActive || hasSelection || hasDirectDraft;
     final screenH = MediaQuery.of(context).size.height;
+    final screenW = MediaQuery.of(context).size.width;
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final bool collapseTopBarInLandscapeNav =
         isLandscape && _cameraMode == _CameraMode.follow;
+    final bool collapseTopBarInPortraitNav =
+        !isLandscape && _cameraMode == _CameraMode.follow;
     final double arrowBottom = isLandscape ? 106.0 : 152.0;
+    final double navBannerLandscapeMaxWidth = math.min(760.0, screenW * 0.46);
+    final double navBannerPortraitMaxWidth = math.min(screenW * 0.88, 700.0);
     final double navBannerTop =
         MediaQuery.of(context).padding.top +
-        (isLandscape ? 8 : (_cameraMode == _CameraMode.follow ? 128 : 74));
+        (isLandscape ? 8 : (_cameraMode == _CameraMode.follow ? 58 : 74));
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -13197,14 +13541,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           Positioned.fill(child: _buildMapLayer()),
 
           // Top status / header (Fluxidi strip).
-          if (!collapseTopBarInLandscapeNav)
+          if (!collapseTopBarInLandscapeNav && !collapseTopBarInPortraitNav)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
               left: 12,
               right: 12,
               child: _buildStatusStrip(state),
             ),
-          if (collapseTopBarInLandscapeNav)
+          if (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 10,
@@ -13232,27 +13576,72 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (_cameraMode == _CameraMode.follow && _nextNavInstruction != null)
             Positioned(
               top: navBannerTop,
-              left: isLandscape ? 62 : 12,
-              right: isLandscape ? 12 : 12,
-              child: _buildTurnInstructionBanner(compact: isLandscape),
+              left: isLandscape ? 62 : 0,
+              right: isLandscape ? null : 0,
+              child: isLandscape
+                  ? ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerLandscapeMaxWidth,
+                      ),
+                      child: _buildTurnInstructionBanner(compact: true),
+                    )
+                  : Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: navBannerPortraitMaxWidth,
+                        ),
+                        child: _buildTurnInstructionBanner(compact: false),
+                      ),
+                    ),
             ),
           if (_cameraMode == _CameraMode.follow &&
               _nextNavInstruction == null &&
               _navStepsLoading)
             Positioned(
               top: navBannerTop,
-              left: isLandscape ? 62 : 12,
-              right: isLandscape ? 12 : 12,
-              child: _buildNavLoadingBanner(compact: isLandscape),
+              left: isLandscape ? 62 : 0,
+              right: isLandscape ? null : 0,
+              child: isLandscape
+                  ? ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerLandscapeMaxWidth,
+                      ),
+                      child: _buildNavLoadingBanner(compact: true),
+                    )
+                  : Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: navBannerPortraitMaxWidth,
+                        ),
+                        child: _buildNavLoadingBanner(compact: false),
+                      ),
+                    ),
             ),
           if (_cameraMode == _CameraMode.follow &&
               !_navStepsLoading &&
               _routeSteps.isEmpty)
             Positioned(
               top: navBannerTop,
-              left: isLandscape ? 62 : 12,
-              right: isLandscape ? 12 : 12,
-              child: _buildNoNavInstructionsBanner(compact: isLandscape),
+              left: isLandscape ? 62 : 0,
+              right: isLandscape ? null : 0,
+              child: isLandscape
+                  ? ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerLandscapeMaxWidth,
+                      ),
+                      child: _buildNoNavInstructionsBanner(compact: true),
+                    )
+                  : Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: navBannerPortraitMaxWidth,
+                        ),
+                        child: _buildNoNavInstructionsBanner(compact: false),
+                      ),
+                    ),
             ),
           if (_cameraMode == _CameraMode.follow)
             Positioned(
@@ -16251,8 +16640,14 @@ class _ReceiptPdfActionRunner {
       ['payload', 'booking', 'to'],
       ['quote', 'inputs', 'to'],
     ]);
-    final from = normalizedFrom ?? rawFrom ?? _receiptText('currentLocation');
-    final to = normalizedTo ?? rawTo ?? '-';
+    final from = _sanitizeCustomerFacingRouteLabel(
+      normalizedFrom ?? rawFrom ?? _receiptText('currentLocation'),
+      isFromField: true,
+    );
+    final to = _sanitizeCustomerFacingRouteLabel(
+      normalizedTo ?? rawTo ?? '-',
+      isFromField: false,
+    );
     final source = (normalizedFrom != null || normalizedTo != null)
         ? 'normalized'
         : ((rawFrom != null || rawTo != null) ? 'raw' : 'fallback');
@@ -17622,8 +18017,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ['quote', 'inputs', 'to'],
     ]);
 
-    final from = normalizedFrom ?? rawFrom ?? _receiptText('currentLocation');
-    final to = normalizedTo ?? rawTo ?? '-';
+    final from = _sanitizeCustomerFacingRouteLabel(
+      normalizedFrom ?? rawFrom ?? _receiptText('currentLocation'),
+      isFromField: true,
+    );
+    final to = _sanitizeCustomerFacingRouteLabel(
+      normalizedTo ?? rawTo ?? '-',
+      isFromField: false,
+    );
     final source = (normalizedFrom != null || normalizedTo != null)
         ? 'normalized'
         : ((rawFrom != null || rawTo != null) ? 'raw' : 'fallback');
@@ -19502,6 +19903,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   @override
   Widget build(BuildContext context) {
+    final route = _resolvedRouteForPdf();
     if (!widget.showReceiptUi) {
       return Scaffold(
         backgroundColor: const Color(0xFF0B1020),
@@ -19594,8 +19996,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                     _receiptText('endTime'),
                     _formatDate(item.stoppedAt),
                   ),
-                  _receiptRow(_receiptText('from'), item.origin),
-                  _receiptRow(_receiptText('to'), item.destination),
+                  _receiptRow(_receiptText('from'), route.from),
+                  _receiptRow(_receiptText('to'), route.to),
                   _receiptRow(_receiptText('distance'), _kmText()),
                   _receiptRow(
                     _receiptText('actualWaitingTime'),
