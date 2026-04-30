@@ -283,6 +283,69 @@ class _ComplianceRideLedgerStore {
   }
 }
 
+/// Local fallback store for direct rides that stayed local-only (no backend trip).
+/// Kept isolated from backend history to avoid changing server behavior.
+class _LocalDirectTripHistoryStore {
+  static const String _fileName = 'local_direct_trip_history_v1.jsonl';
+
+  static Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    return File('${base.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<void> append(Map<String, dynamic> record) async {
+    if (kIsWeb) return;
+    try {
+      final file = await _file();
+      if (!await file.exists()) {
+        await file.create(recursive: true);
+      }
+      await file.writeAsString(
+        '${jsonEncode(record)}\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {
+      // Best-effort only; do not break ride stop flow.
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> readFor({
+    required String tenantId,
+    required String driverId,
+    int limit = 120,
+  }) async {
+    if (kIsWeb) return const <Map<String, dynamic>>[];
+    try {
+      final file = await _file();
+      if (!await file.exists()) return const <Map<String, dynamic>>[];
+      final lines = await file.readAsLines();
+      final parsed = <Map<String, dynamic>>[];
+      for (final raw in lines) {
+        final line = raw.trim();
+        if (line.isEmpty) continue;
+        try {
+          final decoded = jsonDecode(line);
+          if (decoded is! Map) continue;
+          final map = Map<String, dynamic>.from(decoded);
+          final rowTenant = (map['tenant_id'] ?? '').toString().trim();
+          final rowDriver = (map['driver_id'] ?? '').toString().trim();
+          if (rowTenant != tenantId.trim() || rowDriver != driverId.trim()) {
+            continue;
+          }
+          parsed.add(map);
+        } catch (_) {
+          // Ignore malformed JSONL entries to keep history resilient.
+        }
+      }
+      if (parsed.length <= limit) return parsed;
+      return parsed.sublist(parsed.length - limit);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
+  }
+}
+
 /// ===============================
 /// BRANDING (Fluxidi Taxi UI)
 /// ===============================
@@ -7767,6 +7830,15 @@ class _TripHistoryItem {
     return s == 'stopped' || s == 'completed';
   }
 
+  bool get isLocalOnlyDirectFallback {
+    final source = (rawSource['history_source'] ?? '').toString().trim();
+    final detailsSource = (bookingDetails['history_source'] ?? '')
+        .toString()
+        .trim();
+    return source == 'local_only_direct_fallback' ||
+        detailsSource == 'local_only_direct_fallback';
+  }
+
   String get receiptNumber {
     if (tripId.length <= 10) return tripId;
     return '${tripId.substring(0, 6)}-${tripId.substring(tripId.length - 4)}';
@@ -10711,6 +10783,75 @@ class _DriverHomePageState extends State<DriverHomePage>
     };
   }
 
+  Map<String, dynamic> _buildLocalOnlyDirectHistoryRecord({
+    required DateTime stoppedAt,
+    required DateTime? startedAt,
+    required double kmTotal,
+    required int waitSecondsTotal,
+    required double totalEur,
+  }) {
+    final localTripId =
+        'local_direct_${stoppedAt.toUtc().millisecondsSinceEpoch}';
+    final origin = _currentOriginPayload(_startPos ?? _lastPos);
+    final destination = <String, dynamic>{
+      'label': (_directRideDestinationText ?? '').trim(),
+      if (_directRideDestinationPoint != null)
+        'lat': _directRideDestinationPoint!.lat,
+      if (_directRideDestinationPoint != null)
+        'lon': _directRideDestinationPoint!.lon,
+    };
+    final payment = _buildCompliancePaymentPayload();
+
+    return <String, dynamic>{
+      'trip_id': localTripId,
+      'kind': 'direct',
+      'status': 'COMPLETED',
+      'tenant_id': kOutboundTenantId,
+      'driver_id': kDriverId,
+      'vehicle_id': _directRideVehicleId(),
+      'started_at': startedAt?.toUtc().toIso8601String(),
+      'stopped_at': stoppedAt.toUtc().toIso8601String(),
+      'origin': origin,
+      'destination': destination,
+      'km_total': kmTotal,
+      'wait_seconds_total': waitSecondsTotal,
+      'total_eur': totalEur,
+      'currency': kDefaultCurrency,
+      'payment_status': payment['status'] ?? 'unknown',
+      'booking_details': <String, dynamic>{
+        'payment_status': payment['status'] ?? 'unknown',
+        if (payment['method'] != null) 'payment_method': payment['method'],
+        if (payment['source'] != null) 'payment_source': payment['source'],
+        if (payment['provider'] != null)
+          'payment_provider': payment['provider'],
+        if (payment['payment_id'] != null) 'payment_id': payment['payment_id'],
+        if (payment['paid_at_utc'] != null) 'paid_at': payment['paid_at_utc'],
+        'history_source': 'local_only_direct_fallback',
+        'backend_confirmed': false,
+      },
+      'history_source': 'local_only_direct_fallback',
+      'backend_confirmed': false,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
+
+  Future<void> _persistLocalOnlyDirectHistoryFallback({
+    required DateTime stoppedAt,
+    required DateTime? startedAt,
+    required double kmTotal,
+    required int waitSecondsTotal,
+    required double totalEur,
+  }) async {
+    final record = _buildLocalOnlyDirectHistoryRecord(
+      stoppedAt: stoppedAt,
+      startedAt: startedAt,
+      kmTotal: kmTotal,
+      waitSecondsTotal: waitSecondsTotal,
+      totalEur: totalEur,
+    );
+    await _LocalDirectTripHistoryStore.append(record);
+  }
+
   Future<void> _stopTrip() async {
     final trip = _activeTripId;
     if (trip == null && !_directRideActive) return;
@@ -10786,16 +10927,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (wasDirectRide) {
       final directBackendConfirmed =
           _directTripStartWorkerOk && _directTripStopWorkerOk;
+      final finalDirectTotal = serverDirectTotal ?? finalTotal;
       final directLedger = _buildComplianceDirectLedgerRecord(
         tripId: directTripId,
         startedAt: startedAt,
         stoppedAt: stoppedAt,
         kmTotal: _kmDriven,
         waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
-        totalEur: serverDirectTotal ?? finalTotal,
+        totalEur: finalDirectTotal,
         backendConfirmed: directBackendConfirmed,
       );
       unawaited(_writeComplianceLedgerRecord(record: directLedger));
+      final isLocalOnlyDirect =
+          directTripId == null || directTripId.trim().isEmpty;
+      if (isLocalOnlyDirect) {
+        await _persistLocalOnlyDirectHistoryFallback(
+          stoppedAt: stoppedAt,
+          startedAt: startedAt,
+          kmTotal: _kmDriven,
+          waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+          totalEur: finalDirectTotal,
+        );
+      }
       _directTripStartWorkerOk = false;
       _directTripStopWorkerOk = false;
     }
@@ -15992,30 +16145,97 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
   }
 
   Future<List<_TripHistoryItem>> _fetch() async {
-    final uri = Uri.parse(
-      '${widget.workerBaseUrl}$kTripsHistoryPath'
-      '?tenant_id=${Uri.encodeQueryComponent(widget.tenantId)}'
-      '&driver_id=${Uri.encodeQueryComponent(widget.driverId)}'
-      '&limit=100',
-    );
-    final res = await http
-        .get(uri, headers: widget.headers)
-        .timeout(const Duration(seconds: 10));
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    DateTime? parseIso(String? iso) {
+      final text = iso?.trim();
+      if (text == null || text.isEmpty) return null;
+      return DateTime.tryParse(text);
     }
-    final decoded = jsonDecode(res.body);
-    if (decoded is! Map || decoded['ok'] != true) {
-      throw Exception('Ongeldig antwoord van Worker');
+
+    void sortNewestFirst(List<_TripHistoryItem> items) {
+      items.sort((a, b) {
+        final aStopped = parseIso(a.stoppedAt);
+        final bStopped = parseIso(b.stoppedAt);
+        if (aStopped != null && bStopped != null) {
+          final c = bStopped.compareTo(aStopped);
+          if (c != 0) return c;
+        } else if (aStopped == null && bStopped != null) {
+          return 1;
+        } else if (aStopped != null && bStopped == null) {
+          return -1;
+        }
+        final aStarted = parseIso(a.startedAt);
+        final bStarted = parseIso(b.startedAt);
+        if (aStarted != null && bStarted != null) {
+          final c = bStarted.compareTo(aStarted);
+          if (c != 0) return c;
+        } else if (aStarted == null && bStarted != null) {
+          return 1;
+        } else if (aStarted != null && bStarted == null) {
+          return -1;
+        }
+        return b.tripId.compareTo(a.tripId);
+      });
     }
-    final trips = decoded['trips'];
-    if (trips is! List) return <_TripHistoryItem>[];
-    final items = trips
-        .whereType<Map>()
-        .map((e) => _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)))
-        .where((e) => e.tripId.trim().isNotEmpty)
-        .toList(growable: false);
-    return items;
+
+    Future<List<_TripHistoryItem>> readLocalItems() async {
+      final localRecords = await _LocalDirectTripHistoryStore.readFor(
+        tenantId: widget.tenantId,
+        driverId: widget.driverId,
+        limit: 120,
+      );
+      return localRecords
+          .map(_TripHistoryItem.fromJson)
+          .where((e) => e.tripId.trim().isNotEmpty)
+          .toList(growable: false);
+    }
+
+    late final List<_TripHistoryItem> backendItems;
+    try {
+      final uri = Uri.parse(
+        '${widget.workerBaseUrl}$kTripsHistoryPath'
+        '?tenant_id=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&driver_id=${Uri.encodeQueryComponent(widget.driverId)}'
+        '&limit=100',
+      );
+      final res = await http
+          .get(uri, headers: widget.headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map || decoded['ok'] != true) {
+        throw Exception('Ongeldig antwoord van Worker');
+      }
+      final trips = decoded['trips'];
+      backendItems = trips is! List
+          ? <_TripHistoryItem>[]
+          : trips
+                .whereType<Map>()
+                .map(
+                  (e) =>
+                      _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)),
+                )
+                .where((e) => e.tripId.trim().isNotEmpty)
+                .toList(growable: false);
+    } catch (_) {
+      final localItems = await readLocalItems();
+      if (localItems.isEmpty) rethrow;
+      sortNewestFirst(localItems);
+      return localItems;
+    }
+
+    final localItems = await readLocalItems();
+    final mergedByTripId = <String, _TripHistoryItem>{};
+    for (final item in backendItems) {
+      mergedByTripId[item.tripId.trim()] = item;
+    }
+    for (final item in localItems) {
+      mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
+    }
+    final merged = mergedByTripId.values.toList(growable: false);
+    sortNewestFirst(merged);
+    return merged;
   }
 
   void _refresh() {
@@ -16190,7 +16410,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                '${item.kindLabel} • ${_formatDate(item.startedAt)}\n$km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)} • ${_localizedRideStatus(item.status)}',
+                                '${item.kindLabel}${item.isLocalOnlyDirectFallback ? ' • Lokaal' : ''} • ${_formatDate(item.startedAt)}\n$km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)} • ${_localizedRideStatus(item.status)}',
                                 style: const TextStyle(
                                   color: Colors.white70,
                                   height: 1.35,
