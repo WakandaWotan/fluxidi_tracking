@@ -1,11 +1,254 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
+
+  AppLanguage get _lang => appConfig.currentLanguage;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B1020),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B1020),
+        title: Text(
+          _t(
+            nl: 'Chiron Compliance',
+            en: 'Chiron Compliance',
+            fr: 'Conformité Chiron',
+            es: 'Cumplimiento Chiron',
+          ),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          _baseCard(
+            title: _t(
+              nl: 'Overzicht',
+              en: 'Overview',
+              fr: 'Aperçu',
+              es: 'Resumen',
+            ),
+            child: Text(
+              _t(
+                nl: 'Alleen-lezen compliance overzicht.',
+                en: 'Read-only compliance overview.',
+                fr: 'Aperçu de conformité en lecture seule.',
+                es: 'Resumen de cumplimiento de solo lectura.',
+              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          _HubActionCard(
+            title: _t(
+              nl: 'Checklist & readiness',
+              en: 'Checklist & readiness',
+              fr: 'Checklist et préparation',
+              es: 'Checklist y preparación',
+            ),
+            subtitle: _t(
+              nl: 'Controleer bedrijf, chauffeurs, voertuigen en documenten.',
+              en: 'Check company, drivers, vehicles and documents.',
+              fr: 'Contrôlez l entreprise, les chauffeurs, les véhicules et les documents.',
+              es: 'Revisa empresa, conductores, vehículos y documentos.',
+            ),
+            trailingIcon: Icons.fact_check_outlined,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const _ChironReadinessChecklistPage(),
+                ),
+              );
+            },
+          ),
+          _HubActionCard(
+            title: _t(
+              nl: 'Lokale rittenledger',
+              en: 'Local ride ledger',
+              fr: 'Ledger local des trajets',
+              es: 'Ledger local de trayectos',
+            ),
+            subtitle: _t(
+              nl: 'Bekijk lokale compliance-records van afgeronde ritten.',
+              en: 'View local compliance records of completed rides.',
+              fr: 'Consultez les enregistrements locaux de conformité des trajets terminés.',
+              es: 'Consulta registros locales de cumplimiento de trayectos completados.',
+            ),
+            note: _t(
+              nl: 'Read-only',
+              en: 'Read-only',
+              fr: 'Lecture seule',
+              es: 'Solo lectura',
+            ),
+            trailingIcon: Icons.receipt_long_outlined,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const _ChironLocalLedgerPage(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Widget _baseCard({
+  required String title,
+  required Widget child,
+  String? subtitle,
+}) {
+  return Card(
+    color: const Color(0xFF141B2F),
+    elevation: 0,
+    margin: const EdgeInsets.only(bottom: 10),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(14),
+      side: const BorderSide(color: Color(0x22FFFFFF)),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFFFFD54F),
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+            ),
+          ),
+          if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    ),
+  );
+}
+
+class _HubActionCard extends StatelessWidget {
+  const _HubActionCard({
+    required this.title,
+    required this.subtitle,
+    required this.trailingIcon,
+    required this.onTap,
+    this.note,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData trailingIcon;
+  final VoidCallback onTap;
+  final String? note;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: const Color(0xFF141B2F),
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0x22FFFFFF)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFFFFD54F),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if ((note ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: const Color(0x22FFFFFF)),
+                        ),
+                        child: Text(
+                          note!,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(trailingIcon, color: Colors.white70),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChironReadinessChecklistPage extends StatelessWidget {
+  const _ChironReadinessChecklistPage();
 
   AppLanguage get _lang => appConfig.currentLanguage;
 
@@ -36,46 +279,6 @@ class ChironComplianceDashboardPage extends StatelessWidget {
     final parsed = DateTime.tryParse(normalized);
     if (parsed == null) return null;
     return DateTime(parsed.year, parsed.month, parsed.day);
-  }
-
-  Widget _card({
-    required String title,
-    required Widget child,
-    String? subtitle,
-  }) {
-    return Card(
-      color: const Color(0xFF141B2F),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0x22FFFFFF)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: Color(0xFFFFD54F),
-                fontWeight: FontWeight.w800,
-                fontSize: 15,
-              ),
-            ),
-            if (subtitle != null && subtitle.trim().isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-            const SizedBox(height: 12),
-            child,
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _metric({
@@ -517,17 +720,17 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             backgroundColor: const Color(0xFF0B1020),
             title: Text(
               _t(
-                nl: 'Chiron Compliance Dashboard',
-                en: 'Chiron Compliance Dashboard',
-                fr: 'Tableau de conformité Chiron',
-                es: 'Panel de cumplimiento Chiron',
+                nl: 'Checklist & readiness',
+                en: 'Checklist & readiness',
+                fr: 'Checklist et préparation',
+                es: 'Checklist y preparación',
               ),
             ),
           ),
           body: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Overzicht',
                   en: 'Overall summary',
@@ -642,7 +845,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Bedrijfsprofiel readiness',
                   en: 'Company profile readiness',
@@ -754,7 +957,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Chauffeur readiness',
                   en: 'Driver readiness',
@@ -832,7 +1035,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Voertuig readiness',
                   en: 'Vehicle readiness',
@@ -913,7 +1116,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Chauffeur documentstatus',
                   en: 'Driver document status',
@@ -1007,24 +1210,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ],
                 ),
               ),
-              _card(
-                title: _t(
-                  nl: 'Compliance ritlogboek',
-                  en: 'Compliance ride ledger',
-                  fr: 'Journal conformité des trajets',
-                  es: 'Libro de rutas de cumplimiento',
-                ),
-                child: Text(
-                  _t(
-                    nl: 'Compliance ritlogboek wordt lokaal geschreven. Read-only viewer volgt in een aparte veilige stap.',
-                    en: 'Compliance ride ledger is written locally. Read-only viewer will follow in a separate safe step.',
-                    fr: 'Le journal de conformité est écrit localement. Un lecteur en lecture seule suivra dans une étape séparée.',
-                    es: 'El libro de cumplimiento se escribe localmente. El visor de solo lectura llegará en un paso seguro aparte.',
-                  ),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ),
-              _card(
+              _baseCard(
                 title: _t(
                   nl: 'Aandacht nodig',
                   en: 'Attention needed',
@@ -1086,6 +1272,371 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _ChironLocalLedgerPage extends StatelessWidget {
+  const _ChironLocalLedgerPage();
+
+  AppLanguage get _lang => appConfig.currentLanguage;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B1020),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B1020),
+        title: Text(
+          _t(
+            nl: 'Lokale rittenledger',
+            en: 'Local ride ledger',
+            fr: 'Ledger local des trajets',
+            es: 'Ledger local de trayectos',
+          ),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          _baseCard(
+            title: _t(nl: 'Ledger', en: 'Ledger', fr: 'Ledger', es: 'Ledger'),
+            subtitle: _t(
+              nl: 'Laatste lokale compliance-records in read-only modus.',
+              en: 'Latest local compliance records in read-only mode.',
+              fr: 'Derniers enregistrements locaux de conformité en lecture seule.',
+              es: 'Últimos registros locales de cumplimiento en modo de solo lectura.',
+            ),
+            child: _LocalComplianceLedgerSection(lang: _lang),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocalComplianceLedgerSection extends StatefulWidget {
+  const _LocalComplianceLedgerSection({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_LocalComplianceLedgerSection> createState() =>
+      _LocalComplianceLedgerSectionState();
+}
+
+class _LocalComplianceLedgerSectionState
+    extends State<_LocalComplianceLedgerSection> {
+  late Future<ComplianceLedgerReadResult> _future;
+  final ComplianceLedgerReader _reader = ComplianceLedgerReader();
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _reader.readLatest(limit: 20);
+  }
+
+  void _refresh() {
+    setState(() {
+      _future = _reader.readLatest(limit: 20);
+    });
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _fmtDateTime(DateTime? value) {
+    if (value == null) return '—';
+    final local = value.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _backendLabel(bool? value) {
+    if (value == true) {
+      return _t(
+        nl: 'bevestigd',
+        en: 'confirmed',
+        fr: 'confirmé',
+        es: 'confirmado',
+      );
+    }
+    if (value == false) {
+      return _t(
+        nl: 'niet bevestigd',
+        en: 'not confirmed',
+        fr: 'non confirmé',
+        es: 'no confirmado',
+      );
+    }
+    return _t(nl: 'onbekend', en: 'unknown', fr: 'inconnu', es: 'desconocido');
+  }
+
+  String _normalizedRideType(String type) {
+    final t = type.trim().toLowerCase();
+    if (t == 'planned') return 'PLANNED';
+    if (t == 'direct') return 'DIRECT';
+    if (t.isEmpty) return 'UNKNOWN';
+    return t.toUpperCase();
+  }
+
+  Widget _chip(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white70, fontSize: 11),
+      ),
+    );
+  }
+
+  Widget _recordTile(ComplianceLedgerEntry e) {
+    final reference = e.receiptReference.trim().isNotEmpty
+        ? 'Bon ${e.receiptReference.trim()}'
+        : (e.rideId.trim().isNotEmpty ? e.rideId.trim() : '—');
+    final pickup = e.pickupLabel.trim();
+    final dropoff = e.dropoffLabel.trim();
+    final route = pickup.isNotEmpty && dropoff.isNotEmpty
+        ? '$pickup → $dropoff'
+        : (pickup.isNotEmpty ? pickup : (dropoff.isNotEmpty ? dropoff : '—'));
+    final distance = e.distanceKm == null
+        ? null
+        : '${e.distanceKm!.toStringAsFixed(2)} km';
+    final fare = e.fareTotalEur == null
+        ? null
+        : '€ ${e.fareTotalEur!.toStringAsFixed(2)}${e.currency.trim().isNotEmpty ? ' ${e.currency.trim()}' : ''}';
+    final started = _fmtDateTime(e.startedAtUtc);
+    final finalized = _fmtDateTime(e.finalizedAtUtc ?? e.createdAtUtc);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_normalizedRideType(e.rideType)} • $reference',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$started  →  $finalized',
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _chip(
+                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${e.validationState.trim().isEmpty ? '—' : e.validationState.trim()}',
+              ),
+              _chip(
+                '${_t(nl: 'Backend', en: 'Backend', fr: 'Backend', es: 'Backend')}: ${_backendLabel(e.backendConfirmed)}',
+              ),
+              _chip(
+                '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${e.paymentStatus.trim().isEmpty ? '—' : e.paymentStatus.trim()}',
+              ),
+              if (distance != null) _chip(distance),
+              if (fare != null) _chip(fare),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            route,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: const Color(0xFF141B2F),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0x22FFFFFF)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _t(
+                      nl: 'Lokale compliance ledger',
+                      en: 'Local compliance ledger',
+                      fr: 'Ledger conformité local',
+                      es: 'Ledger de cumplimiento local',
+                    ),
+                    style: const TextStyle(
+                      color: Color(0xFFFFD54F),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Rafraîchir',
+                    es: 'Actualizar',
+                  ),
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh, color: Colors.white70),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _t(
+                nl: 'Laatste lokale records (read-only, geen synchronisatie).',
+                en: 'Latest local records (read-only, no sync).',
+                fr: 'Derniers enregistrements locaux (lecture seule, sans synchronisation).',
+                es: 'Últimos registros locales (solo lectura, sin sincronización).',
+              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            FutureBuilder<ComplianceLedgerReadResult>(
+              future: _future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return Row(
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _t(
+                          nl: 'Lokale ledger wordt geladen...',
+                          en: 'Loading local ledger...',
+                          fr: 'Chargement du ledger local...',
+                          es: 'Cargando ledger local...',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+
+                final result =
+                    snapshot.data ??
+                    const ComplianceLedgerReadResult(
+                      entries: <ComplianceLedgerEntry>[],
+                      fileExists: false,
+                      skippedMalformedLines: 0,
+                    );
+
+                if (result.entries.isEmpty) {
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0x22FFFFFF)),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Nog geen lokale compliance-ritten gevonden.',
+                        en: 'No local compliance rides found yet.',
+                        fr: 'Aucun trajet de conformité local trouvé.',
+                        es: 'Aún no se encontraron trayectos locales de cumplimiento.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (result.skippedMalformedLines > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          '${result.skippedMalformedLines} ${_t(nl: 'beschadigde ledgerregels overgeslagen.', en: 'malformed ledger lines skipped.', fr: 'lignes ledger endommagées ignorées.', es: 'líneas de ledger dañadas omitidas.')}',
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ...result.entries.map(_recordTile),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
