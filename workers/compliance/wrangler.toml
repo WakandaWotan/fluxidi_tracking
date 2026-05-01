@@ -1,6 +1,8 @@
 name = "fluxidi-compliance-api"
 main = "fluxidi_compliance_worker.js"
 compatibility_date = "2026-04-30"
+workers_dev = true
+preview_urls = false
 
 [observability.logs]
 enabled = true
