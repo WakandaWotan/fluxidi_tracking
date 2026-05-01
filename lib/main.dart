@@ -8867,12 +8867,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   void initState() {
     super.initState();
     debugPrint('[MAP][HOSTING_MODE] mode=HC textureView=true');
+    final initialStyle = _styleForMode(_cameraMode);
+    _activeMapStyleUri = initialStyle;
     _stableMapWidget = mb.MapWidget(
       key: const ValueKey('mapbox_map'),
       onMapCreated: _onMapCreated,
       textureView: true,
       androidHostingMode: mb.AndroidPlatformViewHostingMode.HC,
-      styleUri: 'mapbox://styles/mapbox/streets-v12',
+      styleUri: initialStyle,
       cameraOptions: mb.CameraOptions(
         center: _mbPoint(3.62, 50.78),
         zoom: 12.0,
