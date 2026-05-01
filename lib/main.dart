@@ -8348,6 +8348,17 @@ class _LonLat {
   const _LonLat(this.lon, this.lat);
 }
 
+class _ExternalNavTarget {
+  final double? lat;
+  final double? lon;
+  final String? query;
+
+  const _ExternalNavTarget({this.lat, this.lon, this.query});
+
+  bool get hasCoordinates => lat != null && lon != null;
+  bool get hasQuery => (query ?? '').trim().isNotEmpty;
+}
+
 class _NavStep {
   final double lat;
   final double lon;
@@ -12609,6 +12620,136 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  _ExternalNavTarget? _resolveExternalNavTarget() {
+    if (_directRideDestinationPoint != null) {
+      return _ExternalNavTarget(
+        lat: _directRideDestinationPoint!.lat,
+        lon: _directRideDestinationPoint!.lon,
+      );
+    }
+
+    if (_routeCoords.isNotEmpty) {
+      final destination = _routeCoords.last;
+      return _ExternalNavTarget(lat: destination.lat, lon: destination.lon);
+    }
+
+    final bookingDestination = (_activeBooking?.to ?? '').trim();
+    if (bookingDestination.isNotEmpty) {
+      return _ExternalNavTarget(query: bookingDestination);
+    }
+
+    final directDestination = (_directRideDestinationText ?? '').trim();
+    if (directDestination.isNotEmpty) {
+      return _ExternalNavTarget(query: directDestination);
+    }
+
+    return null;
+  }
+
+  Future<void> _launchExternalNavUri(Uri uri) async {
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (ok || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Navigatie-app kon niet worden geopend.',
+            en: 'Could not open navigation app.',
+            fr: 'Impossible d’ouvrir l’application de navigation.',
+            es: 'No se pudo abrir la aplicación de navegación.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openInGoogleMaps() async {
+    final target = _resolveExternalNavTarget();
+    if (target == null) return;
+    Uri uri;
+    if (target.hasCoordinates) {
+      uri = Uri.https('www.google.com', '/maps/dir/', <String, String>{
+        'api': '1',
+        'destination': '${target.lat},${target.lon}',
+      });
+    } else if (target.hasQuery) {
+      uri = Uri.https('www.google.com', '/maps/dir/', <String, String>{
+        'api': '1',
+        'destination': target.query!.trim(),
+      });
+    } else {
+      return;
+    }
+    await _launchExternalNavUri(uri);
+  }
+
+  Future<void> _openInWaze() async {
+    final target = _resolveExternalNavTarget();
+    if (target == null) return;
+    Uri uri;
+    if (target.hasCoordinates) {
+      uri = Uri.https('waze.com', '/ul', <String, String>{
+        'll': '${target.lat},${target.lon}',
+        'navigate': 'yes',
+      });
+    } else if (target.hasQuery) {
+      uri = Uri.https('waze.com', '/ul', <String, String>{
+        'q': target.query!.trim(),
+        'navigate': 'yes',
+      });
+    } else {
+      return;
+    }
+    await _launchExternalNavUri(uri);
+  }
+
+  Widget _buildExternalNavButtons() {
+    if (_resolveExternalNavTarget() == null) return const SizedBox.shrink();
+    final buttonStyle = OutlinedButton.styleFrom(
+      foregroundColor: Colors.white,
+      backgroundColor: const Color(0xCC0B1326),
+      side: BorderSide(color: kFluxidiYellow.withOpacity(0.78), width: 1.2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        alignment: WrapAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            style: buttonStyle,
+            onPressed: _openInGoogleMaps,
+            icon: const Icon(Icons.map, size: 16),
+            label: Text(
+              _tr(
+                nl: 'Openen in Google Maps',
+                en: 'Open in Google Maps',
+                fr: 'Ouvrir dans Google Maps',
+                es: 'Abrir en Google Maps',
+              ),
+            ),
+          ),
+          OutlinedButton.icon(
+            style: buttonStyle,
+            onPressed: _openInWaze,
+            icon: const Icon(Icons.alt_route, size: 16),
+            label: Text(
+              _tr(
+                nl: 'Openen in Waze',
+                en: 'Open in Waze',
+                fr: 'Ouvrir dans Waze',
+                es: 'Abrir en Waze',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // -------------------------------
   // ROUTE (Overview -> Follow)
   // -------------------------------
@@ -14479,6 +14620,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? 2
         : ((hasSelection || hasDirectDraft) ? 1 : 0);
     final bool showCockpit = liveActive || hasSelection || hasDirectDraft;
+    final bool showExternalNavButtons =
+        showCockpit && _resolveExternalNavTarget() != null;
     final screenH = MediaQuery.of(context).size.height;
     final screenW = MediaQuery.of(context).size.width;
     final bool isLandscape =
@@ -14672,19 +14815,26 @@ class _DriverHomePageState extends State<DriverHomePage>
                           child: showCockpit
                               ? SizedBox(
                                   width: double.infinity,
-                                  child: CockpitWidget(
-                                    etaText: _etaText,
-                                    kmText: _kmRemainingText,
-                                    priceText: _cockpitPriceText,
-                                    tripStarted: _liveRideActive,
-                                    isWaiting: _isWaiting,
-                                    navActive:
-                                        _cameraMode == _CameraMode.follow,
-                                    onNav: _openNavigation,
-                                    onStart: _handleCockpitStart,
-                                    onStop: _stopTrip,
-                                    onWait: _enterWaitMode,
-                                    onGo: _exitWaitMode,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CockpitWidget(
+                                        etaText: _etaText,
+                                        kmText: _kmRemainingText,
+                                        priceText: _cockpitPriceText,
+                                        tripStarted: _liveRideActive,
+                                        isWaiting: _isWaiting,
+                                        navActive:
+                                            _cameraMode == _CameraMode.follow,
+                                        onNav: _openNavigation,
+                                        onStart: _handleCockpitStart,
+                                        onStop: _stopTrip,
+                                        onWait: _enterWaitMode,
+                                        onGo: _exitWaitMode,
+                                      ),
+                                      if (showExternalNavButtons)
+                                        _buildExternalNavButtons(),
+                                    ],
                                   ),
                                 )
                               : ConstrainedBox(
@@ -14714,18 +14864,26 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 MediaQuery.of(context).viewInsets.bottom + 6,
                           ),
                           child: showCockpit
-                              ? CockpitWidget(
-                                  etaText: _etaText,
-                                  kmText: _kmRemainingText,
-                                  priceText: _cockpitPriceText,
-                                  tripStarted: _liveRideActive,
-                                  isWaiting: _isWaiting,
-                                  navActive: _cameraMode == _CameraMode.follow,
-                                  onNav: _openNavigation,
-                                  onStart: _handleCockpitStart,
-                                  onStop: _stopTrip,
-                                  onWait: _enterWaitMode,
-                                  onGo: _exitWaitMode,
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CockpitWidget(
+                                      etaText: _etaText,
+                                      kmText: _kmRemainingText,
+                                      priceText: _cockpitPriceText,
+                                      tripStarted: _liveRideActive,
+                                      isWaiting: _isWaiting,
+                                      navActive:
+                                          _cameraMode == _CameraMode.follow,
+                                      onNav: _openNavigation,
+                                      onStart: _handleCockpitStart,
+                                      onStop: _stopTrip,
+                                      onWait: _enterWaitMode,
+                                      onGo: _exitWaitMode,
+                                    ),
+                                    if (showExternalNavButtons)
+                                      _buildExternalNavButtons(),
+                                  ],
                                 )
                               : _buildHintPanel(),
                         ),
