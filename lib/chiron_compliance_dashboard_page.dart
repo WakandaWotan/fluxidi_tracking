@@ -1595,7 +1595,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1618,7 +1618,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1645,7 +1645,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1662,7 +1662,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1690,7 +1690,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1715,7 +1715,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 
@@ -1751,7 +1751,7 @@ class _RemoteComplianceEventsSectionState
       case 'unknown':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : raw.trim();
+        return raw.trim().isEmpty ? '—' : _localizedUnknown();
     }
   }
 

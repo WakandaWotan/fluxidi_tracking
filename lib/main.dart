@@ -1313,7 +1313,7 @@ String _localizedRideSubtype(String? raw) {
   if (value == 'heenrit' || value == 'outbound ride' || value == 'outbound') {
     return _receiptText('outboundRide');
   }
-  return raw?.trim().isNotEmpty == true ? raw!.trim() : _receiptText('unknown');
+  return _receiptText('unknown');
 }
 
 String _localizedRideStatus(String? raw) {
@@ -1349,7 +1349,7 @@ String _localizedRideStatus(String? raw) {
         es: 'Cancelada',
       );
   }
-  return raw?.trim().isNotEmpty == true ? raw!.trim() : _receiptText('unknown');
+  return _receiptText('unknown');
 }
 
 bool _looksLikeCoordinatePair(String? value) {
@@ -4079,7 +4079,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         es: 'A pagar en el vehiculo',
       );
     }
-    return p.isEmpty ? '-' : p;
+    return p.isEmpty
+        ? '-'
+        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
   }
 
   String _bookingStatusLabel(CustomerSavedBooking booking) {
@@ -4116,7 +4118,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         es: 'Cancelada',
       );
     }
-    return status.isEmpty ? '-' : status;
+    return status.isEmpty
+        ? '-'
+        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
   }
 
   Future<void> _openSavedBooking(CustomerSavedBooking booking) async {
@@ -4496,7 +4500,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         es: 'Cancelada',
       );
     }
-    return status.isEmpty ? '-' : status;
+    return status.isEmpty
+        ? '-'
+        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
   }
 
   String _paymentLabel(StoredCustomerBooking booking) {
