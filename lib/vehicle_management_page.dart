@@ -52,10 +52,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       SnackBar(
         content: Text(
           _t(
-            nl: 'Voertuigen lokaal opgeslagen, maar backend-sync mislukt. Controleer ADMIN_TOKEN/netwerk en probeer opnieuw.',
-            en: 'Vehicles were saved locally, but backend sync failed. Check ADMIN_TOKEN/network and try again.',
-            fr: 'Vehicules sauvegardes localement, mais la synchronisation backend a echoue. Verifiez ADMIN_TOKEN/reseau et reessayez.',
-            es: 'Vehiculos guardados localmente, pero fallo la sincronizacion backend. Verifica ADMIN_TOKEN/red e intentalo de nuevo.',
+            nl: 'Voertuigen lokaal opgeslagen, maar backend-sync mislukt. Controleer beheerderstoegang of netwerk.',
+            en: 'Vehicles were saved locally, but backend sync failed. Check admin access or network.',
+            fr: 'Véhicules enregistrés localement, mais la synchronisation backend a échoué. Vérifiez l’accès administrateur ou le réseau.',
+            es: 'Los vehículos se guardaron localmente, pero la sincronización backend falló. Verifica el acceso de administrador o la red.',
           ),
         ),
       ),
@@ -82,6 +82,53 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return null;
   }
 
+  String _displayVehicleName(String rawName) {
+    final trimmed = rawName.trim();
+    final normalized = trimmed.toLowerCase();
+    if (trimmed.isEmpty ||
+        normalized == 'hoofdwagen' ||
+        normalized == 'main vehicle' ||
+        normalized == 'véhicule principal' ||
+        normalized == 'vehículo principal') {
+      return _t(
+        nl: 'Hoofdwagen',
+        en: 'Main vehicle',
+        fr: 'Véhicule principal',
+        es: 'Vehículo principal',
+      );
+    }
+    return trimmed;
+  }
+
+  String _displayColor(String rawColor) {
+    final trimmed = rawColor.trim();
+    final normalized = trimmed.toLowerCase();
+    if (normalized == 'zwart' ||
+        normalized == 'black' ||
+        normalized == 'noir' ||
+        normalized == 'negro') {
+      return _t(nl: 'Zwart', en: 'Black', fr: 'Noir', es: 'Negro');
+    }
+    return trimmed.isEmpty ? '—' : trimmed;
+  }
+
+  String _displayDriverName(String rawName) {
+    final trimmed = rawName.trim();
+    final normalized = trimmed.toLowerCase();
+    if (normalized == 'standaard chauffeur' ||
+        normalized == 'default driver' ||
+        normalized == 'chauffeur standard' ||
+        normalized == 'conductor estándar') {
+      return _t(
+        nl: 'Standaard chauffeur',
+        en: 'Default driver',
+        fr: 'Chauffeur standard',
+        es: 'Conductor estándar',
+      );
+    }
+    return trimmed;
+  }
+
   Future<bool> _confirmVehicleUpsellIfNeeded() async {
     final currentCount = vehiclesNotifier.value.length;
     if (currentCount < includedVehicleLimit) return true;
@@ -92,16 +139,16 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
           _t(
             nl: 'Extra voertuig',
             en: 'Additional vehicle',
-            fr: 'Vehicule supplementaire',
-            es: 'Vehiculo adicional',
+            fr: 'Véhicule supplémentaire',
+            es: 'Vehículo adicional',
           ),
         ),
         content: Text(
           _t(
             nl: 'Je abonnement bevat 1 voertuig. Extra voertuigen vallen onder een upsell van €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per voertuig per maand.',
             en: 'Your subscription includes 1 vehicle. Additional vehicles use an upsell of €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} per vehicle per month.',
-            fr: 'Votre abonnement inclut 1 vehicule. Les vehicules supplementaires utilisent un supplement de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} par vehicule et par mois.',
-            es: 'Tu suscripcion incluye 1 vehiculo. Los vehiculos adicionales aplican un cargo de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} por vehiculo al mes.',
+            fr: 'Votre abonnement inclut 1 véhicule. Les véhicules supplémentaires utilisent un supplément de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} par véhicule et par mois.',
+            es: 'Tu suscripción incluye 1 vehículo. Los vehículos adicionales aplican un cargo de €${fleetSubscriptionPolicy.additionalVehicleMonthlyPrice.toStringAsFixed(0)} por vehículo al mes.',
           ),
         ),
         actions: [
@@ -185,8 +232,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                 _t(
                   nl: 'Telefoonnummer',
                   en: 'Phone number',
-                  fr: 'Numero de telephone',
-                  es: 'Numero de telefono',
+                  fr: 'Numéro de téléphone',
+                  es: 'Número de teléfono',
                 ),
               ),
               _txt(
@@ -542,14 +589,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           ? _t(
                               nl: 'Voertuig toevoegen',
                               en: 'Add vehicle',
-                              fr: 'Ajouter vehicule',
-                              es: 'Agregar vehiculo',
+                              fr: 'Ajouter un véhicule',
+                              es: 'Agregar vehículo',
                             )
                           : _t(
                               nl: 'Voertuig bewerken',
                               en: 'Edit vehicle',
-                              fr: 'Modifier vehicule',
-                              es: 'Editar vehiculo',
+                              fr: 'Modifier le véhicule',
+                              es: 'Editar vehículo',
                             ),
                       style: const TextStyle(
                         fontWeight: FontWeight.w800,
@@ -562,16 +609,16 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       _t(
                         nl: 'Voertuignaam',
                         en: 'Vehicle name',
-                        fr: 'Nom vehicule',
-                        es: 'Nombre del vehiculo',
+                        fr: 'Nom du véhicule',
+                        es: 'Nombre del vehículo',
                       ),
                     ),
                     _txt(
                       modelCtrl,
                       _t(
                         nl: 'Merk/model',
-                        en: 'Brand/model',
-                        fr: 'Marque/modele',
+                        en: 'Make/model',
+                        fr: 'Marque/modèle',
                         es: 'Marca/modelo',
                       ),
                     ),
@@ -579,27 +626,27 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       plateCtrl,
                       _t(
                         nl: 'Nummerplaat',
-                        en: 'License plate',
+                        en: 'Plate',
                         fr: 'Plaque',
-                        es: 'Matricula',
+                        es: 'Matrícula',
                       ),
                     ),
                     _txt(
                       exploitationLicenseCtrl,
                       _t(
-                        nl: 'Exploitatievergunningnummer',
-                        en: 'Exploitation license number',
-                        fr: 'Numero de licence d exploitation',
-                        es: 'Numero de licencia de explotacion',
+                        nl: 'Exploitatievergunning',
+                        en: 'Operating license number',
+                        fr: 'N° de licence d’exploitation',
+                        es: 'N.º licencia de explotación',
                       ),
                     ),
                     _txt(
                       vehicleRegistrationCtrl,
                       _t(
-                        nl: 'Chassisnummer',
-                        en: 'Vehicle registration/VIN/chassis number',
-                        fr: 'Numero d immatriculation/VIN/chassis',
-                        es: 'Numero de matricula/VIN/chasis',
+                        nl: 'Inschrijving/VIN/chassis',
+                        en: 'Registration/VIN/chassis',
+                        fr: 'Immatriculation/VIN/châssis',
+                        es: 'Matrícula/VIN/chasis',
                       ),
                     ),
                     _txt(
@@ -614,7 +661,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             _t(
                               nl: 'Passagierscapaciteit',
                               en: 'Passenger capacity',
-                              fr: 'Capacite passagers',
+                              fr: 'Capacité passagers',
                               es: 'Capacidad pasajeros',
                             ),
                           ),
@@ -626,7 +673,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             _t(
                               nl: 'Bagagecapaciteit',
                               en: 'Luggage capacity',
-                              fr: 'Capacite bagages',
+                              fr: 'Capacité bagages',
                               es: 'Capacidad equipaje',
                             ),
                           ),
@@ -651,10 +698,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       },
                       decoration: InputDecoration(
                         labelText: _t(
-                          nl: 'Tier/klasse',
-                          en: 'Tier/class',
-                          fr: 'Categorie',
-                          es: 'Categoria',
+                          nl: 'Categorie',
+                          en: 'Category',
+                          fr: 'Catégorie',
+                          es: 'Categoría',
                         ),
                         filled: true,
                         fillColor: const Color(0xFF0B0B0B),
@@ -695,7 +742,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       _t(
                         nl: 'Gekoppelde chauffeur',
                         en: 'Linked driver',
-                        fr: 'Chauffeur lie',
+                        fr: 'Chauffeur lié',
                         es: 'Conductor vinculado',
                       ),
                       style: const TextStyle(fontWeight: FontWeight.w700),
@@ -844,8 +891,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   _t(
                                     nl: 'Telefoonnummer',
                                     en: 'Phone number',
-                                    fr: 'Numero de telephone',
-                                    es: 'Numero de telefono',
+                                    fr: 'Numéro de téléphone',
+                                    es: 'Número de teléfono',
                                   ),
                                   d.phone,
                                 ),
@@ -853,9 +900,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 _driverInfoLine(
                                   _t(
                                     nl: 'Chauffeurskaartnummer',
-                                    en: 'Taxi driver card number',
-                                    fr: 'Numero carte chauffeur',
-                                    es: 'Numero tarjeta conductor',
+                                    en: 'Driver card number',
+                                    fr: 'N° carte chauffeur',
+                                    es: 'N.º tarjeta de conductor',
                                   ),
                                   d.taxiDriverCardNumber,
                                 ),
@@ -863,9 +910,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 _driverInfoLine(
                                   _t(
                                     nl: 'Vervaldatum chauffeurskaart',
-                                    en: 'Taxi driver card expiry',
+                                    en: 'Driver card expiry',
                                     fr: 'Expiration carte chauffeur',
-                                    es: 'Vencimiento tarjeta conductor',
+                                    es: 'Caducidad tarjeta de conductor',
                                   ),
                                   d.taxiDriverCardExpiry,
                                 ),
@@ -940,7 +987,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       placeholderText: _t(
                         nl: 'Geen foto ingesteld',
                         en: 'No photo set',
-                        fr: 'Aucune photo definie',
+                        fr: 'Aucune photo définie',
                         es: 'Sin foto configurada',
                       ),
                     ),
@@ -1168,8 +1215,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       _t(
                         nl: 'Maximaal 5 foto\'s per voertuig',
                         en: 'Maximum 5 photos per vehicle',
-                        fr: 'Maximum 5 photos par vehicule',
-                        es: 'Maximo 5 fotos por vehiculo',
+                        fr: 'Maximum 5 photos par véhicule',
+                        es: 'Máximo 5 fotos por vehículo',
                       ),
                       style: const TextStyle(
                         color: Colors.white70,
@@ -1346,8 +1393,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             _t(
               nl: 'Voertuigen',
               en: 'Vehicles',
-              fr: 'Vehicules',
-              es: 'Vehiculos',
+              fr: 'Véhicules',
+              es: 'Vehículos',
             ),
           ),
           actions: [
@@ -1355,8 +1402,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
               tooltip: _t(
                 nl: 'Voertuig toevoegen',
                 en: 'Add vehicle',
-                fr: 'Ajouter vehicule',
-                es: 'Agregar vehiculo',
+                fr: 'Ajouter un véhicule',
+                es: 'Agregar vehículo',
               ),
               onPressed: () async {
                 if (!await _confirmVehicleUpsellIfNeeded()) return;
@@ -1386,8 +1433,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           _t(
                             nl: 'Nog geen voertuigen.',
                             en: 'No vehicles yet.',
-                            fr: 'Aucun vehicule.',
-                            es: 'Sin vehiculos.',
+                            fr: 'Aucun véhicule.',
+                            es: 'Sin vehículos.',
                           ),
                           style: const TextStyle(color: Colors.white70),
                           textAlign: TextAlign.center,
@@ -1430,14 +1477,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      v.vehicleName.isEmpty
-                                          ? _t(
-                                              nl: 'Naamloos voertuig',
-                                              en: 'Unnamed vehicle',
-                                              fr: 'Vehicule sans nom',
-                                              es: 'Vehiculo sin nombre',
-                                            )
-                                          : v.vehicleName,
+                                      _displayVehicleName(v.vehicleName),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w800,
                                         fontSize: 16,
@@ -1464,43 +1504,43 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 ),
                               ),
                               Text(
-                                '${_t(nl: 'Merk/model', en: 'Brand/model', fr: 'Marque/modele', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}',
+                                '${_t(nl: 'Merk/model', en: 'Make/model', fr: 'Marque/modèle', es: 'Marca/modelo')}: ${v.brandModel.isEmpty ? '—' : v.brandModel}',
                               ),
                               Text(
-                                '${_t(nl: 'Nummerplaat', en: 'License plate', fr: 'Plaque', es: 'Matricula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
+                                '${_t(nl: 'Nummerplaat', en: 'Plate', fr: 'Plaque', es: 'Matrícula')}: ${v.licensePlate.isEmpty ? '—' : v.licensePlate}',
                               ),
                               Text(
-                                '${_t(nl: 'Exploitatievergunningnummer', en: 'Exploitation license number', fr: 'Numero licence exploitation', es: 'Numero licencia explotacion')}: ${v.exploitationLicenseNumber.isEmpty ? '—' : v.exploitationLicenseNumber}',
+                                '${_t(nl: 'Exploitatievergunning', en: 'Operating license number', fr: 'N° de licence d’exploitation', es: 'N.º licencia de explotación')}: ${v.exploitationLicenseNumber.isEmpty ? '—' : v.exploitationLicenseNumber}',
                               ),
                               Text(
-                                '${_t(nl: 'Chassisnummer', en: 'Vehicle registration/VIN/chassis number', fr: 'Immatriculation/VIN/chassis', es: 'Matricula/VIN/chasis')}: ${v.vehicleRegistrationNumber.isEmpty ? '—' : v.vehicleRegistrationNumber}',
+                                '${_t(nl: 'Inschrijving/VIN/chassis', en: 'Registration/VIN/chassis', fr: 'Immatriculation/VIN/châssis', es: 'Matrícula/VIN/chasis')}: ${v.vehicleRegistrationNumber.isEmpty ? '—' : v.vehicleRegistrationNumber}',
                               ),
                               Text(
-                                '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${v.color.isEmpty ? '—' : v.color}',
+                                '${_t(nl: 'Kleur', en: 'Color', fr: 'Couleur', es: 'Color')}: ${_displayColor(v.color)}',
                               ),
                               Text(
-                                '${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacite', es: 'Capacidad')}: ${v.passengerCapacity} pax • ${v.luggageCapacity} bags',
+                                '${_t(nl: 'Capaciteit', en: 'Capacity', fr: 'Capacité', es: 'Capacidad')}: ${v.passengerCapacity} ${_t(nl: 'passagiers', en: 'passengers', fr: 'passagers', es: 'pasajeros')} • ${v.luggageCapacity} ${_t(nl: 'koffers', en: 'bags', fr: 'bagages', es: 'maletas')}',
                               ),
                               Text(
-                                '${_t(nl: 'Tier/klasse', en: 'Tier/class', fr: 'Categorie', es: 'Categoria')}: ${_tierLabel(v.tierId)}',
+                                '${_t(nl: 'Categorie', en: 'Category', fr: 'Catégorie', es: 'Categoría')}: ${_tierLabel(v.tierId)}',
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${_t(nl: 'Gekoppelde chauffeur', en: 'Linked driver', fr: 'Chauffeur lie', es: 'Conductor vinculado')}: '
-                                '${linkedDriver == null ? '—' : linkedDriver.fullName}',
+                                '${_t(nl: 'Gekoppelde chauffeur', en: 'Linked driver', fr: 'Chauffeur lié', es: 'Conductor vinculado')}: '
+                                '${linkedDriver == null ? '—' : _displayDriverName(linkedDriver.fullName)}',
                               ),
                               if (linkedDriver != null) ...[
                                 Text(
                                   '${_t(nl: 'Chauffeur-ID', en: 'Driver ID', fr: 'ID chauffeur', es: 'ID conductor')}: ${linkedDriver.employeeNumber}',
                                 ),
                                 Text(
-                                  '${_t(nl: 'Telefoon', en: 'Phone', fr: 'Telephone', es: 'Telefono')}: ${linkedDriver.phone.isEmpty ? '—' : linkedDriver.phone}',
+                                  '${_t(nl: 'Telefoon', en: 'Phone', fr: 'Téléphone', es: 'Teléfono')}: ${linkedDriver.phone.isEmpty ? '—' : linkedDriver.phone}',
                                 ),
                                 Text(
-                                  '${_t(nl: 'Chauffeurskaartnummer', en: 'Taxi driver card number', fr: 'Numero carte chauffeur', es: 'Numero tarjeta conductor')}: ${linkedDriver.taxiDriverCardNumber.isEmpty ? '—' : linkedDriver.taxiDriverCardNumber}',
+                                  '${_t(nl: 'Chauffeurskaartnummer', en: 'Driver card number', fr: 'N° carte chauffeur', es: 'N.º tarjeta de conductor')}: ${linkedDriver.taxiDriverCardNumber.isEmpty ? '—' : linkedDriver.taxiDriverCardNumber}',
                                 ),
                                 Text(
-                                  '${_t(nl: 'Vervaldatum chauffeurskaart', en: 'Taxi driver card expiry', fr: 'Expiration carte chauffeur', es: 'Vencimiento tarjeta conductor')}: ${linkedDriver.taxiDriverCardExpiry.isEmpty ? '—' : linkedDriver.taxiDriverCardExpiry}',
+                                  '${_t(nl: 'Vervaldatum chauffeurskaart', en: 'Driver card expiry', fr: 'Expiration carte chauffeur', es: 'Caducidad tarjeta de conductor')}: ${linkedDriver.taxiDriverCardExpiry.isEmpty ? '—' : linkedDriver.taxiDriverCardExpiry}',
                                 ),
                               ],
                               const SizedBox(height: 6),
@@ -1511,7 +1551,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 placeholderText: _t(
                                   nl: 'Geen foto ingesteld',
                                   en: 'No photo set',
-                                  fr: 'Aucune photo definie',
+                                  fr: 'Aucune photo définie',
                                   es: 'Sin foto configurada',
                                 ),
                               ),
@@ -1520,9 +1560,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 Text(
                                   _t(
                                     nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
-                                    en: '+${v.galleryPhotoRefs.length - 1} extra photos',
-                                    fr: '+${v.galleryPhotoRefs.length - 1} photos en plus',
-                                    es: '+${v.galleryPhotoRefs.length - 1} fotos extra',
+                                    en: '+${v.galleryPhotoRefs.length - 1} more photos',
+                                    fr: '+${v.galleryPhotoRefs.length - 1} photos supplémentaires',
+                                    es: '+${v.galleryPhotoRefs.length - 1} fotos adicionales',
                                   ),
                                   style: const TextStyle(
                                     color: Colors.white70,

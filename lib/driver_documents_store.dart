@@ -84,7 +84,7 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
         case AppLanguage.fr:
           return 'Certificat médical';
         case AppLanguage.es:
-          return 'Certificado medico';
+          return 'Certificado médico';
       }
     case DriverDocumentTypes.goodConduct:
       switch (lang) {
@@ -128,7 +128,7 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
         case AppLanguage.fr:
           return 'Déclaration de détachement / transfrontalière';
         case AppLanguage.es:
-          return 'Desplazamiento / declaracion transfronteriza';
+          return 'Desplazamiento / declaración transfronteriza';
       }
     default:
       switch (lang) {
@@ -202,7 +202,16 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Rechazado';
       }
     default:
-      return status;
+      switch (lang) {
+        case AppLanguage.nl:
+          return 'Onbekend';
+        case AppLanguage.en:
+          return 'Unknown';
+        case AppLanguage.fr:
+          return 'Inconnu';
+        case AppLanguage.es:
+          return 'Desconocido';
+      }
   }
 }
 

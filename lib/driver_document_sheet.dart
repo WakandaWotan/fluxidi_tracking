@@ -201,7 +201,7 @@ Future<void> openDriverDocumentFile(
             lang,
             nl: 'Kon bestand niet openen.',
             en: 'Could not open the file.',
-            fr: 'Impossible d ouvrir le fichier.',
+            fr: 'Impossible d’ouvrir le fichier.',
             es: 'No se pudo abrir el archivo.',
           ),
         ),

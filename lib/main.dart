@@ -3028,6 +3028,23 @@ class CompanyDriverManagementPage extends StatelessWidget {
 
   AppLanguage get _lang => appConfig.currentLanguage;
 
+  String _displayDriverName(String rawName) {
+    final trimmed = rawName.trim();
+    final normalized = trimmed.toLowerCase();
+    if (normalized == 'standaard chauffeur' ||
+        normalized == 'default driver' ||
+        normalized == 'chauffeur standard' ||
+        normalized == 'conductor estándar') {
+      return _t(
+        nl: 'Standaard chauffeur',
+        en: 'Default driver',
+        fr: 'Chauffeur standard',
+        es: 'Conductor estándar',
+      );
+    }
+    return trimmed;
+  }
+
   Widget _driverField(
     TextEditingController ctrl,
     String label, {
@@ -3088,7 +3105,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
             _t(
               nl: 'Chauffeur bewerken',
               en: 'Edit driver',
-              fr: 'Modifier chauffeur',
+              fr: 'Modifier le chauffeur',
               es: 'Editar conductor',
             ),
           ),
@@ -3116,8 +3133,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   _t(
                     nl: 'Telefoonnummer',
                     en: 'Phone number',
-                    fr: 'Numero de telephone',
-                    es: 'Numero de telefono',
+                    fr: 'Numéro de téléphone',
+                    es: 'Número de teléfono',
                   ),
                 ),
                 _driverField(
@@ -3135,7 +3152,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                     nl: 'Vervaldatum kaart',
                     en: 'Card expiry',
                     fr: 'Expiration carte',
-                    es: 'Vencimiento tarjeta',
+                    es: 'Caducidad tarjeta',
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -3471,6 +3488,14 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   final count = docs.length;
                   final gap = DriverDocumentsStore.instance
                       .hasCoreDocumentGapForDriver(d.id);
+                  final docCountLabel = _lang == AppLanguage.fr
+                      ? ((count == 0 || count == 1) ? 'document' : 'documents')
+                      : _t(
+                          nl: 'documenten',
+                          en: 'documents',
+                          fr: 'documents',
+                          es: 'documentos',
+                        );
                   return Card(
                     color: const Color(0xFF141B2F),
                     child: Padding(
@@ -3490,7 +3515,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                           fr: 'Chauffeur sans nom',
                                           es: 'Conductor sin nombre',
                                         )
-                                      : d.fullName.trim(),
+                                      : _displayDriverName(d.fullName),
                                   style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w700,
@@ -3538,26 +3563,26 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             _t(
                               nl: 'Telefoon',
                               en: 'Phone',
-                              fr: 'Telephone',
-                              es: 'Telefono',
+                              fr: 'Téléphone',
+                              es: 'Teléfono',
                             ),
                             d.phone,
                           ),
                           _line(
                             _t(
                               nl: 'Chauffeurskaartnummer',
-                              en: 'Taxi driver card number',
-                              fr: 'Numero carte chauffeur',
-                              es: 'Numero tarjeta conductor',
+                              en: 'Driver card number',
+                              fr: 'N° carte chauffeur',
+                              es: 'N.º tarjeta de conductor',
                             ),
                             d.taxiDriverCardNumber,
                           ),
                           _line(
                             _t(
                               nl: 'Vervaldatum chauffeurskaart',
-                              en: 'Taxi driver card expiry',
+                              en: 'Driver card expiry',
                               fr: 'Expiration carte chauffeur',
-                              es: 'Vencimiento tarjeta conductor',
+                              es: 'Caducidad tarjeta de conductor',
                             ),
                             d.taxiDriverCardExpiry,
                           ),
@@ -3575,8 +3600,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
                               ),
                             ),
                             child: Text(
-                              '$count ${_t(nl: 'documenten', en: 'documents', fr: 'documents', es: 'documentos')}'
-                              '${gap ? ' • ${_t(nl: 'Controleer kern-documenten', en: 'Check core documents', fr: 'Verifier documents', es: 'Revise documentos')}' : ''}',
+                              '$count $docCountLabel'
+                              '${gap ? ' · ${_t(nl: 'Controleer documenten', en: 'Check documents', fr: 'Vérifier les documents', es: 'Revise documentos')}' : ''}',
                               style: TextStyle(
                                 color: gap
                                     ? Colors.orangeAccent
@@ -3604,7 +3629,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                               docs.isEmpty
                                   ? _t(
                                       nl: 'Nog geen documenten.',
-                                      en: 'No documents yet.',
+                                      en: 'No documents.',
                                       fr: 'Aucun document.',
                                       es: 'Sin documentos.',
                                     )
@@ -3630,7 +3655,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                       Text(
                                         _t(
                                           nl: 'Nog geen documenten.',
-                                          en: 'No documents yet.',
+                                          en: 'No documents.',
                                           fr: 'Aucun document.',
                                           es: 'Sin documentos.',
                                         ),

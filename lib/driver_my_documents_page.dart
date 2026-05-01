@@ -238,7 +238,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
           const SizedBox(height: 6),
           Text(
             '${_tr(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${driverDocumentStatusLabel(doc.status, _lang)}'
-            '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_tr(nl: 'datum verlopen', en: 'date expired', fr: 'date expiree', es: 'fecha caducada')})' : ''}',
+            '${doc.isExpiredByDate && doc.status != DriverDocumentStatuses.expired ? ' (${_tr(nl: 'datum verlopen', en: 'date expired', fr: 'date expirée', es: 'fecha caducada')})' : ''}',
             style: TextStyle(
               color: expiredVisual ? Colors.orangeAccent : Colors.white70,
               fontSize: 12,
