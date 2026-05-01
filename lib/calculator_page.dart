@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
@@ -1753,6 +1754,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final email = _emailCtrl.text.trim();
     final companyName = _companyNameCtrl.text.trim();
     final vatNumber = _vatNumberCtrl.text.trim();
+    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+    final tenantCompanyId = localCompanyId.isNotEmpty
+        ? localCompanyId
+        : kTenantId;
     if (name.isEmpty ||
         phone.isEmpty ||
         email.isEmpty ||
@@ -1769,6 +1774,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
+      'tenant_id': tenantCompanyId,
+      'company_id': tenantCompanyId,
+      'booking_source': 'flutter_app',
+      'entry_channel': 'flutter_calculator',
+      'source_context': <String, dynamic>{
+        'role': 'customer_or_app',
+        'language': widget.language.name,
+        'surface': 'calculator_confirmation',
+      },
       // Keep website-compatible aliases
       'return_enabled': (widget.payload['return'] ?? false) == true,
       'extra_service_key': widget.payload['extra_service'] ?? 'NONE',

@@ -2515,6 +2515,100 @@ async function mollieWebhook(request, env) {
 // Mollie webhook calls this after payment and sets payload.__mollie_paid = true.
 // This function must never throw (to avoid 500s). It returns {ok:false,error} on failures.
 
+function _sanitizeBookingSourceContext(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const out = {};
+  const entries = Object.entries(input).slice(0, 12);
+  for (const [rawKey, rawValue] of entries) {
+    const key = safeStr(rawKey, 64);
+    if (!key) continue;
+    if (rawValue == null) {
+      out[key] = null;
+      continue;
+    }
+    const t = typeof rawValue;
+    if (t === "boolean") {
+      out[key] = rawValue;
+      continue;
+    }
+    if (t === "number") {
+      out[key] = Number.isFinite(rawValue) ? rawValue : null;
+      continue;
+    }
+    if (t === "string") {
+      out[key] = safeStr(rawValue, 240);
+      continue;
+    }
+    // Keep source_context JSON-safe and shallow in Phase 1.
+    out[key] = safeStr(String(rawValue), 240);
+  }
+  return out;
+}
+
+function resolveBookingTenantContext({ payload, request, env }) {
+  let tenantId = "";
+  let companyId = "";
+  let tenantResolutionMode = "";
+
+  // Future trusted route/server context can be injected here and should win.
+  const trustedContext =
+    payload &&
+    typeof payload === "object" &&
+    payload.__trusted_tenant_context &&
+    typeof payload.__trusted_tenant_context === "object" &&
+    !Array.isArray(payload.__trusted_tenant_context)
+      ? payload.__trusted_tenant_context
+      : null;
+  if (trustedContext) {
+    tenantId = safeStr(trustedContext.tenant_id ?? trustedContext.tenantId, 80);
+    companyId = safeStr(trustedContext.company_id ?? trustedContext.companyId, 80);
+    if (tenantId) {
+      tenantResolutionMode = "trusted_route";
+    }
+  }
+
+  // Phase 1 accepts app context from payload.
+  if (!tenantId) {
+    tenantId = safeStr(
+      payload?.tenant_id ?? payload?.tenantId ?? payload?.company_id ?? payload?.companyId,
+      80,
+    );
+    if (tenantId) tenantResolutionMode = "payload_context";
+  }
+  if (!companyId) {
+    companyId = safeStr(payload?.company_id ?? payload?.companyId ?? tenantId, 80);
+  }
+
+  // Legacy fallback for existing MVP behavior.
+  if (!tenantId) {
+    tenantId = "fluxidi";
+    tenantResolutionMode = "legacy_fallback";
+  }
+  if (!companyId) companyId = tenantId;
+
+  const bookingSource = safeStr(
+    payload?.booking_source ?? payload?.bookingSource ?? "flutter_app",
+    64,
+  ) || "flutter_app";
+  const entryChannel = safeStr(
+    payload?.entry_channel ?? payload?.entryChannel ?? "flutter_calculator",
+    64,
+  ) || "flutter_calculator";
+  const sourceContext = _sanitizeBookingSourceContext(
+    payload?.source_context ?? payload?.sourceContext,
+  );
+
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_source: bookingSource,
+    entry_channel: entryChannel,
+    source_context: sourceContext,
+    tenant_resolution_mode: tenantResolutionMode || "legacy_fallback",
+    tenant_resolved_at: new Date().toISOString(),
+  };
+}
+
 async function handleBooking(payload, env, request) {
   try {
     if (!env?.BOOKING_KV) {
@@ -2559,6 +2653,7 @@ async function handleBooking(payload, env, request) {
         received: { date: safeStr(payload?.date), time: safeStr(payload?.time), pickup_iso: pickupIsoRaw }
       };
     }
+    const tenantContext = resolveBookingTenantContext({ payload, request, env });
 
     const pricingProfile = await _loadTenantPricingProfile(env);
     const vat_rate = clampNumber(
@@ -3101,6 +3196,13 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       bookingId: canonicalBookingId,
       booking_uuid: booking_uuid,
       createdAt: new Date().toISOString(),
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      booking_source: tenantContext.booking_source,
+      entry_channel: tenantContext.entry_channel,
+      source_context: tenantContext.source_context,
+      tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+      tenant_resolved_at: tenantContext.tenant_resolved_at,
 
       // customer
       custName: customerContact.name,
@@ -3173,12 +3275,26 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     // Persist canonical record (used by tracking apps)
     const record = {
       stage: "BOOKED",
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      booking_source: tenantContext.booking_source,
+      entry_channel: tenantContext.entry_channel,
+      source_context: tenantContext.source_context,
+      tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+      tenant_resolved_at: tenantContext.tenant_resolved_at,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
       ...paymentFields,
       booking: {
         bookingId: booking.bookingId,
         createdAt: booking.createdAt,
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        booking_source: tenantContext.booking_source,
+        entry_channel: tenantContext.entry_channel,
+        source_context: tenantContext.source_context,
+        tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+        tenant_resolved_at: tenantContext.tenant_resolved_at,
         custName: booking.custName || "",
         custPhone: booking.custPhone || "",
         custEmail: booking.custEmail || "",
