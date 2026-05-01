@@ -10,6 +10,7 @@ const ALLOWED_EVENT_TYPES = new Set([
 const SCHEMA_VERSION = "compliance_event_v1";
 const SYNC_STATE = "not_configured";
 const APPEND_PATH = "/compliance/events/append";
+const RECENT_PATH = "/compliance/events/recent";
 
 function jsonResponse(payload, status = 200, origin = "*") {
   return new Response(JSON.stringify(payload), {
@@ -18,7 +19,7 @@ function jsonResponse(payload, status = 200, origin = "*") {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
       "access-control-allow-origin": origin || "*",
-      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
       "access-control-allow-headers": "content-type, authorization, x-admin-token",
       "access-control-max-age": "86400",
     },
@@ -219,6 +220,151 @@ async function handleAppend(request, env, origin) {
   );
 }
 
+function parseRecentLimit(url) {
+  const raw = cleanText(url.searchParams.get("limit"), 16);
+  if (!raw) return { value: 20 };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return { error: "Invalid query parameter: limit must be an integer." };
+  }
+  return { value: Math.min(100, Math.max(1, parsed)) };
+}
+
+function parseRequiredQuerySegment(url, key) {
+  const raw = cleanText(url.searchParams.get(key), 128);
+  if (!raw) {
+    return { error: `Missing required query parameter: ${key}` };
+  }
+  const segment = safeSegment(raw, "");
+  if (!segment) {
+    return { error: `Invalid query parameter: ${key}` };
+  }
+  return { value: segment };
+}
+
+function projectRecentEvent(key, parsedEvent) {
+  const event = parsedEvent && typeof parsedEvent === "object" && !Array.isArray(parsedEvent)
+    ? parsedEvent
+    : {};
+  return {
+    key,
+    event_id: cleanText(event.event_id, 200) || null,
+    event_type: cleanText(event.event_type, 64) || null,
+    ride_type: cleanText(event.ride_type, 64) || null,
+    booking_id: cleanText(event.booking_id, 128) || null,
+    trip_id: cleanText(event.trip_id, 128) || null,
+    sync_state: cleanText(event.sync_state, 64) || null,
+    created_at_utc: cleanText(event.created_at_utc, 64) || null,
+    timestamps:
+      event.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
+        ? event.timestamps
+        : {},
+    payment:
+      event.payment && typeof event.payment === "object" && !Array.isArray(event.payment)
+        ? event.payment
+        : {},
+    fare:
+      event.fare && typeof event.fare === "object" && !Array.isArray(event.fare)
+        ? event.fare
+        : {},
+    provenance:
+      event.provenance && typeof event.provenance === "object" && !Array.isArray(event.provenance)
+        ? event.provenance
+        : {},
+  };
+}
+
+async function handleRecent(request, url, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!env || !env.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+  const limit = parseRecentLimit(url);
+  if (limit.error) {
+    return jsonResponse({ ok: false, error: limit.error }, 400, origin);
+  }
+
+  const tenantId = tenant.value;
+  const companyId = company.value;
+  const requestedLimit = limit.value;
+  const prefix = [
+    "compliance_event_v1",
+    "tenant",
+    tenantId,
+    "company",
+    companyId,
+    "",
+  ].join("/");
+
+  let listed;
+  try {
+    const internalLimit = Math.min(1000, Math.max(requestedLimit, requestedLimit * 5));
+    listed = await env.COMPLIANCE_KV.list({ prefix, limit: internalLimit });
+  } catch (_) {
+    return jsonResponse({ ok: false, error: "Failed to list compliance events." }, 500, origin);
+  }
+
+  const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+  const sortedKeys = keys
+    .map((entry) => cleanText(entry?.name, 1024))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, requestedLimit);
+
+  const events = [];
+  let malformedCount = 0;
+  for (const key of sortedKeys) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      return jsonResponse({ ok: false, error: "Failed to read compliance events." }, 500, origin);
+    }
+    if (!raw) {
+      malformedCount += 1;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      events.push(projectRecentEvent(key, parsed));
+    } catch (_) {
+      malformedCount += 1;
+    }
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      limit: requestedLimit,
+      count: events.length,
+      malformed_count: malformedCount,
+      events,
+    },
+    200,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -229,14 +375,14 @@ export default {
         status: 204,
         headers: {
           "access-control-allow-origin": origin,
-          "access-control-allow-methods": "POST, OPTIONS",
+          "access-control-allow-methods": "GET, POST, OPTIONS",
           "access-control-allow-headers": "content-type, authorization, x-admin-token",
           "access-control-max-age": "86400",
         },
       });
     }
 
-    if (url.pathname !== APPEND_PATH) {
+    if (url.pathname !== APPEND_PATH && url.pathname !== RECENT_PATH) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
         404,
@@ -244,12 +390,17 @@ export default {
       );
     }
 
-    if (request.method !== "POST") {
-      return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
-    }
-
     try {
-      return await handleAppend(request, env, origin);
+      if (url.pathname === APPEND_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleAppend(request, env, origin);
+      }
+      if (request.method !== "GET") {
+        return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+      }
+      return await handleRecent(request, url, env, origin);
     } catch (_) {
       return jsonResponse({ ok: false, error: "Internal error" }, 500, origin);
     }
