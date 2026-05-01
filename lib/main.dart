@@ -16420,7 +16420,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 leading: const Icon(Icons.history),
                 title: Text(
                   _tr(
-                    nl: 'Ritten historiek',
+                    nl: 'Ritgeschiedenis',
                     en: 'Ride history',
                     fr: 'Historique des courses',
                     es: 'Historial de viajes',
@@ -16447,12 +16447,16 @@ class _DriverHomePageState extends State<DriverHomePage>
               ListTile(
                 leading: const Icon(Icons.calculate_outlined),
                 title: Text(
-                  appConfig.strings.calculatorTitle.of(
-                    appConfig.defaultLanguage,
-                  ),
+                  appConfig.currentLanguage == AppLanguage.nl
+                      ? 'Ritprijs berekenen'
+                      : appConfig.strings.calculatorTitle.of(
+                          appConfig.defaultLanguage,
+                        ),
                 ),
                 subtitle: Text(
-                  kCalculatorMenuSubtitle,
+                  appConfig.currentLanguage == AppLanguage.nl
+                      ? 'Bereken en boek ritten'
+                      : kCalculatorMenuSubtitle,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.65),
                     fontSize: 12,
