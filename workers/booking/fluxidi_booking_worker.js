@@ -591,6 +591,7 @@ async function handlePublicBootstrap(url, env) {
       public_booking_status: "prepared",
       display_name: displayName || "Fluxidi",
       default_language: defaultLanguage || "nl",
+      supported_languages: ["nl", "en", "fr", "es"],
       public_contact: {
         email: pickFirstPublicValue(
           business.companyEmail,
