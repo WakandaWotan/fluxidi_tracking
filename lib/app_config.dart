@@ -630,6 +630,10 @@ final ValueNotifier<AppLanguage> appLanguageNotifier =
 
 const String kTenantId = 'fluxidi';
 const String kCompanyId = kTenantId;
+const String kPublicBookingBaseUrl = String.fromEnvironment(
+  'PUBLIC_BOOKING_BASE_URL',
+  defaultValue: 'https://fluxidi.com/book',
+);
 
 enum AppRole { customer, driver, companyAdmin, dispatcher }
 

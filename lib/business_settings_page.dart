@@ -1098,6 +1098,32 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  String _effectivePublicCompanyId() {
+    final active = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (active.isNotEmpty) return active;
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) return resolved;
+    return kTenantId;
+  }
+
+  String _preparedPublicBookingUrl(String companyId) {
+    final safeCompanyId = companyId.trim().isEmpty
+        ? kTenantId
+        : companyId.trim();
+    final base = kPublicBookingBaseUrl.trim().isEmpty
+        ? 'https://fluxidi.com/book'
+        : kPublicBookingBaseUrl.trim();
+    final encodedCompanyId = Uri.encodeQueryComponent(safeCompanyId);
+    try {
+      final uri = Uri.parse(base);
+      final nextQuery = Map<String, String>.from(uri.queryParameters);
+      nextQuery['company_id'] = safeCompanyId;
+      return uri.replace(queryParameters: nextQuery).toString();
+    } catch (_) {
+      return '$base?company_id=$encodedCompanyId';
+    }
+  }
+
   Widget _txt(
     TextEditingController ctrl,
     String label, {
@@ -1338,6 +1364,178 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             ),
                           ),
                         ],
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+            _card(
+              title: _t(
+                nl: 'Publieke boekingslink',
+                en: 'Public booking link',
+                fr: 'Lien de réservation public',
+                es: 'Enlace público de reserva',
+              ),
+              child: ValueListenableBuilder<CompanyProfile?>(
+                valueListenable: companyProfileNotifier,
+                builder: (context, _, __) {
+                  final activeCompanyId =
+                      companyProfileNotifier.value?.companyId.trim() ?? '';
+                  final effectiveCompanyId = _effectivePublicCompanyId();
+                  final publicBookingUrl = _preparedPublicBookingUrl(
+                    effectiveCompanyId,
+                  );
+                  final usingFallbackId = activeCompanyId.isEmpty;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _t(
+                                    nl: 'Voorbereide publieke link',
+                                    en: 'Prepared public link',
+                                    fr: 'Lien public préparé',
+                                    es: 'Enlace público preparado',
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SelectableText(
+                                  publicBookingUrl,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: _t(
+                              nl: 'Publieke link kopiëren',
+                              en: 'Copy public link',
+                              fr: 'Copier le lien public',
+                              es: 'Copiar enlace público',
+                            ),
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: publicBookingUrl),
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _t(
+                                      nl: 'Publieke boekingslink gekopieerd',
+                                      en: 'Public booking link copied',
+                                      fr: 'Lien de réservation public copié',
+                                      es: 'Enlace público de reserva copiado',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.copy, color: Colors.white54),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _t(
+                          nl: 'Deze link is voorbereid voor websiteboekingen, QR-codes en sociale media. De publieke boekingspagina wordt in een volgende stap geactiveerd.',
+                          en: 'This link is prepared for website bookings, QR codes and social media. The public booking page will be activated in a next step.',
+                          fr: 'Ce lien est préparé pour les réservations via site web, QR codes et réseaux sociaux. La page de réservation publique sera activée lors d’une prochaine étape.',
+                          es: 'Este enlace está preparado para reservas desde la web, códigos QR y redes sociales. La página pública de reserva se activará en un siguiente paso.',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.qr_code_2_outlined,
+                            size: 16,
+                            color: Colors.white54,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _t(
+                              nl: 'QR-code volgt',
+                              en: 'QR code coming next',
+                              fr: 'QR code à venir',
+                              es: 'Código QR próximamente',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.language_outlined,
+                            size: 16,
+                            color: Colors.white54,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _t(
+                              nl: 'Websiteknop/embed volgt',
+                              en: 'Website button/embed coming next',
+                              fr: 'Bouton/intégration site web à venir',
+                              es: 'Botón/integración web próximamente',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (usingFallbackId) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.45),
+                            ),
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Actieve bedrijfs-ID ontbreekt. De voorbereide link gebruikt momenteel een fallback-ID.',
+                              en: 'Active company ID is missing. The prepared link currently uses a fallback ID.',
+                              fr: 'L’ID entreprise active est manquant. Le lien préparé utilise actuellement un ID de secours.',
+                              es: 'Falta el ID activo de empresa. El enlace preparado usa actualmente un ID de respaldo.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                       ],
                     ],
                   );
