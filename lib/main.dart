@@ -16447,11 +16447,12 @@ class _DriverHomePageState extends State<DriverHomePage>
               ListTile(
                 leading: const Icon(Icons.calculate_outlined),
                 title: Text(
-                  appConfig.currentLanguage == AppLanguage.nl
-                      ? 'Ritprijs berekenen'
-                      : appConfig.strings.calculatorTitle.of(
-                          appConfig.defaultLanguage,
-                        ),
+                  _tr(
+                    nl: 'Ritprijs berekenen',
+                    en: 'Fare calculator',
+                    fr: 'Calculateur de tarif',
+                    es: 'Calculadora de tarifa',
+                  ),
                 ),
                 subtitle: Text(
                   appConfig.currentLanguage == AppLanguage.nl
