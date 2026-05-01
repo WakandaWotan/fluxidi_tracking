@@ -1756,12 +1756,22 @@ class _RemoteComplianceEventsSectionState
   }
 
   Future<RemoteComplianceEventsResponse> _loadRemoteEvents() async {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final resolvedId = resolvedCompanyId.trim();
+    final effectiveTenantId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    final effectiveCompanyId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+
     final token = _complianceAdminToken.trim();
     if (token.isEmpty) {
       return RemoteComplianceEventsResponse(
         ok: false,
-        tenantId: kTenantId,
-        companyId: kCompanyId,
+        tenantId: effectiveTenantId,
+        companyId: effectiveCompanyId,
         limit: 10,
         count: 0,
         malformedCount: 0,
@@ -1778,8 +1788,8 @@ class _RemoteComplianceEventsSectionState
     final uri = Uri.parse('$_complianceApiBaseUrl/compliance/events/recent')
         .replace(
           queryParameters: <String, String>{
-            'tenant_id': kTenantId,
-            'company_id': kCompanyId,
+            'tenant_id': effectiveTenantId,
+            'company_id': effectiveCompanyId,
             'limit': '10',
           },
         );
@@ -1847,8 +1857,8 @@ class _RemoteComplianceEventsSectionState
     } catch (_) {
       return RemoteComplianceEventsResponse(
         ok: false,
-        tenantId: kTenantId,
-        companyId: kCompanyId,
+        tenantId: effectiveTenantId,
+        companyId: effectiveCompanyId,
         limit: 10,
         count: 0,
         malformedCount: 0,
