@@ -5227,6 +5227,68 @@ class CustomerBookingView {
     return null;
   }
 
+  double? _sumQuoteLegMetric({
+    required List<String> listPaths,
+    required List<String> keyCandidates,
+  }) {
+    for (final path in listPaths) {
+      final raw = _valueAtPath(path);
+      if (raw is! List || raw.isEmpty) continue;
+      var sum = 0.0;
+      var found = false;
+      for (final item in raw) {
+        if (item is! Map) continue;
+        for (final key in keyCandidates) {
+          final value = item[key];
+          if (value is num) {
+            sum += value.toDouble();
+            found = true;
+            break;
+          }
+          final text = value?.toString().trim() ?? '';
+          if (!_isMeaningful(text)) continue;
+          final parsed = double.tryParse(text.replaceAll(',', '.'));
+          if (parsed != null) {
+            sum += parsed;
+            found = true;
+            break;
+          }
+        }
+      }
+      if (found) return sum;
+    }
+    return null;
+  }
+
+  String _quoteLegEndpointLabel({required bool fromField}) {
+    final candidates = <dynamic>[
+      _valueAtPath('quote.legs'),
+      _valueAtPath('record.quote.legs'),
+    ];
+    for (final raw in candidates) {
+      if (raw is! List || raw.isEmpty) continue;
+      final edge = fromField ? raw.first : raw.last;
+      if (edge is! Map) continue;
+      final label = fromField
+          ? _firstNonEmpty([
+              edge['from'],
+              edge['origin'],
+              edge['start'],
+              edge['start_address'],
+              edge['startAddress'],
+            ])
+          : _firstNonEmpty([
+              edge['to'],
+              edge['destination'],
+              edge['end'],
+              edge['end_address'],
+              edge['endAddress'],
+            ]);
+      if (_isMeaningful(label)) return label;
+    }
+    return '';
+  }
+
   bool _toBool(dynamic value) {
     if (value is bool) return value;
     final text = value?.toString().trim().toLowerCase() ?? '';
@@ -5348,12 +5410,15 @@ class CustomerBookingView {
       'record.booking.pickup_address',
       'record.booking_details.from',
       'record.booking_details.pickup_address',
+      'record.quote.from',
       'data.record.booking.from',
       'data.record.booking_details.from',
       'payload.from',
       'payload.pickup_address',
+      'quote.from',
       'quote.inputs.from',
     ]),
+    _quoteLegEndpointLabel(fromField: true),
   ]);
   String get toAddress => _firstNonEmpty([
     _firstPathValue(const <String>[
@@ -5372,14 +5437,25 @@ class CustomerBookingView {
       'record.booking.destination_address',
       'record.booking_details.to',
       'record.booking_details.destination_address',
+      'record.quote.to',
       'data.record.booking.to',
       'data.record.booking_details.to',
       'payload.to',
       'payload.destination_address',
+      'quote.to',
       'quote.inputs.to',
     ]),
+    _quoteLegEndpointLabel(fromField: false),
   ]);
   String get pickupIso => _firstNonEmpty([
+    _firstPathValue(const <String>[
+      'pickup_iso',
+      'record.pickup_iso',
+      'record.booking.pickup_iso',
+      'record.booking.pickupStartIso',
+      'record.quote.pickup_iso',
+      'quote.pickup_iso',
+    ]),
     booking['pickupStartIso'],
     booking['pickup_iso'],
     booking['pickup_at'],
@@ -5489,10 +5565,20 @@ class CustomerBookingView {
       'record.booking_details.final_total',
       'record.booking_details.total_price',
       'record.booking_details.price_incl_vat',
+      'record.quote.price',
+      'record.quote.total_price',
+      'record.quote.total',
+      'record.quote.price_incl_vat',
+      'record.quote.pricing.price_incl_vat',
+      'record.quote.pricing_main.price_incl_vat',
+      'record.quote.pricing_main.breakdown.total_incl',
       'quote.price_incl_vat',
       'quote.priceInclVat',
       'quote.total_price',
       'quote.total',
+      'quote.pricing.price_incl_vat',
+      'quote.pricing_main.price_incl_vat',
+      'quote.pricing_main.breakdown.total_incl',
       'payload.price',
       'payload.total',
       'payload.amount',
@@ -5501,6 +5587,33 @@ class CustomerBookingView {
       'payload.price_incl_vat',
       'payload.quote.price_incl_vat',
     ]);
+  }
+
+  double? get distanceKm {
+    return _firstPathNum(const <String>[
+          'distance_km',
+          'record.distance_km',
+          'record.quote.distance_km',
+          'quote.distance_km',
+        ]) ??
+        _sumQuoteLegMetric(
+          listPaths: const <String>['quote.legs', 'record.quote.legs'],
+          keyCandidates: const <String>['distance_km', 'km', 'distance'],
+        );
+  }
+
+  double? get durationMin {
+    return _firstPathNum(const <String>[
+          'duration_min',
+          'record.duration_min',
+          'record.booking.duration_route_min',
+          'record.quote.duration_min',
+          'quote.duration_min',
+        ]) ??
+        _sumQuoteLegMetric(
+          listPaths: const <String>['quote.legs', 'record.quote.legs'],
+          keyCandidates: const <String>['duration_min', 'minutes', 'duration'],
+        );
   }
 
   String get companyName =>
@@ -5773,6 +5886,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             widget.bookingId,
             decoded,
           );
+          final sourceTag = (authoritativeView.record['quote'] is Map)
+              ? 'record.quote'
+              : ((authoritativeView.source['quote'] is Map)
+                    ? 'quote'
+                    : 'record.booking');
+          debugPrint(
+            '[BOOKING_DETAIL][HYDRATE] fromFound=${authoritativeView.fromAddress.trim().isNotEmpty} toFound=${authoritativeView.toAddress.trim().isNotEmpty} priceFound=${authoritativeView.totalAmount != null} source=$sourceTag',
+          );
           final view = authoritativeView.mergedWithExisting(_view);
           final localFallback = StoredCustomerBooking(
             bookingId: _view.bookingId,
@@ -5895,6 +6016,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'tier': _view.tier,
       'passengers': _view.pax,
       'luggage_count': _view.bags,
+      'distance_km': _view.distanceKm,
+      'duration_min': _view.durationMin,
       'booking_total_eur': _view.totalAmount,
       'currency': _view.currency,
       'payment_status': _view.rawPaymentStatus,
@@ -9428,7 +9551,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ? (quote['pricing'] as Map).cast<String, dynamic>()
           : null;
 
-      num? _pickNum(dynamic v) {
+      num? pickNum(dynamic v) {
         if (v is num) return v;
         if (v is String) return num.tryParse(v.replaceAll(',', '.'));
         return null;
@@ -9439,20 +9562,20 @@ class _DriverHomePageState extends State<DriverHomePage>
       // quote:   { price | total | total_price | amount | eur }
       final dynamic pMap = pricing;
       final num? price = (pMap is Map<String, dynamic>)
-          ? (_pickNum(pMap['price_incl_vat']) ??
-                _pickNum(pMap['total_price']) ??
-                _pickNum(pMap['total']) ??
-                _pickNum(pMap['price']) ??
-                _pickNum(pMap['amount']) ??
-                _pickNum(pMap['eur']))
+          ? (pickNum(pMap['price_incl_vat']) ??
+                pickNum(pMap['total_price']) ??
+                pickNum(pMap['total']) ??
+                pickNum(pMap['price']) ??
+                pickNum(pMap['amount']) ??
+                pickNum(pMap['eur']))
           : null;
 
       final num? fallbackFromQuote =
-          _pickNum(quote?['price']) ??
-          _pickNum(quote?['total_price']) ??
-          _pickNum(quote?['total']) ??
-          _pickNum(quote?['amount']) ??
-          _pickNum(quote?['eur']);
+          pickNum(quote?['price']) ??
+          pickNum(quote?['total_price']) ??
+          pickNum(quote?['total']) ??
+          pickNum(quote?['amount']) ??
+          pickNum(quote?['eur']);
 
       final num? resolved = price ?? fallbackFromQuote;
       if (resolved == null) return;
@@ -10077,8 +10200,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final detailMap = booking.details;
     final quote = asMap(booking.details['quote']);
     final record = asMap(booking.details['record']);
+    final recordQuote = asMap(record['quote']);
     final recordPayload = asMap(record['payload']);
     final payloadQuote = asMap(recordPayload['quote']);
+    if (quote.isEmpty && recordQuote.isNotEmpty) {
+      quote.addAll(recordQuote);
+    }
     if (quote.isEmpty && payloadQuote.isNotEmpty) {
       quote.addAll(payloadQuote);
     }
