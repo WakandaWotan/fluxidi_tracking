@@ -742,7 +742,7 @@ async function handlePublicBookingPreview(url, env) {
             <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
           </div>
           <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
-            ${escapeHtml(copy.statusBadge)} &middot; ${escapeHtml(String(data?.public_booking_status || "prepared"))}
+            ${escapeHtml(copy.statusBadge)}
           </span>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
