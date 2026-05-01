@@ -315,10 +315,10 @@ class AppStrings {
 
 const AppStrings _nl = AppStrings(
   calculatorTitle: LocalizedText(
-    nl: 'Calculator',
-    en: 'Calculator',
-    fr: 'Calculateur',
-    es: 'Calculadora',
+    nl: 'Ritprijs berekenen',
+    en: 'Fare calculator',
+    fr: 'Calcul du tarif',
+    es: 'Calcular tarifa',
   ),
   calculatorQuoteTitle: LocalizedText(
     nl: 'Jouw ritprijs',
@@ -383,26 +383,26 @@ const AppStrings _nl = AppStrings(
   drawerBusinessSettingsLabel: LocalizedText(
     nl: 'Bedrijfsinstellingen',
     en: 'Business settings',
-    fr: 'Parametres entreprise',
-    es: 'Configuracion de empresa',
+    fr: 'Paramètres de l’entreprise',
+    es: 'Ajustes de empresa',
   ),
   drawerBusinessSettingsSubtitle: LocalizedText(
-    nl: 'Profiel, branding en defaults',
-    en: 'Profile, branding and defaults',
-    fr: 'Profil, branding et defaults',
-    es: 'Perfil, marca y valores',
+    nl: 'Profiel, branding en standaardwaarden',
+    en: 'Profile, branding, and defaults',
+    fr: 'Profil, marque et valeurs par défaut',
+    es: 'Perfil, marca y valores predeterminados',
   ),
   drawerVehiclesLabel: LocalizedText(
     nl: 'Voertuigen',
     en: 'Vehicles',
-    fr: 'Vehicules',
-    es: 'Vehiculos',
+    fr: 'Véhicules',
+    es: 'Vehículos',
   ),
   drawerVehiclesSubtitle: LocalizedText(
     nl: 'Beheer wagenpark',
     en: 'Manage fleet',
-    fr: 'Gerer la flotte',
-    es: 'Gestionar flota',
+    fr: 'Gérez le parc automobile',
+    es: 'Gestiona la flota',
   ),
   followCarLabel: LocalizedText(
     nl: 'Auto volgen',
@@ -429,10 +429,10 @@ const AppStrings _nl = AppStrings(
     es: 'Iniciar viaje (A → B)',
   ),
   calculatorMenuSubtitle: LocalizedText(
-    nl: 'Prijsberekening',
-    en: 'Price estimate',
-    fr: 'Estimation du prix',
-    es: 'Estimacion de precio',
+    nl: 'Bereken en boek ritten',
+    en: 'Calculate and book rides',
+    fr: 'Calculez et réservez des courses',
+    es: 'Calcula y reserva viajes',
   ),
   activeRideMenuSubtitle: LocalizedText(
     nl: 'Cockpit',

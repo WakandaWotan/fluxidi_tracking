@@ -2842,9 +2842,9 @@ class BusinessHomePage extends StatelessWidget {
                                       },
                                       child: Text(
                                         _t(
-                                          nl: 'Mijn bedrijfsgegevens',
+                                          nl: 'Bedrijfsgegevens',
                                           en: 'Company details',
-                                          fr: 'Mes informations entreprise',
+                                          fr: 'Données de l’entreprise',
                                           es: 'Datos de empresa',
                                         ),
                                       ),
@@ -2870,9 +2870,9 @@ class BusinessHomePage extends StatelessWidget {
                                       child: Text(
                                         _t(
                                           nl: 'Ander bedrijf',
-                                          en: 'Switch company',
-                                          fr: 'Changer entreprise',
-                                          es: 'Cambiar empresa',
+                                          en: 'Other company',
+                                          fr: 'Autre entreprise',
+                                          es: 'Otra empresa',
                                         ),
                                         style: TextStyle(
                                           color: Colors.redAccent.shade100,
@@ -2952,18 +2952,18 @@ class BusinessHomePage extends StatelessWidget {
                   leading: const Icon(Icons.fact_check_outlined),
                   title: Text(
                     _t(
-                      nl: 'Chiron Compliance Dashboard',
-                      en: 'Chiron Compliance Dashboard',
-                      fr: 'Tableau conformité Chiron',
+                      nl: 'Chiron-complianceoverzicht',
+                      en: 'Chiron compliance dashboard',
+                      fr: 'Tableau de conformité Chiron',
                       es: 'Panel de cumplimiento Chiron',
                     ),
                   ),
                   subtitle: Text(
                     _t(
-                      nl: 'Read-only compliance overzicht',
+                      nl: 'Alleen-lezen compliancecontrole',
                       en: 'Read-only compliance overview',
-                      fr: 'Aperçu conformité en lecture seule',
-                      es: 'Resumen de cumplimiento en solo lectura',
+                      fr: 'Vue conformité en lecture seule',
+                      es: 'Vista de cumplimiento de solo lectura',
                     ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
@@ -3718,8 +3718,8 @@ class FluxidiBackToStartButton extends StatelessWidget {
           _tr(
             nl: 'Terug naar startpagina',
             en: 'Back to start page',
-            fr: 'Retour à la page de départ',
-            es: 'Volver a la página de inicio',
+            fr: 'Retour à l’accueil',
+            es: 'Volver a la pantalla inicial',
           ),
         ),
         style: OutlinedButton.styleFrom(

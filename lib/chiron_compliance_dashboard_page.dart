@@ -90,19 +90,19 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           ),
           _HubActionCard(
             title: _t(
-              nl: 'Backend compliance inbox',
+              nl: 'Backendmeldingen',
               en: 'Backend compliance inbox',
               fr: 'Boîte conformité backend',
               es: 'Bandeja de cumplimiento backend',
             ),
             subtitle: _t(
-              nl: 'Bekijk recente backend compliance events uit de Compliance Worker.',
+              nl: 'Bekijk recente backendmeldingen uit de Compliance Worker.',
               en: 'View recent backend compliance events from the Compliance Worker.',
               fr: 'Consultez les événements récents de conformité backend du Compliance Worker.',
               es: 'Consulta eventos recientes de cumplimiento backend del Compliance Worker.',
             ),
             note: _t(
-              nl: 'Read-only · handmatig verversen',
+              nl: 'Alleen lezen · handmatig verversen',
               en: 'Read-only · manual refresh',
               fr: 'Lecture seule · rafraîchissement manuel',
               es: 'Solo lectura · actualización manual',
@@ -1485,10 +1485,10 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
         backgroundColor: const Color(0xFF0B1020),
         title: Text(
           _t(
-            nl: 'Backend compliance inbox',
-            en: 'Backend compliance inbox',
-            fr: 'Boîte conformité backend',
-            es: 'Bandeja de cumplimiento backend',
+            nl: 'Backendmeldingen',
+            en: 'Backend events',
+            fr: 'Événements backend',
+            es: 'Eventos backend',
           ),
         ),
       ),
@@ -1497,13 +1497,13 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
         children: [
           _baseCard(
             title: _t(
-              nl: 'Remote compliance events',
-              en: 'Remote compliance events',
-              fr: 'Événements conformité distants',
-              es: 'Eventos remotos de cumplimiento',
+              nl: 'Backendmeldingen',
+              en: 'Backend compliance inbox',
+              fr: 'Boîte de conformité backend',
+              es: 'Bandeja de cumplimiento backend',
             ),
             subtitle: _t(
-              nl: 'Read-only events uit de backend Compliance Worker.',
+              nl: 'Alleen-lezen meldingen uit de backend Compliance Worker.',
               en: 'Read-only events from the backend Compliance Worker.',
               fr: 'Événements en lecture seule depuis le Compliance Worker backend.',
               es: 'Eventos de solo lectura desde el Compliance Worker backend.',
@@ -1572,6 +1572,189 @@ class _RemoteComplianceEventsSectionState
 
   String _text(dynamic value) => (value ?? '').toString().trim();
 
+  String _localizedUnknown() {
+    return _t(nl: 'onbekend', en: 'unknown', fr: 'inconnu', es: 'desconocido');
+  }
+
+  String _localizedEventTypeLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'payment_update':
+        return _t(
+          nl: 'Betalingsupdate',
+          en: 'Payment update',
+          fr: 'Mise à jour du paiement',
+          es: 'Actualización de pago',
+        );
+      case 'ride_stop':
+        return _t(
+          nl: 'Rit afgerond',
+          en: 'Ride completed',
+          fr: 'Course terminée',
+          es: 'Viaje finalizado',
+        );
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedRideTypeLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'planned':
+        return _t(
+          nl: 'geplande rit',
+          en: 'planned ride',
+          fr: 'course planifiée',
+          es: 'viaje planificado',
+        );
+      case 'direct':
+        return _t(
+          nl: 'directe rit',
+          en: 'direct ride',
+          fr: 'course directe',
+          es: 'viaje directo',
+        );
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedPaymentStatusLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'paid':
+        return _t(nl: 'betaald', en: 'paid', fr: 'payé', es: 'pagado');
+      case 'pending':
+        return _t(
+          nl: 'in behandeling',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
+        );
+      case 'failed':
+        return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
+      case 'unpaid':
+        return _t(
+          nl: 'onbetaald',
+          en: 'unpaid',
+          fr: 'non payé',
+          es: 'no pagado',
+        );
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedPaymentMethodLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'cash':
+        return _t(nl: 'contant', en: 'cash', fr: 'espèces', es: 'efectivo');
+      case 'bancontact':
+        return 'Bancontact';
+      case 'card':
+        return _t(nl: 'kaart', en: 'card', fr: 'carte', es: 'tarjeta');
+      case 'qr':
+        return 'QR';
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedSourceLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'in_car':
+      case 'in_vehicle':
+        return _t(
+          nl: 'in voertuig',
+          en: 'in vehicle',
+          fr: 'dans le véhicule',
+          es: 'en el vehículo',
+        );
+      case 'customer':
+        return _t(nl: 'klant', en: 'customer', fr: 'client', es: 'cliente');
+      case 'backend':
+        return 'backend';
+      case 'driver':
+        return _t(
+          nl: 'chauffeur',
+          en: 'driver',
+          fr: 'chauffeur',
+          es: 'conductor',
+        );
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedSyncStateLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'not_configured':
+        return _t(
+          nl: 'niet ingesteld',
+          en: 'not configured',
+          fr: 'non configurée',
+          es: 'no configurada',
+        );
+      case 'synced':
+        return _t(
+          nl: 'gesynchroniseerd',
+          en: 'synced',
+          fr: 'synchronisée',
+          es: 'sincronizada',
+        );
+      case 'failed':
+        return _t(nl: 'mislukt', en: 'failed', fr: 'échouée', es: 'fallida');
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
+  String _localizedProducerLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'booking_worker':
+      case 'bookingsworker':
+      case 'booking worker':
+        return _t(
+          nl: 'boekingsmodule',
+          en: 'booking module',
+          fr: 'module de réservation',
+          es: 'módulo de reservas',
+        );
+      case 'tracking_worker':
+      case 'trackingworker':
+      case 'tracking worker':
+        return _t(
+          nl: 'trackingmodule',
+          en: 'tracking module',
+          fr: 'module de suivi',
+          es: 'módulo de seguimiento',
+        );
+      case 'compliance_worker':
+      case 'complianceworker':
+      case 'compliance worker':
+        return _t(
+          nl: 'compliancemodule',
+          en: 'compliance module',
+          fr: 'module de conformité',
+          es: 'módulo de cumplimiento',
+        );
+      case 'unknown':
+        return _localizedUnknown();
+      default:
+        return raw.trim().isEmpty ? '—' : raw.trim();
+    }
+  }
+
   Future<RemoteComplianceEventsResponse> _loadRemoteEvents() async {
     final token = _complianceAdminToken.trim();
     if (token.isEmpty) {
@@ -1584,7 +1767,7 @@ class _RemoteComplianceEventsSectionState
         malformedCount: 0,
         events: const <RemoteComplianceEvent>[],
         errorMessage: _t(
-          nl: 'Admin token ontbreekt voor remote compliance events.',
+          nl: 'Admin token ontbreekt voor backendmeldingen.',
           en: 'Admin token is missing for remote compliance events.',
           fr: 'Le jeton admin manque pour les événements de conformité distants.',
           es: 'Falta el token admin para eventos remotos de cumplimiento.',
@@ -1697,14 +1880,18 @@ class _RemoteComplianceEventsSectionState
   }
 
   Widget _eventTile(RemoteComplianceEvent e) {
-    final reference = e.bookingId.isNotEmpty
+    final referenceLabel = e.bookingId.isNotEmpty
+        ? _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva')
+        : e.tripId.isNotEmpty
+        ? _t(nl: 'Rit', en: 'Trip', fr: 'Course', es: 'Viaje')
+        : '';
+    final referenceValue = e.bookingId.isNotEmpty
         ? e.bookingId
         : (e.tripId.isNotEmpty ? e.tripId : '—');
     final paymentStatus = _text(e.payment['status']);
     final paymentMethod = _text(e.payment['method']);
     final paymentSource = _text(e.payment['source']);
     final producer = _text(e.provenance['producer']);
-    final sourceEndpoint = _text(e.provenance['source_endpoint']);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1718,7 +1905,7 @@ class _RemoteComplianceEventsSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${e.eventType.isEmpty ? '—' : e.eventType} • ${e.rideType.isEmpty ? '—' : e.rideType}',
+            '${_localizedEventTypeLabel(e.eventType)} • ${_localizedRideTypeLabel(e.rideType)}',
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w700,
@@ -1727,24 +1914,44 @@ class _RemoteComplianceEventsSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            '${_fmtDateTime(e.createdAtUtc)} • $reference',
+            _fmtDateTime(e.createdAtUtc),
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
+          if (referenceLabel.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '$referenceLabel: $referenceValue',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: [
-              _chip('sync: ${e.syncState.isEmpty ? '—' : e.syncState}'),
-              if (paymentStatus.isNotEmpty) _chip('pay: $paymentStatus'),
+              _chip(
+                '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
+              ),
+              if (paymentStatus.isNotEmpty)
+                _chip(
+                  '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(paymentStatus)}',
+                ),
               if (paymentMethod.isNotEmpty &&
                   paymentMethod.toLowerCase() != 'unknown')
-                _chip('method: $paymentMethod'),
+                _chip(
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(paymentMethod)}',
+                ),
               if (paymentSource.isNotEmpty &&
                   paymentSource.toLowerCase() != 'unknown')
-                _chip('source: $paymentSource'),
-              if (producer.isNotEmpty) _chip('producer: $producer'),
-              if (sourceEndpoint.isNotEmpty) _chip(sourceEndpoint),
+                _chip(
+                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(paymentSource)}',
+                ),
+              if (producer.isNotEmpty)
+                _chip(
+                  '${_t(nl: 'Systeem', en: 'System', fr: 'Système', es: 'Sistema')}: ${_localizedProducerLabel(producer)}',
+                ),
             ],
           ),
         ],
@@ -1762,10 +1969,10 @@ class _RemoteComplianceEventsSectionState
             Expanded(
               child: Text(
                 _t(
-                  nl: 'Compliance Worker (backend)',
-                  en: 'Compliance Worker (backend)',
-                  fr: 'Compliance Worker (backend)',
-                  es: 'Compliance Worker (backend)',
+                  nl: 'Compliance-module (backend)',
+                  en: 'Compliance module (backend)',
+                  fr: 'Module de conformité (backend)',
+                  es: 'Módulo de cumplimiento (backend)',
                 ),
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
@@ -1796,10 +2003,10 @@ class _RemoteComplianceEventsSectionState
                   const SizedBox(width: 8),
                   Text(
                     _t(
-                      nl: 'Remote compliance events laden...',
-                      en: 'Loading remote compliance events...',
-                      fr: 'Chargement des événements conformité distants...',
-                      es: 'Cargando eventos remotos de cumplimiento...',
+                      nl: 'Backendmeldingen laden...',
+                      en: 'Loading backend events...',
+                      fr: 'Chargement des événements backend...',
+                      es: 'Cargando eventos del backend...',
                     ),
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
@@ -1818,10 +2025,10 @@ class _RemoteComplianceEventsSectionState
                   malformedCount: 0,
                   events: const <RemoteComplianceEvent>[],
                   errorMessage: _t(
-                    nl: 'Onbekende fout bij laden van remote events.',
-                    en: 'Unknown error loading remote events.',
-                    fr: 'Erreur inconnue lors du chargement des événements distants.',
-                    es: 'Error desconocido al cargar eventos remotos.',
+                    nl: 'Onbekende fout bij laden van backendmeldingen.',
+                    en: 'Unknown error while loading backend events.',
+                    fr: 'Erreur inconnue lors du chargement des événements backend.',
+                    es: 'Error desconocido al cargar los eventos del backend.',
                   ),
                 );
 
@@ -1862,10 +2069,10 @@ class _RemoteComplianceEventsSectionState
                 ),
                 child: Text(
                   _t(
-                    nl: 'Geen backend compliance events gevonden.',
-                    en: 'No backend compliance events found.',
-                    fr: 'Aucun événement conformité backend trouvé.',
-                    es: 'No se encontraron eventos de cumplimiento backend.',
+                    nl: 'Geen backendmeldingen gevonden.',
+                    en: 'No backend events found.',
+                    fr: 'Aucun événement backend trouvé.',
+                    es: 'No se encontraron eventos del backend.',
                   ),
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
@@ -1879,7 +2086,12 @@ class _RemoteComplianceEventsSectionState
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      '${result.malformedCount} ${_t(nl: 'malformed event(s) overgeslagen.', en: 'malformed event(s) skipped.', fr: 'événement(s) mal formé(s) ignoré(s).', es: 'evento(s) malformado(s) omitido(s).')}',
+                      _t(
+                        nl: '${result.malformedCount} ongeldige melding(en) overgeslagen.',
+                        en: '${result.malformedCount} malformed event(s) skipped.',
+                        fr: '${result.malformedCount} événement(s) invalide(s) ignoré(s).',
+                        es: '${result.malformedCount} evento(s) no válido(s) omitido(s).',
+                      ),
                       style: const TextStyle(
                         color: Colors.orangeAccent,
                         fontSize: 11,
@@ -1888,7 +2100,7 @@ class _RemoteComplianceEventsSectionState
                   ),
                 Text(
                   _t(
-                    nl: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
+                    nl: 'Tenant ${result.tenantId} • Bedrijf ${result.companyId} • ${result.count} meldingen',
                     en: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
                     fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${result.count} événements',
                     es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${result.count} eventos',
