@@ -531,6 +531,100 @@ async function saveCommunicationTemplates(env, templates) {
   return normalized;
 }
 
+function sanitizePublicCompanyId(value) {
+  const trimmed = sanitizeTenantString(value, 80);
+  if (!trimmed) return "";
+  return trimmed.replace(/[^a-zA-Z0-9_.-]/g, "");
+}
+
+function pickFirstPublicValue(...values) {
+  for (const value of values) {
+    const candidate = sanitizeTenantString(value, 240);
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+async function handlePublicBootstrap(url, env) {
+  const rawCompanyId =
+    url.searchParams.get("company_id") ??
+    url.searchParams.get("companyId") ??
+    "";
+  const companyId = sanitizePublicCompanyId(rawCompanyId);
+  if (!companyId) {
+    return json({ ok: false, error: "missing_company_id" }, 400);
+  }
+
+  console.log(`[PUBLIC_BOOTSTRAP] company=${companyId}`);
+
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env);
+  } catch (_) {
+    businessProfile = null;
+  }
+  const business =
+    businessProfile && typeof businessProfile === "object"
+      ? businessProfile
+      : {};
+
+  const displayName = pickFirstPublicValue(
+    business.companyName,
+    business.legalName,
+    business.name,
+    business.displayName,
+    "Fluxidi",
+  );
+
+  const defaultLanguage = pickFirstPublicValue(
+    business.locale,
+    "nl",
+  ).toLowerCase();
+
+  return json(
+    {
+      ok: true,
+      phase: "public_bootstrap_v1",
+      tenant_id: companyId,
+      company_id: companyId,
+      booking_enabled: false,
+      public_booking_status: "prepared",
+      display_name: displayName || "Fluxidi",
+      default_language: defaultLanguage || "nl",
+      public_contact: {
+        email: pickFirstPublicValue(
+          business.companyEmail,
+          business.email,
+          business.supportEmail,
+          business.bookingEmail,
+        ),
+        phone: pickFirstPublicValue(
+          business.phone,
+          business.companyPhone,
+        ),
+        website: pickFirstPublicValue(business.website),
+      },
+      branding: {
+        logo_url: pickFirstPublicValue(business.logoUrl),
+        primary_color: pickFirstPublicValue(
+          business.primaryColor,
+          business.primary_color,
+        ),
+        accent_color: pickFirstPublicValue(
+          business.accentColor,
+          business.accent_color,
+        ),
+      },
+      features: {
+        public_page: false,
+        qr: false,
+        embed: false,
+      },
+    },
+    200,
+  );
+}
+
 function isValidEmail(value) {
   const email = safeStr(value).toLowerCase();
   if (!email) return false;
@@ -1322,6 +1416,14 @@ GET /oauth/callback
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
         return json(out, 200);
+      }
+
+      // PUBLIC BOOTSTRAP (phase 2B, read-only)
+      if (url.pathname === "/public/bootstrap") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicBootstrap(url, env);
       }
 
       // =========================
