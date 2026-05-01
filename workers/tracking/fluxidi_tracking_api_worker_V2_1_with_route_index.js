@@ -323,6 +323,120 @@ function buildPlannedTripStopComplianceEvent(trip, stopPayload) {
   };
 }
 
+function normalizeCompliancePaymentStatus(value) {
+  const raw = safeStr(value, 64);
+  if (!raw) return "unknown";
+  const s = raw.toLowerCase();
+  if (s === "paid" || s === "confirmed" || s === "completed" || s === "success" || s === "settled") {
+    return "paid";
+  }
+  if (s === "pending" || s === "authorized" || s === "open" || s === "processing") {
+    return "pending";
+  }
+  if (s === "failed" || s === "cancelled" || s === "canceled" || s === "declined") {
+    return "failed";
+  }
+  if (s === "unpaid" || s === "not_paid") {
+    return "unpaid";
+  }
+  return "unknown";
+}
+
+function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult) {
+  const tenantFromPayload = safeStr(
+    paymentPayloadOrResult?.tenant_id ??
+      paymentPayloadOrResult?.tenantId ??
+      paymentPayloadOrResult?.company_id ??
+      paymentPayloadOrResult?.companyId,
+    96,
+  );
+  const tenantFromTrip = safeStr(
+    trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
+    96,
+  );
+  const tenantId = tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+  const companyFromPayload = safeStr(
+    paymentPayloadOrResult?.company_id ?? paymentPayloadOrResult?.companyId,
+    96,
+  );
+  const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
+  // TODO: tighten tenant/company authority from a single canonical source.
+  const companyId = companyFromPayload ?? companyFromTrip ?? tenantId;
+  if (!tenantId || !companyId) return null;
+
+  const paidAt =
+    safeStr(
+      trip?.paid_at ??
+        trip?.paidAt ??
+        paymentPayloadOrResult?.paid_at ??
+        paymentPayloadOrResult?.paidAt,
+      64,
+    ) ?? nowIso();
+  const fareCurrency =
+    (safeStr(trip?.currency, 8) ??
+      safeStr(paymentPayloadOrResult?.currency, 8) ??
+      safeStr(trip?.pricing_snapshot?.currency, 8) ??
+      "EUR").toUpperCase();
+  const paymentAmountRaw =
+    paymentPayloadOrResult?.amount ??
+    paymentPayloadOrResult?.price ??
+    paymentPayloadOrResult?.total ??
+    trip?.payment_amount ??
+    trip?.paymentAmount;
+  const paymentAmount = Number.isFinite(Number(paymentAmountRaw))
+    ? Number(paymentAmountRaw)
+    : null;
+  const fareTotalRaw = trip?.total_eur ?? trip?.totalEur ?? paymentPayloadOrResult?.total;
+  const fareTotal = Number.isFinite(Number(fareTotalRaw)) ? Number(fareTotalRaw) : null;
+
+  return {
+    event_type: "payment_update",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(trip?.booking_id ?? trip?.bookingId, 128) ?? undefined,
+    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
+    receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
+    ride_type: "direct",
+    lifecycle_status: "payment_updated",
+    timestamps: {
+      event_at_utc: paidAt,
+      paid_at_utc: paidAt,
+    },
+    driver: {
+      driver_id: safeStr(trip?.driver_id ?? trip?.driverId, 96) ?? null,
+    },
+    vehicle: {
+      vehicle_id: safeStr(trip?.vehicle_id ?? trip?.vehicleId, 96) ?? null,
+    },
+    fare: {
+      currency: fareCurrency,
+      total_amount: fareTotal,
+    },
+    payment: {
+      status: normalizeCompliancePaymentStatus(trip?.payment_status ?? trip?.paymentStatus),
+      method: normalizeComplianceText(trip?.payment_method ?? trip?.paymentMethod),
+      source: normalizeComplianceText(trip?.payment_source ?? trip?.paymentSource),
+      provider: normalizeComplianceText(trip?.payment_provider ?? trip?.paymentProvider),
+      payment_id: safeStr(
+        trip?.payment_id ??
+          trip?.paymentId ??
+          paymentPayloadOrResult?.payment_id ??
+          paymentPayloadOrResult?.paymentId,
+        128,
+      ) ?? undefined,
+      amount: paymentAmount ?? undefined,
+      currency: fareCurrency,
+    },
+    provenance: {
+      producer: "tracking_worker",
+      source_endpoint: "/trip/payment",
+      backend_confirmed: true,
+      validation_state: "payment_update",
+    },
+  };
+}
+
 async function emitComplianceEventBestEffort(env, event, options = {}) {
   try {
     const baseUrlRaw = safeStr(env?.COMPLIANCE_API_URL, 512);
@@ -1104,7 +1218,7 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   );
 }
 
-async function handleTripPayment(req, url, env, origin) {
+async function handleTripPayment(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
@@ -1189,6 +1303,19 @@ async function handleTripPayment(req, url, env, origin) {
   trip.timeline = timeline;
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+
+  const complianceEvent = buildTripPaymentUpdateComplianceEvent(trip, body);
+  if (complianceEvent) {
+    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
+      timeoutMs: 1500,
+      logLabel: "direct_payment_update",
+    });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
+    }
+  }
 
   return withCors(
     json(
@@ -1593,7 +1720,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
-      if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin, ctx);
 
       // core
       if (req.method === "POST" && url.pathname === "/track/session/start") return await handleStart(req, url, env, origin);

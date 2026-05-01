@@ -8,6 +8,11 @@ find_additional_modules = false
 [vars]
 GOOGLE_CALENDAR_ID = "primary"
 FLEET_AVAILABILITY_MODE = "multi_vehicle"
+COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
+
+[[services]]
+binding = "COMPLIANCE_WORKER"
+service = "fluxidi-compliance-api"
 
 [observability.logs]
 enabled = true

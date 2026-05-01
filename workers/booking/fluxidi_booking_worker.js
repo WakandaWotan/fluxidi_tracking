@@ -882,7 +882,7 @@ async function handleSafeResetOperationalData(request, url, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
       const pathParts = url.pathname.split("/").filter(Boolean);
@@ -1574,6 +1574,7 @@ GET /oauth/callback
             bookingId,
             body,
             env,
+            ctx,
           );
           return json(out, out.ok ? 200 : 400);
         }
@@ -1956,6 +1957,259 @@ function paymentFieldsFromPayload(payload) {
     paymentId: payload?.payment_id || payload?.paymentId || payload?.mollie_payment_id || payload?.molliePaymentId,
     paidAt: payload?.paid_at || payload?.paidAt,
   });
+}
+
+const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
+
+function buildComplianceAppendUrl(baseUrlRaw) {
+  const normalized = safeStr(baseUrlRaw);
+  if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    parsed.search = "";
+    parsed.hash = "";
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    if (normalizedPath === COMPLIANCE_APPEND_PATH) return parsed;
+    if (normalizedPath === "" || normalizedPath === "/") {
+      parsed.pathname = COMPLIANCE_APPEND_PATH;
+      return parsed;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeCompliancePaymentStatus(value) {
+  const raw = safeStr(value).toLowerCase();
+  if (!raw) return "unknown";
+  if (raw === "paid" || raw === "confirmed" || raw === "completed" || raw === "success" || raw === "settled") {
+    return "paid";
+  }
+  if (raw === "pending" || raw === "authorized" || raw === "open" || raw === "processing") {
+    return "pending";
+  }
+  if (raw === "failed" || raw === "cancelled" || raw === "canceled" || raw === "declined") {
+    return "failed";
+  }
+  if (raw === "unpaid" || raw === "not_paid") {
+    return "unpaid";
+  }
+  return "unknown";
+}
+
+function normalizeComplianceText(value, fallback = "unknown") {
+  const text = safeStr(value).toLowerCase();
+  return text || fallback;
+}
+
+function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, payment) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const explicitTenantId = safeStr(
+    payment?.tenant_id ||
+      payment?.tenantId ||
+      payment?.company_id ||
+      payment?.companyId ||
+      rec?.tenant_id ||
+      rec?.tenantId ||
+      booking?.tenant_id ||
+      booking?.tenantId ||
+      rec?.company_id ||
+      rec?.companyId ||
+      booking?.company_id ||
+      booking?.companyId,
+  );
+  // TODO: replace Fluxidi fallback with strict tenant/company authority before production.
+  const tenantId = explicitTenantId || "fluxidi";
+  const explicitCompanyId = safeStr(
+    payment?.company_id ||
+      payment?.companyId ||
+      rec?.company_id ||
+      rec?.companyId ||
+      booking?.company_id ||
+      booking?.companyId,
+  );
+  const companyId = explicitCompanyId || tenantId;
+  if (!tenantId || !companyId) return null;
+
+  const paidAt = safeStr(
+    rec?.paid_at ||
+      rec?.paidAt ||
+      booking?.paid_at ||
+      booking?.paidAt ||
+      payment?.paid_at ||
+      payment?.paidAt,
+  );
+  const eventAt = paidAt || new Date().toISOString();
+  const currency = (
+    safeStr(
+      payment?.currency ||
+        rec?.currency ||
+        booking?.currency ||
+        booking?.booking_currency ||
+        "EUR",
+    ) || "EUR"
+  ).toUpperCase();
+  const amountRaw =
+    payment?.amount ??
+    payment?.price ??
+    payment?.total ??
+    rec?.payment_amount ??
+    rec?.paymentAmount ??
+    booking?.payment_amount ??
+    booking?.paymentAmount;
+  const amountNum = Number(amountRaw);
+  const amount = Number.isFinite(amountNum) ? amountNum : null;
+  const totalRaw =
+    booking?.price_incl_vat ??
+    booking?.priceInclVat ??
+    rec?.price_incl_vat ??
+    rec?.priceInclVat ??
+    amountRaw;
+  const totalNum = Number(totalRaw);
+  const totalAmount = Number.isFinite(totalNum) ? totalNum : null;
+
+  return {
+    event_type: "payment_update",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(bookingId) || undefined,
+    trip_id: safeStr(rec?.trip_id || rec?.tripId || booking?.trip_id || booking?.tripId) || undefined,
+    receipt_reference: safeStr(
+      rec?.receipt_reference ||
+        rec?.receiptReference ||
+        booking?.receipt_reference ||
+        booking?.receiptReference,
+    ) || undefined,
+    ride_type: "planned",
+    lifecycle_status: "payment_updated",
+    timestamps: {
+      event_at_utc: eventAt,
+      paid_at_utc: paidAt || undefined,
+    },
+    fare: {
+      currency,
+      total_amount: totalAmount,
+    },
+    payment: {
+      status: normalizeCompliancePaymentStatus(
+        rec?.payment_status ||
+          rec?.paymentStatus ||
+          booking?.payment_status ||
+          booking?.paymentStatus ||
+          payment?.payment_status ||
+          payment?.paymentStatus,
+      ),
+      method: normalizeComplianceText(
+        rec?.payment_method ||
+          rec?.paymentMethod ||
+          booking?.payment_method ||
+          booking?.paymentMethod ||
+          payment?.payment_method ||
+          payment?.paymentMethod,
+      ),
+      source: normalizeComplianceText(
+        rec?.payment_source ||
+          rec?.paymentSource ||
+          booking?.payment_source ||
+          booking?.paymentSource ||
+          payment?.payment_source ||
+          payment?.paymentSource,
+      ),
+      provider: normalizeComplianceText(
+        rec?.payment_provider ||
+          rec?.paymentProvider ||
+          booking?.payment_provider ||
+          booking?.paymentProvider ||
+          payment?.payment_provider ||
+          payment?.paymentProvider,
+      ),
+      payment_id: safeStr(
+        rec?.payment_id ||
+          rec?.paymentId ||
+          booking?.payment_id ||
+          booking?.paymentId ||
+          payment?.payment_id ||
+          payment?.paymentId,
+      ) || undefined,
+      amount: amount ?? undefined,
+      currency,
+    },
+    provenance: {
+      producer: "booking_worker",
+      source_endpoint: "/bookings/:id/payment",
+      backend_confirmed: true,
+      validation_state: "payment_update",
+    },
+  };
+}
+
+async function emitComplianceEventBestEffort(env, event, options = {}) {
+  try {
+    const baseUrlRaw = safeStr(env?.COMPLIANCE_API_URL);
+    const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN || env?.ADMIN_TOKEN);
+    const logLabel = safeStr(options?.logLabel) || "payment_update";
+    if (!baseUrlRaw || !adminToken) {
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=missing_config`);
+      return { ok: false, skipped: "missing_config" };
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=invalid_event`);
+      return { ok: false, skipped: "invalid_event" };
+    }
+    const appendUrl = buildComplianceAppendUrl(baseUrlRaw);
+    if (!appendUrl) {
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] skipped reason=invalid_url_config`);
+      return { ok: false, skipped: "invalid_url_config" };
+    }
+
+    const requestedTimeout = Number(options?.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeout)
+      ? Math.max(1, Math.min(1500, Math.round(requestedTimeout)))
+      : 1500;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const req = new Request(appendUrl.toString(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(event),
+        signal: controller.signal,
+      });
+      const hasServiceBinding = !!(env?.COMPLIANCE_WORKER && typeof env.COMPLIANCE_WORKER.fetch === "function");
+      const transport = hasServiceBinding ? "service_binding" : "public_fetch";
+      const resp = hasServiceBinding
+        ? await env.COMPLIANCE_WORKER.fetch(req)
+        : await fetch(req);
+      if (!resp.ok) {
+        console.log(
+          `[COMPLIANCE_EMIT][${logLabel}] failed status=${resp.status} transport=${transport} origin=${appendUrl.origin} path=${appendUrl.pathname}`,
+        );
+        return { ok: false, status: resp.status };
+      }
+      // TODO: reduce/remove success log after rollout verification.
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] ok transport=${transport}`);
+      return { ok: true, status: resp.status };
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=timeout`);
+        return { ok: false, error: "timeout" };
+      }
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=fetch_failed`);
+      return { ok: false, error: "fetch_failed" };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_) {
+    return { ok: false, error: "internal_error" };
+  }
 }
 
 function maskEmailForLog(value) {
@@ -5195,7 +5449,7 @@ async function updateBookingStatusAuthoritative(bookingId, status, env) {
   return { ok: true, booking_id: bookingId, status: normalized };
 }
 
-async function updateBookingPaymentAuthoritative(bookingId, payment, env) {
+async function updateBookingPaymentAuthoritative(bookingId, payment, env, ctx) {
   const { key, rec } = await loadBookingRecord(env, bookingId);
   const asText = (value) => String(value ?? "").trim();
   const wasAlreadyPaid =
@@ -5493,6 +5747,20 @@ async function updateBookingPaymentAuthoritative(bookingId, payment, env) {
   }
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  const complianceEvent = buildBookingPaymentUpdateComplianceEvent(rec, bookingId, payment);
+  if (complianceEvent) {
+    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
+      timeoutMs: 1500,
+      logLabel: "planned_payment_update",
+    });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
+    }
+  } else {
+    console.log("[COMPLIANCE_EMIT][planned_payment_update] skipped reason=builder_null");
+  }
   return {
     ok: true,
     booking_id: bookingId,
