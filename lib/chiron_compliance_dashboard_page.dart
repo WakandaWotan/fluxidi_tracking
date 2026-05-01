@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
+import 'package:http/http.dart' as http;
 
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
@@ -81,6 +84,34 @@ class ChironComplianceDashboardPage extends StatelessWidget {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => const _ChironReadinessChecklistPage(),
+                ),
+              );
+            },
+          ),
+          _HubActionCard(
+            title: _t(
+              nl: 'Backend compliance inbox',
+              en: 'Backend compliance inbox',
+              fr: 'Boîte conformité backend',
+              es: 'Bandeja de cumplimiento backend',
+            ),
+            subtitle: _t(
+              nl: 'Bekijk recente backend compliance events uit de Compliance Worker.',
+              en: 'View recent backend compliance events from the Compliance Worker.',
+              fr: 'Consultez les événements récents de conformité backend du Compliance Worker.',
+              es: 'Consulta eventos recientes de cumplimiento backend del Compliance Worker.',
+            ),
+            note: _t(
+              nl: 'Read-only · handmatig verversen',
+              en: 'Read-only · manual refresh',
+              fr: 'Lecture seule · rafraîchissement manuel',
+              es: 'Solo lectura · actualización manual',
+            ),
+            trailingIcon: Icons.cloud_done_outlined,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const _ChironRemoteCompliancePage(),
                 ),
               );
             },
@@ -1334,6 +1365,543 @@ class _ChironLocalLedgerPage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+const String _complianceApiBaseUrl = String.fromEnvironment(
+  'COMPLIANCE_API_BASE_URL',
+  defaultValue: 'https://fluxidi-compliance-api.fluxidi.workers.dev',
+);
+const String _complianceAdminToken = String.fromEnvironment(
+  'ADMIN_TOKEN',
+  defaultValue: '',
+);
+
+class RemoteComplianceEvent {
+  const RemoteComplianceEvent({
+    required this.key,
+    required this.eventId,
+    required this.eventType,
+    required this.rideType,
+    required this.bookingId,
+    required this.tripId,
+    required this.syncState,
+    required this.createdAtUtc,
+    required this.timestamps,
+    required this.payment,
+    required this.fare,
+    required this.provenance,
+  });
+
+  final String key;
+  final String eventId;
+  final String eventType;
+  final String rideType;
+  final String bookingId;
+  final String tripId;
+  final String syncState;
+  final String createdAtUtc;
+  final Map<String, dynamic> timestamps;
+  final Map<String, dynamic> payment;
+  final Map<String, dynamic> fare;
+  final Map<String, dynamic> provenance;
+
+  factory RemoteComplianceEvent.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic> asMap(Object? value) {
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    String text(String key) => (json[key] ?? '').toString().trim();
+
+    return RemoteComplianceEvent(
+      key: text('key'),
+      eventId: text('event_id'),
+      eventType: text('event_type'),
+      rideType: text('ride_type'),
+      bookingId: text('booking_id'),
+      tripId: text('trip_id'),
+      syncState: text('sync_state'),
+      createdAtUtc: text('created_at_utc'),
+      timestamps: asMap(json['timestamps']),
+      payment: asMap(json['payment']),
+      fare: asMap(json['fare']),
+      provenance: asMap(json['provenance']),
+    );
+  }
+}
+
+class RemoteComplianceEventsResponse {
+  const RemoteComplianceEventsResponse({
+    required this.ok,
+    required this.tenantId,
+    required this.companyId,
+    required this.limit,
+    required this.count,
+    required this.malformedCount,
+    required this.events,
+    this.errorMessage = '',
+  });
+
+  final bool ok;
+  final String tenantId;
+  final String companyId;
+  final int limit;
+  final int count;
+  final int malformedCount;
+  final List<RemoteComplianceEvent> events;
+  final String errorMessage;
+}
+
+class _ChironRemoteCompliancePage extends StatelessWidget {
+  const _ChironRemoteCompliancePage();
+
+  AppLanguage get _lang => appConfig.currentLanguage;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B1020),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B1020),
+        title: Text(
+          _t(
+            nl: 'Backend compliance inbox',
+            en: 'Backend compliance inbox',
+            fr: 'Boîte conformité backend',
+            es: 'Bandeja de cumplimiento backend',
+          ),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          _baseCard(
+            title: _t(
+              nl: 'Remote compliance events',
+              en: 'Remote compliance events',
+              fr: 'Événements conformité distants',
+              es: 'Eventos remotos de cumplimiento',
+            ),
+            subtitle: _t(
+              nl: 'Read-only events uit de backend Compliance Worker.',
+              en: 'Read-only events from the backend Compliance Worker.',
+              fr: 'Événements en lecture seule depuis le Compliance Worker backend.',
+              es: 'Eventos de solo lectura desde el Compliance Worker backend.',
+            ),
+            child: _RemoteComplianceEventsSection(lang: _lang),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RemoteComplianceEventsSection extends StatefulWidget {
+  const _RemoteComplianceEventsSection({required this.lang});
+
+  final AppLanguage lang;
+
+  @override
+  State<_RemoteComplianceEventsSection> createState() =>
+      _RemoteComplianceEventsSectionState();
+}
+
+class _RemoteComplianceEventsSectionState
+    extends State<_RemoteComplianceEventsSection> {
+  late Future<RemoteComplianceEventsResponse> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadRemoteEvents();
+  }
+
+  void _refresh() {
+    setState(() {
+      _future = _loadRemoteEvents();
+    });
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _fmtDateTime(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return '—';
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return text;
+    final local = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _text(dynamic value) => (value ?? '').toString().trim();
+
+  Future<RemoteComplianceEventsResponse> _loadRemoteEvents() async {
+    final token = _complianceAdminToken.trim();
+    if (token.isEmpty) {
+      return RemoteComplianceEventsResponse(
+        ok: false,
+        tenantId: kTenantId,
+        companyId: kCompanyId,
+        limit: 10,
+        count: 0,
+        malformedCount: 0,
+        events: const <RemoteComplianceEvent>[],
+        errorMessage: _t(
+          nl: 'Admin token ontbreekt voor remote compliance events.',
+          en: 'Admin token is missing for remote compliance events.',
+          fr: 'Le jeton admin manque pour les événements de conformité distants.',
+          es: 'Falta el token admin para eventos remotos de cumplimiento.',
+        ),
+      );
+    }
+
+    final uri = Uri.parse('$_complianceApiBaseUrl/compliance/events/recent')
+        .replace(
+          queryParameters: <String, String>{
+            'tenant_id': kTenantId,
+            'company_id': kCompanyId,
+            'limit': '10',
+          },
+        );
+    try {
+      final res = await http
+          .get(
+            uri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      Map<String, dynamic> asMap(Object? value) {
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return const <String, dynamic>{};
+      }
+
+      final decoded = jsonDecode(res.body);
+      final payload = asMap(decoded);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        final err = _text(payload['error']);
+        return RemoteComplianceEventsResponse(
+          ok: false,
+          tenantId: _text(payload['tenant_id']),
+          companyId: _text(payload['company_id']),
+          limit: int.tryParse(_text(payload['limit'])) ?? 10,
+          count: 0,
+          malformedCount: 0,
+          events: const <RemoteComplianceEvent>[],
+          errorMessage: err.isEmpty
+              ? _t(
+                  nl: 'Backend compliance events ophalen mislukt.',
+                  en: 'Failed to load backend compliance events.',
+                  fr: 'Échec du chargement des événements conformité backend.',
+                  es: 'No se pudieron cargar los eventos de cumplimiento backend.',
+                )
+              : err,
+        );
+      }
+
+      final eventsRaw = payload['events'];
+      final events = eventsRaw is List
+          ? eventsRaw
+                .whereType<Map>()
+                .map(
+                  (e) => RemoteComplianceEvent.fromJson(
+                    Map<String, dynamic>.from(e),
+                  ),
+                )
+                .toList(growable: false)
+          : const <RemoteComplianceEvent>[];
+
+      return RemoteComplianceEventsResponse(
+        ok: payload['ok'] == true,
+        tenantId: _text(payload['tenant_id']),
+        companyId: _text(payload['company_id']),
+        limit: int.tryParse(_text(payload['limit'])) ?? 10,
+        count: int.tryParse(_text(payload['count'])) ?? events.length,
+        malformedCount: int.tryParse(_text(payload['malformed_count'])) ?? 0,
+        events: events,
+        errorMessage: '',
+      );
+    } catch (_) {
+      return RemoteComplianceEventsResponse(
+        ok: false,
+        tenantId: kTenantId,
+        companyId: kCompanyId,
+        limit: 10,
+        count: 0,
+        malformedCount: 0,
+        events: const <RemoteComplianceEvent>[],
+        errorMessage: _t(
+          nl: 'Kan backend compliance events niet laden. Controleer netwerk/token.',
+          en: 'Cannot load backend compliance events. Check network/token.',
+          fr: 'Impossible de charger les événements conformité backend. Vérifiez réseau/jeton.',
+          es: 'No se pueden cargar eventos de cumplimiento backend. Verifica red/token.',
+        ),
+      );
+    }
+  }
+
+  Widget _chip(String label) {
+    if (label.trim().isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white70, fontSize: 11),
+      ),
+    );
+  }
+
+  Widget _eventTile(RemoteComplianceEvent e) {
+    final reference = e.bookingId.isNotEmpty
+        ? e.bookingId
+        : (e.tripId.isNotEmpty ? e.tripId : '—');
+    final paymentStatus = _text(e.payment['status']);
+    final paymentMethod = _text(e.payment['method']);
+    final paymentSource = _text(e.payment['source']);
+    final producer = _text(e.provenance['producer']);
+    final sourceEndpoint = _text(e.provenance['source_endpoint']);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${e.eventType.isEmpty ? '—' : e.eventType} • ${e.rideType.isEmpty ? '—' : e.rideType}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${_fmtDateTime(e.createdAtUtc)} • $reference',
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _chip('sync: ${e.syncState.isEmpty ? '—' : e.syncState}'),
+              if (paymentStatus.isNotEmpty) _chip('pay: $paymentStatus'),
+              if (paymentMethod.isNotEmpty &&
+                  paymentMethod.toLowerCase() != 'unknown')
+                _chip('method: $paymentMethod'),
+              if (paymentSource.isNotEmpty &&
+                  paymentSource.toLowerCase() != 'unknown')
+                _chip('source: $paymentSource'),
+              if (producer.isNotEmpty) _chip('producer: $producer'),
+              if (sourceEndpoint.isNotEmpty) _chip(sourceEndpoint),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Compliance Worker (backend)',
+                  en: 'Compliance Worker (backend)',
+                  fr: 'Compliance Worker (backend)',
+                  es: 'Compliance Worker (backend)',
+                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+            IconButton(
+              tooltip: _t(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Rafraîchir',
+                es: 'Actualizar',
+              ),
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh, color: Colors.white70),
+            ),
+          ],
+        ),
+        FutureBuilder<RemoteComplianceEventsResponse>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return Row(
+                children: [
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _t(
+                      nl: 'Remote compliance events laden...',
+                      en: 'Loading remote compliance events...',
+                      fr: 'Chargement des événements conformité distants...',
+                      es: 'Cargando eventos remotos de cumplimiento...',
+                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              );
+            }
+
+            final result =
+                snapshot.data ??
+                RemoteComplianceEventsResponse(
+                  ok: false,
+                  tenantId: kTenantId,
+                  companyId: kCompanyId,
+                  limit: 10,
+                  count: 0,
+                  malformedCount: 0,
+                  events: const <RemoteComplianceEvent>[],
+                  errorMessage: _t(
+                    nl: 'Onbekende fout bij laden van remote events.',
+                    en: 'Unknown error loading remote events.',
+                    fr: 'Erreur inconnue lors du chargement des événements distants.',
+                    es: 'Error desconocido al cargar eventos remotos.',
+                  ),
+                );
+
+            if (!result.ok) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0x22FFFFFF)),
+                ),
+                child: Text(
+                  result.errorMessage.isEmpty
+                      ? _t(
+                          nl: 'Remote compliance events niet beschikbaar.',
+                          en: 'Remote compliance events are unavailable.',
+                          fr: 'Événements conformité distants indisponibles.',
+                          es: 'Eventos remotos de cumplimiento no disponibles.',
+                        )
+                      : result.errorMessage,
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 12,
+                  ),
+                ),
+              );
+            }
+
+            if (result.events.isEmpty) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0x22FFFFFF)),
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Geen backend compliance events gevonden.',
+                    en: 'No backend compliance events found.',
+                    fr: 'Aucun événement conformité backend trouvé.',
+                    es: 'No se encontraron eventos de cumplimiento backend.',
+                  ),
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (result.malformedCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '${result.malformedCount} ${_t(nl: 'malformed event(s) overgeslagen.', en: 'malformed event(s) skipped.', fr: 'événement(s) mal formé(s) ignoré(s).', es: 'evento(s) malformado(s) omitido(s).')}',
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                Text(
+                  _t(
+                    nl: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
+                    en: 'Tenant ${result.tenantId} • Company ${result.companyId} • ${result.count} events',
+                    fr: 'Tenant ${result.tenantId} • Société ${result.companyId} • ${result.count} événements',
+                    es: 'Tenant ${result.tenantId} • Empresa ${result.companyId} • ${result.count} eventos',
+                  ),
+                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                const SizedBox(height: 8),
+                ...result.events.map(_eventTile),
+              ],
+            );
+          },
+        ),
+      ],
     );
   }
 }
