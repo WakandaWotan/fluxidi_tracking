@@ -557,6 +557,11 @@ async function handlePublicBootstrap(url, env) {
 
   console.log(`[PUBLIC_BOOTSTRAP] company=${companyId}`);
 
+  const payload = await buildPublicBootstrapPayload(companyId, env);
+  return json(payload, 200);
+}
+
+async function buildPublicBootstrapPayload(companyId, env) {
   let businessProfile = null;
   try {
     businessProfile = await loadBusinessProfile(env);
@@ -581,47 +586,185 @@ async function handlePublicBootstrap(url, env) {
     "nl",
   ).toLowerCase();
 
-  return json(
-    {
-      ok: true,
-      phase: "public_bootstrap_v1",
-      tenant_id: companyId,
-      company_id: companyId,
-      booking_enabled: false,
-      public_booking_status: "prepared",
-      display_name: displayName || "Fluxidi",
-      default_language: defaultLanguage || "nl",
-      supported_languages: ["nl", "en", "fr", "es"],
-      public_contact: {
-        email: pickFirstPublicValue(
-          business.companyEmail,
-          business.email,
-          business.supportEmail,
-          business.bookingEmail,
-        ),
-        phone: pickFirstPublicValue(
-          business.phone,
-          business.companyPhone,
-        ),
-        website: pickFirstPublicValue(business.website),
-      },
-      branding: {
-        logo_url: pickFirstPublicValue(business.logoUrl),
-        primary_color: pickFirstPublicValue(
-          business.primaryColor,
-          business.primary_color,
-        ),
-        accent_color: pickFirstPublicValue(
-          business.accentColor,
-          business.accent_color,
-        ),
-      },
-      features: {
-        public_page: false,
-        qr: false,
-        embed: false,
-      },
+  return {
+    ok: true,
+    phase: "public_bootstrap_v1",
+    tenant_id: companyId,
+    company_id: companyId,
+    booking_enabled: false,
+    public_booking_status: "prepared",
+    display_name: displayName || "Fluxidi",
+    default_language: defaultLanguage || "nl",
+    supported_languages: ["nl", "en", "fr", "es"],
+    public_contact: {
+      email: pickFirstPublicValue(
+        business.companyEmail,
+        business.email,
+        business.supportEmail,
+        business.bookingEmail,
+      ),
+      phone: pickFirstPublicValue(
+        business.phone,
+        business.companyPhone,
+      ),
+      website: pickFirstPublicValue(business.website),
     },
+    branding: {
+      logo_url: pickFirstPublicValue(business.logoUrl),
+      primary_color: pickFirstPublicValue(
+        business.primaryColor,
+        business.primary_color,
+      ),
+      accent_color: pickFirstPublicValue(
+        business.accentColor,
+        business.accent_color,
+      ),
+    },
+    features: {
+      public_page: false,
+      qr: false,
+      embed: false,
+    },
+  };
+}
+
+function normalizePublicPreviewLanguage(raw) {
+  const normalized = sanitizeTenantString(raw, 8).toLowerCase();
+  return ["nl", "en", "fr", "es"].includes(normalized) ? normalized : "nl";
+}
+
+function publicPreviewCopy(lang) {
+  const dictionary = {
+    nl: {
+      pageTitle: "Publieke boekingspagina",
+      statusBadge: "Voorbereid",
+      heading: "Online boeken wordt binnenkort beschikbaar.",
+      description:
+        "Deze publieke boekingspagina is voorbereid voor websiteboekingen, QR-codes en sociale media.",
+      cta: "Boeking binnenkort beschikbaar",
+      contactTitle: "Publiek contact",
+      email: "E-mail",
+      phone: "Telefoon",
+      website: "Website",
+    },
+    en: {
+      pageTitle: "Public booking page",
+      statusBadge: "Prepared",
+      heading: "Online booking will be available soon.",
+      description:
+        "This public booking page is prepared for website bookings, QR codes and social media.",
+      cta: "Booking coming soon",
+      contactTitle: "Public contact",
+      email: "Email",
+      phone: "Phone",
+      website: "Website",
+    },
+    fr: {
+      pageTitle: "Page de réservation publique",
+      statusBadge: "Préparé",
+      heading: "La réservation en ligne sera bientôt disponible.",
+      description:
+        "Cette page de réservation publique est préparée pour les réservations via site web, QR codes et réseaux sociaux.",
+      cta: "Réservation bientôt disponible",
+      contactTitle: "Contact public",
+      email: "E-mail",
+      phone: "Téléphone",
+      website: "Site web",
+    },
+    es: {
+      pageTitle: "Página pública de reserva",
+      statusBadge: "Preparado",
+      heading: "La reserva online estará disponible pronto.",
+      description:
+        "Esta página pública de reserva está preparada para reservas desde la web, códigos QR y redes sociales.",
+      cta: "Reserva próximamente",
+      contactTitle: "Contacto público",
+      email: "Correo",
+      phone: "Teléfono",
+      website: "Sitio web",
+    },
+  };
+  return dictionary[lang] || dictionary.nl;
+}
+
+async function handlePublicBookingPreview(url, env) {
+  const rawCompanyId =
+    url.searchParams.get("company_id") ??
+    url.searchParams.get("companyId") ??
+    "";
+  const companyId = sanitizePublicCompanyId(rawCompanyId);
+  if (!companyId) {
+    return html(
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:system-ui;background:#0B1020;color:#fff;padding:24px"><h1 style="font-size:20px;margin:0 0 8px">missing_company_id</h1><p style="margin:0;color:#AEB8D0">Provide ?company_id=...</p></body></html>`,
+      400,
+    );
+  }
+
+  const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
+  const copy = publicPreviewCopy(lang);
+  const data = await buildPublicBootstrapPayload(companyId, env);
+  const displayName = sanitizeTenantString(data?.display_name || "Fluxidi", 120);
+  const contact = data?.public_contact && typeof data.public_contact === "object"
+    ? data.public_contact
+    : {};
+  const contactEmail = sanitizeTenantString(contact.email, 240);
+  const contactPhone = sanitizeTenantString(contact.phone, 120);
+  const contactWebsite = sanitizeTenantString(contact.website, 240);
+  const hasContact = !!(contactEmail || contactPhone || contactWebsite);
+  const supportedLanguages = Array.isArray(data?.supported_languages)
+    ? data.supported_languages.filter((code) => ["nl", "en", "fr", "es"].includes(String(code || "").toLowerCase()))
+    : ["nl", "en", "fr", "es"];
+
+  const langChips = supportedLanguages
+    .map((codeRaw) => String(codeRaw || "").toLowerCase())
+    .filter((code, idx, arr) => code && arr.indexOf(code) === idx)
+    .map((code) => {
+      const active = code === lang;
+      const href = `/public/book?company_id=${encodeURIComponent(companyId)}&lang=${encodeURIComponent(code)}`;
+      return `<a href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
+    })
+    .join("");
+
+  return html(
+    `<!doctype html>
+<html lang="${escapeHtml(lang)}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(copy.pageTitle)} - ${escapeHtml(displayName)}</title>
+  </head>
+  <body style="margin:0;background:#0B1020;color:#E8EEFF;font-family:Inter,Segoe UI,system-ui,-apple-system,sans-serif;">
+    <main style="max-width:760px;margin:0 auto;padding:22px 16px 28px;">
+      <section style="background:#121A30;border:1px solid #26314F;border-radius:16px;padding:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px;color:#AEB8D0;">Fluxidi</div>
+            <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
+          </div>
+          <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
+            ${escapeHtml(copy.statusBadge)} &middot; ${escapeHtml(String(data?.public_booking_status || "prepared"))}
+          </span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
+        <h2 style="margin:18px 0 8px;font-size:21px;line-height:1.28;">${escapeHtml(copy.heading)}</h2>
+        <p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.5;">${escapeHtml(copy.description)}</p>
+        <button type="button" disabled style="margin-top:16px;width:100%;border:none;border-radius:12px;padding:13px 16px;background:#28324C;color:#A4AFCB;font-size:15px;font-weight:700;cursor:not-allowed;opacity:0.95;">
+          ${escapeHtml(copy.cta)}
+        </button>
+      </section>
+      ${
+        hasContact
+          ? `<section style="margin-top:14px;background:#121A30;border:1px solid #26314F;border-radius:16px;padding:16px;">
+        <h3 style="margin:0 0 10px;font-size:16px;">${escapeHtml(copy.contactTitle)}</h3>
+        ${contactEmail ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.email)}:</strong> ${escapeHtml(contactEmail)}</div>` : ""}
+        ${contactPhone ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.phone)}:</strong> ${escapeHtml(contactPhone)}</div>` : ""}
+        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${escapeHtml(contactWebsite)}</div>` : ""}
+      </section>`
+          : ""
+      }
+    </main>
+  </body>
+</html>`,
     200,
   );
 }
@@ -1425,6 +1568,14 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handlePublicBootstrap(url, env);
+      }
+
+      // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
+      if (url.pathname === "/public/book") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicBookingPreview(url, env);
       }
 
       // =========================
