@@ -633,11 +633,85 @@ function normalizePublicPreviewLanguage(raw) {
   return ["nl", "en", "fr", "es"].includes(normalized) ? normalized : "nl";
 }
 
+function normalizePublicStatusKey(rawStatus) {
+  const key = sanitizeTenantString(rawStatus, 64).toLowerCase();
+  if (!key) return "unknown";
+  if (key === "cancelled" || key === "canceled") return "cancelled";
+  if (
+    key === "prepared" ||
+    key === "pending" ||
+    key === "confirmed" ||
+    key === "completed" ||
+    key === "planned" ||
+    key === "direct" ||
+    key === "ride_stop" ||
+    key === "payment_update"
+  ) {
+    return key;
+  }
+  return "unknown";
+}
+
+function publicStatusLabel(lang, rawStatus) {
+  const key = normalizePublicStatusKey(rawStatus);
+  const labels = {
+    nl: {
+      prepared: "Voorbereid",
+      pending: "In afwachting",
+      confirmed: "Bevestigd",
+      cancelled: "Geannuleerd",
+      completed: "Afgerond",
+      planned: "Gepland",
+      direct: "Direct",
+      ride_stop: "Rit beëindigd",
+      payment_update: "Betaling bijgewerkt",
+      unknown: "Onbekend",
+    },
+    en: {
+      prepared: "Prepared",
+      pending: "Pending",
+      confirmed: "Confirmed",
+      cancelled: "Cancelled",
+      completed: "Completed",
+      planned: "Scheduled",
+      direct: "Direct",
+      ride_stop: "Ride ended",
+      payment_update: "Payment updated",
+      unknown: "Unknown",
+    },
+    fr: {
+      prepared: "Préparé",
+      pending: "En attente",
+      confirmed: "Confirmé",
+      cancelled: "Annulé",
+      completed: "Terminée",
+      planned: "Planifiée",
+      direct: "Directe",
+      ride_stop: "Course terminée",
+      payment_update: "Paiement mis à jour",
+      unknown: "Inconnu",
+    },
+    es: {
+      prepared: "Preparado",
+      pending: "Pendiente",
+      confirmed: "Confirmado",
+      cancelled: "Cancelado",
+      completed: "Finalizado",
+      planned: "Programado",
+      direct: "Directo",
+      ride_stop: "Viaje finalizado",
+      payment_update: "Pago actualizado",
+      unknown: "Desconocido",
+    },
+  };
+  const table = labels[lang] || labels.nl;
+  return table[key] || table.unknown;
+}
+
 function publicPreviewCopy(lang) {
   const dictionary = {
     nl: {
       pageTitle: "Publieke boekingspagina",
-      statusBadge: "Voorbereid",
       heading: "Online boeken wordt binnenkort beschikbaar.",
       description:
         "Deze publieke boekingspagina is voorbereid voor websiteboekingen, QR-codes en sociale media.",
@@ -649,7 +723,6 @@ function publicPreviewCopy(lang) {
     },
     en: {
       pageTitle: "Public booking page",
-      statusBadge: "Prepared",
       heading: "Online booking will be available soon.",
       description:
         "This public booking page is prepared for website bookings, QR codes and social media.",
@@ -661,7 +734,6 @@ function publicPreviewCopy(lang) {
     },
     fr: {
       pageTitle: "Page de réservation publique",
-      statusBadge: "Préparé",
       heading: "La réservation en ligne sera bientôt disponible.",
       description:
         "Cette page de réservation publique est préparée pour les réservations via site web, QR codes et réseaux sociaux.",
@@ -673,7 +745,6 @@ function publicPreviewCopy(lang) {
     },
     es: {
       pageTitle: "Página pública de reserva",
-      statusBadge: "Preparado",
       heading: "La reserva online estará disponible pronto.",
       description:
         "Esta página pública de reserva está preparada para reservas desde la web, códigos QR y redes sociales.",
@@ -703,6 +774,7 @@ async function handlePublicBookingPreview(url, env) {
   const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
   const copy = publicPreviewCopy(lang);
   const data = await buildPublicBootstrapPayload(companyId, env);
+  const localizedStatus = publicStatusLabel(lang, data?.public_booking_status);
   const displayName = sanitizeTenantString(data?.display_name || "Fluxidi", 120);
   const contact = data?.public_contact && typeof data.public_contact === "object"
     ? data.public_contact
@@ -742,7 +814,7 @@ async function handlePublicBookingPreview(url, env) {
             <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
           </div>
           <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
-            ${escapeHtml(copy.statusBadge)}
+            ${escapeHtml(localizedStatus)}
           </span>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
