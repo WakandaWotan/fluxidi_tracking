@@ -99,6 +99,192 @@ function safeStr(v, maxLen = 2000) {
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
+const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
+const TRACKING_FALLBACK_TENANT_ID = "fluxidi";
+
+function normalizeComplianceText(v, fallback = "unknown", maxLen = 64) {
+  const text = safeStr(v, maxLen);
+  if (!text) return fallback;
+  return text.toLowerCase();
+}
+
+function buildComplianceAppendUrl(baseUrlRaw) {
+  const normalized = safeStr(baseUrlRaw, 512);
+  if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    parsed.search = "";
+    parsed.hash = "";
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    if (normalizedPath === COMPLIANCE_APPEND_PATH) {
+      return parsed;
+    }
+    if (normalizedPath === "" || normalizedPath === "/") {
+      parsed.pathname = COMPLIANCE_APPEND_PATH;
+      return parsed;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals) {
+  const tenantFromTrip = safeStr(
+    trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
+    96,
+  );
+  const tenantFromPayload = safeStr(
+    stopPayload?.tenant_id ?? stopPayload?.tenantId ?? stopPayload?.company_id ?? stopPayload?.companyId,
+    96,
+  );
+  const tenantId = tenantFromTrip ?? tenantFromPayload ?? TRACKING_FALLBACK_TENANT_ID;
+
+  const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
+  const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
+  // TODO: tighten tenant/company authority from a single canonical source.
+  const companyId = companyFromTrip ?? companyFromPayload ?? tenantId;
+
+  if (!tenantId || !companyId) return null;
+
+  const pickup = trip?.origin && typeof trip.origin === "object"
+    ? {
+        label: safeStr(trip.origin.label, 256) ?? null,
+        lat: Number.isFinite(Number(trip.origin.lat)) ? Number(trip.origin.lat) : null,
+        lng: Number.isFinite(Number(trip.origin.lon)) ? Number(trip.origin.lon) : null,
+      }
+    : null;
+  const dropoff = trip?.destination && typeof trip.destination === "object"
+    ? {
+        label: safeStr(trip.destination.label, 256) ?? null,
+        lat: Number.isFinite(Number(trip.destination.lat)) ? Number(trip.destination.lat) : null,
+        lng: Number.isFinite(Number(trip.destination.lon)) ? Number(trip.destination.lon) : null,
+      }
+    : null;
+
+  const paymentAmountRaw = trip?.payment_amount ?? trip?.paymentAmount;
+  const paymentAmount = Number.isFinite(Number(paymentAmountRaw))
+    ? Number(paymentAmountRaw)
+    : null;
+  const fareCurrency =
+    (safeStr(totals?.currency, 8) ??
+      safeStr(trip?.currency, 8) ??
+      safeStr(trip?.pricing_snapshot?.currency, 8) ??
+      "EUR").toUpperCase();
+
+  return {
+    event_type: "ride_stop",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(trip?.booking_id ?? trip?.bookingId, 128) ?? undefined,
+    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
+    receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
+    ride_type: "direct",
+    lifecycle_status: "stopped",
+    timestamps: {
+      event_at_utc: stoppedAt,
+      started_at_utc: safeStr(trip?.started_at ?? trip?.startedAt ?? trip?.created_at, 64) ?? null,
+      stopped_at_utc: stoppedAt,
+    },
+    driver: {
+      driver_id: safeStr(trip?.driver_id ?? trip?.driverId, 96) ?? null,
+    },
+    vehicle: {
+      vehicle_id: safeStr(trip?.vehicle_id ?? trip?.vehicleId, 96) ?? null,
+      license_plate: safeStr(trip?.license_plate ?? trip?.licensePlate, 64) ?? undefined,
+    },
+    locations: {
+      pickup,
+      dropoff,
+    },
+    fare: {
+      currency: fareCurrency,
+      distance_km: Number.isFinite(Number(totals?.km_total)) ? Number(totals.km_total) : null,
+      wait_seconds_total: Number.isFinite(Number(totals?.wait_seconds_total))
+        ? Number(totals.wait_seconds_total)
+        : null,
+      total_amount: Number.isFinite(Number(totals?.total_eur)) ? Number(totals.total_eur) : null,
+    },
+    payment: {
+      status: normalizeComplianceText(trip?.payment_status ?? trip?.paymentStatus),
+      method: normalizeComplianceText(trip?.payment_method ?? trip?.paymentMethod),
+      source: normalizeComplianceText(trip?.payment_source ?? trip?.paymentSource),
+      provider: normalizeComplianceText(trip?.payment_provider ?? trip?.paymentProvider),
+      amount: paymentAmount ?? undefined,
+      currency: fareCurrency,
+    },
+    provenance: {
+      producer: "tracking_worker",
+      source_endpoint: "/trip/stop",
+      backend_confirmed: true,
+      validation_state: "exportable",
+    },
+  };
+}
+
+async function emitComplianceEventBestEffort(env, event, options = {}) {
+  try {
+    const baseUrlRaw = safeStr(env?.COMPLIANCE_API_URL, 512);
+    const adminToken = safeStr(env?.COMPLIANCE_ADMIN_TOKEN, 512);
+    if (!baseUrlRaw || !adminToken) {
+      return { ok: false, skipped: "missing_config" };
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      return { ok: false, skipped: "invalid_event" };
+    }
+    const appendUrl = buildComplianceAppendUrl(baseUrlRaw);
+    if (!appendUrl) {
+      return { ok: false, skipped: "invalid_url_config" };
+    }
+
+    const requestedTimeout = Number(options?.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeout)
+      ? Math.max(1, Math.min(1500, Math.round(requestedTimeout)))
+      : 1500;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const req = new Request(appendUrl.toString(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(event),
+        signal: controller.signal,
+      });
+      const hasServiceBinding = !!(env?.COMPLIANCE_WORKER && typeof env.COMPLIANCE_WORKER.fetch === "function");
+      const transport = hasServiceBinding ? "service_binding" : "public_fetch";
+      const resp = hasServiceBinding
+        ? await env.COMPLIANCE_WORKER.fetch(req)
+        : await fetch(req);
+
+      if (!resp.ok) {
+        console.log(
+          `[COMPLIANCE_EMIT][ride_stop] failed status=${resp.status} transport=${transport} origin=${appendUrl.origin} path=${appendUrl.pathname}`,
+        );
+        return { ok: false, status: resp.status };
+      }
+      return { ok: true, status: resp.status };
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        console.log("[COMPLIANCE_EMIT][ride_stop] failed error=timeout");
+        return { ok: false, error: "timeout" };
+      }
+      console.log("[COMPLIANCE_EMIT][ride_stop] failed error=fetch_failed");
+      return { ok: false, error: "fetch_failed" };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_) {
+    return { ok: false, error: "internal_error" };
+  }
+}
+
 function randToken(len = 20) {
   const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let out = "";
@@ -738,7 +924,7 @@ async function handleWaitEndTrip(req, url, env, origin) {
   );
 }
 
-async function handleStopTrip(req, url, env, origin) {
+async function handleStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
@@ -776,6 +962,16 @@ async function handleStopTrip(req, url, env, origin) {
   trip.timeline = timeline;
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+
+  const complianceEvent = buildDirectTripStopComplianceEvent(trip, body, stoppedAt, totals);
+  if (complianceEvent) {
+    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, { timeoutMs: 1500 });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
+    }
+  }
 
   return withCors(
     json(
@@ -1262,7 +1458,7 @@ async function handlePurgeOrphans(req, url, env, origin) {
 // Router
 // -------------------------------
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const origin = getOrigin(req);
     const url = new URL(req.url);
 
@@ -1280,7 +1476,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/record-planned-stop") return await handleRecordPlannedStopTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
-      if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin);
 
       // core
