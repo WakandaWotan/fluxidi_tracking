@@ -223,6 +223,106 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
   };
 }
 
+function buildPlannedTripStopComplianceEvent(trip, stopPayload) {
+  const tenantFromPayload = safeStr(
+    stopPayload?.tenant_id ?? stopPayload?.tenantId ?? stopPayload?.company_id ?? stopPayload?.companyId,
+    96,
+  );
+  const tenantFromTrip = safeStr(
+    trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
+    96,
+  );
+  const tenantId = tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+
+  const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
+  const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
+  // TODO: tighten tenant/company authority from a single canonical source.
+  const companyId = companyFromPayload ?? companyFromTrip ?? tenantId;
+  if (!tenantId || !companyId) return null;
+
+  const stoppedAt = safeStr(
+    trip?.stopped_at ?? trip?.stoppedAt ?? stopPayload?.stopped_at ?? stopPayload?.client_stopped_at,
+    64,
+  ) ?? null;
+  const startedAt = safeStr(
+    trip?.started_at ?? trip?.startedAt ?? stopPayload?.started_at ?? stopPayload?.client_started_at,
+    64,
+  ) ?? null;
+  const fareCurrency =
+    (safeStr(trip?.currency, 8) ??
+      safeStr(stopPayload?.currency, 8) ??
+      safeStr(trip?.pricing_snapshot?.currency, 8) ??
+      "EUR").toUpperCase();
+  const paymentAmountRaw = trip?.payment_amount ?? trip?.paymentAmount;
+  const paymentAmount = Number.isFinite(Number(paymentAmountRaw))
+    ? Number(paymentAmountRaw)
+    : null;
+
+  const pickup = trip?.origin && typeof trip.origin === "object"
+    ? {
+        label: safeStr(trip.origin.label, 256) ?? null,
+        lat: Number.isFinite(Number(trip.origin.lat)) ? Number(trip.origin.lat) : null,
+        lng: Number.isFinite(Number(trip.origin.lon)) ? Number(trip.origin.lon) : null,
+      }
+    : null;
+  const dropoff = trip?.destination && typeof trip.destination === "object"
+    ? {
+        label: safeStr(trip.destination.label, 256) ?? null,
+        lat: Number.isFinite(Number(trip.destination.lat)) ? Number(trip.destination.lat) : null,
+        lng: Number.isFinite(Number(trip.destination.lon)) ? Number(trip.destination.lon) : null,
+      }
+    : null;
+
+  return {
+    event_type: "ride_stop",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(trip?.booking_id ?? trip?.bookingId ?? stopPayload?.booking_id, 128) ?? undefined,
+    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
+    receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
+    ride_type: "planned",
+    lifecycle_status: "stopped",
+    timestamps: {
+      event_at_utc: stoppedAt,
+      started_at_utc: startedAt,
+      stopped_at_utc: stoppedAt,
+    },
+    driver: {
+      driver_id: safeStr(trip?.driver_id ?? trip?.driverId, 96) ?? null,
+    },
+    vehicle: {
+      vehicle_id: safeStr(trip?.vehicle_id ?? trip?.vehicleId, 96) ?? null,
+    },
+    locations: {
+      pickup,
+      dropoff,
+    },
+    fare: {
+      currency: fareCurrency,
+      distance_km: Number.isFinite(Number(trip?.km_total)) ? Number(trip.km_total) : null,
+      wait_seconds_total: Number.isFinite(Number(trip?.wait_seconds_total))
+        ? Number(trip.wait_seconds_total)
+        : null,
+      total_amount: Number.isFinite(Number(trip?.total_eur)) ? Number(trip.total_eur) : null,
+    },
+    payment: {
+      status: normalizeComplianceText(trip?.payment_status ?? trip?.paymentStatus),
+      method: normalizeComplianceText(trip?.payment_method ?? trip?.paymentMethod),
+      source: normalizeComplianceText(trip?.payment_source ?? trip?.paymentSource),
+      provider: normalizeComplianceText(trip?.payment_provider ?? trip?.paymentProvider),
+      amount: paymentAmount ?? undefined,
+      currency: fareCurrency,
+    },
+    provenance: {
+      producer: "tracking_worker",
+      source_endpoint: "/trip/record-planned-stop",
+      backend_confirmed: true,
+      validation_state: "exportable",
+    },
+  };
+}
+
 async function emitComplianceEventBestEffort(env, event, options = {}) {
   try {
     const baseUrlRaw = safeStr(env?.COMPLIANCE_API_URL, 512);
@@ -259,23 +359,26 @@ async function emitComplianceEventBestEffort(env, event, options = {}) {
       });
       const hasServiceBinding = !!(env?.COMPLIANCE_WORKER && typeof env.COMPLIANCE_WORKER.fetch === "function");
       const transport = hasServiceBinding ? "service_binding" : "public_fetch";
+      const logLabel = safeStr(options?.logLabel, 64) ?? "ride_stop";
       const resp = hasServiceBinding
         ? await env.COMPLIANCE_WORKER.fetch(req)
         : await fetch(req);
 
       if (!resp.ok) {
         console.log(
-          `[COMPLIANCE_EMIT][ride_stop] failed status=${resp.status} transport=${transport} origin=${appendUrl.origin} path=${appendUrl.pathname}`,
+          `[COMPLIANCE_EMIT][${logLabel}] failed status=${resp.status} transport=${transport} origin=${appendUrl.origin} path=${appendUrl.pathname}`,
         );
         return { ok: false, status: resp.status };
       }
       return { ok: true, status: resp.status };
     } catch (err) {
       if (err?.name === "AbortError") {
-        console.log("[COMPLIANCE_EMIT][ride_stop] failed error=timeout");
+        const logLabel = safeStr(options?.logLabel, 64) ?? "ride_stop";
+        console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=timeout`);
         return { ok: false, error: "timeout" };
       }
-      console.log("[COMPLIANCE_EMIT][ride_stop] failed error=fetch_failed");
+      const logLabel = safeStr(options?.logLabel, 64) ?? "ride_stop";
+      console.log(`[COMPLIANCE_EMIT][${logLabel}] failed error=fetch_failed`);
       return { ok: false, error: "fetch_failed" };
     } finally {
       clearTimeout(timer);
@@ -748,7 +851,7 @@ async function handleStartDirectTrip(req, url, env, origin) {
   );
 }
 
-async function handleRecordPlannedStopTrip(req, url, env, origin) {
+async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
@@ -806,6 +909,19 @@ async function handleRecordPlannedStopTrip(req, url, env, origin) {
   await kvPutJson(env.FLUXIDI_TRACKING, tripKey(trip_id), trip, TTL_TRIP);
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}`, trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}:${driver_id}`, trip_id, 200);
+
+  const complianceEvent = buildPlannedTripStopComplianceEvent(trip, body);
+  if (complianceEvent) {
+    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
+      timeoutMs: 1500,
+      logLabel: "planned_ride_stop",
+    });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
+    }
+  }
 
   return withCors(
     json(
@@ -1473,7 +1589,7 @@ export default {
       if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trips/archive") return await handleArchiveTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/start-direct") return await handleStartDirectTrip(req, url, env, origin);
-      if (req.method === "POST" && url.pathname === "/trip/record-planned-stop") return await handleRecordPlannedStopTrip(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/record-planned-stop") return await handleRecordPlannedStopTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
