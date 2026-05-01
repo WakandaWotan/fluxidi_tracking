@@ -80,8 +80,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
   );
 
   int get safeBags => _bags.clamp(0, 3);
-  get _lang => appConfig.currentLanguage;
-  get _s => appConfig.strings;
+  AppLanguage get _lang => appConfig.currentLanguage;
+  AppStrings get _s => appConfig.strings;
   BusinessSettingsState get _business => businessSettingsNotifier.value;
   bool get _returnFeatureEnabled => _business.pricingReturnEnabled;
 
@@ -133,8 +133,185 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   String _breakdownLabelFor(String key) {
-    final label = _s.breakdownLabel(key, _lang);
-    return (label == key) ? _toTitleFromKey(key) : label;
+    switch (key) {
+      case 'return_fee_ex':
+        return _labelFor(
+          nl: 'Retourtoeslag',
+          en: 'Return surcharge',
+          fr: 'Supplément retour',
+          es: 'Recargo de vuelta',
+        );
+      case 'fuel_surcharge_ex':
+        return _labelFor(
+          nl: 'Brandstoftoeslag',
+          en: 'Fuel surcharge',
+          fr: 'Supplément carburant',
+          es: 'Recargo de combustible',
+        );
+      case 'surcharge_amount_ex':
+        return _labelFor(
+          nl: 'Nacht/weekend toeslag',
+          en: 'Night/weekend surcharge',
+          fr: 'Supplément de nuit/week-end',
+          es: 'Recargo nocturno/fin de semana',
+        );
+      default:
+        final label = _s.breakdownLabel(key, _lang);
+        return (label == key) ? _toTitleFromKey(key) : label;
+    }
+  }
+
+  String _labelFor({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  String _serviceLabel(String id, String fallback) {
+    switch (id) {
+      case 'airport':
+        return _labelFor(
+          nl: 'Luchthaven',
+          en: 'Airport',
+          fr: 'Aéroport',
+          es: 'Aeropuerto',
+        );
+      case 'passenger_transport':
+      case 'passenger':
+        return _labelFor(
+          nl: 'Personenvervoer',
+          en: 'Passenger transport',
+          fr: 'Transport de passagers',
+          es: 'Transporte de pasajeros',
+        );
+      case 'business':
+        return _labelFor(
+          nl: 'Zakelijk',
+          en: 'Business',
+          fr: 'Affaires',
+          es: 'Negocios',
+        );
+      case 'courier':
+        return _labelFor(
+          nl: 'Koerier',
+          en: 'Courier',
+          fr: 'Coursier',
+          es: 'Mensajería',
+        );
+      case 'care_transport':
+      case 'care':
+        return _labelFor(
+          nl: 'Zorgvervoer',
+          en: 'Care transport',
+          fr: 'Transport de soins',
+          es: 'Transporte asistencial',
+        );
+      case 'event':
+        return _labelFor(
+          nl: 'Evenement',
+          en: 'Event',
+          fr: 'Événement',
+          es: 'Evento',
+        );
+      default:
+        return fallback;
+    }
+  }
+
+  String _tierLabel(String id, String fallback) {
+    switch (id) {
+      case 'comfort':
+        return _labelFor(
+          nl: 'Comfort',
+          en: 'Comfort',
+          fr: 'Confort',
+          es: 'Confort',
+        );
+      case 'private':
+        return _labelFor(
+          nl: 'Privé',
+          en: 'Private',
+          fr: 'Privé',
+          es: 'Privado',
+        );
+      case 'premium':
+        return _labelFor(
+          nl: 'Premium',
+          en: 'Premium',
+          fr: 'Premium',
+          es: 'Premium',
+        );
+      default:
+        return fallback;
+    }
+  }
+
+  String _extraLabel(String id, String fallback) {
+    switch (id) {
+      case 'none':
+        return _labelFor(
+          nl: 'Geen extra service',
+          en: 'No extra service',
+          fr: 'Aucun service supplémentaire',
+          es: 'Sin servicio extra',
+        );
+      case 'drinks':
+        return _labelFor(
+          nl: 'Drankservice (water/frisdrank — alcohol op aanvraag)',
+          en: 'Drinks service (water/soft drinks — alcohol on request)',
+          fr: 'Service boissons (eau/softs — alcool sur demande)',
+          es: 'Servicio de bebidas (agua/refrescos — alcohol bajo solicitud)',
+        );
+      case 'work_table':
+      case 'worktable':
+        return _labelFor(
+          nl: 'Werktafel (laptopmodus)',
+          en: 'Work table (laptop)',
+          fr: 'Table de travail (mode ordinateur)',
+          es: 'Mesa de trabajo (modo portátil)',
+        );
+      default:
+        return fallback;
+    }
+  }
+
+  String _backToStartLabel() {
+    return _labelFor(
+      nl: 'Terug naar startpagina',
+      en: 'Back to start page',
+      fr: 'Retour à l’accueil',
+      es: 'Volver a la pantalla inicial',
+    );
+  }
+
+  String _returnTripLabel() {
+    return _labelFor(
+      nl: 'Retourrit',
+      en: 'Return trip',
+      fr: 'Trajet retour',
+      es: 'Viaje de vuelta',
+    );
+  }
+
+  String _disabledReturnLabel() {
+    return _labelFor(
+      nl: 'Uitgeschakeld in de tariefinstellingen van het bedrijf.',
+      en: 'Disabled in the company fare settings.',
+      fr: 'Désactivé dans les paramètres tarifaires de l’entreprise.',
+      es: 'Desactivado en la configuración de tarifas de la empresa.',
+    );
   }
 
   String _fmtDateYmd(DateTime dt) =>
@@ -619,63 +796,63 @@ class _CalculatorPageState extends State<CalculatorPage> {
     String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
     final detailsRows = <MapEntry<String, String>>[
       MapEntry<String, String>(
-        'Starttarief',
+        _breakdownLabelFor('start_fee_ex'),
         fmtMoneyVal(breakdown['start_fee_ex']),
       ),
       MapEntry<String, String>(
-        'Afstandskosten',
+        _breakdownLabelFor('base_drive_ex'),
         fmtMoneyVal(breakdown['base_drive_ex']),
       ),
       MapEntry<String, String>(
-        'Tijdskosten',
+        _breakdownLabelFor('per_min_ex'),
         fmtMoneyVal(breakdown['per_min_ex']),
       ),
       MapEntry<String, String>(
-        'Wachttijd',
+        _breakdownLabelFor('waiting_ex'),
         fmtMoneyVal(breakdown['waiting_ex']),
       ),
       MapEntry<String, String>(
-        'Extra stops',
+        _breakdownLabelFor('extra_stops_ex'),
         fmtMoneyVal(breakdown['extra_stops_ex']),
       ),
       MapEntry<String, String>(
-        'Bagagetoeslag',
+        _breakdownLabelFor('bags_ex'),
         fmtMoneyVal(breakdown['bags_ex']),
       ),
       MapEntry<String, String>(
-        'Voertuigklasse toeslag',
+        _breakdownLabelFor('tier_fee_ex'),
         fmtMoneyVal(breakdown['tier_fee_ex']),
       ),
       if ((parseNum(breakdown['surcharge_amount_ex']) ?? 0) > 0)
         MapEntry<String, String>(
-          'Nacht/weekend toeslag',
+          _breakdownLabelFor('surcharge_amount_ex'),
           fmtMoneyVal(breakdown['surcharge_amount_ex']),
         ),
       if ((parseNum(breakdown['return_fee_ex']) ?? 0) > 0)
         MapEntry<String, String>(
-          'Retourtoeslag',
+          _breakdownLabelFor('return_fee_ex'),
           fmtMoneyVal(breakdown['return_fee_ex']),
         ),
       if ((parseNum(breakdown['fuel_surcharge_ex']) ?? 0) > 0)
         MapEntry<String, String>(
-          'Brandstoftoeslag',
+          _breakdownLabelFor('fuel_surcharge_ex'),
           fmtMoneyVal(breakdown['fuel_surcharge_ex']),
         ),
       MapEntry<String, String>(
-        'Subtotaal excl. BTW',
+        _breakdownLabelFor('total_ex'),
         '$_currencySymbol ${fmtNum(priceEx)}',
       ),
       MapEntry<String, String>(
-        'BTW (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)',
+        '${_breakdownLabelFor('vat_amount')} (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)',
         '$_currencySymbol ${fmtNum(priceVat)}',
       ),
       MapEntry<String, String>(
-        'Totaal incl. BTW',
+        _breakdownLabelFor('total_incl'),
         '$_currencySymbol ${fmtNum(priceIncl)}',
       ),
       if (showPricingDebug)
         MapEntry<String, String>(
-          'BTW-tarief',
+          _breakdownLabelFor('vat_rate'),
           '${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%',
         ),
     ];
@@ -690,8 +867,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Jouw ritprijs',
+          Text(
+            _s.calculatorQuoteTitle.of(_lang),
             style: TextStyle(
               color: Colors.white,
               fontSize: 16,
@@ -708,17 +885,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
             ),
           ),
           const SizedBox(height: 2),
-          const Text(
-            'Inclusief BTW',
+          Text(
+            _s.calculatorPriceInclVatLabel.of(_lang),
             style: TextStyle(color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 8),
           Text(
-            'Afstand: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
+            '${_s.calculatorDistanceLabel.of(_lang)}: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
             style: const TextStyle(color: Colors.white70),
           ),
           Text(
-            'Duur: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
+            '${_s.calculatorDurationLabel.of(_lang)}: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
             style: const TextStyle(color: Colors.white70),
           ),
           if (breakdown.isNotEmpty) ...[
@@ -732,8 +909,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 childrenPadding: EdgeInsets.zero,
                 iconColor: Colors.white70,
                 collapsedIconColor: Colors.white54,
-                title: const Text(
-                  'Prijsdetails',
+                title: Text(
+                  _s.calculatorBreakdownTitle.of(_lang),
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -763,7 +940,12 @@ class _CalculatorPageState extends State<CalculatorPage> {
       child: Row(
         children: [
           Expanded(
-            child: Text(k, style: const TextStyle(color: Colors.white70)),
+            child: Text(
+              k,
+              style: const TextStyle(color: Colors.white70),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           Text(
             v,
@@ -784,7 +966,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
       appBar: AppBar(
         backgroundColor: _calcScaffoldColor,
         title: Text(
-          '${appConfig.companyName} ${_s.calculatorTitle.of(_lang)}',
+          _s.calculatorTitle.of(_lang),
           style: const TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
@@ -793,7 +975,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             TextButton.icon(
               onPressed: widget.onGoToStartPage,
               icon: const Icon(Icons.home_outlined, size: 18),
-              label: const Text('Terug naar startpagina'),
+              label: Text(_backToStartLabel()),
               style: TextButton.styleFrom(foregroundColor: Colors.white),
             ),
         ],
@@ -964,7 +1146,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   .map(
                     (o) => DropdownMenuItem(
                       value: o.id,
-                      child: Text(o.labelFor(_lang)),
+                      child: Text(_serviceLabel(o.id, o.labelFor(_lang))),
                     ),
                   )
                   .toList(growable: false),
@@ -978,7 +1160,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   .map(
                     (o) => DropdownMenuItem(
                       value: o.id,
-                      child: Text(o.labelFor(_lang)),
+                      child: Text(_tierLabel(o.id, o.labelFor(_lang))),
                     ),
                   )
                   .toList(growable: false),
@@ -999,7 +1181,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     .map(
                       (o) => DropdownMenuItem(
                         value: o.id,
-                        child: Text(o.labelFor(_lang)),
+                        child: Text(_extraLabel(o.id, o.labelFor(_lang))),
                       ),
                     )
                     .toList(growable: false),
@@ -1017,8 +1199,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       _returnTrip = v;
                       if (!v) _returnPickupDateTime = null;
                     }),
-              title: const Text(
-                'Retourrit',
+              title: Text(
+                _returnTripLabel(),
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -1027,13 +1209,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
               subtitle: Text(
                 _returnFeatureEnabled
                     ? _s.calculatorReturnSubtitle.of(_lang)
-                    : (_lang == AppLanguage.en
-                          ? 'Disabled by company pricing settings.'
-                          : _lang == AppLanguage.fr
-                          ? 'Desactive dans les parametres tarifaires de l entreprise.'
-                          : _lang == AppLanguage.es
-                          ? 'Desactivado en la configuracion de precios de la empresa.'
-                          : 'Uitgeschakeld via bedrijfsprijsinstellingen.'),
+                    : _disabledReturnLabel(),
                 style: const TextStyle(color: Colors.white54),
               ),
               activeColor: Colors.amberAccent,
@@ -1055,7 +1231,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Retourrit ${_s.calculatorPickupTimeLabel.of(_lang)}',
+                        '${_returnTripLabel()} ${_s.calculatorPickupTimeLabel.of(_lang)}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
@@ -1121,7 +1297,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 child: Text(
                   _loading
                       ? _s.calculatorButtonBusyLabel.of(_lang)
-                      : 'Bereken prijs',
+                      : _s.calculatorButtonLabel.of(_lang),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
