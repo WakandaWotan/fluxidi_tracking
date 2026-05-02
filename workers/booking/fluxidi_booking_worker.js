@@ -70,13 +70,21 @@ function _adminTokenFromRequest(request, url) {
 
 async function _allocatorRequest(env, pickupIso, payload) {
   if (!env?.FLEET_ALLOCATOR) throw new Error("FLEET_ALLOCATOR binding is missing");
-  const scopeKey = _fleetAllocatorScopeKey(pickupIso);
+  const tenantScope = normalizeFleetTenantScope(
+    payload?.tenantScope ?? payload?.tenant_scope ?? payload,
+  );
+  const scopeKey = _fleetAllocatorScopeKey(pickupIso, tenantScope);
   const id = env.FLEET_ALLOCATOR.idFromName(scopeKey);
   const stub = env.FLEET_ALLOCATOR.get(id);
   const res = await stub.fetch("https://fleet-allocator/internal", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...payload, scope_key: scopeKey }),
+    body: JSON.stringify({
+      ...payload,
+      scope_key: scopeKey,
+      tenant_id: tenantScope.tenant_id || undefined,
+      company_id: tenantScope.company_id || undefined,
+    }),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -85,18 +93,30 @@ async function _allocatorRequest(env, pickupIso, payload) {
   return out;
 }
 
-function _fleetAllocatorScopeKey(pickupIso) {
+function _fleetAllocatorScopeKey(pickupIso, scope = null) {
+  const normalizedScope = normalizeFleetTenantScope(scope);
   try {
     const d = new Date(pickupIso);
-    if (isNaN(d.getTime())) return "fleet:invalid-date";
+    if (isNaN(d.getTime())) {
+      if (normalizedScope.hasScope) {
+        return `fleet:${normalizedScope.tenant_id}:${normalizedScope.company_id}:invalid-date`;
+      }
+      return "fleet:invalid-date";
+    }
     const day = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Europe/Brussels",
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
     }).format(d);
+    if (normalizedScope.hasScope) {
+      return `fleet:${normalizedScope.tenant_id}:${normalizedScope.company_id}:${day}`;
+    }
     return `fleet:${day}`;
   } catch (_) {
+    if (normalizedScope.hasScope) {
+      return `fleet:${normalizedScope.tenant_id}:${normalizedScope.company_id}:fallback`;
+    }
     return "fleet:fallback";
   }
 }
@@ -134,7 +154,8 @@ export class FleetAllocatorDO {
       return this._json({ ok: false, error: "Invalid allocate request" }, 400);
     }
 
-    const req = { pickupMs, serviceMin, tier, pax, bags };
+    const tenantScope = normalizeFleetTenantScope(body);
+    const req = { pickupMs, serviceMin, tier, pax, bags, tenantScope };
     const reservations = await this._loadReservations();
 
     // Idempotency for retried booking confirmation
@@ -148,7 +169,7 @@ export class FleetAllocatorDO {
       });
     }
 
-    const vehicles = await _loadVehicleInventory(this.env);
+    const vehicles = await _loadVehicleInventory(this.env, { scope: tenantScope });
     const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
     if (suitableVehicles.length === 0) {
       return this._json({
@@ -170,6 +191,7 @@ export class FleetAllocatorDO {
       if (!key.startsWith("booking:")) continue;
       const rec = await this.env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
+      if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, tenantScope)) continue;
       const lifecycle = _normLifecycleStatus(rec?.status || rec?.stage || null);
       if (lifecycle === "COMPLETED" || lifecycle === "CANCELLED") continue;
       const d = _bookingDemandFromRecord(rec, this.env);
@@ -1305,9 +1327,13 @@ async function releaseSafeResetBookingReservation(env, key) {
   if (!pickupIso) return false;
 
   try {
+    const tenantScope = normalizeFleetTenantScope(
+      resolveBookingTenantScopeFromRecord(rec),
+    );
     await _allocatorRequest(env, pickupIso, {
       action: "release",
       booking_id: bookingId,
+      tenantScope,
     });
     return true;
   } catch (_) {
@@ -1775,7 +1801,7 @@ GET /oauth/callback
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await handleAvailability(body, env);
+        const out = await handleAvailability(body, env, request, url);
         return json(out, 200);
       }
 
@@ -1881,7 +1907,7 @@ GET /oauth/callback
       // POST /bookings/availability-check (alias for existing /availability)
       if (url.pathname === "/bookings/availability-check" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await handleAvailability(body, env);
+        const out = await handleAvailability(body, env, request, url);
         return json(out, 200);
       }
 
@@ -3436,6 +3462,7 @@ async function handleBooking(payload, env, request) {
       };
     }
     const tenantContext = resolveBookingTenantContext({ payload, request, env });
+    const fleetScope = normalizeFleetTenantScope(tenantContext);
 
     const pricingProfile = await _loadTenantPricingProfile(env, tenantContext);
     const vat_rate = clampNumber(
@@ -3692,6 +3719,7 @@ async function handleBooking(payload, env, request) {
             tier,
             pax,
             bags,
+            tenantScope: fleetScope,
           });
           if (!alloc?.allowed) {
             return {
@@ -3717,6 +3745,7 @@ async function handleBooking(payload, env, request) {
             tier,
             pax,
             bags,
+            tenantScope: fleetScope,
           });
           if (!vehicleCapacity.ok) {
             return {
@@ -3734,6 +3763,7 @@ async function handleBooking(payload, env, request) {
           resolvedAssignedDriver = await _driverSummaryForVehicleId(
             env,
             resolvedAssignedVehicleId,
+            fleetScope,
           );
         }
       }
@@ -3896,6 +3926,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tier,
           pax,
           bags,
+          tenantScope: fleetScope,
         });
         if (!alloc?.allowed) {
           return {
@@ -3921,6 +3952,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tier,
           pax,
           bags,
+          tenantScope: fleetScope,
         });
         if (!vehicleCapacity.ok) {
           return {
@@ -3938,6 +3970,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         resolvedAssignedDriver = await _driverSummaryForVehicleId(
           env,
           resolvedAssignedVehicleId,
+          fleetScope,
         );
       }
     }
@@ -4150,6 +4183,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           await _allocatorRequest(env, pickup_iso, {
             action: "release",
             booking_id: canonicalBookingId,
+            tenantScope: fleetScope,
           });
         } catch (_) {
           // Best-effort rollback; do not mask original persistence error.
@@ -5810,6 +5844,12 @@ function _toPositiveInt(v, fallback = 0) {
   return Math.max(0, Math.trunc(n));
 }
 
+function _bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope) {
+  const normalizedScope = normalizeFleetTenantScope(fleetScope);
+  if (!normalizedScope.hasScope) return true;
+  return bookingMatchesRequestedTenantScope(rec, normalizedScope);
+}
+
 function normalizeFleetTenantScope(scope) {
   const tenantIdRaw = _scopeText(scope?.tenant_id ?? scope?.tenantId);
   const companyIdRaw = _scopeText(scope?.company_id ?? scope?.companyId);
@@ -6028,7 +6068,8 @@ function _availabilityMode(env) {
 }
 
 async function _vehicleCapacityGateForRequest(env, req) {
-  const vehicles = await _loadVehicleInventory(env);
+  const fleetScope = normalizeFleetTenantScope(req?.tenantScope ?? req?.tenant_scope ?? req);
+  const vehicles = await _loadVehicleInventory(env, { scope: fleetScope });
   const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
   if (suitableVehicles.length === 0) {
     return {
@@ -6041,7 +6082,10 @@ async function _vehicleCapacityGateForRequest(env, req) {
     };
   }
 
-  const assignment = await _pickVehicleAssignmentForRequest(env, req);
+  const assignment = await _pickVehicleAssignmentForRequest(env, {
+    ...req,
+    tenantScope: fleetScope,
+  });
   const availableSlots = Number(assignment?.available_slots ?? 0);
   const overlappingDemand = Number(assignment?.overlapping_demand_count ?? 0);
   if (availableSlots <= 0) {
@@ -6101,7 +6145,8 @@ async function _pickVehicleAssignmentForRequest(env, req) {
 }
 
 async function _evaluateFleetAvailability(env, req) {
-  const vehicles = await _loadVehicleInventory(env);
+  const fleetScope = normalizeFleetTenantScope(req?.tenantScope ?? req?.tenant_scope ?? req);
+  const vehicles = await _loadVehicleInventory(env, { scope: fleetScope });
   const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
   const pickupMs = Number(req?.pickupMs);
   const serviceMin = Math.max(1, Number(req?.serviceMin) || 1);
@@ -6142,6 +6187,7 @@ async function _evaluateFleetAvailability(env, req) {
     if (!key.startsWith("booking:")) continue;
     const rec = await env.BOOKING_KV.get(key, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
+    if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope)) continue;
 
     const lifecycle = _normLifecycleStatus(rec?.status || rec?.stage || null);
     if (lifecycle === "COMPLETED" || lifecycle === "CANCELLED") continue;
@@ -6221,10 +6267,11 @@ async function _evaluateFleetAvailability(env, req) {
   };
 }
 
-async function _driverSummaryForVehicleId(env, vehicleId) {
+async function _driverSummaryForVehicleId(env, vehicleId, scope = null) {
   const wanted = String(vehicleId || "").trim();
   if (!wanted) return null;
-  const vehicles = await _loadVehicleInventory(env);
+  const normalizedScope = normalizeFleetTenantScope(scope);
+  const vehicles = await _loadVehicleInventory(env, { scope: normalizedScope });
   const hit = vehicles.find((v) => v?.vehicle_id === wanted);
   return _assignedDriverFromVehicle(hit || null);
 }
@@ -6268,6 +6315,7 @@ async function debugFleetAvailability(body, env) {
       tier,
       pax,
       bags,
+      tenantScope: normalizeFleetTenantScope(body),
     });
 
     return {
@@ -7171,8 +7219,10 @@ async function cleanupBookingCalendarEvents(env, rec) {
   }
 }
 
-async function handleAvailability(body, env) {
+async function handleAvailability(body, env, request = null, url = null) {
   const availabilityMode = _availabilityMode(env);
+  const tenantContext = resolveBookingTenantContext({ payload: body || {}, request, env });
+  const fleetScope = normalizeFleetTenantScope(tenantContext);
   // Availability is optional. If Google creds are missing, default to available.
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN || !env.GOOGLE_CALENDAR_ID) {
     return { ok: true, available: true, calendar_configured: false, build: BUILD_TAG };
@@ -7207,6 +7257,7 @@ async function handleAvailability(body, env) {
     tier: normalizeTier(body?.tier || "comfort"),
     pax: clampInt(body?.pax, 1, 99),
     bags: Math.max(0, clampInt(body?.bags, 0, 99)),
+    tenantScope: fleetScope,
   });
   if (!vehicleCapacity.ok) {
     return {
