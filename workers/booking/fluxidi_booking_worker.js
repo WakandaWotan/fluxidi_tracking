@@ -3118,6 +3118,87 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
     amountRaw;
   const totalNum = Number(totalRaw);
   const totalAmount = Number.isFinite(totalNum) ? totalNum : null;
+  const paymentMethod = normalizeComplianceText(
+    pickMeaningfulPaymentValue(
+      rec?.payment_method,
+      rec?.paymentMethod,
+      booking?.payment_method,
+      booking?.paymentMethod,
+      payment?.payment_method,
+      payment?.paymentMethod,
+    ),
+  );
+  const paymentSource = normalizeComplianceText(
+    pickMeaningfulPaymentValue(
+      rec?.payment_source,
+      rec?.paymentSource,
+      booking?.payment_source,
+      booking?.paymentSource,
+      payment?.payment_source,
+      payment?.paymentSource,
+    ),
+  );
+  const rawProvider = pickMeaningfulPaymentValue(
+    rec?.payment_provider,
+    rec?.paymentProvider,
+    booking?.payment_provider,
+    booking?.paymentProvider,
+    payment?.payment_provider,
+    payment?.paymentProvider,
+  );
+  const normalizedProvider = normalizeComplianceText(rawProvider);
+  const paymentId = safeStr(
+    rec?.payment_id ||
+      rec?.paymentId ||
+      booking?.payment_id ||
+      booking?.paymentId ||
+      payment?.payment_id ||
+      payment?.paymentId,
+  ) || undefined;
+  const molliePaymentId = safeStr(
+    payment?.mollie_payment_id ||
+      payment?.molliePaymentId ||
+      rec?.mollie_payment_id ||
+      rec?.molliePaymentId ||
+      rec?.mollie?.payment_id ||
+      rec?.mollie?.id ||
+      booking?.mollie_payment_id ||
+      booking?.molliePaymentId ||
+      booking?.mollie?.payment_id ||
+      booking?.mollie?.id,
+  );
+  const looksLikeMolliePaymentId = (value) => /^tr_[a-z0-9]+$/i.test(String(value || "").trim());
+  const hasReliableExternalPaymentId = looksLikeMolliePaymentId(molliePaymentId) || looksLikeMolliePaymentId(paymentId);
+  const isManualLikeSource = (value) =>
+    [
+      "in_car",
+      "in-car",
+      "in_vehicle",
+      "in-vehicle",
+      "manual",
+      "driver",
+      "driver_app",
+      "chauffeur",
+      "cash",
+    ].includes(String(value || "").trim().toLowerCase());
+  const isManualLikeMethod = (value) =>
+    [
+      "cash",
+      "bancontact",
+      "card",
+      "pin",
+      "qr",
+      "in_car",
+      "manual",
+      "driver",
+      "chauffeur",
+    ].includes(String(value || "").trim().toLowerCase());
+  const shouldSanitizeManualProvider =
+    isManualLikeSource(paymentSource) &&
+    isManualLikeMethod(paymentMethod) &&
+    !hasReliableExternalPaymentId &&
+    normalizedProvider === "mollie";
+  const compliancePaymentProvider = shouldSanitizeManualProvider ? "manual" : normalizedProvider;
 
   return {
     event_type: "payment_update",
@@ -3150,44 +3231,10 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
           payment?.payment_status ||
           payment?.paymentStatus,
       ),
-      method: normalizeComplianceText(
-        pickMeaningfulPaymentValue(
-          rec?.payment_method,
-          rec?.paymentMethod,
-          booking?.payment_method,
-          booking?.paymentMethod,
-          payment?.payment_method,
-          payment?.paymentMethod,
-        ),
-      ),
-      source: normalizeComplianceText(
-        pickMeaningfulPaymentValue(
-          rec?.payment_source,
-          rec?.paymentSource,
-          booking?.payment_source,
-          booking?.paymentSource,
-          payment?.payment_source,
-          payment?.paymentSource,
-        ),
-      ),
-      provider: normalizeComplianceText(
-        pickMeaningfulPaymentValue(
-          rec?.payment_provider,
-          rec?.paymentProvider,
-          booking?.payment_provider,
-          booking?.paymentProvider,
-          payment?.payment_provider,
-          payment?.paymentProvider,
-        ),
-      ),
-      payment_id: safeStr(
-        rec?.payment_id ||
-          rec?.paymentId ||
-          booking?.payment_id ||
-          booking?.paymentId ||
-          payment?.payment_id ||
-          payment?.paymentId,
-      ) || undefined,
+      method: paymentMethod,
+      source: paymentSource,
+      provider: compliancePaymentProvider,
+      payment_id: paymentId,
       amount: amount ?? undefined,
       currency,
     },
