@@ -8437,6 +8437,27 @@ async function payStatus(request, env) {
 
     if (shouldEmitCompliancePaymentUpdate) {
       compliancePaymentUpdateEmitAttempted = true;
+      const isUnknownLikePaymentValue = (value) => {
+        const raw = String(value ?? "").trim().toLowerCase();
+        return (
+          raw === "" ||
+          raw === "unknown" ||
+          raw === "onbekend" ||
+          raw === "—" ||
+          raw === "-" ||
+          raw === "null" ||
+          raw === "undefined"
+        );
+      };
+      const pickMeaningfulPaymentValue = (...candidates) => {
+        for (const candidate of candidates) {
+          const text = safeStr(candidate);
+          if (!text) continue;
+          if (isUnknownLikePaymentValue(text)) continue;
+          return text;
+        }
+        return null;
+      };
       const complianceBookingId =
         safeStr(
           data?.booking_id ||
@@ -8449,13 +8470,28 @@ async function payStatus(request, env) {
       const compliancePaymentPayload = {
         payment_status: data?.payment_status || data?.paymentStatus || "paid",
         payment_method:
-          safeStr(data?.payment_method || data?.paymentMethod || data?.payload?.payment_method || data?.payload?.paymentMethod) ||
+          pickMeaningfulPaymentValue(
+            data?.payment_method,
+            data?.paymentMethod,
+            data?.payload?.payment_method,
+            data?.payload?.paymentMethod,
+          ) ||
           "online_payment",
         payment_source:
-          safeStr(data?.payment_source || data?.paymentSource || data?.payload?.payment_source || data?.payload?.paymentSource) ||
+          pickMeaningfulPaymentValue(
+            data?.payment_source,
+            data?.paymentSource,
+            data?.payload?.payment_source,
+            data?.payload?.paymentSource,
+          ) ||
           "mollie",
         payment_provider:
-          safeStr(data?.payment_provider || data?.paymentProvider || data?.payload?.payment_provider || data?.payload?.paymentProvider) ||
+          pickMeaningfulPaymentValue(
+            data?.payment_provider,
+            data?.paymentProvider,
+            data?.payload?.payment_provider,
+            data?.payload?.paymentProvider,
+          ) ||
           "mollie",
         payment_id:
           safeStr(data?.payment_id || data?.paymentId || data?.mollie?.payment_id || data?.mollie?.id) || null,
