@@ -91,15 +91,15 @@ class ChironComplianceDashboardPage extends StatelessWidget {
           _HubActionCard(
             title: _t(
               nl: 'Backendmeldingen',
-              en: 'Backend compliance inbox',
-              fr: 'Boîte conformité backend',
-              es: 'Bandeja de cumplimiento backend',
+              en: 'Backend messages',
+              fr: 'Messages système',
+              es: 'Mensajes del sistema',
             ),
             subtitle: _t(
-              nl: 'Bekijk recente backendmeldingen uit de Compliance Worker.',
-              en: 'View recent backend compliance events from the Compliance Worker.',
-              fr: 'Consultez les événements récents de conformité backend du Compliance Worker.',
-              es: 'Consulta eventos recientes de cumplimiento backend del Compliance Worker.',
+              nl: 'Bekijk recente alleen-lezen meldingen uit de compliancemodule.',
+              en: 'View recent read-only messages from the compliance module.',
+              fr: 'Consultez les messages récents en lecture seule du module de conformité.',
+              es: 'Consulta los mensajes recientes de solo lectura del módulo de cumplimiento.',
             ),
             note: _t(
               nl: 'Alleen lezen · handmatig verversen',
@@ -1356,10 +1356,10 @@ class _ChironLocalLedgerPage extends StatelessWidget {
               es: 'Registro local de viajes',
             ),
             subtitle: _t(
-              nl: 'Laatste lokale compliance-records in read-only modus.',
-              en: 'Latest local compliance records in read-only mode.',
-              fr: 'Derniers enregistrements locaux de conformité en lecture seule.',
-              es: 'Últimos registros locales de cumplimiento en modo de solo lectura.',
+              nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
+              en: 'Latest local rides (read-only, no synchronization).',
+              fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
+              es: 'Últimos viajes locales (solo lectura, sin sincronización).',
             ),
             child: _LocalComplianceLedgerSection(lang: _lang),
           ),
@@ -1486,9 +1486,9 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
         title: Text(
           _t(
             nl: 'Backendmeldingen',
-            en: 'Backend events',
-            fr: 'Événements du backend',
-            es: 'Eventos del backend',
+            en: 'Backend messages',
+            fr: 'Messages système',
+            es: 'Mensajes del sistema',
           ),
         ),
       ),
@@ -1498,15 +1498,15 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
           _baseCard(
             title: _t(
               nl: 'Backendmeldingen',
-              en: 'Backend compliance inbox',
-              fr: 'Boîte de conformité backend',
-              es: 'Bandeja de cumplimiento backend',
+              en: 'Backend messages',
+              fr: 'Messages système',
+              es: 'Mensajes del sistema',
             ),
             subtitle: _t(
-              nl: 'Alleen-lezen meldingen uit de backend Compliance Worker.',
-              en: 'Read-only events from the backend Compliance Worker.',
-              fr: 'Événements en lecture seule depuis le Compliance Worker backend.',
-              es: 'Eventos de solo lectura desde el Compliance Worker backend.',
+              nl: 'Alleen-lezen meldingen uit de compliancemodule.',
+              en: 'Read-only messages from the compliance module.',
+              fr: 'Messages en lecture seule provenant du module de conformité.',
+              es: 'Mensajes de solo lectura del módulo de cumplimiento.',
             ),
             child: _RemoteComplianceEventsSection(lang: _lang),
           ),
@@ -1603,17 +1603,17 @@ class _RemoteComplianceEventsSectionState
     switch (raw.trim().toLowerCase()) {
       case 'planned':
         return _t(
-          nl: 'geplande rit',
-          en: 'planned ride',
-          fr: 'course planifiée',
-          es: 'viaje planificado',
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Trajet planifié',
+          es: 'Viaje planificado',
         );
       case 'direct':
         return _t(
-          nl: 'directe rit',
-          en: 'direct ride',
-          fr: 'course directe',
-          es: 'viaje directo',
+          nl: 'Directe rit',
+          en: 'Direct ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
         );
       case 'unknown':
         return _localizedUnknown();
@@ -2382,7 +2382,7 @@ class _RemoteComplianceEventsSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            '${_t(nl: 'Laatste event', en: 'Latest event', fr: 'Dernier événement', es: 'Último evento')}: ${_fmtDateTime(latest.createdAtUtc)}',
+            '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: ${_fmtDateTime(latest.createdAtUtc)}',
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
           const SizedBox(height: 6),
@@ -2450,10 +2450,10 @@ class _RemoteComplianceEventsSectionState
             Expanded(
               child: Text(
                 _t(
-                  nl: 'Compliance-module (backend)',
-                  en: 'Compliance module (backend)',
-                  fr: 'Module de conformité (backend)',
-                  es: 'Módulo de cumplimiento (backend)',
+                  nl: 'Compliancemodule',
+                  en: 'Compliance module',
+                  fr: 'Module de conformité',
+                  es: 'Módulo de cumplimiento',
                 ),
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
@@ -2485,9 +2485,9 @@ class _RemoteComplianceEventsSectionState
                   Text(
                     _t(
                       nl: 'Backendmeldingen laden...',
-                      en: 'Loading backend events...',
-                      fr: 'Chargement des événements backend...',
-                      es: 'Cargando eventos del backend...',
+                      en: 'Loading backend messages...',
+                      fr: 'Chargement des messages système...',
+                      es: 'Cargando mensajes del sistema...',
                     ),
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
@@ -2525,10 +2525,10 @@ class _RemoteComplianceEventsSectionState
                 child: Text(
                   result.errorMessage.isEmpty
                       ? _t(
-                          nl: 'Remote compliance events niet beschikbaar.',
-                          en: 'Remote compliance events are unavailable.',
-                          fr: 'Événements conformité distants indisponibles.',
-                          es: 'Eventos remotos de cumplimiento no disponibles.',
+                          nl: 'Systeemmeldingen uit de compliancemodule zijn niet beschikbaar.',
+                          en: 'System messages from the compliance module are unavailable.',
+                          fr: 'Les messages système du module de conformité ne sont pas disponibles.',
+                          es: 'Los mensajes del sistema del módulo de cumplimiento no están disponibles.',
                         )
                       : result.errorMessage,
                   style: const TextStyle(
@@ -2707,8 +2707,8 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'direct':
         return _t(
-          nl: 'Straatrit',
-          en: 'Street ride',
+          nl: 'Directe rit',
+          en: 'Direct ride',
           fr: 'Course directe',
           es: 'Viaje directo',
         );
@@ -3658,7 +3658,7 @@ class _LocalComplianceLedgerSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            '${_t(nl: 'Laatste event', en: 'Latest event', fr: 'Dernier événement', es: 'Último evento')}: $latestTime',
+            '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: $latestTime',
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
           Text(
@@ -3829,10 +3829,10 @@ class _LocalComplianceLedgerSectionState
             const SizedBox(height: 6),
             Text(
               _t(
-                nl: 'Laatste lokale records (read-only, geen synchronisatie).',
-                en: 'Latest local records (read-only, no sync).',
-                fr: 'Derniers enregistrements locaux (lecture seule, sans synchronisation).',
-                es: 'Últimos registros locales (solo lectura, sin sincronización).',
+                nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
+                en: 'Latest local rides (read-only, no synchronization).',
+                fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
+                es: 'Últimos viajes locales (solo lectura, sin sincronización).',
               ),
               style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
