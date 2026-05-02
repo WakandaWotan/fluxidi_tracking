@@ -202,6 +202,165 @@ String get kWorkerBaseUrl {
 /// otherwise [kFallbackDriverTrackingId] for legacy/company-preview driver view.
 String get kDriverId => resolvedDriverTrackingId;
 
+const bool kDriverAllowAllCompanyRidesDebug = false;
+const bool kDriverCanSeeUnassignedRides = false;
+
+String _driverOwnershipBlockedMessage() => _tr(
+  nl: 'Deze rit is niet aan jou of jouw voertuig toegewezen.',
+  en: 'This ride is not assigned to you or your vehicle.',
+  fr: 'This ride is not assigned to you or your vehicle.',
+  es: 'This ride is not assigned to you or your vehicle.',
+);
+
+String _resolvedActiveDriverIdForScope() {
+  final sessionId = activeDriverSessionNotifier.value?.driverId.trim() ?? '';
+  if (sessionId.isNotEmpty) return sessionId;
+  final resolvedId = resolvedDriverTrackingId.trim();
+  if (resolvedId.isNotEmpty) return resolvedId;
+  return kDriverId.trim();
+}
+
+String? _bookingScopeText(Map<String, dynamic> booking, List<String> path) {
+  dynamic cursor = booking;
+  for (final segment in path) {
+    if (cursor is! Map || !cursor.containsKey(segment)) return null;
+    cursor = cursor[segment];
+  }
+  final text = cursor?.toString().trim() ?? '';
+  if (text.isEmpty || text.toLowerCase() == 'null') return null;
+  return text;
+}
+
+String? _bookingScopeFirstText(
+  Map<String, dynamic> booking,
+  List<List<String>> paths,
+) {
+  for (final path in paths) {
+    final value = _bookingScopeText(booking, path);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+Set<String> _activeDriverLinkedVehicleIds() {
+  final activeDriverId = _resolvedActiveDriverIdForScope().trim();
+  if (activeDriverId.isEmpty) return const <String>{};
+  final activeCompany = resolvedCompanyId.trim().isNotEmpty
+      ? resolvedCompanyId.trim()
+      : kOutboundTenantId.trim();
+  final ids = <String>{};
+  for (final vehicle in vehiclesNotifier.value) {
+    if (!vehicle.isActive) continue;
+    final vehicleId = vehicle.id.trim();
+    if (vehicleId.isEmpty) continue;
+    final driverId = vehicle.driverId?.trim() ?? '';
+    if (driverId != activeDriverId) continue;
+    final vehicleCompany = vehicle.companyId?.trim() ?? '';
+    if (vehicleCompany.isNotEmpty &&
+        activeCompany.isNotEmpty &&
+        vehicleCompany != activeCompany) {
+      continue;
+    }
+    ids.add(vehicleId);
+  }
+  return ids;
+}
+
+bool _bookingBelongsToActiveDriver(Map<String, dynamic> booking) {
+  final activeDriverId = _resolvedActiveDriverIdForScope().trim();
+  if (activeDriverId.isEmpty) return false;
+  final linkedVehicleIds = _activeDriverLinkedVehicleIds();
+  final assignedDriverId = _bookingScopeFirstText(booking, const [
+    ['assigned_driver', 'driver_id'],
+    ['assigned_driver', 'driverId'],
+    ['assigned_driver', 'id'],
+    ['assignedDriver', 'driver_id'],
+    ['assignedDriver', 'driverId'],
+    ['assignedDriver', 'id'],
+    ['driver_id'],
+    ['driverId'],
+    ['booking', 'assigned_driver', 'driver_id'],
+    ['booking', 'assigned_driver', 'driverId'],
+    ['booking', 'assigned_driver', 'id'],
+    ['booking', 'assignedDriver', 'driver_id'],
+    ['booking', 'assignedDriver', 'driverId'],
+    ['booking', 'assignedDriver', 'id'],
+    ['booking', 'driver_id'],
+    ['booking', 'driverId'],
+    ['record', 'booking', 'assigned_driver', 'driver_id'],
+    ['record', 'booking', 'assigned_driver', 'driverId'],
+    ['record', 'booking', 'assigned_driver', 'id'],
+    ['record', 'booking', 'assignedDriver', 'driver_id'],
+    ['record', 'booking', 'assignedDriver', 'driverId'],
+    ['record', 'booking', 'assignedDriver', 'id'],
+    ['record', 'booking', 'driver_id'],
+    ['record', 'booking', 'driverId'],
+  ]);
+  if (assignedDriverId == activeDriverId) return true;
+
+  final assignedVehicleId = _bookingScopeFirstText(booking, const [
+    ['assigned_vehicle_id'],
+    ['assignedVehicleId'],
+    ['vehicle_id'],
+    ['vehicleId'],
+    ['booking', 'assigned_vehicle_id'],
+    ['booking', 'assignedVehicleId'],
+    ['booking', 'vehicle_id'],
+    ['booking', 'vehicleId'],
+    ['record', 'booking', 'assigned_vehicle_id'],
+    ['record', 'booking', 'assignedVehicleId'],
+    ['record', 'booking', 'vehicle_id'],
+    ['record', 'booking', 'vehicleId'],
+  ]);
+  if (assignedVehicleId != null &&
+      assignedVehicleId.isNotEmpty &&
+      linkedVehicleIds.contains(assignedVehicleId)) {
+    return true;
+  }
+  return false;
+}
+
+bool _bookingIsUnassigned(Map<String, dynamic> booking) {
+  final assignedDriverId = _bookingScopeFirstText(booking, const [
+    ['assigned_driver', 'driver_id'],
+    ['assigned_driver', 'driverId'],
+    ['assigned_driver', 'id'],
+    ['assignedDriver', 'driver_id'],
+    ['assignedDriver', 'driverId'],
+    ['assignedDriver', 'id'],
+    ['driver_id'],
+    ['driverId'],
+    ['booking', 'assigned_driver', 'driver_id'],
+    ['booking', 'assigned_driver', 'driverId'],
+    ['booking', 'assigned_driver', 'id'],
+    ['booking', 'assignedDriver', 'driver_id'],
+    ['booking', 'assignedDriver', 'driverId'],
+    ['booking', 'assignedDriver', 'id'],
+    ['booking', 'driver_id'],
+    ['booking', 'driverId'],
+  ]);
+  final assignedVehicleId = _bookingScopeFirstText(booking, const [
+    ['assigned_vehicle_id'],
+    ['assignedVehicleId'],
+    ['vehicle_id'],
+    ['vehicleId'],
+    ['booking', 'assigned_vehicle_id'],
+    ['booking', 'assignedVehicleId'],
+    ['booking', 'vehicle_id'],
+    ['booking', 'vehicleId'],
+  ]);
+  return (assignedDriverId == null || assignedDriverId.isEmpty) &&
+      (assignedVehicleId == null || assignedVehicleId.isEmpty);
+}
+
+bool _canActiveDriverOperateBooking(Map<String, dynamic> booking) {
+  final role = appRoleNotifier.value;
+  if (role == AppRole.companyAdmin || role == AppRole.dispatcher) return true;
+  if (role != AppRole.driver) return true;
+  if (kDriverAllowAllCompanyRidesDebug) return true;
+  return _bookingBelongsToActiveDriver(booking);
+}
+
 bool _outboundTenantFallbackLogged = false;
 
 /// Tenant id for outbound ride/trip Worker payloads.
@@ -9301,9 +9460,82 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _bookingStatusOverrides[b.bookingId] ?? b.status;
   }
 
+  Map<String, dynamic> _bookingScopeViewFor(BookingItem b) {
+    return <String, dynamic>{
+      ...b.details,
+      'booking_id': b.bookingId,
+      'bookingId': b.bookingId,
+      if (b.details['booking'] is! Map)
+        'booking': <String, dynamic>{...b.details},
+    };
+  }
+
+  bool _canOperateBookingWithGuard(
+    Map<String, dynamic> booking, {
+    required String action,
+  }) {
+    final allowed = _canActiveDriverOperateBooking(booking);
+    final bookingId =
+        _bookingScopeFirstText(booking, const [
+          ['booking_id'],
+          ['bookingId'],
+          ['id'],
+          ['booking', 'booking_id'],
+          ['booking', 'bookingId'],
+        ]) ??
+        'unknown';
+    final assignedVehicleId =
+        _bookingScopeFirstText(booking, const [
+          ['assigned_vehicle_id'],
+          ['assignedVehicleId'],
+          ['vehicle_id'],
+          ['vehicleId'],
+          ['booking', 'assigned_vehicle_id'],
+          ['booking', 'assignedVehicleId'],
+          ['booking', 'vehicle_id'],
+          ['booking', 'vehicleId'],
+        ]) ??
+        '';
+    final activeDriverId = _resolvedActiveDriverIdForScope();
+    if (!allowed) {
+      debugPrint(
+        '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=$activeDriverId allowed=false',
+      );
+      _toast(_driverOwnershipBlockedMessage());
+      return false;
+    }
+    return true;
+  }
+
   List<BookingItem> get _visibleBookings => _bookings
       .where((b) => !_deletedBookingIds.contains(b.bookingId))
       .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
+      .where((b) {
+        final role = appRoleNotifier.value;
+        if (role != AppRole.driver) return true;
+        if (kDriverAllowAllCompanyRidesDebug) return true;
+        final booking = _bookingScopeViewFor(b);
+        final allowed =
+            _bookingBelongsToActiveDriver(booking) ||
+            (kDriverCanSeeUnassignedRides && _bookingIsUnassigned(booking));
+        final bookingId = b.bookingId;
+        final assignedVehicleId =
+            _bookingScopeFirstText(booking, const [
+              ['assigned_vehicle_id'],
+              ['assignedVehicleId'],
+              ['vehicle_id'],
+              ['vehicleId'],
+              ['booking', 'assigned_vehicle_id'],
+              ['booking', 'assignedVehicleId'],
+              ['booking', 'vehicle_id'],
+              ['booking', 'vehicleId'],
+            ]) ??
+            '';
+        debugPrint(
+          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=$allowed',
+        );
+        return allowed;
+      })
       .toList();
 
   void _markBookingsUiDirty() {
@@ -9805,6 +10037,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// - driver presses START on the map to begin tracking + streetview/follow cam
   Future<void> _goToRide(BookingItem b) async {
     try {
+      if (!_canOperateBookingWithGuard(
+        _bookingScopeViewFor(b),
+        action: 'open_ride',
+      )) {
+        return;
+      }
       // We are typically called from the Bookings Hub page.
       // UX: return to the main map/cockpit immediately.
       if (Navigator.of(context).canPop()) {
@@ -9891,6 +10129,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _startTrip(BookingItem b) async {
     try {
+      if (!_canOperateBookingWithGuard(
+        _bookingScopeViewFor(b),
+        action: 'start_tracking',
+      )) {
+        return;
+      }
       if (mounted) setState(() => _isStartingTrip = true);
 
       // UX rule: Start in Drawer → Drawer closes → Map becomes primary focus
@@ -10075,6 +10319,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _setBookingStatus(BookingItem b, String status) async {
     if (!mounted) return;
+    if (!_canOperateBookingWithGuard(
+      _bookingScopeViewFor(b),
+      action: 'status_$status',
+    )) {
+      return;
+    }
     final bookingId = b.bookingId;
     setState(() => _bookingActionInFlight.add(bookingId));
     _markBookingsUiDirty();
@@ -10171,6 +10421,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _deleteBooking(BookingItem b) async {
     if (!mounted) return;
+    if (!_canOperateBookingWithGuard(
+      _bookingScopeViewFor(b),
+      action: 'delete_booking',
+    )) {
+      return;
+    }
     final bookingId = b.bookingId;
     setState(() => _bookingActionInFlight.add(bookingId));
     _markBookingsUiDirty();
@@ -11761,6 +12017,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     final trip = _activeTripId;
     if (trip == null && !_directRideActive) return;
     final stoppedBooking = _activeBooking;
+    if (stoppedBooking != null &&
+        !_canOperateBookingWithGuard(
+          _bookingScopeViewFor(stoppedBooking),
+          action: 'stop_complete_booking',
+        )) {
+      return;
+    }
     final wasDirectRide = _directRideActive;
     final directTripId = _activeDirectTripId;
     final finalTotal = _liveMeterTotalEur;
@@ -12111,6 +12374,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _openNavigation() async {
     // NAV always forces follow mode for live street-level navigation.
     if (_map == null) return;
+    final booking = _activeBooking;
+    if (booking != null &&
+        !_canOperateBookingWithGuard(
+          _bookingScopeViewFor(booking),
+          action: 'open_navigation',
+        )) {
+      return;
+    }
 
     setState(() {
       _cameraMode = _CameraMode.follow;
@@ -19235,6 +19506,63 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   _TripHistoryItem get item => widget.item;
 
+  Map<String, dynamic> _driverScopeBookingViewForReceipt() {
+    final map = <String, dynamic>{...item.bookingDetails};
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isNotEmpty) {
+      map['booking_id'] = bookingId;
+      map['bookingId'] = bookingId;
+    }
+    if (map['booking'] is! Map) {
+      map['booking'] = <String, dynamic>{...item.bookingDetails};
+    }
+    if ((item.vehicleId ?? '').trim().isNotEmpty) {
+      map['vehicle_id'] = item.vehicleId!.trim();
+      map['vehicleId'] = item.vehicleId!.trim();
+    }
+    if (item.driverId.trim().isNotEmpty) {
+      map['driver_id'] = item.driverId.trim();
+      map['driverId'] = item.driverId.trim();
+    }
+    return map;
+  }
+
+  bool _guardDriverReceiptOperation({required String action}) {
+    final booking = _driverScopeBookingViewForReceipt();
+    final allowed = _canActiveDriverOperateBooking(booking);
+    if (allowed) return true;
+    final bookingId =
+        _bookingScopeFirstText(booking, const [
+          ['booking_id'],
+          ['bookingId'],
+          ['id'],
+          ['booking', 'booking_id'],
+          ['booking', 'bookingId'],
+        ]) ??
+        'unknown';
+    final assignedVehicleId =
+        _bookingScopeFirstText(booking, const [
+          ['assigned_vehicle_id'],
+          ['assignedVehicleId'],
+          ['vehicle_id'],
+          ['vehicleId'],
+          ['booking', 'assigned_vehicle_id'],
+          ['booking', 'assignedVehicleId'],
+          ['booking', 'vehicle_id'],
+          ['booking', 'vehicleId'],
+        ]) ??
+        '';
+    debugPrint(
+      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=false',
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_driverOwnershipBlockedMessage())));
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -21287,6 +21615,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   void _showPaymentLink(BuildContext context) {
+    if (!_guardDriverReceiptOperation(action: 'payment_link')) return;
     _markPaymentRequestSent();
     showDialog<void>(
       context: context,
@@ -21311,6 +21640,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   void _showPaymentQr(BuildContext context) {
+    if (!_guardDriverReceiptOperation(action: 'payment_qr')) return;
     _markPaymentRequestSent();
     final link = _paymentLink();
     showDialog<void>(
@@ -21388,6 +21718,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     required BuildContext context,
     required String method,
   }) async {
+    if (!_guardDriverReceiptOperation(action: 'persist_payment_$method'))
+      return;
     final bookingId = (item.bookingId ?? '').trim();
     final normalizedMethod = method.toLowerCase().trim();
     if (bookingId.isEmpty) {
