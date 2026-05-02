@@ -280,6 +280,63 @@ export class FleetAllocatorDO {
   }
 }
 
+export class BookingReferenceSequenceDO {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const action = String(body?.action || "").trim().toLowerCase();
+    if (action !== "allocate") {
+      return this._json({ ok: false, error: "Unknown action" }, 400);
+    }
+    return this._allocate(body);
+  }
+
+  async _allocate(body) {
+    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120) || "fluxidi";
+    const companyId = safeStr(body?.company_id || body?.companyId, 120) || tenantId;
+    const yearMonth =
+      normalizeBookingReferenceYearMonth(body?.year_month || body?.yearMonth) ||
+      bookingReferenceYearMonthFromPickupIso(body?.pickup_iso || body?.pickupIso) ||
+      bookingReferenceYearMonthFromPickupIso(new Date().toISOString());
+    if (!yearMonth) {
+      return this._json({ ok: false, error: "Unable to resolve year_month" }, 400);
+    }
+
+    const current = clampInt(await this.state.storage.get("counter"), 0, 0, 999999999);
+    const next = current + 1;
+    await this.state.storage.put("counter", next);
+
+    const publicBookingReference = `${yearMonth}-${String(next).padStart(6, "0")}`;
+    return this._json({
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      year_month: yearMonth,
+      seq: next,
+      public_booking_reference: publicBookingReference,
+      publicBookingReference: publicBookingReference,
+      booking_reference: publicBookingReference,
+      bookingReference: publicBookingReference,
+    });
+  }
+
+  _json(obj, status = 200) {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+}
+
 function _requireAdmin(request, url, env) {
   const expected = (env.ADMIN_TOKEN || "").trim();
   if (!expected) throw new Error("ADMIN_TOKEN is not configured");
@@ -3392,6 +3449,19 @@ async function mollieCreatePayment(payload, env, request) {
       // Make sure we persist it inside the stored payload too (so finalize uses the same id everywhere)
       payloadClean.__booking_id = publicBookingId;
     }
+    const publicBookingReference = safeStr(
+      payload?.__public_booking_reference ||
+        payload?.public_booking_reference ||
+        payload?.publicBookingReference ||
+        payload?.booking_reference ||
+        payload?.bookingReference ||
+        payload?.public_reference ||
+        payload?.publicReference,
+    );
+    if (publicBookingReference) {
+      payloadClean.__public_booking_reference = publicBookingReference;
+      attachPublicBookingReferenceAliases(payloadClean, publicBookingReference);
+    }
 
     // 2) compute quote
     let quote = null;
@@ -3431,6 +3501,10 @@ async function mollieCreatePayment(payload, env, request) {
         status: "PENDING",
         createdAt,
         public_booking_id: publicBookingId || null,
+        public_booking_reference: publicBookingReference || null,
+        publicBookingReference: publicBookingReference || null,
+        booking_reference: publicBookingReference || null,
+        bookingReference: publicBookingReference || null,
         payload: payloadClean,
         quote,
         mollie: null,
@@ -3814,8 +3888,26 @@ async function handleBooking(payload, env, request) {
     // BOOKING ID (human + uuid)
     // =========================
     const providedId = safeStr(payload?.__booking_id || payload?.bookingId || payload?.booking_id);
+    const providedPublicBookingReference = safeStr(
+      payload?.__public_booking_reference ||
+        payload?.public_booking_reference ||
+        payload?.publicBookingReference ||
+        payload?.booking_reference ||
+        payload?.bookingReference ||
+        payload?.public_reference ||
+        payload?.publicReference,
+    );
     const booking_uuid = (crypto?.randomUUID ? crypto.randomUUID() : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`);
     const canonicalBookingId = providedId || await nextHumanBookingId(env, pickup_iso);
+    const publicBookingReference =
+      providedPublicBookingReference ||
+      (await allocatePublicBookingReference(env, {
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        pickup_iso,
+      }));
+    attachPublicBookingReferenceAliases(payload, publicBookingReference);
+    payload.__public_booking_reference = publicBookingReference;
 
 
 
@@ -4070,6 +4162,7 @@ async function handleBooking(payload, env, request) {
           {
             ...payload,
             __booking_id: canonicalBookingId,
+            __public_booking_reference: publicBookingReference,
             bookingId: canonicalBookingId,
             total_incl_vat: totalPricing.price_incl_vat,
             total_ex_vat: totalPricing.price_ex_vat,
@@ -4084,6 +4177,12 @@ async function handleBooking(payload, env, request) {
           booking_id: canonicalBookingId,
           bookingId: canonicalBookingId,
           public_booking_id: canonicalBookingId,
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          booking_reference: publicBookingReference,
+          bookingReference: publicBookingReference,
+          public_reference: publicBookingReference,
+          publicReference: publicBookingReference,
           payment_booking_id: pay.bookingId || null,
           paymentBookingId: pay.bookingId || null,
           requiresPayment: true,
@@ -4274,6 +4373,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         {
           ...payload,
           __booking_id: canonicalBookingId,
+          __public_booking_reference: publicBookingReference,
           bookingId: canonicalBookingId,
           total_incl_vat: totalPricing.price_incl_vat,
           total_ex_vat: totalPricing.price_ex_vat,
@@ -4288,6 +4388,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         booking_id: canonicalBookingId,
         bookingId: canonicalBookingId,
         public_booking_id: canonicalBookingId,
+        public_booking_reference: publicBookingReference,
+        publicBookingReference: publicBookingReference,
+        booking_reference: publicBookingReference,
+        bookingReference: publicBookingReference,
+        public_reference: publicBookingReference,
+        publicReference: publicBookingReference,
         payment_booking_id: pay.bookingId || null,
         paymentBookingId: pay.bookingId || null,
         requiresPayment: true,
@@ -4307,6 +4413,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       createdAt: new Date().toISOString(),
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
+      public_booking_reference: publicBookingReference,
+      publicBookingReference: publicBookingReference,
+      booking_reference: publicBookingReference,
+      bookingReference: publicBookingReference,
       booking_source: tenantContext.booking_source,
       entry_channel: tenantContext.entry_channel,
       source_context: tenantContext.source_context,
@@ -4386,6 +4496,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       stage: "BOOKED",
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
+      public_booking_reference: publicBookingReference,
+      publicBookingReference: publicBookingReference,
+      booking_reference: publicBookingReference,
+      bookingReference: publicBookingReference,
       booking_source: tenantContext.booking_source,
       entry_channel: tenantContext.entry_channel,
       source_context: tenantContext.source_context,
@@ -4399,6 +4513,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         createdAt: booking.createdAt,
         tenant_id: tenantContext.tenant_id,
         company_id: tenantContext.company_id,
+        public_booking_reference: publicBookingReference,
+        publicBookingReference: publicBookingReference,
+        booking_reference: publicBookingReference,
+        bookingReference: publicBookingReference,
         booking_source: tenantContext.booking_source,
         entry_channel: tenantContext.entry_channel,
         source_context: tenantContext.source_context,
@@ -4471,6 +4589,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
+      await putPublicBookingReferenceIndex(env, {
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        public_booking_reference: publicBookingReference,
+        canonical_booking_id: booking.bookingId,
+      });
     } catch (persistErr) {
       if (availabilityMode === "multi_vehicle") {
         try {
@@ -4560,6 +4684,13 @@ return {
       ok: true,
       bookingId: booking.bookingId,
       booking_id: booking.bookingId,
+      public_booking_id: booking.bookingId,
+      public_booking_reference: publicBookingReference,
+      publicBookingReference: publicBookingReference,
+      booking_reference: publicBookingReference,
+      bookingReference: publicBookingReference,
+      public_reference: publicBookingReference,
+      publicReference: publicBookingReference,
       booking_uuid: booking.booking_uuid,
       push,
 
@@ -7724,6 +7855,133 @@ async function nextHumanBookingId(env, pickupIso) {
   return `${yyyy}-${mm}-${String(Date.now()).slice(-6)}`;
 }
 
+function normalizeBookingReferenceYearMonth(value) {
+  const raw = safeStr(value);
+  if (!raw) return "";
+  const m = raw.match(/^([0-9]{4})-([0-9]{2})$/);
+  if (!m) return "";
+  return `${m[1]}-${m[2]}`;
+}
+
+function bookingReferenceYearMonthFromPickupIso(pickupIso) {
+  const parts = brusselsDateTimePartsFromIso(pickupIso || new Date().toISOString());
+  let yyyy = "";
+  let mm = "";
+
+  if (safeStr(parts?.date).includes("/")) {
+    const seg = String(parts.date).split("/");
+    if (seg.length === 3) {
+      yyyy = safeStr(seg[2]);
+      mm = safeStr(seg[1]).padStart(2, "0");
+    }
+  }
+
+  if (!yyyy || !mm) {
+    const m = safeStr(parts?.date).match(/^([0-9]{4})-([0-9]{2})-/);
+    if (m) {
+      yyyy = m[1];
+      mm = m[2];
+    }
+  }
+
+  if (!yyyy || !mm) {
+    const d = new Date();
+    yyyy = String(d.getUTCFullYear());
+    mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  }
+
+  return `${yyyy}-${mm}`;
+}
+
+function bookingReferenceScopePart(value, fallback) {
+  const raw = safeStr(value, 120).toLowerCase();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+function bookingReferenceScopeName(tenantId, companyId, yearMonth) {
+  const tenantPart = bookingReferenceScopePart(tenantId, "fluxidi");
+  const companyPart = bookingReferenceScopePart(companyId || tenantId, tenantPart);
+  return `booking_ref:${tenantPart}:${companyPart}:${yearMonth}`;
+}
+
+function attachPublicBookingReferenceAliases(target, publicBookingReference) {
+  if (!target || typeof target !== "object") return target;
+  const value = safeStr(publicBookingReference);
+  if (!value) return target;
+  target.public_booking_reference = value;
+  target.publicBookingReference = value;
+  target.booking_reference = value;
+  target.bookingReference = value;
+  target.public_reference = value;
+  target.publicReference = value;
+  return target;
+}
+
+async function allocatePublicBookingReference(env, params = {}) {
+  if (!env?.BOOKING_REFERENCE_SEQUENCE) {
+    throw new Error("Missing BOOKING_REFERENCE_SEQUENCE binding");
+  }
+  const tenantId = safeStr(params?.tenant_id, 120) || "fluxidi";
+  const companyId = safeStr(params?.company_id, 120) || tenantId;
+  const yearMonth =
+    normalizeBookingReferenceYearMonth(params?.year_month || params?.yearMonth) ||
+    bookingReferenceYearMonthFromPickupIso(
+      params?.pickup_iso || params?.pickupIso || new Date().toISOString(),
+    );
+  if (!yearMonth) throw new Error("Cannot allocate public booking reference: missing yearMonth");
+
+  const instanceName = bookingReferenceScopeName(tenantId, companyId, yearMonth);
+  const stub = env.BOOKING_REFERENCE_SEQUENCE.get(
+    env.BOOKING_REFERENCE_SEQUENCE.idFromName(instanceName),
+  );
+  const resp = await stub.fetch("https://do/allocate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "allocate",
+      tenant_id: tenantId,
+      company_id: companyId,
+      year_month: yearMonth,
+      pickup_iso: params?.pickup_iso || params?.pickupIso || null,
+    }),
+  });
+  const body = await resp.json().catch(() => ({}));
+  const publicBookingReference = safeStr(
+    body?.public_booking_reference ||
+      body?.publicBookingReference ||
+      body?.booking_reference ||
+      body?.bookingReference,
+  );
+  if (!resp.ok || !publicBookingReference) {
+    throw new Error(
+      safeStr(body?.error) || `Public booking reference allocation failed (${resp.status})`,
+    );
+  }
+  return publicBookingReference;
+}
+
+async function putPublicBookingReferenceIndex(env, params = {}) {
+  if (!env?.BOOKING_KV) return;
+  const tenantPart = bookingReferenceScopePart(params?.tenant_id, "fluxidi");
+  const companyPart = bookingReferenceScopePart(params?.company_id || params?.tenant_id, tenantPart);
+  const publicBookingReference = safeStr(
+    params?.public_booking_reference || params?.publicBookingReference,
+  );
+  const canonicalBookingId = safeStr(
+    params?.canonical_booking_id || params?.canonicalBookingId || params?.booking_id,
+  );
+  if (!publicBookingReference || !canonicalBookingId) return;
+
+  const key = `booking_ref:${tenantPart}:${companyPart}:${publicBookingReference}`;
+  const existing = safeStr(await env.BOOKING_KV.get(key));
+  if (existing && existing !== canonicalBookingId) {
+    throw new Error(`Public booking reference index collision for ${key}`);
+  }
+  await env.BOOKING_KV.put(key, canonicalBookingId);
+}
+
 /* ===================== PUSHBULLET ===================== */
 
 async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
@@ -9177,6 +9435,19 @@ async function finalizeBookingFromStored(stored, env, request, opts = {}) {
     if (stored.booking_id) stored.payload.__booking_id = stored.booking_id;
     if (stored.payload.booking_id) stored.payload.__booking_id = stored.payload.booking_id;
     if (stored.payload.bookingId) stored.payload.__booking_id = stored.payload.bookingId;
+    const storedPublicBookingReference = safeStr(
+      stored.public_booking_reference ||
+        stored.publicBookingReference ||
+        stored.booking_reference ||
+        stored.bookingReference ||
+        stored.payload?.__public_booking_reference ||
+        stored.payload?.public_booking_reference ||
+        stored.payload?.publicBookingReference,
+    );
+    if (storedPublicBookingReference) {
+      stored.payload.__public_booking_reference = storedPublicBookingReference;
+      attachPublicBookingReferenceAliases(stored.payload, storedPublicBookingReference);
+    }
 
     // Use the current request origin (prevents "https://internal" links in emails)
     const origin = (() => {

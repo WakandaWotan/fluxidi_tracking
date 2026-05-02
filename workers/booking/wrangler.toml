@@ -21,6 +21,10 @@ enabled = true
 name = "FLEET_ALLOCATOR"
 class_name = "FleetAllocatorDO"
 
+[[durable_objects.bindings]]
+name = "BOOKING_REFERENCE_SEQUENCE"
+class_name = "BookingReferenceSequenceDO"
+
 # REQUIRED KV bindings used by this worker code.
 [[kv_namespaces]]
 binding = "BOOKING_KV"
@@ -37,3 +41,7 @@ id = "c945929b64a743fdb10e09059d835746"
 [[migrations]]
 tag = "fleet-allocator-v1"
 new_sqlite_classes = ["FleetAllocatorDO"]
+
+[[migrations]]
+tag = "booking-reference-sequence-v1"
+new_sqlite_classes = ["BookingReferenceSequenceDO"]
