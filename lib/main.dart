@@ -14766,6 +14766,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final bool collapseTopBarInPortraitNav =
         !isLandscape && _cameraMode == _CameraMode.follow;
     final double arrowBottom = isLandscape ? 106.0 : 152.0;
+    final double safeBottomInset = MediaQuery.of(context).padding.bottom;
+    final double recenterBottom = isLandscape
+        ? (showCockpit ? (showExternalNavButtons ? 184.0 : 128.0) : 112.0) +
+              safeBottomInset
+        : (showCockpit ? (showExternalNavButtons ? 266.0 : 188.0) : 150.0) +
+              safeBottomInset;
     final double navBannerLandscapeMaxWidth = math.min(760.0, screenW * 0.46);
     final double navBannerPortraitMaxWidth = math.min(screenW * 0.88, 700.0);
     final double navBannerTop =
@@ -14923,7 +14929,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (_mapSupported)
             Positioned(
               right: 14,
-              bottom: isLandscape ? 112 : (showCockpit ? 188 : 150),
+              bottom: recenterBottom,
               child: _buildRecenterButton(),
             ),
 
