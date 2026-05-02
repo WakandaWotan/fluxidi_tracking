@@ -8374,6 +8374,7 @@ async function payStatus(request, env) {
 
   // We will persist back no matter what happens
   let finalizeAttempted = false;
+  let compliancePaymentUpdateEmitAttempted = false;
 
   try {
     if (paymentId) {
@@ -8426,6 +8427,64 @@ async function payStatus(request, env) {
         data = result?.updatedStored || data;
       }
     }
+
+    // Emit one backend compliance payment_update for Mollie/online finalized bookings.
+    // This is best-effort only and must never block payment finalization.
+    const shouldEmitCompliancePaymentUpdate =
+      String(data?.payment_status || data?.paymentStatus || "").toLowerCase() === "paid" &&
+      !!data?.confirmed_at &&
+      !safeStr(data?.compliance_payment_update_emitted_at);
+
+    if (shouldEmitCompliancePaymentUpdate) {
+      compliancePaymentUpdateEmitAttempted = true;
+      const complianceBookingId =
+        safeStr(
+          data?.booking_id ||
+            data?.public_booking_id ||
+            data?.payload?.__booking_id ||
+            data?.payload?.booking_id ||
+            data?.payload?.bookingId ||
+            id,
+        ) || id;
+      const compliancePaymentPayload = {
+        payment_status: data?.payment_status || data?.paymentStatus || "paid",
+        payment_method:
+          safeStr(data?.payment_method || data?.paymentMethod || data?.payload?.payment_method || data?.payload?.paymentMethod) ||
+          "online_payment",
+        payment_source:
+          safeStr(data?.payment_source || data?.paymentSource || data?.payload?.payment_source || data?.payload?.paymentSource) ||
+          "mollie",
+        payment_provider:
+          safeStr(data?.payment_provider || data?.paymentProvider || data?.payload?.payment_provider || data?.payload?.paymentProvider) ||
+          "mollie",
+        payment_id:
+          safeStr(data?.payment_id || data?.paymentId || data?.mollie?.payment_id || data?.mollie?.id) || null,
+        paid_at: safeStr(data?.paid_at || data?.paidAt) || null,
+        currency: safeStr(data?.currency || data?.payload?.currency || "EUR") || "EUR",
+        tenant_id:
+          safeStr(data?.tenant_id || data?.tenantId || data?.payload?.tenant_id || data?.payload?.tenantId || data?.company_id || data?.companyId) ||
+          "fluxidi",
+        company_id:
+          safeStr(data?.company_id || data?.companyId || data?.payload?.company_id || data?.payload?.companyId || data?.tenant_id || data?.tenantId) ||
+          "fluxidi",
+      };
+      const complianceEvent = buildBookingPaymentUpdateComplianceEvent(
+        data,
+        complianceBookingId,
+        compliancePaymentPayload,
+      );
+      if (complianceEvent) {
+        const emitted = await emitComplianceEventBestEffort(env, complianceEvent, {
+          timeoutMs: 1500,
+          logLabel: "planned_mollie_payment_update",
+        });
+        if (emitted?.ok) {
+          data.compliance_payment_update_emitted_at = new Date().toISOString();
+        }
+      } else {
+        console.log("[COMPLIANCE_EMIT][planned_mollie_payment_update] skipped reason=builder_null");
+      }
+    }
   } catch (e) {
     // Don't fail /pay/status; persist error for diagnostics
     data.mollie = data.mollie || {};
@@ -8435,6 +8494,10 @@ async function payStatus(request, env) {
       if (finalizeAttempted) {
         data.confirm_error = data.confirm_error || "Finalize failed inside /pay/status";
         data.confirming_at = null;
+      }
+      if (compliancePaymentUpdateEmitAttempted) {
+        data.confirm_error =
+          data.confirm_error || "Compliance payment_update emit failed inside /pay/status";
       }
     } catch (_) {}
   } finally {
