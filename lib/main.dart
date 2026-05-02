@@ -223,6 +223,30 @@ String get kOutboundTenantId {
   return kTenantId;
 }
 
+Map<String, String> _activeBookingScopeQuery() {
+  final tenantId = kOutboundTenantId.trim();
+  final companyIdRaw = resolvedCompanyId.trim();
+  final companyId = companyIdRaw.isNotEmpty ? companyIdRaw : tenantId;
+  return <String, String>{
+    'tenant_id': tenantId,
+    'company_id': companyId,
+    'tenantId': tenantId,
+    'companyId': companyId,
+  };
+}
+
+Uri _withActiveBookingScope(
+  String baseUrl,
+  String path, {
+  Map<String, String>? extraQuery,
+}) {
+  final scoped = <String, String>{
+    ..._activeBookingScopeQuery(),
+    ...?extraQuery,
+  };
+  return Uri.parse('$baseUrl$path').replace(queryParameters: scoped);
+}
+
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
@@ -4570,8 +4594,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(id)}',
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
@@ -4852,8 +4877,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         final id = item.canonicalBookingId.trim();
         if (id.isEmpty) continue;
         try {
-          final uri = Uri.parse(
-            '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+          final uri = _withActiveBookingScope(
+            kBookingBaseUrl,
+            '/bookings/${Uri.encodeComponent(id)}',
           );
           final res = await http.get(uri).timeout(const Duration(seconds: 12));
           if (res.statusCode != 200) continue;
@@ -5285,8 +5311,9 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
     });
 
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}',
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
@@ -6324,8 +6351,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _refreshError = null;
     });
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(widget.bookingId)}',
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
@@ -9680,8 +9708,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final primaryUri = Uri.parse(
-        '$kBookingBaseUrl$kListBookingsPath?limit=50&t=$ts',
+      final primaryUri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        kListBookingsPath,
+        extraQuery: <String, String>{'limit': '50', 't': '$ts'},
       );
       debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
       final res = await http.get(primaryUri, headers: _headers(admin: true));
@@ -10049,10 +10079,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _bookingActionInFlight.add(bookingId));
     _markBookingsUiDirty();
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
       );
-      final payload = {'booking_id': bookingId, 'status': status};
+      final payload = <String, dynamic>{
+        'booking_id': bookingId,
+        'status': status,
+        ..._activeBookingScopeQuery(),
+      };
       debugPrint(
         '[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
@@ -10140,10 +10175,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _bookingActionInFlight.add(bookingId));
     _markBookingsUiDirty();
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
       );
-      final payload = {'booking_id': bookingId};
+      final payload = <String, dynamic>{
+        'booking_id': bookingId,
+        ..._activeBookingScopeQuery(),
+      };
       debugPrint(
         '[RIDES][DELETE][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
@@ -10220,10 +10259,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String status,
   }) async {
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '$kDeleteBookingPath/${Uri.encodeComponent(bookingId)}/delete',
       );
-      final payload = {'booking_id': bookingId};
+      final payload = <String, dynamic>{
+        'booking_id': bookingId,
+        ..._activeBookingScopeQuery(),
+      };
       debugPrint(
         '[RIDES][STATUS->DELETE][REQ] status=$status url=$uri payload=${jsonEncode(payload)}',
       );
@@ -10259,8 +10302,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String contextLabel,
   }) async {
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}',
       );
       final res = await http
           .get(uri, headers: _headers(admin: true))
@@ -10409,16 +10453,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     try {
-      final byId = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      final byId = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}',
       );
       final parsedById = await fetchAndParse(byId);
       if (parsedById.isNotEmpty) return parsedById;
     } catch (_) {}
 
     try {
-      final listUrl = Uri.parse(
-        '$kBookingBaseUrl/bookings?limit=200&t=${DateTime.now().millisecondsSinceEpoch}',
+      final listUrl = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings',
+        extraQuery: <String, String>{
+          'limit': '200',
+          't': '${DateTime.now().millisecondsSinceEpoch}',
+        },
       );
       final parsedList = await fetchAndParse(listUrl);
       if (parsedList.isNotEmpty) return parsedList;
@@ -19556,8 +19606,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
     List<dynamic> asList(dynamic value) => value is List ? value : const [];
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}',
       );
       final headers = <String, String>{'Content-Type': 'application/json'};
       if (kAdminToken.trim().isNotEmpty) {
@@ -19600,8 +19651,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
       if (parsed != null && parsed.isNotEmpty) return parsed;
 
-      final listUri = Uri.parse(
-        '$kBookingBaseUrl/bookings?limit=200&t=${DateTime.now().millisecondsSinceEpoch}',
+      final listUri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings',
+        extraQuery: <String, String>{
+          'limit': '200',
+          't': '${DateTime.now().millisecondsSinceEpoch}',
+        },
       );
       final listRes = await http
           .get(listUri, headers: headers)
@@ -21426,6 +21482,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       'payment_status': 'paid',
       'payment_method': normalizedMethod,
       'payment_source': 'in_car',
+      ..._activeBookingScopeQuery(),
       'currency': item.currency.trim().isEmpty
           ? 'EUR'
           : item.currency.trim().toUpperCase(),
@@ -21439,8 +21496,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
 
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/payment',
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}/payment',
       );
       final res = await http
           .post(uri, headers: headers, body: jsonEncode(payload))
