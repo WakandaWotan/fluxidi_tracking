@@ -351,6 +351,91 @@ function normalizeComplianceText(v, fallback = "unknown", maxLen = 64) {
   return text.toLowerCase();
 }
 
+function isUnknownLikeComplianceValue(v) {
+  const raw = String(v ?? "").trim().toLowerCase();
+  return (
+    raw === "" ||
+    raw === "unknown" ||
+    raw === "onbekend" ||
+    raw === "—" ||
+    raw === "-" ||
+    raw === "null" ||
+    raw === "undefined"
+  );
+}
+
+function isMollieLikePaymentId(v) {
+  const raw = String(v ?? "").trim();
+  return /^tr_[a-z0-9]+$/i.test(raw);
+}
+
+function resolveDirectTripPaymentProviderForCompliance(trip, paymentPayloadOrResult) {
+  const explicitProvider = safeStr(
+    trip?.payment_provider ??
+      trip?.paymentProvider ??
+      paymentPayloadOrResult?.payment_provider ??
+      paymentPayloadOrResult?.paymentProvider,
+    64,
+  );
+  if (explicitProvider && !isUnknownLikeComplianceValue(explicitProvider)) {
+    return normalizeComplianceText(explicitProvider);
+  }
+
+  const source = normalizeComplianceText(
+    trip?.payment_source ?? trip?.paymentSource ?? paymentPayloadOrResult?.payment_source ?? paymentPayloadOrResult?.paymentSource,
+  );
+  const method = normalizeComplianceText(
+    trip?.payment_method ?? trip?.paymentMethod ?? paymentPayloadOrResult?.payment_method ?? paymentPayloadOrResult?.paymentMethod,
+  );
+  const paymentId = safeStr(
+    trip?.payment_id ??
+      trip?.paymentId ??
+      paymentPayloadOrResult?.payment_id ??
+      paymentPayloadOrResult?.paymentId,
+    128,
+  );
+  const molliePaymentId = safeStr(
+    paymentPayloadOrResult?.mollie_payment_id ??
+      paymentPayloadOrResult?.molliePaymentId ??
+      trip?.mollie_payment_id ??
+      trip?.molliePaymentId ??
+      trip?.mollie?.payment_id ??
+      trip?.mollie?.id,
+    128,
+  );
+  const hasReliableExternalPaymentId =
+    isMollieLikePaymentId(paymentId) || isMollieLikePaymentId(molliePaymentId);
+  const manualLikeSources = new Set([
+    "in_car",
+    "in_vehicle",
+    "manual",
+    "driver",
+    "driver_app",
+    "chauffeur",
+    "cash",
+  ]);
+  const manualLikeMethods = new Set([
+    "cash",
+    "bancontact",
+    "card",
+    "pin",
+    "qr",
+    "in_car",
+    "manual",
+    "driver",
+    "chauffeur",
+  ]);
+  if (
+    manualLikeSources.has(source) &&
+    manualLikeMethods.has(method) &&
+    !hasReliableExternalPaymentId
+  ) {
+    return "manual";
+  }
+
+  return normalizeComplianceText(explicitProvider);
+}
+
 function buildComplianceAppendUrl(baseUrlRaw) {
   const normalized = safeStr(baseUrlRaw, 512);
   if (!normalized) return null;
@@ -660,7 +745,7 @@ function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult) {
       status: normalizeCompliancePaymentStatus(trip?.payment_status ?? trip?.paymentStatus),
       method: normalizeComplianceText(trip?.payment_method ?? trip?.paymentMethod),
       source: normalizeComplianceText(trip?.payment_source ?? trip?.paymentSource),
-      provider: normalizeComplianceText(trip?.payment_provider ?? trip?.paymentProvider),
+      provider: resolveDirectTripPaymentProviderForCompliance(trip, paymentPayloadOrResult),
       payment_id: safeStr(
         trip?.payment_id ??
           trip?.paymentId ??
