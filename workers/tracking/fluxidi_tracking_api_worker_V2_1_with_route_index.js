@@ -99,6 +99,249 @@ function safeStr(v, maxLen = 2000) {
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
+function resolveTrackingActorFromRequest(request, url, body = null) {
+  const search = url?.searchParams;
+  const actor_role = (
+    safeStr(
+      body?.actor_role ??
+        body?.actorRole ??
+        search?.get("actor_role") ??
+        search?.get("actorRole") ??
+        request?.headers?.get?.("x-fluxidi-actor-role"),
+      32,
+    ) ?? ""
+  ).toLowerCase();
+  const actor_driver_id =
+    safeStr(
+      body?.actor_driver_id ??
+        body?.actorDriverId ??
+        body?.driver_id ??
+        body?.driverId ??
+        body?.paid_by_driver_id ??
+        body?.paidByDriverId ??
+        search?.get("actor_driver_id") ??
+        search?.get("actorDriverId") ??
+        search?.get("driver_id") ??
+        search?.get("driverId") ??
+        request?.headers?.get?.("x-fluxidi-driver-id") ??
+        request?.headers?.get?.("x-driver-id"),
+      96,
+    ) ?? null;
+  const actor_vehicle_id =
+    safeStr(
+      body?.actor_vehicle_id ??
+        body?.actorVehicleId ??
+        body?.vehicle_id ??
+        body?.vehicleId ??
+        search?.get("actor_vehicle_id") ??
+        search?.get("actorVehicleId") ??
+        search?.get("vehicle_id") ??
+        search?.get("vehicleId") ??
+        request?.headers?.get?.("x-fluxidi-vehicle-id") ??
+        request?.headers?.get?.("x-vehicle-id"),
+      96,
+    ) ?? null;
+  return { actor_role, actor_driver_id, actor_vehicle_id };
+}
+
+function _trackingOwnershipError(error) {
+  return { ok: false, error };
+}
+
+function _trackingOwnershipValue(v, maxLen = 96) {
+  return safeStr(v, maxLen) ?? "";
+}
+
+function _trackingOwnershipAllowed({
+  actorDriverId,
+  actorVehicleId,
+  ownerDriverId,
+  ownerVehicleId,
+  fallbackDriverId = "",
+  fallbackVehicleId = "",
+}) {
+  const actorDriver = _trackingOwnershipValue(actorDriverId);
+  const actorVehicle = _trackingOwnershipValue(actorVehicleId);
+  const ownerDriver = _trackingOwnershipValue(ownerDriverId);
+  const ownerVehicle = _trackingOwnershipValue(ownerVehicleId);
+  const tripDriver = _trackingOwnershipValue(fallbackDriverId);
+  const tripVehicle = _trackingOwnershipValue(fallbackVehicleId);
+  const candidateDriver = ownerDriver || tripDriver;
+  const candidateVehicle = ownerVehicle || tripVehicle;
+
+  if (!actorDriver && !actorVehicle) {
+    return {
+      allowed: false,
+      certainMismatch: true,
+      reason: "actor_identity_missing",
+      candidateDriver,
+      candidateVehicle,
+    };
+  }
+  if (candidateDriver && actorDriver) {
+    if (candidateDriver === actorDriver) {
+      return { allowed: true, certainMismatch: false, reason: "driver_match", candidateDriver, candidateVehicle };
+    }
+    return { allowed: false, certainMismatch: true, reason: "driver_mismatch", candidateDriver, candidateVehicle };
+  }
+  if (candidateVehicle && actorVehicle) {
+    if (candidateVehicle === actorVehicle) {
+      return { allowed: true, certainMismatch: false, reason: "vehicle_match", candidateDriver, candidateVehicle };
+    }
+    return { allowed: false, certainMismatch: true, reason: "vehicle_mismatch", candidateDriver, candidateVehicle };
+  }
+  if (!candidateDriver && !candidateVehicle) {
+    return {
+      allowed: true,
+      certainMismatch: false,
+      reason: "ownership_unknown_allow_compat",
+      candidateDriver,
+      candidateVehicle,
+    };
+  }
+  return {
+    allowed: false,
+    certainMismatch: false,
+    reason: "insufficient_actor_fields",
+    candidateDriver,
+    candidateVehicle,
+  };
+}
+
+function _logTrackingOwnershipCheck({
+  target,
+  targetId,
+  actor,
+  ownerDriverId,
+  ownerVehicleId,
+  allowed,
+  reason,
+}) {
+  console.log(
+    `[TRACKING_OWNERSHIP][CHECK] target=${target} id=${targetId} actor_role=${actor.actor_role || "-"} actor_driver=${actor.actor_driver_id || "-"} actor_vehicle=${actor.actor_vehicle_id || "-"} owner_driver=${ownerDriverId || "-"} owner_vehicle=${ownerVehicleId || "-"} allowed=${allowed} reason=${reason || "-"}`,
+  );
+}
+
+function _logTrackingOwnershipBlock({
+  target,
+  targetId,
+  actor,
+  ownerDriverId,
+  ownerVehicleId,
+  error,
+}) {
+  console.log(
+    `[TRACKING_OWNERSHIP][BLOCK] target=${target} id=${targetId} actor_role=${actor.actor_role || "-"} actor_driver=${actor.actor_driver_id || "-"} actor_vehicle=${actor.actor_vehicle_id || "-"} owner_driver=${ownerDriverId || "-"} owner_vehicle=${ownerVehicleId || "-"} error=${error}`,
+  );
+}
+
+async function _driverVehicleOwnershipBestEffort(env, { tenant_id, driver_id, vehicle_id }) {
+  const tenantId = _trackingOwnershipValue(tenant_id);
+  const driverId = _trackingOwnershipValue(driver_id);
+  const vehicleId = _trackingOwnershipValue(vehicle_id);
+  if (!tenantId || !driverId || !vehicleId) {
+    return { allowed: false, certainMismatch: true, reason: "missing_driver_or_vehicle" };
+  }
+  const mapKey = `owner_vehicle:${tenantId}:${vehicleId}`;
+  const knownDriverId = _trackingOwnershipValue(await env.FLUXIDI_TRACKING.get(mapKey));
+  if (!knownDriverId) {
+    return { allowed: true, certainMismatch: false, reason: "no_vehicle_owner_known" };
+  }
+  if (knownDriverId === driverId) {
+    return { allowed: true, certainMismatch: false, reason: "vehicle_owner_match" };
+  }
+  return { allowed: false, certainMismatch: true, reason: "vehicle_owner_mismatch" };
+}
+
+async function _rememberVehicleOwnerBestEffort(env, { tenant_id, driver_id, vehicle_id }) {
+  const tenantId = _trackingOwnershipValue(tenant_id);
+  const driverId = _trackingOwnershipValue(driver_id);
+  const vehicleId = _trackingOwnershipValue(vehicle_id);
+  if (!tenantId || !driverId || !vehicleId) return;
+  const mapKey = `owner_vehicle:${tenantId}:${vehicleId}`;
+  await env.FLUXIDI_TRACKING.put(mapKey, driverId, { expirationTtl: TTL_TRIP });
+}
+
+async function _assertTripOwnedByActorOrBlock({
+  trip,
+  trip_id,
+  actor,
+  error,
+  origin,
+}) {
+  if (actor.actor_role !== "driver") return null;
+  const ownerDriverId = _trackingOwnershipValue(trip?.owner_driver_id ?? trip?.driver_id);
+  const ownerVehicleId = _trackingOwnershipValue(trip?.owner_vehicle_id ?? trip?.vehicle_id);
+  const check = _trackingOwnershipAllowed({
+    actorDriverId: actor.actor_driver_id,
+    actorVehicleId: actor.actor_vehicle_id,
+    ownerDriverId,
+    ownerVehicleId,
+    fallbackDriverId: _trackingOwnershipValue(trip?.driver_id),
+    fallbackVehicleId: _trackingOwnershipValue(trip?.vehicle_id),
+  });
+  _logTrackingOwnershipCheck({
+    target: "trip",
+    targetId: _trackingOwnershipValue(trip_id) || "unknown",
+    actor,
+    ownerDriverId: check.candidateDriver,
+    ownerVehicleId: check.candidateVehicle,
+    allowed: check.allowed,
+    reason: check.reason,
+  });
+  if (check.allowed) return null;
+  if (!check.certainMismatch) return null;
+  _logTrackingOwnershipBlock({
+    target: "trip",
+    targetId: _trackingOwnershipValue(trip_id) || "unknown",
+    actor,
+    ownerDriverId: check.candidateDriver,
+    ownerVehicleId: check.candidateVehicle,
+    error,
+  });
+  return withCors(json(_trackingOwnershipError(error), { status: 403 }), origin);
+}
+
+async function _assertSessionOwnedByActorOrBlock({
+  session,
+  session_id,
+  actor,
+  error,
+  origin,
+}) {
+  if (actor.actor_role !== "driver") return null;
+  const ownerDriverId = _trackingOwnershipValue(session?.owner_driver_id ?? session?.driver_id);
+  const ownerVehicleId = _trackingOwnershipValue(session?.owner_vehicle_id ?? session?.vehicle_id);
+  const check = _trackingOwnershipAllowed({
+    actorDriverId: actor.actor_driver_id,
+    actorVehicleId: actor.actor_vehicle_id,
+    ownerDriverId,
+    ownerVehicleId,
+    fallbackDriverId: _trackingOwnershipValue(session?.driver_id),
+    fallbackVehicleId: _trackingOwnershipValue(session?.vehicle_id),
+  });
+  _logTrackingOwnershipCheck({
+    target: "session",
+    targetId: _trackingOwnershipValue(session_id) || "unknown",
+    actor,
+    ownerDriverId: check.candidateDriver,
+    ownerVehicleId: check.candidateVehicle,
+    allowed: check.allowed,
+    reason: check.reason,
+  });
+  if (check.allowed) return null;
+  if (!check.certainMismatch) return null;
+  _logTrackingOwnershipBlock({
+    target: "session",
+    targetId: _trackingOwnershipValue(session_id) || "unknown",
+    actor,
+    ownerDriverId: check.candidateDriver,
+    ownerVehicleId: check.candidateVehicle,
+    error,
+  });
+  return withCors(json(_trackingOwnershipError(error), { status: 403 }), origin);
+}
+
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
 const TRACKING_FALLBACK_TENANT_ID = "fluxidi";
 
@@ -904,11 +1147,84 @@ async function handleStartDirectTrip(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"] ?? "fluxidi", 96) ?? "fluxidi";
   const driver_id = safeStr(body["driver_id"], 96);
   if (!driver_id) throw new Error("driver_id is required");
 
   const vehicle_id = safeStr(body["vehicle_id"], 96) ?? null;
+  const owner_company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+  if (actor.actor_role === "driver") {
+    if (!actor.actor_driver_id) {
+      _logTrackingOwnershipBlock({
+        target: "trip_start_direct",
+        targetId: "new",
+        actor,
+        ownerDriverId: driver_id,
+        ownerVehicleId: vehicle_id,
+        error: "trip_not_assigned_to_driver",
+      });
+      return withCors(json(_trackingOwnershipError("trip_not_assigned_to_driver"), { status: 403 }), origin);
+    }
+    if (!vehicle_id) {
+      _logTrackingOwnershipBlock({
+        target: "trip_start_direct",
+        targetId: "new",
+        actor,
+        ownerDriverId: driver_id,
+        ownerVehicleId: vehicle_id,
+        error: "trip_not_assigned_to_driver",
+      });
+      return withCors(json(_trackingOwnershipError("trip_not_assigned_to_driver"), { status: 403 }), origin);
+    }
+    if (actor.actor_driver_id !== driver_id) {
+      _logTrackingOwnershipBlock({
+        target: "trip_start_direct",
+        targetId: "new",
+        actor,
+        ownerDriverId: driver_id,
+        ownerVehicleId: vehicle_id,
+        error: "trip_not_assigned_to_driver",
+      });
+      return withCors(json(_trackingOwnershipError("trip_not_assigned_to_driver"), { status: 403 }), origin);
+    }
+    if (actor.actor_vehicle_id && actor.actor_vehicle_id !== vehicle_id) {
+      _logTrackingOwnershipBlock({
+        target: "trip_start_direct",
+        targetId: "new",
+        actor,
+        ownerDriverId: driver_id,
+        ownerVehicleId: vehicle_id,
+        error: "trip_not_assigned_to_driver",
+      });
+      return withCors(json(_trackingOwnershipError("trip_not_assigned_to_driver"), { status: 403 }), origin);
+    }
+    const vehicleOwnership = await _driverVehicleOwnershipBestEffort(env, {
+      tenant_id,
+      driver_id: actor.actor_driver_id,
+      vehicle_id,
+    });
+    _logTrackingOwnershipCheck({
+      target: "trip_start_direct_vehicle",
+      targetId: vehicle_id,
+      actor,
+      ownerDriverId: actor.actor_driver_id,
+      ownerVehicleId: vehicle_id,
+      allowed: vehicleOwnership.allowed,
+      reason: vehicleOwnership.reason,
+    });
+    if (!vehicleOwnership.allowed && vehicleOwnership.certainMismatch) {
+      _logTrackingOwnershipBlock({
+        target: "trip_start_direct_vehicle",
+        targetId: vehicle_id,
+        actor,
+        ownerDriverId: actor.actor_driver_id,
+        ownerVehicleId: vehicle_id,
+        error: "trip_not_assigned_to_driver",
+      });
+      return withCors(json(_trackingOwnershipError("trip_not_assigned_to_driver"), { status: 403 }), origin);
+    }
+  }
   const originData = normalizeDestination(body["origin"]);
   const destination = normalizeDestination(body["destination"]);
   const pricing_snapshot = normalizePricingSnapshot(body["pricing_snapshot"]);
@@ -940,9 +1256,20 @@ async function handleStartDirectTrip(req, url, env, origin) {
     km_total: null,
     wait_seconds_total: 0,
     total_eur: null,
+    owner_driver_id: actor.actor_role === "driver" ? actor.actor_driver_id : driver_id,
+    owner_vehicle_id: actor.actor_role === "driver" ? (actor.actor_vehicle_id ?? vehicle_id) : vehicle_id,
+    owner_tenant_id: tenant_id,
+    owner_company_id,
   };
 
   await kvPutJson(env.FLUXIDI_TRACKING, tripKey(trip_id), trip, TTL_TRIP);
+  if (actor.actor_role === "driver") {
+    await _rememberVehicleOwnerBestEffort(env, {
+      tenant_id,
+      driver_id: actor.actor_driver_id,
+      vehicle_id,
+    });
+  }
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}`, trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}:${driver_id}`, trip_id, 200);
 
@@ -969,6 +1296,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const booking_id = safeStr(body["booking_id"], 96);
   if (!booking_id) throw new Error("booking_id is required");
 
@@ -987,6 +1315,19 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const total_eur = safeNum(body["total_eur"], 0, 1000000);
   const currency = safeStr(body["currency"] ?? "EUR", 8) ?? "EUR";
   const trip_id = `planned_${booking_id}`;
+  const owner_company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+
+  const existingTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(trip_id));
+  if (existingTrip) {
+    const ownershipBlock = await _assertTripOwnedByActorOrBlock({
+      trip: existingTrip,
+      trip_id,
+      actor,
+      error: "trip_not_assigned_to_driver",
+      origin,
+    });
+    if (ownershipBlock) return ownershipBlock;
+  }
 
   const trip = {
     trip_id,
@@ -1018,9 +1359,21 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     wait_seconds_total,
     total_eur,
     currency,
+    owner_driver_id: actor.actor_role === "driver" ? actor.actor_driver_id : driver_id,
+    owner_vehicle_id: actor.actor_role === "driver" ? (actor.actor_vehicle_id ?? vehicle_id) : vehicle_id,
+    owner_tenant_id: tenant_id,
+    owner_company_id,
+    owner_booking_id: booking_id,
   };
 
   await kvPutJson(env.FLUXIDI_TRACKING, tripKey(trip_id), trip, TTL_TRIP);
+  if (actor.actor_role === "driver") {
+    await _rememberVehicleOwnerBestEffort(env, {
+      tenant_id,
+      driver_id: actor.actor_driver_id ?? driver_id,
+      vehicle_id: actor.actor_vehicle_id ?? vehicle_id,
+    });
+  }
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}`, trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}:${driver_id}`, trip_id, 200);
 
@@ -1158,12 +1511,21 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
   const key = tripKey(trip_id);
   const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
   if (!trip) throw new Error("Unknown trip_id");
+  const ownershipBlock = await _assertTripOwnedByActorOrBlock({
+    trip,
+    trip_id,
+    actor,
+    error: "trip_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
   if (trip.status !== "active") throw new Error("Trip is not active");
 
   const km_total = safeNum(body["km_total"], 0, 100000);
@@ -1222,12 +1584,21 @@ async function handleTripPayment(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
   const key = tripKey(trip_id);
   const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
   if (!trip) throw new Error("Unknown trip_id");
+  const ownershipBlock = await _assertTripOwnedByActorOrBlock({
+    trip,
+    trip_id,
+    actor,
+    error: "trip_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
 
   const rawStatus = String(body["payment_status"] ?? body["paymentStatus"] ?? "")
     .trim()
@@ -1343,11 +1714,95 @@ async function handleStart(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const booking_id = safeStr(body["booking_id"], 64);
   if (!booking_id) throw new Error("booking_id is required");
 
   const pickup = safeStr(body["pickup"], 200) ?? null;
   const dropoff = safeStr(body["dropoff"], 200) ?? null;
+  const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"], 96) ?? null;
+  const company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+  const owner_driver_id = safeStr(body["driver_id"], 96) ?? actor.actor_driver_id ?? null;
+  const owner_vehicle_id = safeStr(body["vehicle_id"], 96) ?? actor.actor_vehicle_id ?? null;
+
+  if (actor.actor_role === "driver" && !actor.actor_driver_id) {
+    _logTrackingOwnershipBlock({
+      target: "session_start",
+      targetId: booking_id,
+      actor,
+      ownerDriverId: owner_driver_id,
+      ownerVehicleId: owner_vehicle_id,
+      error: "booking_not_assigned_to_driver",
+    });
+    return withCors(json(_trackingOwnershipError("booking_not_assigned_to_driver"), { status: 403 }), origin);
+  }
+  if (actor.actor_role === "driver") {
+    const existingBookingMap = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
+    if (existingBookingMap) {
+      const existingSession = existingBookingMap.session_id
+        ? await kvGetJson(env.FLUXIDI_TRACKING, `session:${existingBookingMap.session_id}`)
+        : null;
+      const ownerCheck = _trackingOwnershipAllowed({
+        actorDriverId: actor.actor_driver_id,
+        actorVehicleId: actor.actor_vehicle_id,
+        ownerDriverId:
+          existingBookingMap.owner_driver_id ??
+          existingSession?.owner_driver_id ??
+          existingSession?.driver_id,
+        ownerVehicleId:
+          existingBookingMap.owner_vehicle_id ??
+          existingSession?.owner_vehicle_id ??
+          existingSession?.vehicle_id,
+      });
+      _logTrackingOwnershipCheck({
+        target: "session_start_booking",
+        targetId: booking_id,
+        actor,
+        ownerDriverId: ownerCheck.candidateDriver,
+        ownerVehicleId: ownerCheck.candidateVehicle,
+        allowed: ownerCheck.allowed,
+        reason: ownerCheck.reason,
+      });
+      if (!ownerCheck.allowed && ownerCheck.certainMismatch) {
+        _logTrackingOwnershipBlock({
+          target: "session_start_booking",
+          targetId: booking_id,
+          actor,
+          ownerDriverId: ownerCheck.candidateDriver,
+          ownerVehicleId: ownerCheck.candidateVehicle,
+          error: "booking_not_assigned_to_driver",
+        });
+        return withCors(json(_trackingOwnershipError("booking_not_assigned_to_driver"), { status: 403 }), origin);
+      }
+    }
+    if (actor.actor_vehicle_id) {
+      const vehicleOwnership = await _driverVehicleOwnershipBestEffort(env, {
+        tenant_id: tenant_id ?? company_id ?? TRACKING_FALLBACK_TENANT_ID,
+        driver_id: actor.actor_driver_id,
+        vehicle_id: actor.actor_vehicle_id,
+      });
+      _logTrackingOwnershipCheck({
+        target: "session_start_vehicle",
+        targetId: actor.actor_vehicle_id,
+        actor,
+        ownerDriverId: actor.actor_driver_id,
+        ownerVehicleId: actor.actor_vehicle_id,
+        allowed: vehicleOwnership.allowed,
+        reason: vehicleOwnership.reason,
+      });
+      if (!vehicleOwnership.allowed && vehicleOwnership.certainMismatch) {
+        _logTrackingOwnershipBlock({
+          target: "session_start_vehicle",
+          targetId: actor.actor_vehicle_id,
+          actor,
+          ownerDriverId: actor.actor_driver_id,
+          ownerVehicleId: actor.actor_vehicle_id,
+          error: "booking_not_assigned_to_driver",
+        });
+        return withCors(json(_trackingOwnershipError("booking_not_assigned_to_driver"), { status: 403 }), origin);
+      }
+    }
+  }
 
   const sessionId = `s_${booking_id}_${Date.now().toString(36)}_${Math.random()
     .toString(36)
@@ -1365,6 +1820,13 @@ async function handleStart(req, url, env, origin) {
     last_ping_at: null,
     points: [],
     public_token,
+    driver_id: owner_driver_id,
+    vehicle_id: owner_vehicle_id,
+    owner_driver_id: actor.actor_role === "driver" ? actor.actor_driver_id : owner_driver_id,
+    owner_vehicle_id: actor.actor_role === "driver" ? (actor.actor_vehicle_id ?? owner_vehicle_id) : owner_vehicle_id,
+    owner_booking_id: booking_id,
+    owner_tenant_id: tenant_id,
+    owner_company_id: company_id,
   };
 
   await kvPutJson(env.FLUXIDI_TRACKING, `session:${sessionId}`, session, TTL_SESSION);
@@ -1375,8 +1837,20 @@ async function handleStart(req, url, env, origin) {
     pickup,
     dropoff,
     public_token,
+    owner_driver_id: session.owner_driver_id ?? null,
+    owner_vehicle_id: session.owner_vehicle_id ?? null,
+    owner_booking_id: booking_id,
+    owner_tenant_id: session.owner_tenant_id ?? null,
+    owner_company_id: session.owner_company_id ?? null,
   };
   await kvPutJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`, bookingMap, TTL_SESSION);
+  if (actor.actor_role === "driver") {
+    await _rememberVehicleOwnerBestEffort(env, {
+      tenant_id: tenant_id ?? company_id ?? TRACKING_FALLBACK_TENANT_ID,
+      driver_id: actor.actor_driver_id,
+      vehicle_id: actor.actor_vehicle_id ?? owner_vehicle_id,
+    });
+  }
 
   await kvPutJson(
     env.FLUXIDI_TRACKING,
@@ -1399,6 +1873,7 @@ async function handlePing(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const session_id = safeStr(body["session_id"], 128);
   if (!session_id) throw new Error("session_id is required");
 
@@ -1412,6 +1887,14 @@ async function handlePing(req, url, env, origin) {
   const sessionKey = `session:${session_id}`;
   const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
   if (!session) throw new Error("Unknown session_id");
+  const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
+    session,
+    session_id,
+    actor,
+    error: "session_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
 
   if (session.status === "stopped") {
     return withCors(json({ ok: false, error: "Session stopped" }, { status: 409 }), origin);
@@ -1436,12 +1919,21 @@ async function handleStop(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const actor = resolveTrackingActorFromRequest(req, url, body);
   const session_id = safeStr(body["session_id"], 128);
   if (!session_id) throw new Error("session_id is required");
 
   const sessionKey = `session:${session_id}`;
   const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
   if (!session) throw new Error("Unknown session_id");
+  const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
+    session,
+    session_id,
+    actor,
+    error: "session_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
 
   session.status = "stopped";
   session.stopped_at = nowIso();

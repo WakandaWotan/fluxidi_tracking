@@ -10162,11 +10162,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         Navigator.of(context).pop();
       }
       final uri = Uri.parse('$kWorkerBaseUrl$kStartTripPath');
+      final actorVehicleId = _directRideVehicleId();
       final payload = {
         'booking_id': b.bookingId,
+        'driver_id': kDriverId,
+        'vehicle_id': actorVehicleId,
         // Optional context (helps debugging / future UI)
         'pickup': (b.from ?? '').toString(),
         'dropoff': (b.to ?? '').toString(),
+        ..._driverMutationActorFields(actorVehicleId: actorVehicleId),
       };
 
       final res = await http
@@ -11466,6 +11470,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'client_started_at': (_trackingStartedAt ?? DateTime.now())
             .toUtc()
             .toIso8601String(),
+        ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       };
       final res = await http
           .post(
@@ -11506,6 +11511,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'km_total': kmTotal,
         'wait_seconds_total': waitSecondsTotal,
         'client_stopped_at': DateTime.now().toUtc().toIso8601String(),
+        ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       };
       final res = await http
           .post(
@@ -11611,6 +11617,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           'payment_id': bookingDetails['payment_id'],
         if (bookingDetails['paymentId'] != null)
           'paymentId': bookingDetails['paymentId'],
+        ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       };
       final res = await http
           .post(
@@ -12092,7 +12099,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (trip != null) {
       try {
         final uri = Uri.parse('$kWorkerBaseUrl$kStopTripPath');
-        final payload = {'session_id': trip, 'driver_id': kDriverId};
+        final payload = <String, dynamic>{
+          'session_id': trip,
+          'driver_id': kDriverId,
+          ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
+        };
         final res = await http
             .post(
               uri,
@@ -12563,15 +12574,18 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     try {
       final uri = Uri.parse('$kWorkerBaseUrl$kPingPath');
+      final actorVehicleId = _directRideVehicleId();
       final payload = {
         'session_id': trip,
         'driver_id': kDriverId,
+        'vehicle_id': actorVehicleId,
         'lat': pos.latitude,
         'lon': pos.longitude,
         'speed': (pos.speed.isFinite ? (pos.speed * 3.6) : 0.0),
         'heading': (pos.heading.isFinite ? pos.heading : 0.0),
         'accuracy_m': pos.accuracy,
         'ts': DateTime.now().toIso8601String(),
+        ..._driverMutationActorFields(actorVehicleId: actorVehicleId),
       };
 
       final res = await http
