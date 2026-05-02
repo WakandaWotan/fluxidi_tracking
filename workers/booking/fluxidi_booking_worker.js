@@ -3756,7 +3756,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         assigned_vehicle_id: resolvedAssignedVehicleId,
         assigned_driver: resolvedAssignedDriver,
         calendar_event_id,
+        calendarEventId: calendar_event_id || null,
+        return_event_id: safeStr(calendar?.return_event_id || null),
+        returnEventId: safeStr(calendar?.return_event_id || null),
         htmlLink,
+        return_htmlLink: safeStr(calendar?.return_htmlLink || null),
+        returnHtmlLink: safeStr(calendar?.return_htmlLink || null),
         ...paymentFields,
       },
       quote: {
@@ -5186,16 +5191,29 @@ async function existingCalendarForBooking(env, bookingId) {
       rec.calendar_event_id ||
       rec.calendarEventId ||
       _pick(rec, ["calendar", "calendar_event_id"], null) ||
+      _pick(rec, ["calendar", "calendarEventId"], null) ||
       _pick(rec, ["booking", "calendar_event_id"], null);
     if (!eventId) return null;
     return {
       eventId,
-      htmlLink: rec.htmlLink || _pick(rec, ["calendar", "htmlLink"], null) || _pick(rec, ["booking", "htmlLink"], null),
+      htmlLink:
+        rec.htmlLink ||
+        _pick(rec, ["calendar", "htmlLink"], null) ||
+        _pick(rec, ["booking", "htmlLink"], null),
       returnEventId:
         rec.return_event_id ||
+        rec.returnEventId ||
         _pick(rec, ["calendar", "return_event_id"], null) ||
-        _pick(rec, ["booking", "return_event_id"], null),
-      returnHtmlLink: rec.return_htmlLink || _pick(rec, ["calendar", "return_htmlLink"], null),
+        _pick(rec, ["calendar", "returnEventId"], null) ||
+        _pick(rec, ["booking", "return_event_id"], null) ||
+        _pick(rec, ["booking", "returnEventId"], null),
+      returnHtmlLink:
+        rec.return_htmlLink ||
+        rec.returnHtmlLink ||
+        _pick(rec, ["calendar", "return_htmlLink"], null) ||
+        _pick(rec, ["calendar", "returnHtmlLink"], null) ||
+        _pick(rec, ["booking", "return_htmlLink"], null) ||
+        _pick(rec, ["booking", "returnHtmlLink"], null),
     };
   } catch (_) {
     return null;
@@ -6608,16 +6626,39 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
 }
 
 async function cleanupBookingCalendarEvents(env, rec) {
-  const booking = rec?.booking;
-  if (!booking || typeof booking !== "object") return;
+  const booking =
+    rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
+  const calendar =
+    rec?.calendar && typeof rec.calendar === "object" ? rec.calendar : null;
 
-  const events = [
-    { key: "calendar_event_id", eventId: safeStr(booking.calendar_event_id) },
-    { key: "return_event_id", eventId: safeStr(booking.return_event_id) },
-  ].filter((item) => !!item.eventId);
+  const mainEventId =
+    safeStr(rec?.calendar_event_id) ||
+    safeStr(rec?.calendarEventId) ||
+    safeStr(calendar?.calendar_event_id) ||
+    safeStr(calendar?.calendarEventId) ||
+    safeStr(booking?.calendar_event_id) ||
+    safeStr(booking?.calendarEventId);
+  const returnEventId =
+    safeStr(rec?.return_event_id) ||
+    safeStr(rec?.returnEventId) ||
+    safeStr(calendar?.return_event_id) ||
+    safeStr(calendar?.returnEventId) ||
+    safeStr(booking?.return_event_id) ||
+    safeStr(booking?.returnEventId);
+
+  const events = [];
+  if (mainEventId) {
+    events.push({ kind: "main", eventId: mainEventId });
+  }
+  if (returnEventId && returnEventId !== mainEventId) {
+    events.push({ kind: "return", eventId: returnEventId });
+  }
   if (!events.length) return;
 
-  booking.calendar_clear_attempted_at = new Date().toISOString();
+  const attemptedAt = new Date().toISOString();
+  if (booking) booking.calendar_clear_attempted_at = attemptedAt;
+  if (calendar) calendar.calendar_clear_attempted_at = attemptedAt;
+  rec.calendar_clear_attempted_at = attemptedAt;
 
   let accessToken = null;
   const calendarId = env?.GOOGLE_CALENDAR_ID || "primary";
@@ -6631,15 +6672,52 @@ async function cleanupBookingCalendarEvents(env, rec) {
   for (const item of events) {
     try {
       await googleDeleteEvent(accessToken, calendarId, item.eventId);
-      booking[item.key] = null;
+      if (item.kind === "main") {
+        rec.calendar_event_id = null;
+        rec.calendarEventId = null;
+        if (calendar) {
+          calendar.calendar_event_id = null;
+          calendar.calendarEventId = null;
+        }
+        if (booking) {
+          booking.calendar_event_id = null;
+          booking.calendarEventId = null;
+        }
+      } else {
+        rec.return_event_id = null;
+        rec.returnEventId = null;
+        if (calendar) {
+          calendar.return_event_id = null;
+          calendar.returnEventId = null;
+        }
+        if (booking) {
+          booking.return_event_id = null;
+          booking.returnEventId = null;
+        }
+      }
     } catch (_) {
       allCleared = false;
     }
   }
 
-  const remaining = safeStr(booking.calendar_event_id) || safeStr(booking.return_event_id);
+  const remaining =
+    safeStr(rec?.calendar_event_id) ||
+    safeStr(rec?.calendarEventId) ||
+    safeStr(rec?.return_event_id) ||
+    safeStr(rec?.returnEventId) ||
+    safeStr(calendar?.calendar_event_id) ||
+    safeStr(calendar?.calendarEventId) ||
+    safeStr(calendar?.return_event_id) ||
+    safeStr(calendar?.returnEventId) ||
+    safeStr(booking?.calendar_event_id) ||
+    safeStr(booking?.calendarEventId) ||
+    safeStr(booking?.return_event_id) ||
+    safeStr(booking?.returnEventId);
   if (allCleared && !remaining) {
-    booking.calendar_cleared_at = new Date().toISOString();
+    const clearedAt = new Date().toISOString();
+    if (booking) booking.calendar_cleared_at = clearedAt;
+    if (calendar) calendar.calendar_cleared_at = clearedAt;
+    rec.calendar_cleared_at = clearedAt;
   }
 }
 
