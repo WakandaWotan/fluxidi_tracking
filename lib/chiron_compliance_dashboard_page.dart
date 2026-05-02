@@ -120,7 +120,7 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             title: _t(
               nl: 'Lokaal rittenregister',
               en: 'Local ride register',
-              fr: 'Registre local des courses',
+              fr: 'Registre local des trajets',
               es: 'Registro local de viajes',
             ),
             subtitle: _t(
@@ -1340,7 +1340,7 @@ class _ChironLocalLedgerPage extends StatelessWidget {
           _t(
             nl: 'Lokaal rittenregister',
             en: 'Local ride register',
-            fr: 'Registre local des courses',
+            fr: 'Registre local des trajets',
             es: 'Registro local de viajes',
           ),
         ),
@@ -1352,7 +1352,7 @@ class _ChironLocalLedgerPage extends StatelessWidget {
             title: _t(
               nl: 'Lokaal rittenregister',
               en: 'Local ride register',
-              fr: 'Registre local des courses',
+              fr: 'Registre local des trajets',
               es: 'Registro local de viajes',
             ),
             subtitle: _t(
@@ -2618,27 +2618,25 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'direct':
         return _t(
-          nl: 'Straatrit',
-          en: 'Direct ride',
-          fr: 'Course directe',
-          es: 'Viaje directo',
+          nl: 'straatrit',
+          en: 'street ride',
+          fr: 'course directe',
+          es: 'viaje directo',
         );
       case 'planned':
         return _t(
-          nl: 'Geplande rit',
-          en: 'Planned ride',
-          fr: 'Course planifiée',
-          es: 'Viaje planificado',
+          nl: 'geplande rit',
+          en: 'planned ride',
+          fr: 'trajet planifié',
+          es: 'viaje planificado',
         );
       default:
-        return raw.trim().isEmpty
-            ? _t(
-                nl: 'Onbekende rit',
-                en: 'Unknown ride',
-                fr: 'Course inconnue',
-                es: 'Viaje desconocido',
-              )
-            : raw.trim();
+        return _t(
+          nl: 'geplande rit',
+          en: 'planned ride',
+          fr: 'trajet planifié',
+          es: 'viaje planificado',
+        );
     }
   }
 
@@ -2823,6 +2821,15 @@ class _LocalComplianceLedgerSectionState
     );
   }
 
+  String _paymentUpdatedLaterLabel() {
+    return _t(
+      nl: 'Betaling later bijgewerkt',
+      en: 'Payment updated later',
+      fr: 'Paiement mis à jour plus tard',
+      es: 'Pago actualizado más tarde',
+    );
+  }
+
   String _receiptLabel() {
     return _t(nl: 'Bon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
   }
@@ -2842,31 +2849,87 @@ class _LocalComplianceLedgerSectionState
     );
   }
 
+  String _eventTypeLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'ride_stop':
+        return _t(
+          nl: 'Rit afgerond',
+          en: 'Ride completed',
+          fr: 'Trajet terminé',
+          es: 'Trayecto finalizado',
+        );
+      case 'payment_update':
+        return _t(
+          nl: 'Betalingsupdate',
+          en: 'Payment update',
+          fr: 'Mise à jour du paiement',
+          es: 'Actualización de pago',
+        );
+      default:
+        return _t(
+          nl: 'Gebeurtenis',
+          en: 'Event',
+          fr: 'Événement',
+          es: 'Evento',
+        );
+    }
+  }
+
+  String _driverLabel() {
+    return _t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor');
+  }
+
+  String _vehicleLabel() {
+    return _t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo');
+  }
+
+  String _driverNotLinkedLabel() {
+    return _t(
+      nl: 'Chauffeur niet gekoppeld',
+      en: 'Driver not linked',
+      fr: 'Chauffeur non lié',
+      es: 'Conductor no vinculado',
+    );
+  }
+
+  String _vehicleNotLinkedLabel() {
+    return _t(
+      nl: 'Voertuig niet gekoppeld',
+      en: 'Vehicle not linked',
+      fr: 'Véhicule non lié',
+      es: 'Vehículo no vinculado',
+    );
+  }
+
+  String _amountLabel() {
+    return _t(nl: 'Bedrag', en: 'Amount', fr: 'Montant', es: 'Importe');
+  }
+
+  String _auditHistoryLabel() {
+    return _t(
+      nl: 'Auditgeschiedenis',
+      en: 'Audit history',
+      fr: 'Historique d’audit',
+      es: 'Historial de auditoría',
+    );
+  }
+
   String? _ledgerKeyPart(String prefix, String value) {
     final normalized = value.trim();
     if (normalized.isEmpty || normalized == '—') return null;
     return '$prefix:${normalized.toLowerCase()}';
   }
 
-  List<String> _ledgerMatchKeys(
-    ComplianceLedgerEntry e, {
-    bool includeFallback = false,
-  }) {
-    final keys = <String>[
-      if (_ledgerKeyPart('booking', e.bookingId) != null)
-        _ledgerKeyPart('booking', e.bookingId)!,
-      if (_ledgerKeyPart('trip', e.tripId) != null)
-        _ledgerKeyPart('trip', e.tripId)!,
-      if (_ledgerKeyPart('receipt', e.receiptReference) != null)
-        _ledgerKeyPart('receipt', e.receiptReference)!,
-    ];
-    if (keys.isEmpty && includeFallback) {
-      final fallback =
-          _ledgerKeyPart('ride', e.rideId) ??
-          _ledgerKeyPart('event', e.eventId);
-      if (fallback != null) keys.add(fallback);
-    }
-    return keys;
+  String _ledgerGroupKey(ComplianceLedgerEntry e, int index) {
+    final booking = _ledgerKeyPart('booking', e.bookingId);
+    if (booking != null) return booking;
+    final trip = _ledgerKeyPart('trip', e.tripId);
+    if (trip != null) return trip;
+    final receipt = _ledgerKeyPart('receipt', e.receiptReference);
+    if (receipt != null) return receipt;
+    final event = _ledgerKeyPart('event', e.eventId);
+    if (event != null) return event;
+    return 'event:index_$index';
   }
 
   DateTime? _ledgerSortTime(ComplianceLedgerEntry e) {
@@ -2890,73 +2953,265 @@ class _LocalComplianceLedgerSectionState
     return candidate.sourceLineIndex > existing.sourceLineIndex;
   }
 
-  Map<String, ComplianceLedgerEntry> _latestPaymentUpdatesByKey(
+  List<List<ComplianceLedgerEntry>> _groupedLedgerEntries(
     List<ComplianceLedgerEntry> entries,
   ) {
-    final latest = <String, ComplianceLedgerEntry>{};
+    final grouped = <String, List<ComplianceLedgerEntry>>{};
+    for (final indexed in entries.asMap().entries) {
+      final entry = indexed.value;
+      final key = _ledgerGroupKey(entry, indexed.key);
+      grouped.putIfAbsent(key, () => <ComplianceLedgerEntry>[]).add(entry);
+    }
+    final groups = grouped.values.toList(growable: false);
+    groups.sort((a, b) {
+      final newestA = _newestLedgerEntry(a);
+      final newestB = _newestLedgerEntry(b);
+      return _compareLedgerEntries(newestB, newestA);
+    });
+    return groups;
+  }
+
+  int _compareLedgerEntries(ComplianceLedgerEntry a, ComplianceLedgerEntry b) {
+    final at = _ledgerSortTime(a);
+    final bt = _ledgerSortTime(b);
+    if (at != null && bt != null) return at.compareTo(bt);
+    if (at != null) return 1;
+    if (bt != null) return -1;
+    return a.sourceLineIndex.compareTo(b.sourceLineIndex);
+  }
+
+  ComplianceLedgerEntry _newestLedgerEntry(
+    List<ComplianceLedgerEntry> entries,
+  ) {
+    final sorted = [...entries]..sort(_compareLedgerEntries);
+    return sorted.isEmpty ? entries.first : sorted.last;
+  }
+
+  ComplianceLedgerEntry _summaryLedgerEntry(
+    List<ComplianceLedgerEntry> entries,
+  ) {
+    final sorted = [...entries]..sort(_compareLedgerEntries);
+    for (final entry in sorted.reversed) {
+      if (!entry.isPaymentUpdate) return entry;
+    }
+    return sorted.last;
+  }
+
+  ComplianceLedgerEntry? _latestPaymentUpdateInGroup(
+    List<ComplianceLedgerEntry> entries,
+  ) {
+    ComplianceLedgerEntry? latest;
     for (final entry in entries.where((e) => e.isPaymentUpdate)) {
-      for (final key in _ledgerMatchKeys(entry, includeFallback: true)) {
-        final existing = latest[key];
-        if (existing == null || _isNewerLedgerEntry(entry, existing)) {
-          latest[key] = entry;
-        }
+      if (latest == null || _isNewerLedgerEntry(entry, latest)) {
+        latest = entry;
       }
     }
     return latest;
   }
 
-  ComplianceLedgerEntry? _effectivePaymentUpdateFor(
-    ComplianceLedgerEntry e,
-    Map<String, ComplianceLedgerEntry> latestPaymentUpdates,
-  ) {
-    ComplianceLedgerEntry? best;
-    for (final key in _ledgerMatchKeys(e)) {
-      final update = latestPaymentUpdates[key];
-      if (update == null) continue;
-      if (best == null || _isNewerLedgerEntry(update, best)) {
-        best = update;
-      }
+  String? _rawPathText(Map<String, dynamic> root, List<String> path) {
+    dynamic cursor = root;
+    for (final part in path) {
+      if (cursor is! Map) return null;
+      cursor = cursor[part];
     }
-    return best;
+    final text = (cursor ?? '').toString().trim();
+    return text.isEmpty ? null : text;
   }
 
-  Widget _recordTile(
-    ComplianceLedgerEntry e,
-    Map<String, ComplianceLedgerEntry> latestPaymentUpdates,
-  ) {
-    final effectivePaymentUpdate = e.isPaymentUpdate
-        ? null
-        : _effectivePaymentUpdateFor(e, latestPaymentUpdates);
-    final effectivePayment = effectivePaymentUpdate ?? e;
-    final reference = e.receiptReference.trim().isNotEmpty
-        ? '${_receiptLabel()} ${e.receiptReference.trim()}'
-        : (e.bookingId.trim().isNotEmpty
-              ? e.bookingId.trim()
-              : (e.tripId.trim().isNotEmpty
-                    ? e.tripId.trim()
-                    : (e.rideId.trim().isNotEmpty ? e.rideId.trim() : '—')));
-    final pickup = e.pickupLabel.trim();
-    final dropoff = e.dropoffLabel.trim();
-    final route = pickup.isNotEmpty && dropoff.isNotEmpty
-        ? '$pickup → $dropoff'
-        : (pickup.isNotEmpty ? pickup : (dropoff.isNotEmpty ? dropoff : '—'));
-    final distance = e.distanceKm == null
-        ? null
-        : '${e.distanceKm!.toStringAsFixed(2)} km';
-    final fare = e.fareTotalEur == null
-        ? null
-        : '€ ${e.fareTotalEur!.toStringAsFixed(2)}${e.currency.trim().isNotEmpty ? ' ${e.currency.trim()}' : ''}';
-    final started = _fmtDateTime(e.startedAtUtc);
-    final finalized = _fmtDateTime(e.finalizedAtUtc ?? e.createdAtUtc);
-    final title = e.isPaymentUpdate
-        ? 'AUDIT • ${_paymentUpdatedLabel()} • $reference'
-        : '${_rideTypeLabel(e.rideType)} • $reference';
+  String _driverDisplay(ComplianceLedgerEntry entry) {
+    final candidates = <String?>[
+      _rawPathText(entry.raw, const ['driver', 'name']),
+      _rawPathText(entry.raw, const ['driver', 'display_name']),
+      _rawPathText(entry.raw, const ['driver', 'displayName']),
+      _rawPathText(entry.raw, const ['assigned_driver', 'name']),
+      _rawPathText(entry.raw, const ['assignedDriver', 'name']),
+      _rawPathText(entry.raw, const ['driver_profile', 'name']),
+      _rawPathText(entry.raw, const ['driverProfile', 'name']),
+      _rawPathText(entry.raw, const ['driver_name']),
+      _rawPathText(entry.raw, const ['driverName']),
+      _rawPathText(entry.raw, const ['chauffeur_name']),
+      _rawPathText(entry.raw, const ['chauffeurName']),
+      _rawPathText(entry.raw, const ['driver_label']),
+      _rawPathText(entry.raw, const ['driverLabel']),
+      entry.driverId.trim().isEmpty ? null : entry.driverId.trim(),
+    ];
+    for (final value in candidates) {
+      if (value != null && value.trim().isNotEmpty) return value.trim();
+    }
+    return _driverNotLinkedLabel();
+  }
+
+  String _driverDisplayForGroup(List<ComplianceLedgerEntry> group) {
+    final sorted = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+    for (final entry in sorted) {
+      final value = _driverDisplay(entry);
+      if (value != _driverNotLinkedLabel()) return value;
+    }
+    return _driverNotLinkedLabel();
+  }
+
+  String _vehicleDisplay(ComplianceLedgerEntry entry) {
+    final candidates = <String?>[
+      _rawPathText(entry.raw, const ['vehicle', 'label']),
+      _rawPathText(entry.raw, const ['vehicle', 'name']),
+      _rawPathText(entry.raw, const ['vehicle', 'display_label']),
+      _rawPathText(entry.raw, const ['vehicle', 'displayLabel']),
+      _rawPathText(entry.raw, const ['vehicle', 'license_plate']),
+      _rawPathText(entry.raw, const ['vehicle', 'licensePlate']),
+      _rawPathText(entry.raw, const ['vehicle', 'registration_number']),
+      _rawPathText(entry.raw, const ['vehicle', 'registrationNumber']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'label']),
+      _rawPathText(entry.raw, const ['assignedVehicle', 'label']),
+      _rawPathText(entry.raw, const ['vehicle_registration_number']),
+      _rawPathText(entry.raw, const ['vehicleRegistrationNumber']),
+      _rawPathText(entry.raw, const ['license_plate']),
+      _rawPathText(entry.raw, const ['licensePlate']),
+      _rawPathText(entry.raw, const ['registration_number']),
+      _rawPathText(entry.raw, const ['registrationNumber']),
+      _rawPathText(entry.raw, const ['vehicle_name']),
+      _rawPathText(entry.raw, const ['vehicleName']),
+      entry.vehicleId.trim().isEmpty ? null : entry.vehicleId.trim(),
+    ];
+    for (final value in candidates) {
+      if (value != null && value.trim().isNotEmpty) return value.trim();
+    }
+    return _vehicleNotLinkedLabel();
+  }
+
+  String _vehicleDisplayForGroup(List<ComplianceLedgerEntry> group) {
+    final sorted = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+    for (final entry in sorted) {
+      final value = _vehicleDisplay(entry);
+      if (value != _vehicleNotLinkedLabel()) return value;
+    }
+    return _vehicleNotLinkedLabel();
+  }
+
+  String _routeDisplay(ComplianceLedgerEntry entry) {
+    final pickup = entry.pickupLabel.trim();
+    final dropoff = entry.dropoffLabel.trim();
+    if (pickup.isNotEmpty && dropoff.isNotEmpty) return '$pickup → $dropoff';
+    if (pickup.isNotEmpty) return pickup;
+    if (dropoff.isNotEmpty) return dropoff;
+    return '—';
+  }
+
+  String _referenceDisplay(ComplianceLedgerEntry entry) {
+    if (entry.receiptReference.trim().isNotEmpty) {
+      return '${_receiptLabel()} ${entry.receiptReference.trim()}';
+    }
+    if (entry.bookingId.trim().isNotEmpty) return entry.bookingId.trim();
+    if (entry.tripId.trim().isNotEmpty) return entry.tripId.trim();
+    if (entry.rideId.trim().isNotEmpty) return entry.rideId.trim();
+    if (entry.eventId.trim().isNotEmpty) return entry.eventId.trim();
+    return '—';
+  }
+
+  String? _fareDisplay(ComplianceLedgerEntry entry) {
+    if (entry.fareTotalEur == null) return null;
+    final currency = entry.currency.trim().isEmpty
+        ? 'EUR'
+        : entry.currency.trim();
+    return '€ ${entry.fareTotalEur!.toStringAsFixed(2)} $currency';
+  }
+
+  Widget _auditEventRow(
+    ComplianceLedgerEntry entry, {
+    required ComplianceLedgerEntry? latestPaymentUpdate,
+  }) {
+    final eventTime = _fmtDateTime(_ledgerSortTime(entry));
+    final hasLaterPaymentUpdate =
+        !entry.isPaymentUpdate &&
+        latestPaymentUpdate != null &&
+        _isNewerLedgerEntry(latestPaymentUpdate, entry);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: e.isPaymentUpdate ? Colors.black12 : Colors.black26,
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_eventTypeLabel(entry.eventType)} • ${_rideTypeLabel(entry.rideType)}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            eventTime,
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _chip(
+                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(entry.validationState)}',
+              ),
+              _chip(_backendChipLabel(entry.backendConfirmed)),
+              if (hasLaterPaymentUpdate) _chip(_paymentUpdatedLaterLabel()),
+              if (!hasLaterPaymentUpdate) ...[
+                if (entry.paymentStatus.trim().isNotEmpty)
+                  _chip(
+                    '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_paymentStatusLabel(entry.paymentStatus)}',
+                  ),
+                if (entry.paymentMethod.trim().isNotEmpty &&
+                    _ledgerToken(entry.paymentMethod) != 'unknown')
+                  _chip(
+                    '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_paymentMethodLabel(entry.paymentMethod)}',
+                  ),
+                if (entry.paymentSource.trim().isNotEmpty &&
+                    _ledgerToken(entry.paymentSource) != 'unknown')
+                  _chip(
+                    '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(entry.paymentSource)}',
+                  ),
+                if (entry.paymentProvider.trim().isNotEmpty &&
+                    _ledgerToken(entry.paymentProvider) != 'unknown')
+                  _chip(
+                    '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_paymentProviderLabel(entry.paymentProvider)}',
+                  ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _groupCard(List<ComplianceLedgerEntry> group) {
+    final newest = _newestLedgerEntry(group);
+    final summary = _summaryLedgerEntry(group);
+    final latestPaymentUpdate = _latestPaymentUpdateInGroup(group);
+    final effectivePayment = latestPaymentUpdate ?? summary;
+    final title =
+        '${_rideTypeLabel(summary.rideType)} • ${_referenceDisplay(summary)}';
+    final route = _routeDisplay(summary);
+    final rideTime = _fmtDateTime(_ledgerSortTime(summary));
+    final latestTime = _fmtDateTime(_ledgerSortTime(newest));
+    final paymentUpdatedTime = latestPaymentUpdate == null
+        ? null
+        : _fmtDateTime(
+            latestPaymentUpdate.paidAtUtc ??
+                _ledgerSortTime(latestPaymentUpdate),
+          );
+    final fare = _fareDisplay(effectivePayment) ?? _fareDisplay(summary);
+    final sortedAudit = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0x1AFFFFFF),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0x22FFFFFF)),
       ),
       child: Column(
@@ -2967,60 +3222,105 @@ class _LocalComplianceLedgerSectionState
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w700,
-              fontSize: 12,
+              fontSize: 13,
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
           Text(
-            e.isPaymentUpdate ? finalized : '$started  →  $finalized',
+            '${_t(nl: 'Laatste event', en: 'Latest event', fr: 'Dernier événement', es: 'Último evento')}: $latestTime',
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          Text(
+            '${_t(nl: 'Ritmoment', en: 'Ride time', fr: 'Heure du trajet', es: 'Hora del viaje')}: $rideTime',
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
           const SizedBox(height: 6),
+          Text(
+            route,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${_driverLabel()}: ${_driverDisplayForGroup(group)}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          Text(
+            '${_vehicleLabel()}: ${_vehicleDisplayForGroup(group)}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          if (fare != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${_amountLabel()}: $fare',
+                style: const TextStyle(
+                  color: Color(0xFFFFD54F),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: [
               _chip(
-                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(e.validationState)}',
-              ),
-              _chip(_backendChipLabel(e.backendConfirmed)),
-              _chip(
                 '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_paymentStatusLabel(effectivePayment.paymentStatus)}',
               ),
               if (effectivePayment.paymentMethod.trim().isNotEmpty &&
-                  effectivePayment.paymentMethod.trim().toLowerCase() !=
-                      'unknown')
+                  _ledgerToken(effectivePayment.paymentMethod) != 'unknown')
                 _chip(
                   '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_paymentMethodLabel(effectivePayment.paymentMethod)}',
                 ),
               if (effectivePayment.paymentSource.trim().isNotEmpty &&
-                  effectivePayment.paymentSource.trim().toLowerCase() !=
-                      'unknown')
+                  _ledgerToken(effectivePayment.paymentSource) != 'unknown')
                 _chip(
                   '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(effectivePayment.paymentSource)}',
                 ),
               if (effectivePayment.paymentProvider.trim().isNotEmpty &&
-                  effectivePayment.paymentProvider.trim().toLowerCase() !=
-                      'unknown')
+                  _ledgerToken(effectivePayment.paymentProvider) != 'unknown')
                 _chip(
                   '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_paymentProviderLabel(effectivePayment.paymentProvider)}',
                 ),
-              if (effectivePaymentUpdate != null) _chip(_paymentUpdatedLabel()),
-              if (distance != null) _chip(distance),
-              if (fare != null) _chip(fare),
+              _chip(_backendChipLabel(summary.backendConfirmed)),
+              _chip(
+                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(summary.validationState)}',
+              ),
+              if (latestPaymentUpdate != null) _chip(_paymentUpdatedLabel()),
             ],
           ),
-          if (!e.isPaymentUpdate) ...[
+          if (paymentUpdatedTime != null) ...[
             const SizedBox(height: 6),
             Text(
-              route,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              '${_paymentUpdatedLabel()}: $paymentUpdatedTime',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           ],
+          const SizedBox(height: 8),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            collapsedIconColor: Colors.white70,
+            iconColor: Colors.white70,
+            title: Text(
+              _auditHistoryLabel(),
+              style: const TextStyle(
+                color: Color(0xFFFFD54F),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+            children: sortedAudit
+                .map(
+                  (entry) => _auditEventRow(
+                    entry,
+                    latestPaymentUpdate: latestPaymentUpdate,
+                  ),
+                )
+                .toList(growable: false),
+          ),
         ],
       ),
     );
@@ -3047,7 +3347,7 @@ class _LocalComplianceLedgerSectionState
                     _t(
                       nl: 'Lokaal rittenregister',
                       en: 'Local ride register',
-                      fr: 'Registre local des courses',
+                      fr: 'Registre local des trajets',
                       es: 'Registro local de viajes',
                     ),
                     style: const TextStyle(
@@ -3140,9 +3440,7 @@ class _LocalComplianceLedgerSectionState
                   );
                 }
 
-                final latestPaymentUpdates = _latestPaymentUpdatesByKey(
-                  result.entries,
-                );
+                final groupedEntries = _groupedLedgerEntries(result.entries);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -3157,9 +3455,7 @@ class _LocalComplianceLedgerSectionState
                           ),
                         ),
                       ),
-                    ...result.entries.map(
-                      (entry) => _recordTile(entry, latestPaymentUpdates),
-                    ),
+                    ...groupedEntries.map(_groupCard),
                   ],
                 );
               },
