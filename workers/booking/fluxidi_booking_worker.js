@@ -2655,6 +2655,27 @@ function normalizeComplianceText(value, fallback = "unknown") {
 function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, payment) {
   const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const isUnknownLikePaymentValue = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    return (
+      raw === "" ||
+      raw === "unknown" ||
+      raw === "onbekend" ||
+      raw === "—" ||
+      raw === "-" ||
+      raw === "null" ||
+      raw === "undefined"
+    );
+  };
+  const pickMeaningfulPaymentValue = (...candidates) => {
+    for (const candidate of candidates) {
+      const text = safeStr(candidate);
+      if (!text) continue;
+      if (isUnknownLikePaymentValue(text)) continue;
+      return text;
+    }
+    return null;
+  };
   const explicitTenantId = safeStr(
     payment?.tenant_id ||
       payment?.tenantId ||
@@ -2751,28 +2772,34 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
           payment?.paymentStatus,
       ),
       method: normalizeComplianceText(
-        rec?.payment_method ||
-          rec?.paymentMethod ||
-          booking?.payment_method ||
-          booking?.paymentMethod ||
-          payment?.payment_method ||
+        pickMeaningfulPaymentValue(
+          rec?.payment_method,
+          rec?.paymentMethod,
+          booking?.payment_method,
+          booking?.paymentMethod,
+          payment?.payment_method,
           payment?.paymentMethod,
+        ),
       ),
       source: normalizeComplianceText(
-        rec?.payment_source ||
-          rec?.paymentSource ||
-          booking?.payment_source ||
-          booking?.paymentSource ||
-          payment?.payment_source ||
+        pickMeaningfulPaymentValue(
+          rec?.payment_source,
+          rec?.paymentSource,
+          booking?.payment_source,
+          booking?.paymentSource,
+          payment?.payment_source,
           payment?.paymentSource,
+        ),
       ),
       provider: normalizeComplianceText(
-        rec?.payment_provider ||
-          rec?.paymentProvider ||
-          booking?.payment_provider ||
-          booking?.paymentProvider ||
-          payment?.payment_provider ||
+        pickMeaningfulPaymentValue(
+          rec?.payment_provider,
+          rec?.paymentProvider,
+          booking?.payment_provider,
+          booking?.paymentProvider,
+          payment?.payment_provider,
           payment?.paymentProvider,
+        ),
       ),
       payment_id: safeStr(
         rec?.payment_id ||
