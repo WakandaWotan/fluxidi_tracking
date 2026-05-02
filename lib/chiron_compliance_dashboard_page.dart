@@ -1747,20 +1747,22 @@ class _RemoteComplianceEventsSectionState
       case 'booking_worker':
       case 'bookingsworker':
       case 'booking worker':
+      case 'bookingmodule':
         return _t(
           nl: 'boekingsmodule',
           en: 'booking module',
           fr: 'module de réservation',
-          es: 'módulo de reservas',
+          es: 'módulo de reserva',
         );
       case 'tracking_worker':
       case 'trackingworker':
       case 'tracking worker':
+      case 'trackingmodule':
         return _t(
-          nl: 'trackingmodule',
-          en: 'tracking module',
-          fr: 'module de suivi',
-          es: 'módulo de seguimiento',
+          nl: 'ritmodule',
+          en: 'ride module',
+          fr: 'module de course',
+          es: 'módulo de viaje',
         );
       case 'compliance_worker':
       case 'complianceworker':
@@ -2034,18 +2036,47 @@ class _RemoteComplianceEventsSectionState
     return updateIsNewer ? updateValue : baseValue;
   }
 
-  Widget _eventTile(
+  bool _isMeaningfulIdentity(String raw) {
+    final token = _normalizeToken(raw);
+    return token.isNotEmpty &&
+        token != 'unknown' &&
+        token != 'onbekend' &&
+        token != '-' &&
+        token != '—' &&
+        token != 'null' &&
+        token != 'undefined';
+  }
+
+  String _dossierGroupKey(RemoteComplianceEvent e, int index) {
+    if (_isMeaningfulIdentity(e.bookingId)) {
+      return 'booking:${e.bookingId.trim().toLowerCase()}';
+    }
+    if (_isMeaningfulIdentity(e.tripId)) {
+      return 'trip:${e.tripId.trim().toLowerCase()}';
+    }
+    final eventId = _text(e.eventId);
+    if (eventId.isNotEmpty) return 'event:${eventId.toLowerCase()}';
+    final createdAt = _text(e.createdAtUtc);
+    if (createdAt.isNotEmpty) return 'event:${createdAt.toLowerCase()}';
+    return 'event:index_$index';
+  }
+
+  int _compareRemoteEventsNewestFirst(
+    RemoteComplianceEvent a,
+    RemoteComplianceEvent b,
+  ) {
+    final at = _remoteEventTime(a);
+    final bt = _remoteEventTime(b);
+    if (at != null && bt != null) return bt.compareTo(at);
+    if (at != null) return -1;
+    if (bt != null) return 1;
+    return _text(b.eventId).compareTo(_text(a.eventId));
+  }
+
+  ({String status, String method, String source}) _effectivePaymentForEvent(
     RemoteComplianceEvent e,
     Map<String, RemoteComplianceEvent> latestPaymentUpdates,
   ) {
-    final referenceLabel = e.bookingId.isNotEmpty
-        ? _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva')
-        : e.tripId.isNotEmpty
-        ? _t(nl: 'Rit', en: 'Trip', fr: 'Course', es: 'Viaje')
-        : '';
-    final referenceValue = e.bookingId.isNotEmpty
-        ? e.bookingId
-        : (e.tripId.isNotEmpty ? e.tripId : '—');
     final paymentUpdate = _normalizeToken(e.eventType) == 'payment_update'
         ? null
         : _effectivePaymentUpdateFor(e, latestPaymentUpdates);
@@ -2063,29 +2094,79 @@ class _RemoteComplianceEventsSectionState
         : _text(paymentUpdate.payment['source']);
     final updateIsNewer =
         paymentUpdate != null && _isNewerRemoteEvent(paymentUpdate, e);
-    final paymentStatus = _resolveEffectivePaymentValue(
-      baseValue: basePaymentStatus,
-      updateValue: updatePaymentStatus,
-      baseIsMeaningful: _isMeaningfulPaymentStatus(basePaymentStatus),
-      updateIsMeaningful: _isMeaningfulPaymentStatus(updatePaymentStatus),
-      updateIsNewer: updateIsNewer,
-    );
-    final paymentMethod = _resolveEffectivePaymentValue(
-      baseValue: basePaymentMethod,
-      updateValue: updatePaymentMethod,
-      baseIsMeaningful: _isMeaningfulPaymentField(basePaymentMethod),
-      updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentMethod),
-      updateIsNewer: updateIsNewer,
-    );
-    final paymentSource = _resolveEffectivePaymentValue(
-      baseValue: basePaymentSource,
-      updateValue: updatePaymentSource,
-      baseIsMeaningful: _isMeaningfulPaymentField(basePaymentSource),
-      updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentSource),
-      updateIsNewer: updateIsNewer,
-    );
-    final producer = _text(e.provenance['producer']);
 
+    return (
+      status: _resolveEffectivePaymentValue(
+        baseValue: basePaymentStatus,
+        updateValue: updatePaymentStatus,
+        baseIsMeaningful: _isMeaningfulPaymentStatus(basePaymentStatus),
+        updateIsMeaningful: _isMeaningfulPaymentStatus(updatePaymentStatus),
+        updateIsNewer: updateIsNewer,
+      ),
+      method: _resolveEffectivePaymentValue(
+        baseValue: basePaymentMethod,
+        updateValue: updatePaymentMethod,
+        baseIsMeaningful: _isMeaningfulPaymentField(basePaymentMethod),
+        updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentMethod),
+        updateIsNewer: updateIsNewer,
+      ),
+      source: _resolveEffectivePaymentValue(
+        baseValue: basePaymentSource,
+        updateValue: updatePaymentSource,
+        baseIsMeaningful: _isMeaningfulPaymentField(basePaymentSource),
+        updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentSource),
+        updateIsNewer: updateIsNewer,
+      ),
+    );
+  }
+
+  String _localizedDossierTitle(String rideType) {
+    switch (_normalizeToken(rideType)) {
+      case 'planned':
+        return _t(
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Course planifiée',
+          es: 'Viaje planificado',
+        );
+      case 'direct':
+        return _t(
+          nl: 'Directe rit',
+          en: 'Direct ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
+        );
+      default:
+        return _t(
+          nl: 'Rittendossier',
+          en: 'Ride dossier',
+          fr: 'Dossier de course',
+          es: 'Expediente del viaje',
+        );
+    }
+  }
+
+  String _localizedRideStatus(List<RemoteComplianceEvent> events) {
+    final hasRideStop = events.any(
+      (event) => _normalizeToken(event.eventType) == 'ride_stop',
+    );
+    if (hasRideStop) {
+      return _t(
+        nl: 'afgerond',
+        en: 'completed',
+        fr: 'terminée',
+        es: 'finalizado',
+      );
+    }
+    return _localizedUnknown();
+  }
+
+  Widget _auditHistoryRow(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
+    final producer = _text(e.provenance['producer']);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -2110,15 +2191,6 @@ class _RemoteComplianceEventsSectionState
             _fmtDateTime(e.createdAtUtc),
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
-          if (referenceLabel.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              '$referenceLabel: $referenceValue',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          ],
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
@@ -2127,25 +2199,126 @@ class _RemoteComplianceEventsSectionState
               _chip(
                 '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
               ),
-              if (paymentStatus.isNotEmpty)
+              if (payment.status.isNotEmpty)
                 _chip(
-                  '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(paymentStatus)}',
+                  '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
                 ),
-              if (paymentMethod.isNotEmpty &&
-                  paymentMethod.toLowerCase() != 'unknown')
+              if (payment.method.isNotEmpty &&
+                  payment.method.toLowerCase() != 'unknown')
                 _chip(
-                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(paymentMethod)}',
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
                 ),
-              if (paymentSource.isNotEmpty &&
-                  paymentSource.toLowerCase() != 'unknown')
+              if (payment.source.isNotEmpty &&
+                  payment.source.toLowerCase() != 'unknown')
                 _chip(
-                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(paymentSource)}',
+                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
                 ),
               if (producer.isNotEmpty)
                 _chip(
-                  '${_t(nl: 'Systeem', en: 'System', fr: 'Système', es: 'Sistema')}: ${_localizedProducerLabel(producer)}',
+                  '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
                 ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dossierCard(
+    List<RemoteComplianceEvent> events,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    final sorted = [...events]..sort(_compareRemoteEventsNewestFirst);
+    final latest = sorted.first;
+    final bookingId = sorted
+        .map((event) => event.bookingId.trim())
+        .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
+    final tripId = sorted
+        .map((event) => event.tripId.trim())
+        .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
+    final payment = _effectivePaymentForEvent(latest, latestPaymentUpdates);
+    final referenceLabel = bookingId.isNotEmpty
+        ? _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva')
+        : _t(nl: 'Rit', en: 'Trip', fr: 'Course', es: 'Viaje');
+    final referenceValue = bookingId.isNotEmpty
+        ? bookingId
+        : (tripId.isNotEmpty ? tripId : '—');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0x1AFFFFFF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _localizedDossierTitle(latest.rideType),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$referenceLabel: $referenceValue',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${_t(nl: 'Laatste event', en: 'Latest event', fr: 'Dernier événement', es: 'Último evento')}: ${_fmtDateTime(latest.createdAtUtc)}',
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _chip(
+                '${_t(nl: 'Ritstatus', en: 'Ride status', fr: 'Statut de course', es: 'Estado del viaje')}: ${_localizedRideStatus(sorted)}',
+              ),
+              _chip(
+                '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(latest.syncState)}',
+              ),
+              if (payment.status.isNotEmpty)
+                _chip(
+                  '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
+                ),
+              if (payment.method.isNotEmpty &&
+                  payment.method.toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_localizedPaymentMethodLabel(payment.method)}',
+                ),
+              if (payment.source.isNotEmpty &&
+                  payment.source.toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Auditgeschiedenis',
+              en: 'Audit history',
+              fr: 'Historique d’audit',
+              es: 'Historial de auditoría',
+            ),
+            style: const TextStyle(
+              color: Color(0xFFFFD54F),
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...sorted.map(
+            (event) => _auditHistoryRow(event, latestPaymentUpdates),
           ),
         ],
       ),
@@ -2275,6 +2448,24 @@ class _RemoteComplianceEventsSectionState
             final latestPaymentUpdates = _latestPaymentUpdatesByKey(
               result.events,
             );
+            final grouped = <String, List<RemoteComplianceEvent>>{};
+            for (final entry in result.events.asMap().entries) {
+              final index = entry.key;
+              final event = entry.value;
+              final groupKey = _dossierGroupKey(event, index);
+              grouped
+                  .putIfAbsent(groupKey, () => <RemoteComplianceEvent>[])
+                  .add(event);
+            }
+            final dossiers = grouped.values.toList(growable: false)
+              ..sort((a, b) {
+                final newestA = [...a]..sort(_compareRemoteEventsNewestFirst);
+                final newestB = [...b]..sort(_compareRemoteEventsNewestFirst);
+                return _compareRemoteEventsNewestFirst(
+                  newestA.first,
+                  newestB.first,
+                );
+              });
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2304,8 +2495,8 @@ class _RemoteComplianceEventsSectionState
                   style: const TextStyle(color: Colors.white60, fontSize: 11),
                 ),
                 const SizedBox(height: 8),
-                ...result.events.map(
-                  (event) => _eventTile(event, latestPaymentUpdates),
+                ...dossiers.map(
+                  (events) => _dossierCard(events, latestPaymentUpdates),
                 ),
               ],
             );
