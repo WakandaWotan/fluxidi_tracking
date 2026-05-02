@@ -2051,6 +2051,96 @@ class _RemoteComplianceEventsSectionState
         token != 'undefined';
   }
 
+  bool _looksLikeRemoteUuid(String value) {
+    return RegExp(
+      r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
+
+  bool _isTechnicalInternalReference(String? value) {
+    final text = _text(value);
+    if (text.isEmpty) return true;
+    final token = _normalizeToken(text);
+    if (token.isEmpty ||
+        token == 'unknown' ||
+        token == 'onbekend' ||
+        token == '-' ||
+        token == '—' ||
+        token == 'null' ||
+        token == 'undefined') {
+      return true;
+    }
+    final lower = text.toLowerCase();
+    if (lower.startsWith('trip_')) return true;
+    if (lower.startsWith('trip-trip_')) return true;
+    if (lower.contains('trip-trip_')) return true;
+    if (_looksLikeRemoteUuid(lower)) return true;
+    final hasUnderscoreOrHyphen = text.contains('_') || text.contains('-');
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(text);
+    final hasDigits = RegExp(r'\d').hasMatch(text);
+    if (text.length >= 28 && hasUnderscoreOrHyphen && hasLetters && hasDigits) {
+      return true;
+    }
+    return false;
+  }
+
+  String _localizedReferenceLabel() {
+    return _t(
+      nl: 'Referentie',
+      en: 'Reference',
+      fr: 'Référence',
+      es: 'Referencia',
+    );
+  }
+
+  String _localizedDraftReceiptLabel() {
+    return _t(
+      nl: 'Conceptbon',
+      en: 'Draft receipt',
+      fr: 'Reçu provisoire',
+      es: 'Recibo provisional',
+    );
+  }
+
+  String _labelValue(String label, String value) {
+    if (appConfig.currentLanguage == AppLanguage.fr) return '$label : $value';
+    return '$label: $value';
+  }
+
+  ({String label, String value}) _businessReferenceForRemoteCard({
+    required String rideType,
+    required String bookingId,
+    required String tripId,
+  }) {
+    final bookingIsBusiness =
+        bookingId.isNotEmpty && !_isTechnicalInternalReference(bookingId);
+    if (bookingIsBusiness) {
+      return (
+        label: _t(
+          nl: 'Boeking',
+          en: 'Booking',
+          fr: 'Réservation',
+          es: 'Reserva',
+        ),
+        value: bookingId,
+      );
+    }
+    final tripIsBusiness =
+        tripId.isNotEmpty && !_isTechnicalInternalReference(tripId);
+    if (tripIsBusiness) {
+      return (label: _localizedReferenceLabel(), value: tripId);
+    }
+    final rideToken = _normalizeToken(rideType);
+    if (rideToken == 'direct' || rideToken == 'planned') {
+      return (
+        label: _localizedReferenceLabel(),
+        value: _localizedDraftReceiptLabel(),
+      );
+    }
+    return (label: _localizedReferenceLabel(), value: '—');
+  }
+
   String _dossierGroupKey(RemoteComplianceEvent e, int index) {
     if (_isMeaningfulIdentity(e.bookingId)) {
       return 'booking:${e.bookingId.trim().toLowerCase()}';
@@ -2258,12 +2348,11 @@ class _RemoteComplianceEventsSectionState
         .map((event) => event.tripId.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
     final payment = _effectivePaymentForEvent(latest, latestPaymentUpdates);
-    final referenceLabel = bookingId.isNotEmpty
-        ? _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva')
-        : _t(nl: 'Rit', en: 'Trip', fr: 'Course', es: 'Viaje');
-    final referenceValue = bookingId.isNotEmpty
-        ? bookingId
-        : (tripId.isNotEmpty ? tripId : '—');
+    final reference = _businessReferenceForRemoteCard(
+      rideType: latest.rideType,
+      bookingId: bookingId,
+      tripId: tripId,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2286,7 +2375,7 @@ class _RemoteComplianceEventsSectionState
           ),
           const SizedBox(height: 4),
           Text(
-            '$referenceLabel: $referenceValue',
+            _labelValue(reference.label, reference.value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Colors.white70, fontSize: 12),
