@@ -1626,6 +1626,13 @@ class _RemoteComplianceEventsSectionState
     switch (raw.trim().toLowerCase()) {
       case 'paid':
         return _t(nl: 'betaald', en: 'paid', fr: 'payé', es: 'pagado');
+      case 'unpaid':
+        return _t(
+          nl: 'onbetaald',
+          en: 'unpaid',
+          fr: 'non payé',
+          es: 'no pagado',
+        );
       case 'pending':
         return _t(
           nl: 'in behandeling',
@@ -1635,17 +1642,11 @@ class _RemoteComplianceEventsSectionState
         );
       case 'failed':
         return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
-      case 'unpaid':
-        return _t(
-          nl: 'onbetaald',
-          en: 'unpaid',
-          fr: 'non payé',
-          es: 'no pagado',
-        );
       case 'unknown':
+      case '':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : _localizedUnknown();
+        return _localizedUnknown();
     }
   }
 
@@ -1656,34 +1657,21 @@ class _RemoteComplianceEventsSectionState
       case 'bancontact':
         return 'Bancontact';
       case 'card':
+      case 'pin':
         return _t(nl: 'kaart', en: 'card', fr: 'carte', es: 'tarjeta');
       case 'qr':
         return 'QR';
+      case 'mollie':
       case 'online_payment':
       case 'online-payment':
       case 'online payment':
       case 'online':
-        return _t(
-          nl: 'online betaling',
-          en: 'online payment',
-          fr: 'paiement en ligne',
-          es: 'pago en línea',
-        );
-      case 'mollie':
-        return 'Mollie';
-      case 'payment_link':
-      case 'payment-link':
-      case 'payment link':
-        return _t(
-          nl: 'betaallink',
-          en: 'payment link',
-          fr: 'lien de paiement',
-          es: 'enlace de pago',
-        );
+        return _t(nl: 'online', en: 'online', fr: 'en ligne', es: 'en línea');
       case 'unknown':
+      case '':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : _localizedUnknown();
+        return _localizedUnknown();
     }
   }
 
@@ -1691,29 +1679,37 @@ class _RemoteComplianceEventsSectionState
     switch (raw.trim().toLowerCase()) {
       case 'in_car':
       case 'in_vehicle':
+      case 'driver':
+      case 'chauffeur':
+      case 'manual':
         return _t(
           nl: 'in voertuig',
           en: 'in vehicle',
           fr: 'dans le véhicule',
           es: 'en el vehículo',
         );
-      case 'customer':
-        return _t(nl: 'klant', en: 'customer', fr: 'client', es: 'cliente');
-      case 'backend':
-        return 'backend';
-      case 'driver':
-        return _t(
-          nl: 'chauffeur',
-          en: 'driver',
-          fr: 'chauffeur',
-          es: 'conductor',
-        );
+      case 'online':
+      case 'mollie':
+        return _t(nl: 'online', en: 'online', fr: 'en ligne', es: 'en línea');
+      case 'unknown':
+      case '':
+        return _localizedUnknown();
+      default:
+        return _localizedUnknown();
+    }
+  }
+
+  String _localizedProviderLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'manual':
+        return _t(nl: 'manueel', en: 'manual', fr: 'manuel', es: 'manual');
       case 'mollie':
         return 'Mollie';
       case 'unknown':
+      case '':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : _localizedUnknown();
+        return _localizedUnknown();
     }
   }
 
@@ -1723,22 +1719,30 @@ class _RemoteComplianceEventsSectionState
         return _t(
           nl: 'niet ingesteld',
           en: 'not configured',
-          fr: 'non configurée',
-          es: 'no configurada',
+          fr: 'non configuré',
+          es: 'no configurado',
         );
       case 'synced':
         return _t(
           nl: 'gesynchroniseerd',
           en: 'synced',
-          fr: 'synchronisée',
-          es: 'sincronizada',
+          fr: 'synchronisé',
+          es: 'sincronizado',
+        );
+      case 'pending':
+        return _t(
+          nl: 'in wachtrij',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
         );
       case 'failed':
-        return _t(nl: 'mislukt', en: 'failed', fr: 'échouée', es: 'fallida');
+        return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
       case 'unknown':
+      case '':
         return _localizedUnknown();
       default:
-        return raw.trim().isEmpty ? '—' : _localizedUnknown();
+        return _localizedUnknown();
     }
   }
 
@@ -2073,7 +2077,8 @@ class _RemoteComplianceEventsSectionState
     return _text(b.eventId).compareTo(_text(a.eventId));
   }
 
-  ({String status, String method, String source}) _effectivePaymentForEvent(
+  ({String status, String method, String source, String provider})
+  _effectivePaymentForEvent(
     RemoteComplianceEvent e,
     Map<String, RemoteComplianceEvent> latestPaymentUpdates,
   ) {
@@ -2083,6 +2088,7 @@ class _RemoteComplianceEventsSectionState
     final basePaymentStatus = _text(e.payment['status']);
     final basePaymentMethod = _text(e.payment['method']);
     final basePaymentSource = _text(e.payment['source']);
+    final basePaymentProvider = _text(e.payment['provider']);
     final updatePaymentStatus = paymentUpdate == null
         ? ''
         : _text(paymentUpdate.payment['status']);
@@ -2092,6 +2098,9 @@ class _RemoteComplianceEventsSectionState
     final updatePaymentSource = paymentUpdate == null
         ? ''
         : _text(paymentUpdate.payment['source']);
+    final updatePaymentProvider = paymentUpdate == null
+        ? ''
+        : _text(paymentUpdate.payment['provider']);
     final updateIsNewer =
         paymentUpdate != null && _isNewerRemoteEvent(paymentUpdate, e);
 
@@ -2115,6 +2124,13 @@ class _RemoteComplianceEventsSectionState
         updateValue: updatePaymentSource,
         baseIsMeaningful: _isMeaningfulPaymentField(basePaymentSource),
         updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentSource),
+        updateIsNewer: updateIsNewer,
+      ),
+      provider: _resolveEffectivePaymentValue(
+        baseValue: basePaymentProvider,
+        updateValue: updatePaymentProvider,
+        baseIsMeaningful: _isMeaningfulPaymentField(basePaymentProvider),
+        updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentProvider),
         updateIsNewer: updateIsNewer,
       ),
     );
@@ -2213,6 +2229,11 @@ class _RemoteComplianceEventsSectionState
                 _chip(
                   '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
                 ),
+              if (payment.provider.isNotEmpty &&
+                  payment.provider.toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_localizedProviderLabel(payment.provider)}',
+                ),
               if (producer.isNotEmpty)
                 _chip(
                   '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
@@ -2299,6 +2320,11 @@ class _RemoteComplianceEventsSectionState
                   payment.source.toLowerCase() != 'unknown')
                 _chip(
                   '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedSourceLabel(payment.source)}',
+                ),
+              if (payment.provider.isNotEmpty &&
+                  payment.provider.toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_localizedProviderLabel(payment.provider)}',
                 ),
             ],
           ),
@@ -2652,14 +2678,14 @@ class _LocalComplianceLedgerSectionState
       case 'completed':
       case 'settled':
       case 'confirmed':
-        return _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+        return _t(nl: 'betaald', en: 'paid', fr: 'payé', es: 'pagado');
       case 'unpaid':
       case 'not_paid':
         return _t(
-          nl: 'Onbetaald',
-          en: 'Unpaid',
-          fr: 'Non payé',
-          es: 'No pagado',
+          nl: 'onbetaald',
+          en: 'unpaid',
+          fr: 'non payé',
+          es: 'no pagado',
         );
       case 'pending':
       case 'open':
@@ -2667,25 +2693,30 @@ class _LocalComplianceLedgerSectionState
       case 'authorised':
       case 'processing':
         return _t(
-          nl: 'In afwachting',
-          en: 'Pending',
-          fr: 'En attente',
-          es: 'Pendiente',
+          nl: 'in behandeling',
+          en: 'pending',
+          fr: 'en attente',
+          es: 'pendiente',
         );
       case 'failed':
       case 'error':
       case 'declined':
-        return _t(nl: 'Mislukt', en: 'Failed', fr: 'Échec', es: 'Fallido');
+        return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
       case 'unknown':
       case '':
         return _t(
-          nl: 'Onbekend',
-          en: 'Unknown',
-          fr: 'Inconnu',
-          es: 'Desconocido',
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
         );
       default:
-        return raw.trim();
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
     }
   }
 
@@ -2693,45 +2724,93 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'cash':
       case 'contant':
-        return _t(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+        return _t(nl: 'contant', en: 'cash', fr: 'espèces', es: 'efectivo');
       case 'bancontact':
         return 'Bancontact';
       case 'card':
+      case 'pin':
       case 'card_terminal':
       case 'terminal':
-        return _t(nl: 'Kaart', en: 'Card', fr: 'Carte', es: 'Tarjeta');
+        return _t(nl: 'kaart', en: 'card', fr: 'carte', es: 'tarjeta');
       case 'qr':
       case 'qr_code':
         return 'QR';
       case 'mollie':
-        return 'Mollie';
+      case 'online':
+        return _t(nl: 'online', en: 'online', fr: 'en ligne', es: 'en línea');
+      case 'unknown':
+      case '':
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
       default:
-        return raw.trim();
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
     }
   }
 
   String _paymentSourceLabel(String raw) {
     switch (_ledgerToken(raw)) {
       case 'in_car':
+      case 'in_vehicle':
+      case 'manual':
+      case 'driver':
+      case 'chauffeur':
         return _t(
-          nl: 'In de wagen',
-          en: 'In car',
-          fr: 'Dans le véhicule',
-          es: 'En el vehículo',
+          nl: 'in voertuig',
+          en: 'in vehicle',
+          fr: 'dans le véhicule',
+          es: 'en el vehículo',
         );
-      case 'payment_link':
+      case 'online':
+      case 'mollie':
+        return _t(nl: 'online', en: 'online', fr: 'en ligne', es: 'en línea');
+      case 'unknown':
+      case '':
         return _t(
-          nl: 'Betaallink',
-          en: 'Payment link',
-          fr: 'Lien de paiement',
-          es: 'Enlace de pago',
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
         );
-      case 'app':
-        return 'App';
-      case 'backend':
-        return 'Backend';
       default:
-        return raw.trim();
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
+    }
+  }
+
+  String _paymentProviderLabel(String raw) {
+    switch (_ledgerToken(raw)) {
+      case 'manual':
+        return _t(nl: 'manueel', en: 'manual', fr: 'manuel', es: 'manual');
+      case 'mollie':
+        return 'Mollie';
+      case 'unknown':
+      case '':
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
+      default:
+        return _t(
+          nl: 'onbekend',
+          en: 'unknown',
+          fr: 'inconnu',
+          es: 'desconocido',
+        );
     }
   }
 
@@ -2921,6 +3000,12 @@ class _LocalComplianceLedgerSectionState
                       'unknown')
                 _chip(
                   '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(effectivePayment.paymentSource)}',
+                ),
+              if (effectivePayment.paymentProvider.trim().isNotEmpty &&
+                  effectivePayment.paymentProvider.trim().toLowerCase() !=
+                      'unknown')
+                _chip(
+                  '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_paymentProviderLabel(effectivePayment.paymentProvider)}',
                 ),
               if (effectivePaymentUpdate != null) _chip(_paymentUpdatedLabel()),
               if (distance != null) _chip(distance),
