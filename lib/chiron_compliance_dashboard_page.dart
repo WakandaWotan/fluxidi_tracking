@@ -2618,24 +2618,24 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'direct':
         return _t(
-          nl: 'straatrit',
-          en: 'street ride',
-          fr: 'course directe',
-          es: 'viaje directo',
+          nl: 'Straatrit',
+          en: 'Street ride',
+          fr: 'Course directe',
+          es: 'Viaje directo',
         );
       case 'planned':
         return _t(
-          nl: 'geplande rit',
-          en: 'planned ride',
-          fr: 'trajet planifié',
-          es: 'viaje planificado',
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Trajet planifié',
+          es: 'Viaje planificado',
         );
       default:
         return _t(
-          nl: 'geplande rit',
-          en: 'planned ride',
-          fr: 'trajet planifié',
-          es: 'viaje planificado',
+          nl: 'Geplande rit',
+          en: 'Planned ride',
+          fr: 'Trajet planifié',
+          es: 'Viaje planificado',
         );
     }
   }
@@ -2849,8 +2849,9 @@ class _LocalComplianceLedgerSectionState
     );
   }
 
-  String _eventTypeLabel(String raw) {
-    switch (_ledgerToken(raw)) {
+  String _eventTypeLabel(String raw, {bool inferCompleted = false}) {
+    final token = _ledgerToken(raw);
+    switch (token) {
       case 'ride_stop':
         return _t(
           nl: 'Rit afgerond',
@@ -2862,10 +2863,18 @@ class _LocalComplianceLedgerSectionState
         return _t(
           nl: 'Betalingsupdate',
           en: 'Payment update',
-          fr: 'Mise à jour du paiement',
+          fr: 'Paiement mis à jour',
           es: 'Actualización de pago',
         );
       default:
+        if (inferCompleted) {
+          return _t(
+            nl: 'Rit afgerond',
+            en: 'Ride completed',
+            fr: 'Trajet terminé',
+            es: 'Trayecto finalizado',
+          );
+        }
         return _t(
           nl: 'Gebeurtenis',
           en: 'Event',
@@ -3119,12 +3128,19 @@ class _LocalComplianceLedgerSectionState
   Widget _auditEventRow(
     ComplianceLedgerEntry entry, {
     required ComplianceLedgerEntry? latestPaymentUpdate,
+    required ComplianceLedgerEntry summaryEntry,
   }) {
+    final eventToken = _ledgerToken(entry.eventType);
     final eventTime = _fmtDateTime(_ledgerSortTime(entry));
     final hasLaterPaymentUpdate =
         !entry.isPaymentUpdate &&
         latestPaymentUpdate != null &&
         _isNewerLedgerEntry(latestPaymentUpdate, entry);
+    final isUnknownEventType = eventToken.isEmpty || eventToken == 'unknown';
+    final inferCompleted =
+        isUnknownEventType &&
+        (_ledgerToken(entry.validationState) == 'exportable' ||
+            identical(entry, summaryEntry));
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
@@ -3137,7 +3153,7 @@ class _LocalComplianceLedgerSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${_eventTypeLabel(entry.eventType)} • ${_rideTypeLabel(entry.rideType)}',
+            '${_eventTypeLabel(entry.eventType, inferCompleted: inferCompleted)} • ${_rideTypeLabel(entry.rideType)}',
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w600,
@@ -3317,6 +3333,7 @@ class _LocalComplianceLedgerSectionState
                   (entry) => _auditEventRow(
                     entry,
                     latestPaymentUpdate: latestPaymentUpdate,
+                    summaryEntry: summary,
                   ),
                 )
                 .toList(growable: false),
