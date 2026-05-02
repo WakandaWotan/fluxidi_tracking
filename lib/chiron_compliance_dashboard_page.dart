@@ -3037,26 +3037,103 @@ class _LocalComplianceLedgerSectionState
     return text.isEmpty ? null : text;
   }
 
+  bool _isUnknownLikeToken(String value) {
+    final token = _ledgerToken(value);
+    return token.isEmpty ||
+        token == 'unknown' ||
+        token == 'onbekend' ||
+        token == 'null' ||
+        token == 'undefined' ||
+        token == '-' ||
+        token == '—';
+  }
+
+  String? _meaningfulDisplayToken(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return null;
+    if (_isUnknownLikeToken(text)) return null;
+    return text;
+  }
+
+  String _driverIdFallback(String driverId) {
+    return _labelValue(
+      _t(
+        nl: 'Chauffeur-ID',
+        en: 'Driver ID',
+        fr: 'ID chauffeur',
+        es: 'ID conductor',
+      ),
+      driverId,
+    );
+  }
+
+  String _vehicleIdFallback(String vehicleId) {
+    return _labelValue(
+      _t(
+        nl: 'Voertuig-ID',
+        en: 'Vehicle ID',
+        fr: 'ID véhicule',
+        es: 'ID vehículo',
+      ),
+      vehicleId,
+    );
+  }
+
+  String _vehicleTierLabel(String rawTier) {
+    switch (_ledgerToken(rawTier)) {
+      case 'comfort':
+        return 'Comfort';
+      case 'private':
+        return 'Private';
+      case 'premium':
+        return 'Premium';
+      default:
+        return rawTier.trim();
+    }
+  }
+
+  String _dedupeVehiclePrimary(String value, String plate) {
+    final v = value.trim();
+    final p = plate.trim();
+    if (v.isEmpty) return v;
+    if (p.isEmpty) return v;
+    if (_ledgerToken(v) == _ledgerToken(p)) return '';
+    return v;
+  }
+
   String _driverDisplay(ComplianceLedgerEntry entry) {
     final candidates = <String?>[
       _rawPathText(entry.raw, const ['driver', 'name']),
+      _rawPathText(entry.raw, const ['driver', 'fullName']),
+      _rawPathText(entry.raw, const ['driver', 'full_name']),
       _rawPathText(entry.raw, const ['driver', 'display_name']),
       _rawPathText(entry.raw, const ['driver', 'displayName']),
       _rawPathText(entry.raw, const ['assigned_driver', 'name']),
+      _rawPathText(entry.raw, const ['assigned_driver', 'fullName']),
+      _rawPathText(entry.raw, const ['assigned_driver', 'full_name']),
       _rawPathText(entry.raw, const ['assignedDriver', 'name']),
+      _rawPathText(entry.raw, const ['assignedDriver', 'fullName']),
       _rawPathText(entry.raw, const ['driver_profile', 'name']),
+      _rawPathText(entry.raw, const ['driver_profile', 'fullName']),
       _rawPathText(entry.raw, const ['driverProfile', 'name']),
+      _rawPathText(entry.raw, const ['driverProfile', 'fullName']),
+      _rawPathText(entry.raw, const ['chauffeur', 'name']),
+      _rawPathText(entry.raw, const ['chauffeur', 'fullName']),
       _rawPathText(entry.raw, const ['driver_name']),
       _rawPathText(entry.raw, const ['driverName']),
       _rawPathText(entry.raw, const ['chauffeur_name']),
       _rawPathText(entry.raw, const ['chauffeurName']),
+      _rawPathText(entry.raw, const ['paid_by_driver_name']),
+      _rawPathText(entry.raw, const ['paidByDriverName']),
       _rawPathText(entry.raw, const ['driver_label']),
       _rawPathText(entry.raw, const ['driverLabel']),
-      entry.driverId.trim().isEmpty ? null : entry.driverId.trim(),
     ];
     for (final value in candidates) {
-      if (value != null && value.trim().isNotEmpty) return value.trim();
+      final meaningful = _meaningfulDisplayToken(value);
+      if (meaningful != null) return meaningful;
     }
+    final driverId = _meaningfulDisplayToken(entry.driverId);
+    if (driverId != null) return _driverIdFallback(driverId);
     return _driverNotLinkedLabel();
   }
 
@@ -3070,30 +3147,100 @@ class _LocalComplianceLedgerSectionState
   }
 
   String _vehicleDisplay(ComplianceLedgerEntry entry) {
-    final candidates = <String?>[
-      _rawPathText(entry.raw, const ['vehicle', 'label']),
-      _rawPathText(entry.raw, const ['vehicle', 'name']),
-      _rawPathText(entry.raw, const ['vehicle', 'display_label']),
-      _rawPathText(entry.raw, const ['vehicle', 'displayLabel']),
-      _rawPathText(entry.raw, const ['vehicle', 'license_plate']),
+    final plateCandidates = <String?>[
       _rawPathText(entry.raw, const ['vehicle', 'licensePlate']),
-      _rawPathText(entry.raw, const ['vehicle', 'registration_number']),
+      _rawPathText(entry.raw, const ['vehicle', 'license_plate']),
+      _rawPathText(entry.raw, const ['vehicle', 'plate']),
+      _rawPathText(entry.raw, const ['vehicle', 'registration']),
       _rawPathText(entry.raw, const ['vehicle', 'registrationNumber']),
-      _rawPathText(entry.raw, const ['assigned_vehicle', 'label']),
-      _rawPathText(entry.raw, const ['assignedVehicle', 'label']),
-      _rawPathText(entry.raw, const ['vehicle_registration_number']),
-      _rawPathText(entry.raw, const ['vehicleRegistrationNumber']),
+      _rawPathText(entry.raw, const ['vehicle', 'registration_number']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'licensePlate']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'license_plate']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'plate']),
+      _rawPathText(entry.raw, const ['assignedVehicle', 'licensePlate']),
+      _rawPathText(entry.raw, const ['vehicle_profile', 'licensePlate']),
+      _rawPathText(entry.raw, const ['vehicleProfile', 'licensePlate']),
       _rawPathText(entry.raw, const ['license_plate']),
       _rawPathText(entry.raw, const ['licensePlate']),
+      _rawPathText(entry.raw, const ['plate']),
       _rawPathText(entry.raw, const ['registration_number']),
       _rawPathText(entry.raw, const ['registrationNumber']),
+    ];
+    String? plate;
+    for (final candidate in plateCandidates) {
+      final meaningful = _meaningfulDisplayToken(candidate);
+      if (meaningful != null) {
+        plate = meaningful;
+        break;
+      }
+    }
+
+    final labelCandidates = <String?>[
+      _rawPathText(entry.raw, const ['vehicle', 'label']),
+      _rawPathText(entry.raw, const ['vehicle', 'name']),
+      _rawPathText(entry.raw, const ['vehicle', 'vehicleLabel']),
+      _rawPathText(entry.raw, const ['vehicle', 'vehicle_label']),
+      _rawPathText(entry.raw, const ['vehicle', 'display_label']),
+      _rawPathText(entry.raw, const ['vehicle', 'displayLabel']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'label']),
+      _rawPathText(entry.raw, const ['assigned_vehicle', 'name']),
+      _rawPathText(entry.raw, const ['assignedVehicle', 'label']),
+      _rawPathText(entry.raw, const ['assignedVehicle', 'name']),
+      _rawPathText(entry.raw, const ['vehicle_profile', 'label']),
+      _rawPathText(entry.raw, const ['vehicle_profile', 'name']),
+      _rawPathText(entry.raw, const ['vehicleProfile', 'label']),
+      _rawPathText(entry.raw, const ['vehicleProfile', 'name']),
+      _rawPathText(entry.raw, const ['vehicle_label']),
+      _rawPathText(entry.raw, const ['vehicleLabel']),
       _rawPathText(entry.raw, const ['vehicle_name']),
       _rawPathText(entry.raw, const ['vehicleName']),
-      entry.vehicleId.trim().isEmpty ? null : entry.vehicleId.trim(),
     ];
-    for (final value in candidates) {
-      if (value != null && value.trim().isNotEmpty) return value.trim();
+    String? vehicleLabel;
+    for (final candidate in labelCandidates) {
+      final meaningful = _meaningfulDisplayToken(candidate);
+      if (meaningful != null) {
+        vehicleLabel = meaningful;
+        break;
+      }
     }
+
+    final make = _meaningfulDisplayToken(
+      _rawPathText(entry.raw, const ['vehicle', 'make']) ??
+          _rawPathText(entry.raw, const ['vehicle', 'brand']),
+    );
+    final model = _meaningfulDisplayToken(
+      _rawPathText(entry.raw, const ['vehicle', 'model']),
+    );
+    final tierRaw = _meaningfulDisplayToken(
+      _rawPathText(entry.raw, const ['vehicle', 'tier']),
+    );
+    final tier = tierRaw == null ? null : _vehicleTierLabel(tierRaw);
+
+    if (vehicleLabel != null) {
+      final primary = _dedupeVehiclePrimary(vehicleLabel, plate ?? '');
+      if (primary.isNotEmpty && plate != null) return '$primary · $plate';
+      if (primary.isNotEmpty) return primary;
+      if (plate != null) return plate;
+    }
+    if (make != null && model != null && plate != null)
+      return '$make $model · $plate';
+    if (make != null && plate != null) return '$make · $plate';
+    if (tier != null && plate != null) return '$tier · $plate';
+    if (make != null && model != null) return '$make $model';
+    if (make != null) return make;
+    if (tier != null) return tier;
+    if (plate != null) return plate;
+
+    final fallbackCandidates = <String?>[
+      _rawPathText(entry.raw, const ['vehicle_registration_number']),
+      _rawPathText(entry.raw, const ['vehicleRegistrationNumber']),
+    ];
+    for (final value in fallbackCandidates) {
+      final meaningful = _meaningfulDisplayToken(value);
+      if (meaningful != null) return meaningful;
+    }
+    final vehicleId = _meaningfulDisplayToken(entry.vehicleId);
+    if (vehicleId != null) return _vehicleIdFallback(vehicleId);
     return _vehicleNotLinkedLabel();
   }
 
