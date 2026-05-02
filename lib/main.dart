@@ -361,6 +361,26 @@ bool _canActiveDriverOperateBooking(Map<String, dynamic> booking) {
   return _bookingBelongsToActiveDriver(booking);
 }
 
+Map<String, dynamic> _driverMutationActorFields({String? actorVehicleId}) {
+  if (appRoleNotifier.value != AppRole.driver) return const <String, dynamic>{};
+  final driverId = resolvedDriverTrackingId.trim();
+  final vehicleId = (actorVehicleId ?? '').trim();
+  return <String, dynamic>{
+    'actor_role': 'driver',
+    'actorRole': 'driver',
+    if (driverId.isNotEmpty) ...{
+      'actor_driver_id': driverId,
+      'actorDriverId': driverId,
+      'driver_id': driverId,
+      'driverId': driverId,
+    },
+    if (vehicleId.isNotEmpty) ...{
+      'actor_vehicle_id': vehicleId,
+      'actorVehicleId': vehicleId,
+    },
+  };
+}
+
 bool _outboundTenantFallbackLogged = false;
 
 /// Tenant id for outbound ride/trip Worker payloads.
@@ -10337,6 +10357,21 @@ class _DriverHomePageState extends State<DriverHomePage>
         'booking_id': bookingId,
         'status': status,
         ..._activeBookingScopeQuery(),
+        ..._driverMutationActorFields(
+          actorVehicleId: _bookingScopeFirstText(
+            _bookingScopeViewFor(b),
+            const [
+              ['assigned_vehicle_id'],
+              ['assignedVehicleId'],
+              ['vehicle_id'],
+              ['vehicleId'],
+              ['booking', 'assigned_vehicle_id'],
+              ['booking', 'assignedVehicleId'],
+              ['booking', 'vehicle_id'],
+              ['booking', 'vehicleId'],
+            ],
+          ),
+        ),
       };
       debugPrint(
         '[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
@@ -10438,6 +10473,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       final payload = <String, dynamic>{
         'booking_id': bookingId,
         ..._activeBookingScopeQuery(),
+        ..._driverMutationActorFields(
+          actorVehicleId: _bookingScopeFirstText(
+            _bookingScopeViewFor(b),
+            const [
+              ['assigned_vehicle_id'],
+              ['assignedVehicleId'],
+              ['vehicle_id'],
+              ['vehicleId'],
+              ['booking', 'assigned_vehicle_id'],
+              ['booking', 'assignedVehicleId'],
+              ['booking', 'vehicle_id'],
+              ['booking', 'vehicleId'],
+            ],
+          ),
+        ),
       };
       debugPrint(
         '[RIDES][DELETE][REQ] url=$uri payload=${jsonEncode(payload)}',
@@ -21743,6 +21793,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             : item.currency.trim().toUpperCase(),
         'paid_by_driver_id': kDriverId,
         'paid_at': paidAtIso,
+        ..._driverMutationActorFields(
+          actorVehicleId: (item.vehicleId ?? '').trim(),
+        ),
         if (amount != null) 'amount': amount,
       };
       final headers = <String, String>{'Content-Type': 'application/json'};
@@ -21820,6 +21873,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           : item.currency.trim().toUpperCase(),
       'paid_by_driver_id': kDriverId,
       'paid_at': DateTime.now().toUtc().toIso8601String(),
+      ..._driverMutationActorFields(
+        actorVehicleId: (item.vehicleId ?? '').trim(),
+      ),
       if (amount != null) 'amount': amount,
     };
     final headers = <String, String>{'Content-Type': 'application/json'};

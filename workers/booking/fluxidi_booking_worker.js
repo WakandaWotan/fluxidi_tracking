@@ -2164,6 +2164,16 @@ GET /oauth/callback
           if (!tenantScope.hasScope) {
             return json(missingTenantScopeError(), 400);
           }
+          const { rec } = await loadBookingRecord(env, bookingId);
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) return json(ownershipBlock, 403);
           const out = await updateBookingStatusAuthoritative(
             bookingId,
             body?.status,
@@ -2189,6 +2199,16 @@ GET /oauth/callback
           if (!tenantScope.hasScope) {
             return json(missingTenantScopeError(), 400);
           }
+          const { rec } = await loadBookingRecord(env, bookingId);
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) return json(ownershipBlock, 403);
           const out = await updateBookingPaymentAuthoritative(
             bookingId,
             body,
@@ -2269,6 +2289,16 @@ GET /oauth/callback
           if (!tenantScope.hasScope) {
             return json(missingTenantScopeError(), 400);
           }
+          const { rec } = await loadBookingRecord(env, bookingId);
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) return json(ownershipBlock, 403);
           const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
           return json(
             out,
@@ -2302,13 +2332,23 @@ GET /oauth/callback
       if (url.pathname === "/track/booking/status" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const bookingId = body?.booking_id || body?.bookingId;
+        const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
         const tenantScope = extractBookingTenantScope({ request, url, body });
         if (!tenantScope.hasScope) {
           return json(missingTenantScopeError(), 400);
         }
+        const { rec } = await loadBookingRecord(env, bookingId);
+        const ownershipBlock = await enforceDriverOwnershipForMutation({
+          request,
+          url,
+          body,
+          rec,
+          tenantScope,
+          env,
+        });
+        if (ownershipBlock) return json(ownershipBlock, 403);
         const out = await updateBookingStatusAuthoritative(
-          String(bookingId || "").trim(),
+          bookingId,
           body?.status,
           env,
           tenantScope,
@@ -2329,6 +2369,16 @@ GET /oauth/callback
         if (!tenantScope.hasScope) {
           return json(missingTenantScopeError(), 400);
         }
+        const { rec } = await loadBookingRecord(env, bookingId);
+        const ownershipBlock = await enforceDriverOwnershipForMutation({
+          request,
+          url,
+          body,
+          rec,
+          tenantScope,
+          env,
+        });
+        if (ownershipBlock) return json(ownershipBlock, 403);
         const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
         return json(
           out,
@@ -2507,6 +2557,193 @@ function bookingMatchesRequestedTenantScope(rec, requestedScope) {
     return false;
   }
   return true;
+}
+
+function resolveMutationActorFromRequest(request, url, body = null) {
+  const search = url?.searchParams;
+  const actorRole = _scopeText(
+    body?.actor_role ??
+      body?.actorRole ??
+      search?.get("actor_role") ??
+      search?.get("actorRole") ??
+      request?.headers?.get?.("x-fluxidi-actor-role"),
+    32,
+  ).toLowerCase();
+  const actorDriverId = _scopeText(
+    body?.actor_driver_id ??
+      body?.actorDriverId ??
+      body?.driver_id ??
+      body?.driverId ??
+      search?.get("actor_driver_id") ??
+      search?.get("actorDriverId") ??
+      search?.get("driver_id") ??
+      search?.get("driverId") ??
+      request?.headers?.get?.("x-driver-id") ??
+      request?.headers?.get?.("x-fluxidi-driver-id"),
+    96,
+  );
+  const actorVehicleId = _scopeText(
+    body?.actor_vehicle_id ??
+      body?.actorVehicleId ??
+      body?.vehicle_id ??
+      body?.vehicleId ??
+      search?.get("actor_vehicle_id") ??
+      search?.get("actorVehicleId") ??
+      search?.get("vehicle_id") ??
+      search?.get("vehicleId") ??
+      request?.headers?.get?.("x-vehicle-id") ??
+      request?.headers?.get?.("x-fluxidi-vehicle-id"),
+    128,
+  );
+  return {
+    actor_role: actorRole,
+    actor_driver_id: actorDriverId,
+    actor_vehicle_id: actorVehicleId,
+  };
+}
+
+function _bookingMutationReadPath(root, paths = []) {
+  for (const path of paths) {
+    let cursor = root;
+    let ok = true;
+    for (const key of path) {
+      if (!cursor || typeof cursor !== "object" || !(key in cursor)) {
+        ok = false;
+        break;
+      }
+      cursor = cursor[key];
+    }
+    if (!ok) continue;
+    const text = _scopeText(cursor, 128);
+    if (text) return text;
+  }
+  return "";
+}
+
+function bookingAssignedVehicleId(rec) {
+  return _bookingMutationReadPath(rec, [
+    ["assigned_vehicle_id"],
+    ["assignedVehicleId"],
+    ["vehicle_id"],
+    ["vehicleId"],
+    ["booking", "assigned_vehicle_id"],
+    ["booking", "assignedVehicleId"],
+    ["booking", "vehicle_id"],
+    ["booking", "vehicleId"],
+    ["record", "booking", "assigned_vehicle_id"],
+    ["record", "booking", "assignedVehicleId"],
+    ["record", "booking", "vehicle_id"],
+    ["record", "booking", "vehicleId"],
+  ]);
+}
+
+function bookingAssignedDriverId(rec) {
+  return _bookingMutationReadPath(rec, [
+    ["assigned_driver", "driver_id"],
+    ["assigned_driver", "driverId"],
+    ["assigned_driver", "id"],
+    ["assignedDriver", "driver_id"],
+    ["assignedDriver", "driverId"],
+    ["assignedDriver", "id"],
+    ["driver_id"],
+    ["driverId"],
+    ["booking", "assigned_driver", "driver_id"],
+    ["booking", "assigned_driver", "driverId"],
+    ["booking", "assigned_driver", "id"],
+    ["booking", "assignedDriver", "driver_id"],
+    ["booking", "assignedDriver", "driverId"],
+    ["booking", "assignedDriver", "id"],
+    ["booking", "driver_id"],
+    ["booking", "driverId"],
+    ["record", "booking", "assigned_driver", "driver_id"],
+    ["record", "booking", "assigned_driver", "driverId"],
+    ["record", "booking", "assigned_driver", "id"],
+    ["record", "booking", "assignedDriver", "driver_id"],
+    ["record", "booking", "assignedDriver", "driverId"],
+    ["record", "booking", "assignedDriver", "id"],
+    ["record", "booking", "driver_id"],
+    ["record", "booking", "driverId"],
+  ]);
+}
+
+async function fleetDriverIdForVehicle(env, vehicleId, tenantScope) {
+  const wantedVehicleId = _scopeText(vehicleId, 128);
+  if (!wantedVehicleId) return "";
+  const scopedVehicles = await _loadVehicleInventory(env, { scope: tenantScope });
+  const hit = scopedVehicles.find((v) => _scopeText(v?.vehicle_id, 128) === wantedVehicleId);
+  if (!hit || typeof hit !== "object") return "";
+  return _bookingMutationReadPath(hit, [
+    ["assigned_driver", "driver_id"],
+    ["assigned_driver", "driverId"],
+    ["assigned_driver", "id"],
+    ["assignedDriver", "driver_id"],
+    ["assignedDriver", "driverId"],
+    ["assignedDriver", "id"],
+    ["driver_id"],
+    ["driverId"],
+  ]);
+}
+
+async function driverOwnsBookingForMutation({
+  rec,
+  actorDriverId,
+  actorVehicleId,
+  tenantScope,
+  env,
+}) {
+  const driverId = _scopeText(actorDriverId, 96);
+  const vehicleId = _scopeText(actorVehicleId, 128);
+  const assignedDriverId = bookingAssignedDriverId(rec);
+  const assignedVehicleId = bookingAssignedVehicleId(rec);
+
+  if (driverId && assignedDriverId && driverId === assignedDriverId) return true;
+  if (vehicleId && assignedVehicleId && vehicleId === assignedVehicleId) return true;
+  if (driverId && assignedVehicleId) {
+    const linkedDriverId = await fleetDriverIdForVehicle(
+      env,
+      assignedVehicleId,
+      tenantScope,
+    );
+    if (linkedDriverId && linkedDriverId === driverId) return true;
+  }
+  return false;
+}
+
+async function enforceDriverOwnershipForMutation({
+  request,
+  url,
+  body,
+  rec,
+  tenantScope,
+  env,
+}) {
+  const actor = resolveMutationActorFromRequest(request, url, body);
+  if (actor.actor_role !== "driver") return null;
+  const actorDriverId = _scopeText(actor.actor_driver_id, 96);
+  const actorVehicleId = _scopeText(actor.actor_vehicle_id, 128);
+  const assignedVehicleId = bookingAssignedVehicleId(rec);
+  const bookingId =
+    _scopeText(rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id ?? rec?.booking?.bookingId, 128) ||
+    "unknown";
+
+  let allowed = false;
+  if (actorDriverId || actorVehicleId) {
+    allowed = await driverOwnsBookingForMutation({
+      rec,
+      actorDriverId,
+      actorVehicleId,
+      tenantScope,
+      env,
+    });
+  }
+  console.log(
+    `[DRIVER_OWNERSHIP][CHECK] booking=${bookingId} actor_driver=${actorDriverId || "-"} actor_vehicle=${actorVehicleId || "-"} assigned_vehicle=${assignedVehicleId || "-"} allowed=${allowed}`,
+  );
+  if (allowed) return null;
+  console.log(
+    `[DRIVER_OWNERSHIP][BLOCK] booking=${bookingId} actor_driver=${actorDriverId || "-"} actor_vehicle=${actorVehicleId || "-"} assigned_vehicle=${assignedVehicleId || "-"}`,
+  );
+  return { ok: false, error: "booking_not_assigned_to_driver" };
 }
 
 /* ===================== OAUTH ROUTES (unchanged) ===================== */
