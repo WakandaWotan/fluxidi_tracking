@@ -1658,9 +1658,11 @@ GET /oauth/callback
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const tenantScope = extractBookingTenantScope({ request, url });
         const items = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
+          tenantScope,
         });
         return json({ ok: true, items, count: items.length }, 200);
       }
@@ -1872,8 +1874,9 @@ GET /oauth/callback
         if (!bookingId) return json({ ok: false, error: "booking_id is required" }, 400);
 
         if (pathParts.length === 2 && request.method === "GET") {
-          const out = await getBookingAuthoritative(bookingId, env);
-          return json(out, 200);
+          const tenantScope = extractBookingTenantScope({ request, url });
+          const out = await getBookingAuthoritative(bookingId, env, tenantScope);
+          return json(out, out?.error === "forbidden" ? 403 : 200);
         }
 
         if (
@@ -1882,12 +1885,14 @@ GET /oauth/callback
           request.method === "POST"
         ) {
           const body = await safeJson(request);
+          const tenantScope = extractBookingTenantScope({ request, url, body });
           const out = await updateBookingStatusAuthoritative(
             bookingId,
             body?.status,
             env,
+            tenantScope,
           );
-          return json(out, out.ok ? 200 : 400);
+          return json(out, out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400));
         }
 
         if (
@@ -1896,13 +1901,15 @@ GET /oauth/callback
           request.method === "POST"
         ) {
           const body = await safeJson(request);
+          const tenantScope = extractBookingTenantScope({ request, url, body });
           const out = await updateBookingPaymentAuthoritative(
             bookingId,
             body,
             env,
             ctx,
+            tenantScope,
           );
-          return json(out, out.ok ? 200 : 400);
+          return json(out, out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400));
         }
 
         if (
@@ -1945,8 +1952,10 @@ GET /oauth/callback
           pathParts[2] === "delete" &&
           request.method === "POST"
         ) {
-          const out = await deleteBookingAuthoritative(bookingId, env);
-          return json(out, out.ok ? 200 : 404);
+          const body = await safeJson(request);
+          const tenantScope = extractBookingTenantScope({ request, url, body });
+          const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
+          return json(out, out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404));
         }
       }
 
@@ -1958,9 +1967,11 @@ GET /oauth/callback
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const tenantScope = extractBookingTenantScope({ request, url });
         const items = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
+          tenantScope,
         });
         return json({ ok: true, items, count: items.length }, 200);
       }
@@ -1968,19 +1979,22 @@ GET /oauth/callback
       if (url.pathname === "/track/booking/status" && request.method === "POST") {
         const body = await safeJson(request);
         const bookingId = body?.booking_id || body?.bookingId;
+        const tenantScope = extractBookingTenantScope({ request, url, body });
         const out = await updateBookingStatusAuthoritative(
           String(bookingId || "").trim(),
           body?.status,
           env,
+          tenantScope,
         );
-        return json(out, out.ok ? 200 : 400);
+        return json(out, out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400));
       }
 
       if (url.pathname === "/track/booking/delete" && request.method === "POST") {
         const body = await safeJson(request);
         const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
-        const out = await deleteBookingAuthoritative(bookingId, env);
-        return json(out, out.ok ? 200 : 404);
+        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
+        return json(out, out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404));
       }
 
       // =========================
@@ -2052,6 +2066,95 @@ async function safeJson(request) {
   const text = await request.text();
   if (!text) return {};
   try { return JSON.parse(text); } catch { return {}; }
+}
+
+function _scopeText(value, maxLen = 80) {
+  return safeStr(value, maxLen) || "";
+}
+
+function extractBookingTenantScope({ request, url, body = null } = {}) {
+  const search = url?.searchParams;
+  const tenantFromQuery = _scopeText(
+    search?.get("tenant_id") ?? search?.get("tenantId"),
+  );
+  const companyFromQuery = _scopeText(
+    search?.get("company_id") ?? search?.get("companyId"),
+  );
+  const tenantFromBody = _scopeText(
+    body?.tenant_id ?? body?.tenantId,
+  );
+  const companyFromBody = _scopeText(
+    body?.company_id ?? body?.companyId,
+  );
+
+  // Optional headers for integrations that already carry tenant context.
+  const tenantFromHeader = _scopeText(
+    request?.headers?.get?.("x-tenant-id") ?? request?.headers?.get?.("x-tenant"),
+  );
+  const companyFromHeader = _scopeText(
+    request?.headers?.get?.("x-company-id") ?? request?.headers?.get?.("x-company"),
+  );
+
+  const tenantId = tenantFromQuery || tenantFromBody || tenantFromHeader || "";
+  const companyId = companyFromQuery || companyFromBody || companyFromHeader || "";
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: !!(tenantId || companyId),
+  };
+}
+
+function resolveBookingTenantScopeFromRecord(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
+  const tenantId = _scopeText(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      booking?.tenant_id ??
+      booking?.tenantId ??
+      rec?.company_id ??
+      rec?.companyId ??
+      booking?.company_id ??
+      booking?.companyId,
+  );
+  const companyId = _scopeText(
+    rec?.company_id ??
+      rec?.companyId ??
+      booking?.company_id ??
+      booking?.companyId ??
+      rec?.tenant_id ??
+      rec?.tenantId ??
+      booking?.tenant_id ??
+      booking?.tenantId,
+  );
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: !!(tenantId || companyId),
+  };
+}
+
+function bookingMatchesRequestedTenantScope(rec, requestedScope) {
+  if (!requestedScope?.hasScope) return true;
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  // Legacy MVP bookings may not have tenant/company metadata yet.
+  // Keep those readable/updatable for current Fluxidi dev compatibility.
+  if (!recordScope.hasScope) return true;
+
+  if (
+    requestedScope.tenant_id &&
+    recordScope.tenant_id &&
+    requestedScope.tenant_id !== recordScope.tenant_id
+  ) {
+    return false;
+  }
+  if (
+    requestedScope.company_id &&
+    recordScope.company_id &&
+    requestedScope.company_id !== recordScope.company_id
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /* ===================== OAUTH ROUTES (unchanged) ===================== */
@@ -5829,7 +5932,10 @@ async function debugFleetRecentBookings(url, env) {
   };
 }
 
-async function listBookingsAuthoritative(env, { limit = 50, includeHistory = false } = {}) {
+async function listBookingsAuthoritative(
+  env,
+  { limit = 50, includeHistory = false, tenantScope = null } = {},
+) {
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const lim = Math.min(200, Math.max(1, Number(limit) || 50));
   const nowMs = Date.now();
@@ -5844,6 +5950,7 @@ async function listBookingsAuthoritative(env, { limit = 50, includeHistory = fal
     if (!bookingId) continue;
     const rec = await env.BOOKING_KV.get(name, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
     const row = _flattenBookingForRidesList(bookingId, rec);
     if (!includeHistory && (row.status === "COMPLETED" || row.status === "CANCELLED")) continue;
     if (!includeHistory) {
@@ -5865,8 +5972,11 @@ async function listBookingsAuthoritative(env, { limit = 50, includeHistory = fal
   return out.slice(0, lim);
 }
 
-async function getBookingAuthoritative(bookingId, env) {
+async function getBookingAuthoritative(bookingId, env, tenantScope = null) {
   const { rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
   return {
     ok: true,
     booking_id: bookingId,
@@ -5875,12 +5985,15 @@ async function getBookingAuthoritative(bookingId, env) {
   };
 }
 
-async function updateBookingStatusAuthoritative(bookingId, status, env) {
+async function updateBookingStatusAuthoritative(bookingId, status, env, tenantScope = null) {
   const normalized = _normLifecycleStatus(status);
   if (!["COMPLETED", "CANCELLED", "PENDING"].includes(normalized)) {
     return { ok: false, error: "Invalid status" };
   }
   const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
   rec.status = normalized;
   rec.stage = normalized;
   rec.updatedAt = new Date().toISOString();
@@ -5891,8 +6004,17 @@ async function updateBookingStatusAuthoritative(bookingId, status, env) {
   return { ok: true, booking_id: bookingId, status: normalized };
 }
 
-async function updateBookingPaymentAuthoritative(bookingId, payment, env, ctx) {
+async function updateBookingPaymentAuthoritative(
+  bookingId,
+  payment,
+  env,
+  ctx,
+  tenantScope = null,
+) {
   const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
   const asText = (value) => String(value ?? "").trim();
   const wasAlreadyPaid =
     String(rec?.payment_status || rec?.paymentStatus || "").toLowerCase() === "paid";
@@ -6472,11 +6594,14 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
   }
 }
 
-async function deleteBookingAuthoritative(bookingId, env) {
+async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const key = `booking:${bookingId}`;
   const rec = await env.BOOKING_KV.get(key, { type: "json" });
   if (!rec) return { ok: false, error: "Booking not found" };
+  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
   await cleanupBookingCalendarEvents(env, rec);
   await env.BOOKING_KV.delete(key);
   return { ok: true, booking_id: bookingId, deleted: true };
