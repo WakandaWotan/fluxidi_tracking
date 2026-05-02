@@ -373,9 +373,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _backendProfilesStatus = null;
     });
     try {
+      final scope = _activeSettingsScope();
       final results = await Future.wait<dynamic>([
-        fetchBackendBusinessProfile(),
-        fetchBackendTaxProfile(),
+        fetchBackendBusinessProfile(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        ),
+        fetchBackendTaxProfile(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        ),
       ]);
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
@@ -507,7 +514,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     // even if the backend HTTP call fails or the device is offline.
     await updateLocalBackendBusinessProfileCache(formProfile);
     try {
-      final saved = await saveBackendBusinessProfile(formProfile);
+      final scope = _activeSettingsScope();
+      final saved = await saveBackendBusinessProfile(
+        formProfile,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
       if (!mounted) return;
       // Merge so empty backend echo does not erase locally entered values.
       final merged = _mergeBackendBusinessProfile(
@@ -548,7 +560,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     // restart even if the backend HTTP call fails or the device is offline.
     await updateLocalBackendTaxProfileCache(formProfile);
     try {
-      final saved = await saveBackendTaxProfile(formProfile);
+      final scope = _activeSettingsScope();
+      final saved = await saveBackendTaxProfile(
+        formProfile,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
       if (!mounted) return;
       setState(() {
         _hydrateBackendTaxProfile(saved);
@@ -583,6 +600,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   void _save() {
     final current = businessSettingsNotifier.value;
+    final scope = _activeSettingsScope();
     updateBusinessSettings(
       current.copyWith(
         companyName: _companyCtrl.text.trim(),
@@ -659,6 +677,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           current.pricingSurchargeCapRate,
         ),
       ),
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
     );
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -708,7 +728,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final cur = businessSettingsNotifier.value;
     final next = _storedLogoPathForLocalTenant(cur.logoAssetPath);
     if (next == cur.logoAssetPath) return;
-    updateBusinessSettings(cur.copyWith(logoAssetPath: next));
+    final scope = _activeSettingsScope();
+    updateBusinessSettings(
+      cur.copyWith(logoAssetPath: next),
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
   }
 
   /// When tenant profile/settings load or update, clear Fluxidi defaults from controllers — but do not
@@ -1104,6 +1129,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final resolved = resolvedCompanyId.trim();
     if (resolved.isNotEmpty) return resolved;
     return kTenantId;
+  }
+
+  ({String tenantId, String companyId}) _activeSettingsScope() {
+    final activeCompanyId = _effectivePublicCompanyId().trim();
+    final companyId = activeCompanyId.isEmpty ? kTenantId : activeCompanyId;
+    return (tenantId: companyId, companyId: companyId);
   }
 
   String _preparedPublicBookingUrl(String companyId) {

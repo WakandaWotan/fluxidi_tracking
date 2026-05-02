@@ -480,16 +480,75 @@ function normalizeCommunicationTemplates(input = {}) {
   return out;
 }
 
-async function loadBusinessProfile(env) {
+function resolveAdminSettingsScope({ request, url, body = null } = {}) {
+  const tenantFromQuery = sanitizeTenantString(
+    url?.searchParams?.get("tenant_id") ?? url?.searchParams?.get("tenantId"),
+    80,
+  );
+  const companyFromQuery = sanitizeTenantString(
+    url?.searchParams?.get("company_id") ?? url?.searchParams?.get("companyId"),
+    80,
+  );
+  const tenantFromBody = sanitizeTenantString(body?.tenant_id ?? body?.tenantId, 80);
+  const companyFromBody = sanitizeTenantString(body?.company_id ?? body?.companyId, 80);
+  const tenantFromHeader = sanitizeTenantString(
+    request?.headers?.get?.("x-tenant-id") ?? request?.headers?.get?.("x-tenant"),
+    80,
+  );
+  const companyFromHeader = sanitizeTenantString(
+    request?.headers?.get?.("x-company-id") ?? request?.headers?.get?.("x-company"),
+    80,
+  );
+
+  let tenantId =
+    tenantFromQuery ||
+    tenantFromBody ||
+    tenantFromHeader ||
+    "";
+  let companyId =
+    companyFromQuery ||
+    companyFromBody ||
+    companyFromHeader ||
+    "";
+  if (!tenantId && companyId) tenantId = companyId;
+  if (!companyId && tenantId) companyId = tenantId;
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: !!(tenantId && companyId),
+  };
+}
+
+function buildScopedSettingsKeys(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return {
+    businessProfileKey: `tenant:${tenantId}:company:${companyId}:business_profile:v1`,
+    taxProfileKey: `tenant:${tenantId}:company:${companyId}:tax_profile:v1`,
+    pricingProfileKey: `tenant:${tenantId}:company:${companyId}:pricing:v1`,
+  };
+}
+
+async function loadBusinessProfile(env, scope = null) {
   if (!env?.BOOKING_KV) return normalizeBusinessProfile(DEFAULT_BUSINESS_PROFILE);
-  const raw = await env.BOOKING_KV.get(TENANT_BUSINESS_PROFILE_KEY, { type: "json" });
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys) {
+    raw = await env.BOOKING_KV.get(scopedKeys.businessProfileKey, { type: "json" });
+  }
+  if (!raw) {
+    raw = await env.BOOKING_KV.get(TENANT_BUSINESS_PROFILE_KEY, { type: "json" });
+  }
   return normalizeBusinessProfile(raw?.business_profile ?? raw ?? DEFAULT_BUSINESS_PROFILE);
 }
 
-async function saveBusinessProfile(env, profile) {
+async function saveBusinessProfile(env, profile, scope = null) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = normalizeBusinessProfile(profile);
-  await env.BOOKING_KV.put(TENANT_BUSINESS_PROFILE_KEY, JSON.stringify({
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY;
+  await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
     business_profile: normalized,
@@ -497,16 +556,25 @@ async function saveBusinessProfile(env, profile) {
   return normalized;
 }
 
-async function loadTaxProfile(env) {
+async function loadTaxProfile(env, scope = null) {
   if (!env?.BOOKING_KV) return normalizeTaxProfile(DEFAULT_TAX_PROFILE);
-  const raw = await env.BOOKING_KV.get(TENANT_TAX_PROFILE_KEY, { type: "json" });
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys) {
+    raw = await env.BOOKING_KV.get(scopedKeys.taxProfileKey, { type: "json" });
+  }
+  if (!raw) {
+    raw = await env.BOOKING_KV.get(TENANT_TAX_PROFILE_KEY, { type: "json" });
+  }
   return normalizeTaxProfile(raw?.tax_profile ?? raw ?? DEFAULT_TAX_PROFILE);
 }
 
-async function saveTaxProfile(env, profile) {
+async function saveTaxProfile(env, profile, scope = null) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = normalizeTaxProfile(profile);
-  await env.BOOKING_KV.put(TENANT_TAX_PROFILE_KEY, JSON.stringify({
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY;
+  await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
     tax_profile: normalized,
@@ -564,7 +632,10 @@ async function handlePublicBootstrap(url, env) {
 async function buildPublicBootstrapPayload(companyId, env) {
   let businessProfile = null;
   try {
-    businessProfile = await loadBusinessProfile(env);
+    businessProfile = await loadBusinessProfile(env, {
+      tenant_id: companyId,
+      company_id: companyId,
+    });
   } catch (_) {
     businessProfile = null;
   }
@@ -907,7 +978,10 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
   let businessProfile = null;
   let communicationTemplates = null;
   try {
-    businessProfile = await loadBusinessProfile(env);
+    businessProfile = await loadBusinessProfile(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
   } catch (_) {
     businessProfile = null;
   }
@@ -1737,7 +1811,8 @@ GET /oauth/callback
 
       if (url.pathname === "/admin/pricing/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const profile = await _loadTenantPricingProfile(env);
+        const scope = resolveAdminSettingsScope({ request, url });
+        const profile = await _loadTenantPricingProfile(env, scope);
         return json({
           ok: true,
           key: TENANT_PRICING_PROFILE_KEY,
@@ -1749,15 +1824,11 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
+        const scope = resolveAdminSettingsScope({ request, url, body });
         const incoming = body?.pricing_profile && typeof body.pricing_profile === "object"
           ? body.pricing_profile
           : body;
-        const normalized = _normalizeTenantPricingProfile(incoming);
-        await env.BOOKING_KV.put(TENANT_PRICING_PROFILE_KEY, JSON.stringify({
-          version: 1,
-          updated_at: new Date().toISOString(),
-          pricing_profile: normalized,
-        }));
+        const normalized = await _saveTenantPricingProfile(env, incoming, scope);
         return json({
           ok: true,
           key: TENANT_PRICING_PROFILE_KEY,
@@ -1767,7 +1838,8 @@ GET /oauth/callback
 
       if (url.pathname === "/admin/business/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const profile = await loadBusinessProfile(env);
+        const scope = resolveAdminSettingsScope({ request, url });
+        const profile = await loadBusinessProfile(env, scope);
         return json({
           ok: true,
           key: TENANT_BUSINESS_PROFILE_KEY,
@@ -1778,10 +1850,11 @@ GET /oauth/callback
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
+        const scope = resolveAdminSettingsScope({ request, url, body });
         const incoming = body?.business_profile && typeof body.business_profile === "object"
           ? body.business_profile
           : body;
-        const profile = await saveBusinessProfile(env, incoming);
+        const profile = await saveBusinessProfile(env, incoming, scope);
         return json({
           ok: true,
           key: TENANT_BUSINESS_PROFILE_KEY,
@@ -1791,7 +1864,8 @@ GET /oauth/callback
 
       if (url.pathname === "/admin/tax/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const profile = await loadTaxProfile(env);
+        const scope = resolveAdminSettingsScope({ request, url });
+        const profile = await loadTaxProfile(env, scope);
         return json({
           ok: true,
           key: TENANT_TAX_PROFILE_KEY,
@@ -1802,10 +1876,11 @@ GET /oauth/callback
       if (url.pathname === "/admin/tax/profile" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
+        const scope = resolveAdminSettingsScope({ request, url, body });
         const incoming = body?.tax_profile && typeof body.tax_profile === "object"
           ? body.tax_profile
           : body;
-        const profile = await saveTaxProfile(env, incoming);
+        const profile = await saveTaxProfile(env, incoming, scope);
         return json({
           ok: true,
           key: TENANT_TAX_PROFILE_KEY,
@@ -4643,14 +4718,34 @@ function _normalizeTenantPricingProfile(raw) {
   };
 }
 
-async function _loadTenantPricingProfile(env) {
+async function _loadTenantPricingProfile(env, scope = null) {
   if (!env?.BOOKING_KV) return { ...DEFAULT_TENANT_PRICING_PROFILE };
-  const raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys) {
+    raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
+  }
+  if (!raw) {
+    raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+  }
   const incoming = raw && typeof raw === "object"
     ? (raw.pricing_profile && typeof raw.pricing_profile === "object" ? raw.pricing_profile : raw)
     : null;
   if (!incoming) return { ...DEFAULT_TENANT_PRICING_PROFILE };
   return _normalizeTenantPricingProfile(incoming);
+}
+
+async function _saveTenantPricingProfile(env, incoming, scope = null) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const normalized = _normalizeTenantPricingProfile(incoming);
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY;
+  await env.BOOKING_KV.put(targetKey, JSON.stringify({
+    version: 1,
+    updated_at: new Date().toISOString(),
+    pricing_profile: normalized,
+  }));
+  return normalized;
 }
 
 function tierFeeEx(tier) {

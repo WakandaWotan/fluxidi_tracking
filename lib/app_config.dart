@@ -725,10 +725,16 @@ final ValueNotifier<BusinessSettingsState> businessSettingsNotifier =
       ),
     );
 
-void updateBusinessSettings(BusinessSettingsState next) {
+void updateBusinessSettings(
+  BusinessSettingsState next, {
+  String? tenantId,
+  String? companyId,
+}) {
   businessSettingsNotifier.value = next;
   _persistLocalTenantState();
-  unawaited(syncPricingProfileToBackend());
+  unawaited(
+    syncPricingProfileToBackend(tenantId: tenantId, companyId: companyId),
+  );
 }
 
 final ValueNotifier<List<VehicleProfile>> vehiclesNotifier =
@@ -1217,6 +1223,39 @@ Map<String, String> _adminJsonHeaders() {
   return headers;
 }
 
+Map<String, String> _resolveAdminTenantCompanyScope({
+  String? tenantId,
+  String? companyId,
+}) {
+  final effectiveTenant = (tenantId ?? companyId ?? '').trim();
+  final effectiveCompany = (companyId ?? tenantId ?? '').trim();
+  final normalizedTenant = effectiveTenant.isEmpty
+      ? kTenantId
+      : effectiveTenant;
+  final normalizedCompany = effectiveCompany.isEmpty
+      ? normalizedTenant
+      : effectiveCompany;
+  return <String, String>{
+    'tenant_id': normalizedTenant,
+    'company_id': normalizedCompany,
+    'tenantId': normalizedTenant,
+    'companyId': normalizedCompany,
+  };
+}
+
+Uri _withAdminTenantCompanyScope(
+  Uri endpoint, {
+  String? tenantId,
+  String? companyId,
+}) {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final merged = <String, String>{...endpoint.queryParameters, ...scope};
+  return endpoint.replace(queryParameters: merged);
+}
+
 Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
   return <String, dynamic>{
     'base_fare': s.pricingBaseFare,
@@ -1265,19 +1304,29 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(VehicleProfile v) {
   };
 }
 
-Future<bool> syncPricingProfileToBackend() async {
+Future<bool> syncPricingProfileToBackend({
+  String? tenantId,
+  String? companyId,
+}) async {
   try {
-    final endpoint = Uri.parse(
-      '${appConfig.bookingBaseUrl}/admin/pricing/profile',
+    final endpoint = _withAdminTenantCompanyScope(
+      Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/profile'),
+      tenantId: tenantId,
+      companyId: companyId,
     );
     final profilePayload = _encodePricingProfileForBackend(
       businessSettingsNotifier.value,
+    );
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
     );
     await http
         .post(
           endpoint,
           headers: _adminJsonHeaders(),
           body: jsonEncode(<String, dynamic>{
+            ...scope,
             'pricing_profile': profilePayload,
           }),
         )
@@ -1311,9 +1360,14 @@ Future<bool> syncFleetInventoryToBackend() async {
   }
 }
 
-Future<BackendBusinessProfile> fetchBackendBusinessProfile() async {
-  final endpoint = Uri.parse(
-    '${appConfig.bookingBaseUrl}/admin/business/profile',
+Future<BackendBusinessProfile> fetchBackendBusinessProfile({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
   );
   final res = await http
       .get(endpoint, headers: _adminJsonHeaders())
@@ -1329,16 +1383,25 @@ Future<BackendBusinessProfile> fetchBackendBusinessProfile() async {
 }
 
 Future<BackendBusinessProfile> saveBackendBusinessProfile(
-  BackendBusinessProfile profile,
-) async {
-  final endpoint = Uri.parse(
-    '${appConfig.bookingBaseUrl}/admin/business/profile',
+  BackendBusinessProfile profile, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
   );
   final res = await http
       .post(
         endpoint,
         headers: _adminJsonHeaders(),
         body: jsonEncode(<String, dynamic>{
+          ...scope,
           'business_profile': profile.toJson(),
         }),
       )
@@ -1353,8 +1416,15 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
   return BackendBusinessProfile.fromJson(Map<String, dynamic>.from(saved));
 }
 
-Future<BackendTaxProfile> fetchBackendTaxProfile() async {
-  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile');
+Future<BackendTaxProfile> fetchBackendTaxProfile({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
   final res = await http
       .get(endpoint, headers: _adminJsonHeaders())
       .timeout(const Duration(seconds: 12));
@@ -1369,14 +1439,27 @@ Future<BackendTaxProfile> fetchBackendTaxProfile() async {
 }
 
 Future<BackendTaxProfile> saveBackendTaxProfile(
-  BackendTaxProfile profile,
-) async {
-  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile');
+  BackendTaxProfile profile, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/tax/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
   final res = await http
       .post(
         endpoint,
         headers: _adminJsonHeaders(),
-        body: jsonEncode(<String, dynamic>{'tax_profile': profile.toJson()}),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'tax_profile': profile.toJson(),
+        }),
       )
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
