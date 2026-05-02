@@ -131,7 +131,9 @@ class StoredCustomerBooking {
   static bool _isMeaningfulString(String s) {
     final normalized = s.trim().toLowerCase();
     if (normalized.isEmpty) return false;
-    if (normalized == '-' || normalized == 'null' || normalized == 'undefined') {
+    if (normalized == '-' ||
+        normalized == 'null' ||
+        normalized == 'undefined') {
       return false;
     }
     return true;
@@ -251,18 +253,22 @@ class StoredCustomerBooking {
       bookingMap['status'],
       'PENDING',
     ]).toUpperCase();
-    final businessDetected = _bool(_firstNonEmpty([
-      response['business_detected'],
-      bookingMap['business_detected'],
-      requestPayload['vat_number'],
-      requestPayload['company_name'],
-    ]));
-    final invoiceRequested = _bool(_firstNonEmpty([
-      response['invoice_requested'],
-      bookingMap['invoice_requested'],
-      requestPayload['invoice_requested'],
-      businessDetected ? 'true' : 'false',
-    ]));
+    final businessDetected = _bool(
+      _firstNonEmpty([
+        response['business_detected'],
+        bookingMap['business_detected'],
+        requestPayload['vat_number'],
+        requestPayload['company_name'],
+      ]),
+    );
+    final invoiceRequested = _bool(
+      _firstNonEmpty([
+        response['invoice_requested'],
+        bookingMap['invoice_requested'],
+        requestPayload['invoice_requested'],
+        businessDetected ? 'true' : 'false',
+      ]),
+    );
     return StoredCustomerBooking(
       bookingId: bookingId,
       publicBookingId: bookingId,
@@ -606,24 +612,25 @@ class StoredCustomerBooking {
         fallback?.createdAt,
         DateTime.now().toIso8601String(),
       ]),
-      businessDetected: _bool(_firstNonEmpty([
-        booking['business_detected'],
-        booking['business_customer'],
-        booking['is_business'],
-        fallback?.businessDetected,
-      ])),
-      invoiceRequested: _bool(_firstNonEmpty([
-        booking['invoice_requested'],
-        fallback?.invoiceRequested,
-      ])),
+      businessDetected: _bool(
+        _firstNonEmpty([
+          booking['business_detected'],
+          booking['business_customer'],
+          booking['is_business'],
+          fallback?.businessDetected,
+        ]),
+      ),
+      invoiceRequested: _bool(
+        _firstNonEmpty([
+          booking['invoice_requested'],
+          fallback?.invoiceRequested,
+        ]),
+      ),
       companyName: _firstNonEmpty([
         booking['company_name'],
         fallback?.companyName,
       ]),
-      vatNumber: _firstNonEmpty([
-        booking['vat_number'],
-        fallback?.vatNumber,
-      ]),
+      vatNumber: _firstNonEmpty([booking['vat_number'], fallback?.vatNumber]),
       invoiceEmail: _firstNonEmpty([
         booking['invoice_email'],
         fallback?.invoiceEmail,
@@ -633,7 +640,9 @@ class StoredCustomerBooking {
         booking['billing_address'],
         fallback?.invoiceAddress,
       ]),
-      quote: quote.isNotEmpty ? quote : (fallback?.quote ?? const <String, dynamic>{}),
+      quote: quote.isNotEmpty
+          ? quote
+          : (fallback?.quote ?? const <String, dynamic>{}),
       updatedAt: DateTime.now().toIso8601String(),
     );
   }
@@ -709,6 +718,7 @@ class CustomerBookingsStore {
   static const String _fileName = 'customer_bookings_v1.json';
 
   List<StoredCustomerBooking>? _cache;
+  Future<void> _writeQueue = Future<void>.value();
 
   Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
@@ -736,14 +746,28 @@ class CustomerBookingsStore {
         _cache = <StoredCustomerBooking>[];
         return const <StoredCustomerBooking>[];
       }
-      final decoded = jsonDecode(raw);
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(raw);
+      } catch (err) {
+        await _backupCorruptFile(file, reason: 'decode_error');
+        debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] decode_error=$err');
+        _cache = <StoredCustomerBooking>[];
+        return const <StoredCustomerBooking>[];
+      }
       if (decoded is! List) {
+        await _backupCorruptFile(file, reason: 'non_list_root');
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][LOAD_ERROR] non_list_root type=${decoded.runtimeType}',
+        );
         _cache = <StoredCustomerBooking>[];
         return const <StoredCustomerBooking>[];
       }
       final items = decoded
           .whereType<Map>()
-          .map((m) => StoredCustomerBooking.fromJson(Map<String, dynamic>.from(m)))
+          .map(
+            (m) => StoredCustomerBooking.fromJson(Map<String, dynamic>.from(m)),
+          )
           .toList(growable: false);
       _cache = items;
       return List<StoredCustomerBooking>.from(items);
@@ -756,23 +780,97 @@ class CustomerBookingsStore {
 
   Future<void> _saveAll(List<StoredCustomerBooking> items) async {
     _cache = List<StoredCustomerBooking>.from(items);
+    await _enqueueWrite(() async {
+      try {
+        final file = await _file();
+        final payload = items.map((e) => e.toJson()).toList(growable: false);
+        await _atomicWriteJsonArray(file: file, payload: payload);
+      } catch (err) {
+        debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
+      }
+    });
+  }
+
+  Future<void> _enqueueWrite(Future<void> Function() writeOp) {
+    _writeQueue = _writeQueue.then((_) => writeOp(), onError: (_) => writeOp());
+    return _writeQueue;
+  }
+
+  String _safeTimestampToken() {
+    final iso = DateTime.now().toUtc().toIso8601String();
+    return iso.replaceAll(RegExp(r'[^0-9A-Za-z]'), '_');
+  }
+
+  Future<void> _backupCorruptFile(File file, {required String reason}) async {
     try {
-      final file = await _file();
-      final payload = items.map((e) => e.toJson()).toList(growable: false);
-      await file.writeAsString(jsonEncode(payload));
+      if (!await file.exists()) return;
+      final dirPath = file.parent.path;
+      final backupName =
+          'customer_bookings_v1.corrupt.${_safeTimestampToken()}.json';
+      final backup = File('$dirPath${Platform.pathSeparator}$backupName');
+      await file.copy(backup.path);
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][RECOVERY] reason=$reason backup=${backup.path}',
+      );
     } catch (err) {
-      debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][RECOVERY_ERROR] reason=$reason error=$err',
+      );
     }
   }
 
-  int _findIndex(List<StoredCustomerBooking> items, StoredCustomerBooking incoming) {
+  Future<void> _atomicWriteJsonArray({
+    required File file,
+    required List<Map<String, dynamic>> payload,
+  }) async {
+    final encoded = jsonEncode(payload);
+    final dirPath = file.parent.path;
+    final tempPath = '${file.path}.tmp';
+    final swapPath = '$dirPath${Platform.pathSeparator}$_fileName.swap';
+    final tempFile = File(tempPath);
+    final swapFile = File(swapPath);
+
+    if (await tempFile.exists()) {
+      await tempFile.delete();
+    }
+    await tempFile.writeAsString(encoded, flush: true);
+
+    try {
+      if (await swapFile.exists()) {
+        await swapFile.delete();
+      }
+      if (await file.exists()) {
+        await file.rename(swapFile.path);
+      }
+      await tempFile.rename(file.path);
+      if (await swapFile.exists()) {
+        await swapFile.delete();
+      }
+    } catch (_) {
+      if (await tempFile.exists()) {
+        await file.writeAsString(encoded, flush: true);
+        await tempFile.delete();
+      }
+      if (!await file.exists() && await swapFile.exists()) {
+        await swapFile.rename(file.path);
+      } else if (await swapFile.exists()) {
+        await swapFile.delete();
+      }
+    }
+  }
+
+  int _findIndex(
+    List<StoredCustomerBooking> items,
+    StoredCustomerBooking incoming,
+  ) {
     final bookingId = incoming.bookingId.trim();
     final publicId = incoming.publicBookingId.trim();
     final paymentBookingId = incoming.paymentBookingId.trim();
     for (int i = 0; i < items.length; i++) {
       final item = items[i];
       if (bookingId.isNotEmpty && item.bookingId.trim() == bookingId) return i;
-      if (publicId.isNotEmpty && item.publicBookingId.trim() == publicId) return i;
+      if (publicId.isNotEmpty && item.publicBookingId.trim() == publicId)
+        return i;
       if (paymentBookingId.isNotEmpty &&
           item.paymentBookingId.trim().isNotEmpty &&
           item.paymentBookingId.trim() == paymentBookingId) {
@@ -793,22 +891,36 @@ class CustomerBookingsStore {
     if (index >= 0) {
       final existing = list[index];
       list[index] = existing.copyWith(
-        bookingId: incoming.bookingId.isNotEmpty ? incoming.bookingId : existing.bookingId,
+        bookingId: incoming.bookingId.isNotEmpty
+            ? incoming.bookingId
+            : existing.bookingId,
         publicBookingId: incoming.publicBookingId.isNotEmpty
             ? incoming.publicBookingId
             : existing.publicBookingId,
         paymentBookingId: incoming.paymentBookingId.isNotEmpty
             ? incoming.paymentBookingId
             : existing.paymentBookingId,
-        customerName: incoming.customerName.isNotEmpty ? incoming.customerName : existing.customerName,
-        customerPhone: incoming.customerPhone.isNotEmpty ? incoming.customerPhone : existing.customerPhone,
-        customerEmail: incoming.customerEmail.isNotEmpty ? incoming.customerEmail : existing.customerEmail,
+        customerName: incoming.customerName.isNotEmpty
+            ? incoming.customerName
+            : existing.customerName,
+        customerPhone: incoming.customerPhone.isNotEmpty
+            ? incoming.customerPhone
+            : existing.customerPhone,
+        customerEmail: incoming.customerEmail.isNotEmpty
+            ? incoming.customerEmail
+            : existing.customerEmail,
         from: incoming.from.isNotEmpty ? incoming.from : existing.from,
         to: incoming.to.isNotEmpty ? incoming.to : existing.to,
-        pickupIso: incoming.pickupIso.isNotEmpty ? incoming.pickupIso : existing.pickupIso,
+        pickupIso: incoming.pickupIso.isNotEmpty
+            ? incoming.pickupIso
+            : existing.pickupIso,
         price: incoming.price ?? existing.price,
-        currency: incoming.currency.isNotEmpty ? incoming.currency : existing.currency,
-        service: incoming.service.isNotEmpty ? incoming.service : existing.service,
+        currency: incoming.currency.isNotEmpty
+            ? incoming.currency
+            : existing.currency,
+        service: incoming.service.isNotEmpty
+            ? incoming.service
+            : existing.service,
         tier: incoming.tier.isNotEmpty ? incoming.tier : existing.tier,
         pax: incoming.pax.isNotEmpty ? incoming.pax : existing.pax,
         bags: incoming.bags.isNotEmpty ? incoming.bags : existing.bags,
@@ -816,12 +928,22 @@ class CustomerBookingsStore {
             ? incoming.paymentStatus
             : existing.paymentStatus,
         status: incoming.status.isNotEmpty ? incoming.status : existing.status,
-        createdAt: existing.createdAt.isNotEmpty ? existing.createdAt : incoming.createdAt,
-        businessDetected: incoming.businessDetected || existing.businessDetected,
-        invoiceRequested: incoming.invoiceRequested || existing.invoiceRequested,
-        companyName: incoming.companyName.isNotEmpty ? incoming.companyName : existing.companyName,
-        vatNumber: incoming.vatNumber.isNotEmpty ? incoming.vatNumber : existing.vatNumber,
-        invoiceEmail: incoming.invoiceEmail.isNotEmpty ? incoming.invoiceEmail : existing.invoiceEmail,
+        createdAt: existing.createdAt.isNotEmpty
+            ? existing.createdAt
+            : incoming.createdAt,
+        businessDetected:
+            incoming.businessDetected || existing.businessDetected,
+        invoiceRequested:
+            incoming.invoiceRequested || existing.invoiceRequested,
+        companyName: incoming.companyName.isNotEmpty
+            ? incoming.companyName
+            : existing.companyName,
+        vatNumber: incoming.vatNumber.isNotEmpty
+            ? incoming.vatNumber
+            : existing.vatNumber,
+        invoiceEmail: incoming.invoiceEmail.isNotEmpty
+            ? incoming.invoiceEmail
+            : existing.invoiceEmail,
         invoiceAddress: incoming.invoiceAddress.isNotEmpty
             ? incoming.invoiceAddress
             : existing.invoiceAddress,
@@ -838,6 +960,7 @@ class CustomerBookingsStore {
   Future<void> markPaid({
     required String bookingId,
     String? paymentBookingId,
+    String? bookingStatus,
   }) async {
     final list = await loadAll();
     final bId = bookingId.trim();
@@ -850,7 +973,9 @@ class CustomerBookingsStore {
           (pId.isNotEmpty && item.paymentBookingId.trim() == pId)) {
         list[i] = item.copyWith(
           paymentStatus: 'paid',
-          status: item.status.isNotEmpty ? item.status : 'CONFIRMED',
+          status: (bookingStatus ?? '').trim().isNotEmpty
+              ? bookingStatus!.trim()
+              : (item.status.isNotEmpty ? item.status : 'CONFIRMED'),
           updatedAt: now,
         );
         changed = true;
@@ -859,5 +984,17 @@ class CustomerBookingsStore {
     if (changed) {
       await _saveAll(list);
     }
+  }
+
+  Future<void> remove(String bookingId) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) return;
+    final list = await loadAll();
+    list.removeWhere((item) => item.bookingId.trim() == id);
+    await _saveAll(list);
+  }
+
+  Future<void> clear() async {
+    await _saveAll(const <StoredCustomerBooking>[]);
   }
 }

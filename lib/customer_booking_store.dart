@@ -1,8 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:fluxidi_tracking/customer_bookings_store.dart';
 
 class CustomerSavedBooking {
   const CustomerSavedBooking({
@@ -118,104 +114,28 @@ class CustomerBookingStore {
 
   static final CustomerBookingStore instance = CustomerBookingStore._();
 
-  static const String _fileName = 'customer_bookings_v1.json';
-  List<CustomerSavedBooking>? _cache;
-
-  Future<File> _file() async {
-    final base = await getApplicationDocumentsDirectory();
-    final dir = Directory(
-      '${base.path}${Platform.pathSeparator}customer_state',
-    );
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    return File('${dir.path}${Platform.pathSeparator}$_fileName');
-  }
-
-  List<CustomerSavedBooking> _sorted(List<CustomerSavedBooking> items) {
-    final out = List<CustomerSavedBooking>.from(items);
-    out.sort((a, b) {
-      final aDt =
-          DateTime.tryParse(a.createdAt) ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final bDt =
-          DateTime.tryParse(b.createdAt) ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      return bDt.compareTo(aDt);
-    });
-    return out;
-  }
-
   Future<List<CustomerSavedBooking>> loadAll() async {
-    if (_cache != null) return List<CustomerSavedBooking>.from(_cache!);
-    try {
-      final file = await _file();
-      if (!await file.exists()) {
-        _cache = <CustomerSavedBooking>[];
-        return const <CustomerSavedBooking>[];
-      }
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) {
-        _cache = <CustomerSavedBooking>[];
-        return const <CustomerSavedBooking>[];
-      }
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) {
-        _cache = <CustomerSavedBooking>[];
-        return const <CustomerSavedBooking>[];
-      }
-      final items = decoded
-          .whereType<Map>()
-          .map(
-            (entry) =>
-                CustomerSavedBooking.fromJson(Map<String, dynamic>.from(entry)),
-          )
-          .where((entry) => entry.bookingId.trim().isNotEmpty)
-          .toList(growable: false);
-      _cache = _sorted(items);
-      return List<CustomerSavedBooking>.from(_cache!);
-    } catch (err) {
-      debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] $err');
-      _cache = <CustomerSavedBooking>[];
-      return const <CustomerSavedBooking>[];
-    }
-  }
-
-  Future<void> _saveAll(List<CustomerSavedBooking> items) async {
-    final sorted = _sorted(items);
-    _cache = sorted;
-    try {
-      final file = await _file();
-      final payload = sorted.map((e) => e.toJson()).toList(growable: false);
-      await file.writeAsString(jsonEncode(payload));
-    } catch (err) {
-      debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
-    }
+    final canonical = await CustomerBookingsStore.instance.loadAll();
+    return canonical
+        .map(_fromCanonical)
+        .where((entry) => entry.bookingId.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<void> upsert(CustomerSavedBooking booking) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
-    final list = await loadAll();
-    final index = list.indexWhere((item) => item.bookingId.trim() == id);
-    if (index >= 0) {
-      list[index] = booking;
-    } else {
-      list.add(booking);
-    }
-    await _saveAll(list);
+    await CustomerBookingsStore.instance.upsert(_toCanonical(booking));
   }
 
   Future<void> remove(String bookingId) async {
     final id = bookingId.trim();
     if (id.isEmpty) return;
-    final list = await loadAll();
-    list.removeWhere((item) => item.bookingId.trim() == id);
-    await _saveAll(list);
+    await CustomerBookingsStore.instance.remove(id);
   }
 
   Future<void> clear() async {
-    await _saveAll(const <CustomerSavedBooking>[]);
+    await CustomerBookingsStore.instance.clear();
   }
 
   Future<void> markPaid({
@@ -224,18 +144,68 @@ class CustomerBookingStore {
   }) async {
     final id = bookingId.trim();
     if (id.isEmpty) return;
-    final list = await loadAll();
-    final index = list.indexWhere((item) => item.bookingId.trim() == id);
-    if (index < 0) return;
-    final item = list[index];
-    list[index] = item.copyWith(
-      paymentStatus: 'paid',
-      bookingStatus:
-          bookingStatus ??
-          (item.bookingStatus.trim().isEmpty
-              ? 'CONFIRMED'
-              : item.bookingStatus),
+    await CustomerBookingsStore.instance.markPaid(
+      bookingId: id,
+      bookingStatus: bookingStatus,
     );
-    await _saveAll(list);
+  }
+
+  CustomerSavedBooking _fromCanonical(StoredCustomerBooking item) {
+    final raw = <String, dynamic>{
+      'booking_id': item.bookingId,
+      'public_booking_id': item.publicBookingId,
+      'payment_booking_id': item.paymentBookingId,
+      'payment_status': item.paymentStatus,
+      'status': item.status,
+      'price': item.price,
+      'currency': item.currency,
+      'quote': item.quote,
+      'updated_at': item.updatedAt,
+    };
+    return CustomerSavedBooking(
+      bookingId: item.bookingId,
+      customerId: '',
+      createdAt: item.createdAt,
+      pickupIso: item.pickupIso,
+      from: item.from,
+      to: item.to,
+      price: item.price,
+      currency: item.currency,
+      paymentStatus: item.paymentStatus,
+      bookingStatus: item.status,
+      publicReference: item.publicBookingId,
+      rawSnapshot: raw,
+    );
+  }
+
+  StoredCustomerBooking _toCanonical(CustomerSavedBooking booking) {
+    return StoredCustomerBooking(
+      bookingId: booking.bookingId,
+      publicBookingId: booking.publicReference,
+      paymentBookingId: (booking.rawSnapshot['payment_booking_id'] ?? '')
+          .toString()
+          .trim(),
+      customerName: (booking.rawSnapshot['customer_name'] ?? '')
+          .toString()
+          .trim(),
+      customerPhone: (booking.rawSnapshot['customer_phone'] ?? '')
+          .toString()
+          .trim(),
+      customerEmail: (booking.rawSnapshot['customer_email'] ?? '')
+          .toString()
+          .trim(),
+      from: booking.from,
+      to: booking.to,
+      pickupIso: booking.pickupIso,
+      price: booking.price,
+      currency: booking.currency,
+      paymentStatus: booking.paymentStatus,
+      status: booking.bookingStatus,
+      createdAt: booking.createdAt,
+      updatedAt: DateTime.now().toIso8601String(),
+      quote: booking.rawSnapshot['quote'] is Map
+          ? Map<String, dynamic>.from(booking.rawSnapshot['quote'] as Map)
+          : const <String, dynamic>{},
+    );
   }
 }
