@@ -2834,6 +2834,56 @@ class _LocalComplianceLedgerSectionState
     return _t(nl: 'Bon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
   }
 
+  String _draftReceiptLabel() {
+    return _t(
+      nl: 'Conceptbon',
+      en: 'Draft receipt',
+      fr: 'Reçu provisoire',
+      es: 'Recibo provisional',
+    );
+  }
+
+  bool _looksLikeUuid(String value) {
+    return RegExp(
+      r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
+
+  bool _looksTechnicalInternalReference(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return true;
+    if (_isUnknownLikeToken(text)) return true;
+    final lower = text.toLowerCase();
+    if (lower.startsWith('trip_')) return true;
+    if (lower.startsWith('trip-trip_')) return true;
+    if (lower.contains('trip-trip_')) return true;
+    if (_looksLikeUuid(lower)) return true;
+    final hasUnderscoreOrHyphen = text.contains('_') || text.contains('-');
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(text);
+    final hasDigits = RegExp(r'\d').hasMatch(text);
+    if (text.length >= 28 && hasUnderscoreOrHyphen && hasLetters && hasDigits) {
+      return true;
+    }
+    return false;
+  }
+
+  String? _bestBusinessReference(ComplianceLedgerEntry entry) {
+    final candidates = <String>[
+      entry.receiptReference.trim(),
+      entry.bookingId.trim(),
+      entry.tripId.trim(),
+      entry.rideId.trim(),
+      entry.eventId.trim(),
+    ];
+    for (final candidate in candidates) {
+      if (candidate.isEmpty) continue;
+      if (_looksTechnicalInternalReference(candidate)) continue;
+      return candidate;
+    }
+    return null;
+  }
+
   Widget _chip(String label) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -3348,13 +3398,14 @@ class _LocalComplianceLedgerSectionState
   }
 
   String _referenceDisplay(ComplianceLedgerEntry entry) {
-    if (entry.receiptReference.trim().isNotEmpty) {
-      return '${_receiptLabel()} ${entry.receiptReference.trim()}';
+    final businessReference = _bestBusinessReference(entry);
+    if (businessReference != null) {
+      return '${_receiptLabel()} $businessReference';
     }
-    if (entry.bookingId.trim().isNotEmpty) return entry.bookingId.trim();
-    if (entry.tripId.trim().isNotEmpty) return entry.tripId.trim();
-    if (entry.rideId.trim().isNotEmpty) return entry.rideId.trim();
-    if (entry.eventId.trim().isNotEmpty) return entry.eventId.trim();
+    final rideType = _ledgerToken(entry.rideType);
+    if (rideType == 'direct' || rideType == 'planned') {
+      return _draftReceiptLabel();
+    }
     return '—';
   }
 
