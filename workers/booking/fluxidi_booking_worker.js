@@ -2173,7 +2173,9 @@ GET /oauth/callback
             tenantScope,
             env,
           });
-          if (ownershipBlock) return json(ownershipBlock, 403);
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
           const out = await updateBookingStatusAuthoritative(
             bookingId,
             body?.status,
@@ -2208,7 +2210,9 @@ GET /oauth/callback
             tenantScope,
             env,
           });
-          if (ownershipBlock) return json(ownershipBlock, 403);
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
           const out = await updateBookingPaymentAuthoritative(
             bookingId,
             body,
@@ -2298,7 +2302,9 @@ GET /oauth/callback
             tenantScope,
             env,
           });
-          if (ownershipBlock) return json(ownershipBlock, 403);
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
           const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
           return json(
             out,
@@ -2346,7 +2352,9 @@ GET /oauth/callback
           tenantScope,
           env,
         });
-        if (ownershipBlock) return json(ownershipBlock, 403);
+        if (ownershipBlock) {
+          return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+        }
         const out = await updateBookingStatusAuthoritative(
           bookingId,
           body?.status,
@@ -2378,7 +2386,9 @@ GET /oauth/callback
           tenantScope,
           env,
         });
-        if (ownershipBlock) return json(ownershipBlock, 403);
+        if (ownershipBlock) {
+          return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+        }
         const out = await deleteBookingAuthoritative(bookingId, env, tenantScope);
         return json(
           out,
