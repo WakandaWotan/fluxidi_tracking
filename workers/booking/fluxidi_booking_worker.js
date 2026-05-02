@@ -3304,7 +3304,7 @@ async function handleBooking(payload, env, request) {
     }
     const tenantContext = resolveBookingTenantContext({ payload, request, env });
 
-    const pricingProfile = await _loadTenantPricingProfile(env);
+    const pricingProfile = await _loadTenantPricingProfile(env, tenantContext);
     const vat_rate = clampNumber(
       pricingProfile?.vat_rate,
       clampNumber(payload?.vat_rate, 0.06, 0, 1),
