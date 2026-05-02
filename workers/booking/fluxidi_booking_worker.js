@@ -1889,16 +1889,23 @@ GET /oauth/callback
       if (url.pathname === "/admin/fleet/vehicles" && request.method === "GET") {
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-        const raw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
-        const vehicles = Array.isArray(raw)
-          ? raw
-          : (raw && typeof raw === "object" && Array.isArray(raw.vehicles) ? raw.vehicles : []);
+        const scope = normalizeFleetTenantScope(
+          extractBookingTenantScope({ request, url }),
+        );
+        if (!scope.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+        const vehicles = fleetRead.vehiclesRaw;
         const normalized = vehicles
           .map(_normalizeVehicleEntry)
           .filter((v) => v !== null);
         return json({
           ok: true,
-          key: VEHICLE_INVENTORY_KEY,
+          key: fleetRead.key,
+          source: fleetRead.source,
+          scoped_key: fleetRead.scoped_key,
+          legacy_key: fleetRead.legacy_key,
           count: normalized.length,
           vehicles: normalized,
         }, 200);
@@ -1908,6 +1915,12 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
+        const scope = normalizeFleetTenantScope(
+          extractBookingTenantScope({ request, url, body }),
+        );
+        if (!scope.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = Array.isArray(body)
           ? body
           : (Array.isArray(body?.vehicles) ? body.vehicles : null);
@@ -1915,17 +1928,21 @@ GET /oauth/callback
           return json({ ok: false, error: "Body must be an array or { vehicles: [] }" }, 400);
         }
         const normalized = incoming
-          .map(_normalizeVehicleEntry)
+          .map((entry) => _normalizeVehicleEntry(entry, { scope }))
           .filter((v) => v !== null);
+        const scopedKey = fleetInventoryScopedKeyForScope(scope);
         const payload = {
           version: 1,
           updated_at: new Date().toISOString(),
           vehicles: normalized,
         };
-        await env.BOOKING_KV.put(VEHICLE_INVENTORY_KEY, JSON.stringify(payload));
+        await env.BOOKING_KV.put(scopedKey, JSON.stringify(payload));
         return json({
           ok: true,
-          key: VEHICLE_INVENTORY_KEY,
+          key: scopedKey,
+          source: "scoped",
+          scoped_key: scopedKey,
+          legacy_key: VEHICLE_INVENTORY_KEY,
           count: normalized.length,
           vehicles: normalized,
         }, 200);
@@ -2187,6 +2204,7 @@ GET /oauth/callback
           if (!tenantScope.hasScope) {
             return json(missingTenantScopeError(), 400);
           }
+          const fleetScope = normalizeFleetTenantScope(tenantScope);
           const vehicleId = String(body?.vehicle_id || body?.assigned_vehicle_id || "").trim();
           if (!vehicleId) {
             return json({ ok: false, error: "vehicle_id is required", booking_id: bookingId }, 400);
@@ -2194,6 +2212,16 @@ GET /oauth/callback
           const { key, rec } = await loadBookingRecord(env, bookingId);
           if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
             return json({ ok: false, error: "forbidden" }, 403);
+          }
+          const scopedVehicles = await _loadVehicleInventory(env, { scope: fleetScope });
+          const vehicleInScope = scopedVehicles.some((v) => String(v?.vehicle_id || "").trim() === vehicleId);
+          if (!vehicleInScope) {
+            return json({
+              ok: false,
+              error: "vehicle_not_in_scope",
+              booking_id: bookingId,
+              assigned_vehicle_id: vehicleId,
+            }, 403);
           }
           rec.assigned_vehicle_id = vehicleId;
           if (rec.booking && typeof rec.booking === "object") {
@@ -5782,7 +5810,55 @@ function _toPositiveInt(v, fallback = 0) {
   return Math.max(0, Math.trunc(n));
 }
 
-function _normalizeVehicleEntry(raw) {
+function normalizeFleetTenantScope(scope) {
+  const tenantIdRaw = _scopeText(scope?.tenant_id ?? scope?.tenantId);
+  const companyIdRaw = _scopeText(scope?.company_id ?? scope?.companyId);
+  const tenantId = tenantIdRaw || companyIdRaw || "";
+  const companyId = companyIdRaw || tenantId || "";
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: !!(tenantId || companyId),
+  };
+}
+
+function fleetInventoryScopedKeyForScope(scope) {
+  const normalized = normalizeFleetTenantScope(scope);
+  if (!normalized.hasScope) return VEHICLE_INVENTORY_KEY;
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:fleet:vehicles:v1`;
+}
+
+async function _loadFleetInventoryRawForScope(env, scope) {
+  if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const normalizedScope = normalizeFleetTenantScope(scope);
+  const scopedKey = fleetInventoryScopedKeyForScope(normalizedScope);
+  const scopedRaw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+  const scopedVehiclesRaw = Array.isArray(scopedRaw)
+    ? scopedRaw
+    : (scopedRaw && typeof scopedRaw === "object" && Array.isArray(scopedRaw.vehicles) ? scopedRaw.vehicles : []);
+  if (scopedVehiclesRaw.length > 0) {
+    return {
+      key: scopedKey,
+      source: "scoped",
+      scoped_key: scopedKey,
+      legacy_key: VEHICLE_INVENTORY_KEY,
+      vehiclesRaw: scopedVehiclesRaw,
+    };
+  }
+  const legacyRaw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
+  const legacyVehiclesRaw = Array.isArray(legacyRaw)
+    ? legacyRaw
+    : (legacyRaw && typeof legacyRaw === "object" && Array.isArray(legacyRaw.vehicles) ? legacyRaw.vehicles : []);
+  return {
+    key: VEHICLE_INVENTORY_KEY,
+    source: "legacy_fallback",
+    scoped_key: scopedKey,
+    legacy_key: VEHICLE_INVENTORY_KEY,
+    vehiclesRaw: legacyVehiclesRaw,
+  };
+}
+
+function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   if (!raw || typeof raw !== "object") return null;
   const vehicleId = String(raw.vehicle_id || raw.id || "").trim();
   if (!vehicleId) return null;
@@ -5804,6 +5880,9 @@ function _normalizeVehicleEntry(raw) {
       };
     }
   }
+  const normalizedScope = normalizeFleetTenantScope(scope);
+  const tenantId = _scopeText(raw.tenant_id ?? raw.tenantId) || normalizedScope.tenant_id || "";
+  const companyId = _scopeText(raw.company_id ?? raw.companyId) || normalizedScope.company_id || tenantId;
   return {
     vehicle_id: vehicleId,
     is_active: isActive,
@@ -5811,20 +5890,27 @@ function _normalizeVehicleEntry(raw) {
     passenger_capacity: passengerCapacity,
     luggage_capacity: luggageCapacity,
     assigned_driver: assignedDriver,
+    tenant_id: tenantId,
+    company_id: companyId,
+    tenantId: tenantId,
+    companyId: companyId,
   };
 }
 
-async function _loadVehicleInventory(env) {
+async function _loadVehicleInventory(env, { scope = null } = {}) {
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
-  const raw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
-  let vehiclesRaw = [];
-  if (Array.isArray(raw)) {
-    vehiclesRaw = raw;
-  } else if (raw && typeof raw === "object" && Array.isArray(raw.vehicles)) {
-    vehiclesRaw = raw.vehicles;
-  }
+  const fleetRead = scope?.hasScope
+    ? await _loadFleetInventoryRawForScope(env, scope)
+    : { vehiclesRaw: await (async () => {
+      const raw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
+      if (Array.isArray(raw)) return raw;
+      if (raw && typeof raw === "object" && Array.isArray(raw.vehicles)) return raw.vehicles;
+      return [];
+    })() };
+  const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+  const normalizedScope = scope?.hasScope ? normalizeFleetTenantScope(scope) : null;
   const normalized = vehiclesRaw
-    .map(_normalizeVehicleEntry)
+    .map((entry) => _normalizeVehicleEntry(entry, { scope: normalizedScope }))
     .filter((v) => v && v.is_active);
   if (normalized.length > 0) return normalized;
 

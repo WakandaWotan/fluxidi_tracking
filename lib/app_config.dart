@@ -981,6 +981,18 @@ int get includedVehicleLimit => fleetSubscriptionPolicy.includedVehicles;
 int get extraVehicleCount =>
     (vehiclesNotifier.value.length - includedVehicleLimit).clamp(0, 1000000);
 
+String _fleetScopeIdFromLocalState() {
+  for (final v in vehiclesNotifier.value) {
+    final id = v.companyId?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+  }
+  for (final d in driversNotifier.value) {
+    final id = d.companyId?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+  }
+  return kTenantId;
+}
+
 void addVehicle(VehicleProfile vehicle) {
   vehiclesNotifier.value = <VehicleProfile>[...vehiclesNotifier.value, vehicle];
   _persistLocalTenantState();
@@ -1003,7 +1015,8 @@ void deleteVehicle(String id) {
 void addDriver(DriverProfile driver) {
   driversNotifier.value = <DriverProfile>[...driversNotifier.value, driver];
   _persistLocalTenantState();
-  unawaited(syncFleetInventoryToBackend());
+  final scopeId = _fleetScopeIdFromLocalState();
+  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
 }
 
 void updateDriver(String id, DriverProfile updated) {
@@ -1011,7 +1024,8 @@ void updateDriver(String id, DriverProfile updated) {
       .map((d) => d.id == id ? updated : d)
       .toList(growable: false);
   _persistLocalTenantState();
-  unawaited(syncFleetInventoryToBackend());
+  final scopeId = _fleetScopeIdFromLocalState();
+  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
 }
 
 void deleteDriver(String id) {
@@ -1022,7 +1036,8 @@ void deleteDriver(String id) {
       .map((v) => v.driverId == id ? v.copyWith(driverId: null) : v)
       .toList(growable: false);
   _persistLocalTenantState();
-  unawaited(syncFleetInventoryToBackend());
+  final scopeId = _fleetScopeIdFromLocalState();
+  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
 }
 
 String _languageCode(AppLanguage l) {
@@ -1483,7 +1498,15 @@ Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
   };
 }
 
-Map<String, dynamic> _encodeVehicleForBackendFleet(VehicleProfile v) {
+Map<String, dynamic> _encodeVehicleForBackendFleet(
+  VehicleProfile v, {
+  required String tenantId,
+  required String companyId,
+}) {
+  final resolvedTenant = tenantId.trim().isEmpty ? kTenantId : tenantId.trim();
+  final resolvedCompany = companyId.trim().isEmpty
+      ? resolvedTenant
+      : companyId.trim();
   DriverProfile? linkedDriver;
   for (final d in driversNotifier.value) {
     if (d.id == v.driverId) {
@@ -1504,6 +1527,18 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(VehicleProfile v) {
     'tier': v.tierId.trim().toLowerCase(),
     'passenger_capacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'luggage_capacity': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
+    'tenant_id': (v.companyId?.trim().isNotEmpty ?? false)
+        ? v.companyId!.trim()
+        : resolvedTenant,
+    'company_id': (v.companyId?.trim().isNotEmpty ?? false)
+        ? v.companyId!.trim()
+        : resolvedCompany,
+    'tenantId': (v.companyId?.trim().isNotEmpty ?? false)
+        ? v.companyId!.trim()
+        : resolvedTenant,
+    'companyId': (v.companyId?.trim().isNotEmpty ?? false)
+        ? v.companyId!.trim()
+        : resolvedCompany,
     if (assignedDriver != null) 'assigned_driver': assignedDriver,
   };
 }
@@ -1541,20 +1576,38 @@ Future<bool> syncPricingProfileToBackend({
   }
 }
 
-Future<bool> syncFleetInventoryToBackend() async {
+Future<bool> syncFleetInventoryToBackend({
+  String? tenantId,
+  String? companyId,
+}) async {
   try {
-    final endpoint = Uri.parse(
-      '${appConfig.bookingBaseUrl}/admin/fleet/vehicles',
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final endpoint = _withAdminTenantCompanyScope(
+      Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles'),
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
     );
     final fleetPayload = vehiclesNotifier.value
-        .map(_encodeVehicleForBackendFleet)
+        .map(
+          (vehicle) => _encodeVehicleForBackendFleet(
+            vehicle,
+            tenantId: scope['tenant_id'] ?? kTenantId,
+            companyId: scope['company_id'] ?? kTenantId,
+          ),
+        )
         .where((e) => (e['vehicle_id'] as String).isNotEmpty)
         .toList(growable: false);
     await http
         .post(
           endpoint,
           headers: _adminJsonHeaders(),
-          body: jsonEncode(<String, dynamic>{'vehicles': fleetPayload}),
+          body: jsonEncode(<String, dynamic>{
+            ...scope,
+            'vehicles': fleetPayload,
+          }),
         )
         .timeout(const Duration(seconds: 12));
     return true;

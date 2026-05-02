@@ -46,7 +46,13 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   }
 
   Future<void> _syncFleetOrShowError() async {
-    final ok = await syncFleetInventoryToBackend();
+    final scopeId = resolvedCompanyId.trim().isEmpty
+        ? kTenantId
+        : resolvedCompanyId.trim();
+    final ok = await syncFleetInventoryToBackend(
+      tenantId: scopeId,
+      companyId: scopeId,
+    );
     if (ok || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
