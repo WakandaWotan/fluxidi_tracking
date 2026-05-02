@@ -2197,55 +2197,34 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       es: 'Tarifa de espera por minuto',
                     ),
                   ),
-                  _txt(
-                    _vatRatePricingCtrl,
-                    _t(
-                      nl: 'BTW/VAT tarief (afgeleid uit BTW-instellingen)',
-                      en: 'VAT rate (derived from VAT settings)',
-                      fr: 'Taux TVA (dérivé des paramètres TVA)',
-                      es: 'Tasa IVA (derivada de ajustes de IVA)',
-                    ),
-                    readOnly: true,
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _pricingVatMode,
-                    items: const [
-                      DropdownMenuItem(value: 'excl', child: Text('Excl VAT')),
-                      DropdownMenuItem(value: 'incl', child: Text('Incl VAT')),
-                    ],
-                    onChanged: null,
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'BTW modus (afgeleid uit BTW-instellingen)',
-                        en: 'VAT mode (derived from VAT settings)',
-                        fr: 'Mode TVA (dérivé des paramètres TVA)',
-                        es: 'Modo IVA (derivado de ajustes de IVA)',
-                      ),
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 16,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF0B0B0B),
-                    ),
-                    dropdownColor: const Color(0xFF111111),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      _t(
-                        nl: 'Pas BTW-instellingen aan om tarief-BTW te wijzigen.',
-                        en: 'Change VAT settings to update pricing VAT.',
-                        fr: 'Modifiez les paramètres TVA pour ajuster la TVA tarifaire.',
-                        es: 'Modifica los ajustes de IVA para actualizar el IVA de tarifas.',
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
+                  Builder(
+                    builder: (_) {
+                      final vat = _activeVatConfig();
+                      final vatPercent = (vat.vatRate * 100).clamp(0.0, 100.0);
+                      final vatModeLabel = vat.vatMode == 'incl'
+                          ? _t(
+                              nl: 'inclusief',
+                              en: 'inclusive',
+                              fr: 'incluse',
+                              es: 'incluido',
+                            )
+                          : _t(
+                              nl: 'exclusief',
+                              en: 'exclusive',
+                              fr: 'hors taxe',
+                              es: 'excluido',
+                            );
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          '${_t(nl: 'BTW wordt beheerd via BTW-instellingen hierboven.', en: 'VAT is managed in the VAT settings above.', fr: 'La TVA est gérée dans les paramètres TVA ci-dessus.', es: 'El IVA se gestiona en los ajustes de IVA de arriba.')} (${vatPercent % 1 == 0 ? vatPercent.toStringAsFixed(0) : vatPercent.toStringAsFixed(2)}%, $vatModeLabel)',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   _txt(
                     _bagFeeCtrl,

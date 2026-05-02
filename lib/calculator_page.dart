@@ -331,8 +331,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00$sign$oh:$om';
   }
 
+  String _activeTenantCompanyId() {
+    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (localCompanyId.isNotEmpty) return localCompanyId;
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) return resolved;
+    return kTenantId;
+  }
+
   Map<String, dynamic> _buildQuotePayload(DateTime dt) {
     final vat = _activeVatConfig;
+    final tenantCompanyId = _activeTenantCompanyId();
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
     final returnDt =
         _returnPickupDateTime ??
@@ -379,6 +388,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "extra_service_key": _isPremiumTier
           ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
           : 'NONE',
+      "tenant_id": tenantCompanyId,
+      "company_id": tenantCompanyId,
+      "tenantId": tenantCompanyId,
+      "companyId": tenantCompanyId,
     };
   }
 
@@ -799,6 +812,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final vatRateRaw =
         parseNum(q['vat_rate']) ??
         parseNum(breakdown['vat_rate']) ??
+        parseNum(
+          (q['inputs'] is Map) ? (q['inputs'] as Map)['vat_rate'] : null,
+        ) ??
         parseNum(
           (q['pricing_profile'] is Map)
               ? (q['pricing_profile'] as Map)['vat_rate']
@@ -1774,9 +1790,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final companyName = _companyNameCtrl.text.trim();
     final vatNumber = _vatNumberCtrl.text.trim();
     final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+    final resolvedCompany = resolvedCompanyId.trim();
     final tenantCompanyId = localCompanyId.isNotEmpty
         ? localCompanyId
-        : kTenantId;
+        : (resolvedCompany.isNotEmpty ? resolvedCompany : kTenantId);
     if (name.isEmpty ||
         phone.isEmpty ||
         email.isEmpty ||

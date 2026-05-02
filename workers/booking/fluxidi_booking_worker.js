@@ -1500,7 +1500,8 @@ GET /oauth/callback
           return json({ ok: false, error: "Missing fields: from, to, date, time" }, 400);
         }
 
-        const pricingProfile = await _loadTenantPricingProfile(env);
+        const quoteScope = resolveAdminSettingsScope({ request, url, body });
+        const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
         const vat_rate = clampNumber(
           pricingProfile?.vat_rate,
           clampNumber(body.vat_rate, 0.06, 0, 1),
