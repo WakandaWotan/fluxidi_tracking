@@ -77,7 +77,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendProfilesLoading = false;
   bool _backendBusinessSaving = false;
   bool _backendTaxSaving = false;
-  BackendSubscriptionProfile? _backendSubscriptionProfile;
   String? _backendProfilesError;
   String? _backendProfilesStatus;
   bool _showAdvancedLogoPath = false;
@@ -390,15 +389,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         ),
-        fetchBackendSubscriptionProfile(
-          tenantId: scope.tenantId,
-          companyId: scope.companyId,
-        ),
       ]);
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
       final rawTax = results[1] as BackendTaxProfile;
-      final rawSubscription = results[2] as BackendSubscriptionProfile;
       // Merge server response over the locally cached profile so empty server
       // fields do not wipe non-empty user-saved values.
       final cached = localBackendBusinessProfileNotifier.value;
@@ -420,7 +414,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       setState(() {
         _hydrateBackendBusinessProfile(merged);
         _hydrateBackendTaxProfile(taxForUi);
-        _backendSubscriptionProfile = rawSubscription;
         _mergeLocalIntoGeneralControllersIfEligible();
         _backendProfilesStatus = _t(
           nl: 'Instellingen geladen.',
@@ -449,7 +442,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
         );
         _hydrateBackendTaxProfile(cachedTax ?? BackendTaxProfile.defaults());
-        _backendSubscriptionProfile ??= BackendSubscriptionProfile.defaults();
         _mergeLocalIntoGeneralControllersIfEligible();
         final hasLocal =
             cached != null ||
@@ -1140,112 +1132,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ),
       ),
     );
-  }
-
-  Widget _subscriptionRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 190,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value.trim().isEmpty ? '—' : value.trim(),
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _subscriptionPlanLabel(String raw) {
-    final key = raw.trim().toLowerCase();
-    switch (key) {
-      case 'starter':
-        return _t(nl: 'Starter', en: 'Starter', fr: 'Starter', es: 'Starter');
-      case 'pro':
-        return _t(nl: 'Pro', en: 'Pro', fr: 'Pro', es: 'Pro');
-      case 'business':
-        return _t(
-          nl: 'Business',
-          en: 'Business',
-          fr: 'Business',
-          es: 'Business',
-        );
-      case 'enterprise':
-        return _t(
-          nl: 'Enterprise',
-          en: 'Enterprise',
-          fr: 'Enterprise',
-          es: 'Enterprise',
-        );
-      default:
-        return raw.trim().isEmpty
-            ? _t(
-                nl: 'Onbekend',
-                en: 'Unknown',
-                fr: 'Inconnu',
-                es: 'Desconocido',
-              )
-            : raw.trim();
-    }
-  }
-
-  String _subscriptionStatusLabel(String raw) {
-    final key = raw.trim().toLowerCase();
-    switch (key) {
-      case 'trialing':
-        return _t(
-          nl: 'Proefperiode',
-          en: 'Trialing',
-          fr: 'Période d essai',
-          es: 'Periodo de prueba',
-        );
-      case 'active':
-        return _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo');
-      case 'past_due':
-        return _t(
-          nl: 'Achterstallig',
-          en: 'Past due',
-          fr: 'En retard',
-          es: 'Atrasado',
-        );
-      case 'canceled':
-        return _t(
-          nl: 'Geannuleerd',
-          en: 'Canceled',
-          fr: 'Annulé',
-          es: 'Cancelado',
-        );
-      case 'suspended':
-        return _t(
-          nl: 'Opgeschort',
-          en: 'Suspended',
-          fr: 'Suspendu',
-          es: 'Suspendido',
-        );
-      default:
-        return raw.trim().isEmpty
-            ? _t(
-                nl: 'Onbekend',
-                en: 'Unknown',
-                fr: 'Inconnu',
-                es: 'Desconocido',
-              )
-            : raw.trim();
-    }
   }
 
   String _effectivePublicCompanyId() {
@@ -2025,171 +1911,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     ),
                   ),
                 ],
-              ),
-            ),
-            _card(
-              title: _t(
-                nl: 'Abonnement & limieten',
-                en: 'Subscription & limits',
-                fr: 'Abonnement & limites',
-                es: 'Suscripción y límites',
-              ),
-              child: Builder(
-                builder: (_) {
-                  final profile =
-                      _backendSubscriptionProfile ??
-                      BackendSubscriptionProfile.defaults();
-                  final features = <String>[
-                    if (profile.features['ai_assistant'] == true)
-                      _t(
-                        nl: 'AI-assistent',
-                        en: 'AI assistant',
-                        fr: 'Assistant IA',
-                        es: 'Asistente IA',
-                      ),
-                    if (profile.features['airport_module'] == true)
-                      _t(
-                        nl: 'Luchthavenmodule',
-                        en: 'Airport module',
-                        fr: 'Module aéroport',
-                        es: 'Módulo aeropuerto',
-                      ),
-                    if (profile.features['live_dispatch'] == true)
-                      _t(
-                        nl: 'Live dispatch',
-                        en: 'Live dispatch',
-                        fr: 'Dispatch en direct',
-                        es: 'Despacho en vivo',
-                      ),
-                    if (profile.features['ev_dispatch'] == true)
-                      _t(
-                        nl: 'EV dispatch',
-                        en: 'EV dispatch',
-                        fr: 'Dispatch VE',
-                        es: 'Despacho EV',
-                      ),
-                    if (profile.features['compliance_dashboard'] == true)
-                      _t(
-                        nl: 'Compliance dashboard',
-                        en: 'Compliance dashboard',
-                        fr: 'Tableau compliance',
-                        es: 'Panel de compliance',
-                      ),
-                    if (profile.features['white_label_branding'] == true)
-                      _t(
-                        nl: 'White-label branding',
-                        en: 'White-label branding',
-                        fr: 'Branding white-label',
-                        es: 'Branding white-label',
-                      ),
-                    if (profile.features['public_booking'] == true)
-                      _t(
-                        nl: 'Publieke boeking',
-                        en: 'Public booking',
-                        fr: 'Réservation publique',
-                        es: 'Reserva pública',
-                      ),
-                    if (profile.features['receipt_pdf'] == true)
-                      _t(
-                        nl: 'Ritbon/PDF',
-                        en: 'Receipt/PDF',
-                        fr: 'Reçu/PDF',
-                        es: 'Recibo/PDF',
-                      ),
-                    if (profile.features['whatsapp_email_receipts'] == true)
-                      _t(
-                        nl: 'WhatsApp/e-mail bonnetjes',
-                        en: 'WhatsApp/email receipts',
-                        fr: 'Reçus WhatsApp/e-mail',
-                        es: 'Recibos WhatsApp/correo',
-                      ),
-                  ];
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _subscriptionRow(
-                        _t(nl: 'Plan', en: 'Plan', fr: 'Plan', es: 'Plan'),
-                        _subscriptionPlanLabel(profile.plan),
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Status',
-                          en: 'Status',
-                          fr: 'Statut',
-                          es: 'Estado',
-                        ),
-                        _subscriptionStatusLabel(profile.status),
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Proefperiode start/einde',
-                          en: 'Trial start/end',
-                          fr: 'Début/fin essai',
-                          es: 'Inicio/fin de prueba',
-                        ),
-                        '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}',
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Facturatie-email',
-                          en: 'Billing email',
-                          fr: 'E-mail de facturation',
-                          es: 'Correo de facturación',
-                        ),
-                        profile.billingEmail,
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Inbegrepen voertuigen',
-                          en: 'Included vehicles',
-                          fr: 'Véhicules inclus',
-                          es: 'Vehículos incluidos',
-                        ),
-                        profile.includedVehicles.toString(),
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Max voertuigen',
-                          en: 'Max vehicles',
-                          fr: 'Véhicules max',
-                          es: 'Máx vehículos',
-                        ),
-                        profile.maxVehicles.toString(),
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Max chauffeurs',
-                          en: 'Max drivers',
-                          fr: 'Chauffeurs max',
-                          es: 'Máx conductores',
-                        ),
-                        profile.maxDrivers.toString(),
-                      ),
-                      _subscriptionRow(
-                        _t(
-                          nl: 'Features',
-                          en: 'Features',
-                          fr: 'Fonctionnalités',
-                          es: 'Funciones',
-                        ),
-                        features.isEmpty ? '—' : features.join(', '),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _t(
-                          nl: 'In deze fase worden limieten alleen weergegeven. Harde blokkering volgt later.',
-                          en: 'In this phase, limits are display-only. Hard blocking comes later.',
-                          fr: 'Dans cette phase, les limites sont uniquement affichées. Le blocage strict viendra plus tard.',
-                          es: 'En esta fase, los límites solo se muestran. El bloqueo estricto llegará después.',
-                        ),
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  );
-                },
               ),
             ),
             _card(
