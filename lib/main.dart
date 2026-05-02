@@ -2933,6 +2933,36 @@ class BusinessHomePage extends StatelessWidget {
               Card(
                 color: const Color(0xFF141B2F),
                 child: ListTile(
+                  leading: const Icon(Icons.credit_card_outlined),
+                  title: Text(
+                    _t(
+                      nl: 'Abonnement & facturatie',
+                      en: 'Subscription & billing',
+                      fr: 'Abonnement & facturation',
+                      es: 'Suscripción y facturación',
+                    ),
+                  ),
+                  subtitle: Text(
+                    _t(
+                      nl: 'Beheer plan, limieten en modules',
+                      en: 'Manage plan, limits and modules',
+                      fr: 'Gérez le plan, les limites et les modules',
+                      es: 'Gestiona el plan, los límites y los módulos',
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CompanySubscriptionBillingPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Card(
+                color: const Color(0xFF141B2F),
+                child: ListTile(
                   leading: const Icon(Icons.directions_car_filled_outlined),
                   title: Text(kDrawerVehiclesLabel),
                   subtitle: Text(kDrawerVehiclesSubtitle),
@@ -3719,6 +3749,258 @@ class CompanyDriverManagementPage extends StatelessWidget {
             },
           ),
         ),
+      ),
+    );
+  }
+}
+
+class CompanySubscriptionBillingPage extends StatefulWidget {
+  const CompanySubscriptionBillingPage({super.key});
+
+  @override
+  State<CompanySubscriptionBillingPage> createState() =>
+      _CompanySubscriptionBillingPageState();
+}
+
+class _CompanySubscriptionBillingPageState
+    extends State<CompanySubscriptionBillingPage> {
+  late Future<BackendSubscriptionProfile> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _fetch();
+  }
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  String _activeCompanyId() {
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) return resolved;
+    return kTenantId;
+  }
+
+  Future<BackendSubscriptionProfile> _fetch() async {
+    final scopeId = _activeCompanyId();
+    return fetchBackendSubscriptionProfile(
+      tenantId: scopeId,
+      companyId: scopeId,
+    );
+  }
+
+  Widget _row(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 190,
+            child: Text(label, style: const TextStyle(color: Colors.white70)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value.trim().isEmpty ? '—' : value.trim(),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'trialing':
+        return _t(
+          nl: 'Proefperiode',
+          en: 'Trialing',
+          fr: 'Période d essai',
+          es: 'Periodo de prueba',
+        );
+      case 'active':
+        return _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo');
+      case 'past_due':
+        return _t(
+          nl: 'Achterstallig',
+          en: 'Past due',
+          fr: 'En retard',
+          es: 'Atrasado',
+        );
+      case 'canceled':
+        return _t(
+          nl: 'Geannuleerd',
+          en: 'Canceled',
+          fr: 'Annulé',
+          es: 'Cancelado',
+        );
+      case 'suspended':
+        return _t(
+          nl: 'Opgeschort',
+          en: 'Suspended',
+          fr: 'Suspendu',
+          es: 'Suspendido',
+        );
+      default:
+        return status.trim().isEmpty
+            ? _t(
+                nl: 'Onbekend',
+                en: 'Unknown',
+                fr: 'Inconnu',
+                es: 'Desconocido',
+              )
+            : status.trim();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _t(
+            nl: 'Abonnement & facturatie',
+            en: 'Subscription & billing',
+            fr: 'Abonnement & facturation',
+            es: 'Suscripción y facturación',
+          ),
+        ),
+      ),
+      body: FutureBuilder<BackendSubscriptionProfile>(
+        future: _future,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  _t(
+                    nl: 'Abonnementsgegevens konden niet worden geladen.',
+                    en: 'Subscription data could not be loaded.',
+                    fr: 'Les données d abonnement n ont pas pu être chargées.',
+                    es: 'No se pudieron cargar los datos de suscripción.',
+                  ),
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          final profile = snap.data ?? BackendSubscriptionProfile.defaults();
+          final enabledFeatures = profile.features.entries
+              .where((e) => e.value == true)
+              .map((e) => e.key)
+              .toList(growable: false);
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                color: const Color(0xFF141B2F),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _row(
+                        _t(nl: 'Plan', en: 'Plan', fr: 'Plan', es: 'Plan'),
+                        profile.plan,
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Status',
+                          en: 'Status',
+                          fr: 'Statut',
+                          es: 'Estado',
+                        ),
+                        _statusLabel(profile.status),
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Proefperiode start/einde',
+                          en: 'Trial start/end',
+                          fr: 'Début/fin essai',
+                          es: 'Inicio/fin de prueba',
+                        ),
+                        '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}',
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Facturatie-email',
+                          en: 'Billing email',
+                          fr: 'E-mail de facturation',
+                          es: 'Correo de facturación',
+                        ),
+                        profile.billingEmail,
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Inbegrepen voertuigen',
+                          en: 'Included vehicles',
+                          fr: 'Véhicules inclus',
+                          es: 'Vehículos incluidos',
+                        ),
+                        profile.includedVehicles.toString(),
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Max voertuigen',
+                          en: 'Max vehicles',
+                          fr: 'Véhicules max',
+                          es: 'Máx vehículos',
+                        ),
+                        profile.maxVehicles.toString(),
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Max chauffeurs',
+                          en: 'Max drivers',
+                          fr: 'Chauffeurs max',
+                          es: 'Máx conductores',
+                        ),
+                        profile.maxDrivers.toString(),
+                      ),
+                      _row(
+                        _t(
+                          nl: 'Ingeschakelde modules',
+                          en: 'Enabled modules',
+                          fr: 'Modules actifs',
+                          es: 'Módulos habilitados',
+                        ),
+                        enabledFeatures.isEmpty
+                            ? '—'
+                            : enabledFeatures.join(', '),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _t(
+                          nl: 'In deze fase worden limieten alleen weergegeven. Harde blokkering volgt later.',
+                          en: 'In this phase, limits are display-only. Hard blocking comes later.',
+                          fr: 'Dans cette phase, les limites sont uniquement affichées. Le blocage strict viendra plus tard.',
+                          es: 'En esta fase, los límites solo se muestran. El bloqueo estricto llegará después.',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
