@@ -3055,38 +3055,93 @@ class _LocalComplianceLedgerSectionState
     return text;
   }
 
-  String _driverIdFallback(String driverId) {
-    return _labelValue(
-      _t(
-        nl: 'Chauffeur-ID',
-        en: 'Driver ID',
-        fr: 'ID chauffeur',
-        es: 'ID conductor',
-      ),
-      driverId,
+  String _driverProfileNotFoundLabel() {
+    return _t(
+      nl: 'Chauffeurprofiel niet gevonden',
+      en: 'Driver profile not found',
+      fr: 'Profil chauffeur introuvable',
+      es: 'Perfil del conductor no encontrado',
     );
   }
 
-  String _vehicleIdFallback(String vehicleId) {
-    return _labelValue(
-      _t(
-        nl: 'Voertuig-ID',
-        en: 'Vehicle ID',
-        fr: 'ID véhicule',
-        es: 'ID vehículo',
-      ),
-      vehicleId,
+  String _vehicleProfileNotFoundLabel() {
+    return _t(
+      nl: 'Voertuigprofiel niet gevonden',
+      en: 'Vehicle profile not found',
+      fr: 'Profil véhicule introuvable',
+      es: 'Perfil del vehículo no encontrado',
     );
+  }
+
+  bool _profileIdMatches(String? candidate, String targetId) {
+    final a = (candidate ?? '').trim();
+    final b = targetId.trim();
+    if (a.isEmpty || b.isEmpty) return false;
+    return _ledgerToken(a) == _ledgerToken(b);
+  }
+
+  String? _lookupDriverProfileDisplay(String? driverId) {
+    final id = (driverId ?? '').trim();
+    if (id.isEmpty) return null;
+    for (final driver in driversNotifier.value) {
+      if (!_profileIdMatches(driver.id, id)) continue;
+      final fullName = _meaningfulDisplayToken(driver.fullName);
+      if (fullName != null) return fullName;
+    }
+    return null;
+  }
+
+  String? _lookupVehicleProfileDisplay(String? vehicleId) {
+    final id = (vehicleId ?? '').trim();
+    if (id.isEmpty) return null;
+    for (final vehicle in vehiclesNotifier.value) {
+      if (!_profileIdMatches(vehicle.id, id)) continue;
+      final label = _friendlyVehicleProfileLabel(vehicle);
+      if (label != null) return label;
+    }
+    return null;
+  }
+
+  String? _friendlyVehicleProfileLabel(VehicleProfile vehicle) {
+    final vehicleName = _meaningfulDisplayToken(vehicle.vehicleName);
+    final brandModel = _meaningfulDisplayToken(vehicle.brandModel);
+    final licensePlate = _meaningfulDisplayToken(vehicle.licensePlate);
+    final tier = _meaningfulDisplayToken(_localizedTierLabel(vehicle.tierId));
+    if (vehicleName != null && licensePlate != null) {
+      return '$vehicleName · $licensePlate';
+    }
+    if (brandModel != null && licensePlate != null) {
+      return '$brandModel · $licensePlate';
+    }
+    if (tier != null && licensePlate != null) return '$tier · $licensePlate';
+    if (licensePlate != null) return licensePlate;
+    if (vehicleName != null) return vehicleName;
+    if (brandModel != null) return brandModel;
+    if (tier != null) return tier;
+    return null;
+  }
+
+  String _localizedTierLabel(String rawTier) {
+    switch (_ledgerToken(rawTier)) {
+      case 'comfort':
+        return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
+      case 'private':
+        return _t(nl: 'Privé', en: 'Private', fr: 'Privé', es: 'Privado');
+      case 'premium':
+        return 'Premium';
+      default:
+        return rawTier.trim();
+    }
   }
 
   String _vehicleTierLabel(String rawTier) {
     switch (_ledgerToken(rawTier)) {
       case 'comfort':
-        return 'Comfort';
+        return _localizedTierLabel('comfort');
       case 'private':
-        return 'Private';
+        return _localizedTierLabel('private');
       case 'premium':
-        return 'Premium';
+        return _localizedTierLabel('premium');
       default:
         return rawTier.trim();
     }
@@ -3132,17 +3187,32 @@ class _LocalComplianceLedgerSectionState
       final meaningful = _meaningfulDisplayToken(value);
       if (meaningful != null) return meaningful;
     }
-    final driverId = _meaningfulDisplayToken(entry.driverId);
-    if (driverId != null) return _driverIdFallback(driverId);
+    final driverId = _meaningfulDisplayToken(
+      _rawPathText(entry.raw, const ['driver', 'driver_id']) ??
+          _rawPathText(entry.raw, const ['driver', 'id']) ??
+          _rawPathText(entry.raw, const ['assigned_driver', 'driver_id']) ??
+          _rawPathText(entry.raw, const ['assigned_driver', 'id']) ??
+          _rawPathText(entry.raw, const ['driver_id']) ??
+          entry.driverId,
+    );
+    final profileDisplay = _lookupDriverProfileDisplay(driverId);
+    if (profileDisplay != null) return profileDisplay;
+    if (driverId != null) return _driverProfileNotFoundLabel();
     return _driverNotLinkedLabel();
   }
 
   String _driverDisplayForGroup(List<ComplianceLedgerEntry> group) {
     final sorted = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+    var profileMissing = false;
     for (final entry in sorted) {
       final value = _driverDisplay(entry);
+      if (value == _driverProfileNotFoundLabel()) {
+        profileMissing = true;
+        continue;
+      }
       if (value != _driverNotLinkedLabel()) return value;
     }
+    if (profileMissing) return _driverProfileNotFoundLabel();
     return _driverNotLinkedLabel();
   }
 
@@ -3239,17 +3309,32 @@ class _LocalComplianceLedgerSectionState
       final meaningful = _meaningfulDisplayToken(value);
       if (meaningful != null) return meaningful;
     }
-    final vehicleId = _meaningfulDisplayToken(entry.vehicleId);
-    if (vehicleId != null) return _vehicleIdFallback(vehicleId);
+    final vehicleId = _meaningfulDisplayToken(
+      _rawPathText(entry.raw, const ['vehicle', 'vehicle_id']) ??
+          _rawPathText(entry.raw, const ['vehicle', 'id']) ??
+          _rawPathText(entry.raw, const ['assigned_vehicle', 'vehicle_id']) ??
+          _rawPathText(entry.raw, const ['assigned_vehicle', 'id']) ??
+          _rawPathText(entry.raw, const ['vehicle_id']) ??
+          entry.vehicleId,
+    );
+    final profileDisplay = _lookupVehicleProfileDisplay(vehicleId);
+    if (profileDisplay != null) return profileDisplay;
+    if (vehicleId != null) return _vehicleProfileNotFoundLabel();
     return _vehicleNotLinkedLabel();
   }
 
   String _vehicleDisplayForGroup(List<ComplianceLedgerEntry> group) {
     final sorted = [...group]..sort((a, b) => _compareLedgerEntries(b, a));
+    var profileMissing = false;
     for (final entry in sorted) {
       final value = _vehicleDisplay(entry);
+      if (value == _vehicleProfileNotFoundLabel()) {
+        profileMissing = true;
+        continue;
+      }
       if (value != _vehicleNotLinkedLabel()) return value;
     }
+    if (profileMissing) return _vehicleProfileNotFoundLabel();
     return _vehicleNotLinkedLabel();
   }
 
