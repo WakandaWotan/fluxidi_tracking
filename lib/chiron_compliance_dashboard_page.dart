@@ -1487,8 +1487,8 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
           _t(
             nl: 'Backendmeldingen',
             en: 'Backend events',
-            fr: 'Événements backend',
-            es: 'Eventos backend',
+            fr: 'Événements du backend',
+            es: 'Eventos del backend',
           ),
         ),
       ),
@@ -1583,7 +1583,7 @@ class _RemoteComplianceEventsSectionState
           nl: 'Betalingsupdate',
           en: 'Payment update',
           fr: 'Mise à jour du paiement',
-          es: 'Actualización de pago',
+          es: 'Actualización del pago',
         );
       case 'ride_stop':
         return _t(
@@ -2281,7 +2281,7 @@ class _RemoteComplianceEventsSectionState
             runSpacing: 6,
             children: [
               _chip(
-                '${_t(nl: 'Ritstatus', en: 'Ride status', fr: 'Statut de course', es: 'Estado del viaje')}: ${_localizedRideStatus(sorted)}',
+                '${_t(nl: 'Ritstatus', en: 'Ride status', fr: 'Statut de la course', es: 'Estado del viaje')}: ${_localizedRideStatus(sorted)}',
               ),
               _chip(
                 '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(latest.syncState)}',
