@@ -1889,7 +1889,132 @@ class _RemoteComplianceEventsSectionState
     );
   }
 
-  Widget _eventTile(RemoteComplianceEvent e) {
+  String _normalizeToken(String raw) {
+    return raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+  }
+
+  String? _eventKeyPart(String prefix, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized == '—') return null;
+    return '$prefix:${normalized.toLowerCase()}';
+  }
+
+  List<String> _remoteMatchKeys(RemoteComplianceEvent e) {
+    return <String>[
+      if (_eventKeyPart('booking', e.bookingId) != null)
+        _eventKeyPart('booking', e.bookingId)!,
+      if (_eventKeyPart('trip', e.tripId) != null)
+        _eventKeyPart('trip', e.tripId)!,
+    ];
+  }
+
+  DateTime? _remoteEventTime(RemoteComplianceEvent e) {
+    DateTime? parseRaw(String raw) {
+      final text = raw.trim();
+      if (text.isEmpty) return null;
+      return DateTime.tryParse(text);
+    }
+
+    final fromCreated = parseRaw(e.createdAtUtc);
+    if (fromCreated != null) return fromCreated;
+
+    final timestampCandidates = <dynamic>[
+      e.timestamps['recorded_at_utc'],
+      e.timestamps['event_at_utc'],
+      e.timestamps['paid_at_utc'],
+      e.timestamps['stopped_at_utc'],
+      e.timestamps['started_at_utc'],
+    ];
+    for (final value in timestampCandidates) {
+      final parsed = parseRaw(_text(value));
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  bool _isNewerRemoteEvent(
+    RemoteComplianceEvent candidate,
+    RemoteComplianceEvent existing,
+  ) {
+    final candidateTime = _remoteEventTime(candidate);
+    final existingTime = _remoteEventTime(existing);
+    if (candidateTime != null && existingTime != null) {
+      final byTime = candidateTime.compareTo(existingTime);
+      if (byTime != 0) return byTime > 0;
+    } else if (candidateTime != null) {
+      return true;
+    } else if (existingTime != null) {
+      return false;
+    }
+    // Recent endpoint currently returns newest-first by key/time.
+    return false;
+  }
+
+  Map<String, RemoteComplianceEvent> _latestPaymentUpdatesByKey(
+    List<RemoteComplianceEvent> events,
+  ) {
+    final latest = <String, RemoteComplianceEvent>{};
+    for (final event in events.where(
+      (e) => _normalizeToken(e.eventType) == 'payment_update',
+    )) {
+      for (final key in _remoteMatchKeys(event)) {
+        final existing = latest[key];
+        if (existing == null || _isNewerRemoteEvent(event, existing)) {
+          latest[key] = event;
+        }
+      }
+    }
+    return latest;
+  }
+
+  RemoteComplianceEvent? _effectivePaymentUpdateFor(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
+    RemoteComplianceEvent? best;
+    for (final key in _remoteMatchKeys(e)) {
+      final update = latestPaymentUpdates[key];
+      if (update == null) continue;
+      if (best == null || _isNewerRemoteEvent(update, best)) {
+        best = update;
+      }
+    }
+    return best;
+  }
+
+  bool _isMeaningfulPaymentStatus(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'paid':
+      case 'pending':
+      case 'failed':
+      case 'unpaid':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isMeaningfulPaymentField(String raw) {
+    final token = _normalizeToken(raw);
+    return token.isNotEmpty && token != 'unknown';
+  }
+
+  String _resolveEffectivePaymentValue({
+    required String baseValue,
+    required String updateValue,
+    required bool baseIsMeaningful,
+    required bool updateIsMeaningful,
+    required bool updateIsNewer,
+  }) {
+    if (!updateIsMeaningful) return baseValue;
+    if (!baseIsMeaningful) return updateValue;
+    return updateIsNewer ? updateValue : baseValue;
+  }
+
+  Widget _eventTile(
+    RemoteComplianceEvent e,
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
+  ) {
     final referenceLabel = e.bookingId.isNotEmpty
         ? _t(nl: 'Boeking', en: 'Booking', fr: 'Réservation', es: 'Reserva')
         : e.tripId.isNotEmpty
@@ -1898,9 +2023,44 @@ class _RemoteComplianceEventsSectionState
     final referenceValue = e.bookingId.isNotEmpty
         ? e.bookingId
         : (e.tripId.isNotEmpty ? e.tripId : '—');
-    final paymentStatus = _text(e.payment['status']);
-    final paymentMethod = _text(e.payment['method']);
-    final paymentSource = _text(e.payment['source']);
+    final paymentUpdate = _normalizeToken(e.eventType) == 'payment_update'
+        ? null
+        : _effectivePaymentUpdateFor(e, latestPaymentUpdates);
+    final basePaymentStatus = _text(e.payment['status']);
+    final basePaymentMethod = _text(e.payment['method']);
+    final basePaymentSource = _text(e.payment['source']);
+    final updatePaymentStatus = paymentUpdate == null
+        ? ''
+        : _text(paymentUpdate.payment['status']);
+    final updatePaymentMethod = paymentUpdate == null
+        ? ''
+        : _text(paymentUpdate.payment['method']);
+    final updatePaymentSource = paymentUpdate == null
+        ? ''
+        : _text(paymentUpdate.payment['source']);
+    final updateIsNewer =
+        paymentUpdate != null && _isNewerRemoteEvent(paymentUpdate, e);
+    final paymentStatus = _resolveEffectivePaymentValue(
+      baseValue: basePaymentStatus,
+      updateValue: updatePaymentStatus,
+      baseIsMeaningful: _isMeaningfulPaymentStatus(basePaymentStatus),
+      updateIsMeaningful: _isMeaningfulPaymentStatus(updatePaymentStatus),
+      updateIsNewer: updateIsNewer,
+    );
+    final paymentMethod = _resolveEffectivePaymentValue(
+      baseValue: basePaymentMethod,
+      updateValue: updatePaymentMethod,
+      baseIsMeaningful: _isMeaningfulPaymentField(basePaymentMethod),
+      updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentMethod),
+      updateIsNewer: updateIsNewer,
+    );
+    final paymentSource = _resolveEffectivePaymentValue(
+      baseValue: basePaymentSource,
+      updateValue: updatePaymentSource,
+      baseIsMeaningful: _isMeaningfulPaymentField(basePaymentSource),
+      updateIsMeaningful: _isMeaningfulPaymentField(updatePaymentSource),
+      updateIsNewer: updateIsNewer,
+    );
     final producer = _text(e.provenance['producer']);
 
     return Container(
@@ -2089,6 +2249,9 @@ class _RemoteComplianceEventsSectionState
               );
             }
 
+            final latestPaymentUpdates = _latestPaymentUpdatesByKey(
+              result.events,
+            );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2118,7 +2281,9 @@ class _RemoteComplianceEventsSectionState
                   style: const TextStyle(color: Colors.white60, fontSize: 11),
                 ),
                 const SizedBox(height: 8),
-                ...result.events.map(_eventTile),
+                ...result.events.map(
+                  (event) => _eventTile(event, latestPaymentUpdates),
+                ),
               ],
             );
           },
