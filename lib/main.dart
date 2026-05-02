@@ -536,7 +536,7 @@ String _receiptText(String key) {
         es: 'Hora de fin',
       );
     case 'duration':
-      return _tr(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duracion');
+      return _tr(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración');
     case 'pickup':
       return _tr(
         nl: 'Ophaaladres',
@@ -625,7 +625,7 @@ String _receiptText(String key) {
         nl: 'Telefoon',
         en: 'Customer phone',
         fr: 'Téléphone client',
-        es: 'Telefono del cliente',
+        es: 'Teléfono del cliente',
       );
     case 'customerEmail':
       return _tr(
@@ -811,7 +811,7 @@ String _receiptText(String key) {
       );
     case 'cashReceived':
       return _tr(
-        nl: 'Cash ontvangen',
+        nl: 'Contant ontvangen',
         en: 'Cash received',
         fr: 'Espèces reçues',
         es: 'Efectivo recibido',
@@ -5986,7 +5986,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     nl: 'Nog niet ingevuld',
     en: 'Not filled in yet',
     fr: 'Pas encore renseigne',
-    es: 'Aun no completado',
+    es: 'Aún no completado',
   );
 
   Future<void> _openExternalUrl(BuildContext context, String rawUrl) async {
@@ -6524,8 +6524,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         _t(
                           nl: 'Telefoon',
                           en: 'Phone',
-                          fr: 'Telephone',
-                          es: 'Telefono',
+                          fr: 'Téléphone',
+                          es: 'Teléfono',
                         ),
                         v.customerPhone,
                       ),
@@ -6673,7 +6673,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             nl: 'Factuuradres',
                             en: 'Invoice address',
                             fr: 'Adresse de facturation',
-                            es: 'Direccion de factura',
+                            es: 'Dirección de factura',
                           ),
                           invoiceAddress,
                           stacked: true,
@@ -6948,8 +6948,8 @@ class _CustomerRegionRegistrationPageState
                   label: _t(
                     nl: 'Telefoon (optioneel)',
                     en: 'Phone (optional)',
-                    fr: 'Telephone (optionnel)',
-                    es: 'Telefono (opcional)',
+                    fr: 'Téléphone (optionnel)',
+                    es: 'Teléfono (opcional)',
                   ),
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
@@ -18421,7 +18421,7 @@ class _ReceiptPdfActionRunner {
         .replaceAll(' ', '_');
     switch (normalized) {
       case 'cash':
-        return _tr(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+        return _tr(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'bancontact':
         return _tr(
           nl: 'Bancontact',
@@ -20017,7 +20017,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         .replaceAll(' ', '_');
     switch (normalized) {
       case 'cash':
-        return _tr(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+        return _tr(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'bancontact':
         return _tr(
           nl: 'Bancontact',

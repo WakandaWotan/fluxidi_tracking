@@ -2314,7 +2314,7 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'cash':
       case 'contant':
-        return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+        return _t(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'bancontact':
         return 'Bancontact';
       case 'card':

@@ -347,7 +347,7 @@ const AppStrings _nl = AppStrings(
   refreshBookingsLabel: LocalizedText(
     nl: 'Vernieuw ritten',
     en: 'Refresh bookings',
-    fr: 'Rafraichir les courses',
+    fr: 'Rafraîchir les courses',
     es: 'Actualizar reservas',
   ),
   centerOnMeLabel: LocalizedText(
@@ -449,7 +449,7 @@ const AppStrings _nl = AppStrings(
   refreshShortLabel: LocalizedText(
     nl: 'Vernieuw',
     en: 'Refresh',
-    fr: 'Rafraichir',
+    fr: 'Rafraîchir',
     es: 'Actualizar',
   ),
   bookingsEmptyLabel: LocalizedText(
@@ -659,8 +659,8 @@ const AppStrings _nl = AppStrings(
   bookingPhoneLabel: LocalizedText(
     nl: 'Telefoonnummer',
     en: 'Phone number',
-    fr: 'Numero de telephone',
-    es: 'Numero de telefono',
+    fr: 'Numéro de téléphone',
+    es: 'Número de teléfono',
   ),
   bookingEmailLabel: LocalizedText(
     nl: 'E-mailadres',

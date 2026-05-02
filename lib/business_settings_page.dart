@@ -1593,7 +1593,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       nl: 'Adres',
                       en: 'Address',
                       fr: 'Adresse',
-                      es: 'Direccion',
+                      es: 'Dirección',
                     ),
                   ),
                   Row(
@@ -1627,8 +1627,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Telefoon',
                       en: 'Phone',
-                      fr: 'Telephone',
-                      es: 'Telefono',
+                      fr: 'Téléphone',
+                      es: 'Teléfono',
                     ),
                   ),
                   _txt(
@@ -1894,8 +1894,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     _t(
                       nl: 'Support telefoon',
                       en: 'Support phone',
-                      fr: 'Telephone support',
-                      es: 'Telefono de soporte',
+                      fr: 'Téléphone support',
+                      es: 'Teléfono de soporte',
                     ),
                   ),
                   _txt(
