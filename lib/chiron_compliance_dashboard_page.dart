@@ -1659,6 +1659,27 @@ class _RemoteComplianceEventsSectionState
         return _t(nl: 'kaart', en: 'card', fr: 'carte', es: 'tarjeta');
       case 'qr':
         return 'QR';
+      case 'online_payment':
+      case 'online-payment':
+      case 'online payment':
+      case 'online':
+        return _t(
+          nl: 'online betaling',
+          en: 'online payment',
+          fr: 'paiement en ligne',
+          es: 'pago en línea',
+        );
+      case 'mollie':
+        return 'Mollie';
+      case 'payment_link':
+      case 'payment-link':
+      case 'payment link':
+        return _t(
+          nl: 'betaallink',
+          en: 'payment link',
+          fr: 'lien de paiement',
+          es: 'enlace de pago',
+        );
       case 'unknown':
         return _localizedUnknown();
       default:
@@ -1687,6 +1708,8 @@ class _RemoteComplianceEventsSectionState
           fr: 'chauffeur',
           es: 'conductor',
         );
+      case 'mollie':
+        return 'Mollie';
       case 'unknown':
         return _localizedUnknown();
       default:
