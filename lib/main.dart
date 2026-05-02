@@ -3795,21 +3795,27 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
-  Widget _row(String label, String value) {
+  Widget _buildInfoItem({required String label, required String value}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 190,
-            child: Text(label, style: const TextStyle(color: Colors.white70)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value.trim().isEmpty ? '—' : value.trim(),
-              style: const TextStyle(color: Colors.white),
+          const SizedBox(height: 2),
+          Text(
+            value.trim().isEmpty ? '—' : value.trim(),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -3817,30 +3823,67 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
+  String _planLabel(String plan) {
+    switch (plan.trim().toLowerCase()) {
+      case 'starter':
+        return 'Starter';
+      case 'pro':
+        return 'Pro';
+      case 'business':
+        return _t(
+          nl: 'Business',
+          en: 'Business',
+          fr: 'Business',
+          es: 'Business',
+        );
+      case 'enterprise':
+        return 'Enterprise';
+      default:
+        return plan.trim().isEmpty
+            ? _t(
+                nl: 'Onbekend',
+                en: 'Unknown',
+                fr: 'Inconnu',
+                es: 'Desconocido',
+              )
+            : plan.trim();
+    }
+  }
+
   String _statusLabel(String status) {
     switch (status.trim().toLowerCase()) {
       case 'trialing':
+      case 'trial':
+      case 'trial_active':
         return _t(
           nl: 'Proefperiode',
-          en: 'Trialing',
-          fr: 'Période d essai',
+          en: 'Trial',
+          fr: 'Période d’essai',
           es: 'Periodo de prueba',
         );
       case 'active':
         return _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo');
       case 'past_due':
         return _t(
-          nl: 'Achterstallig',
-          en: 'Past due',
-          fr: 'En retard',
-          es: 'Atrasado',
+          nl: 'Betaling vereist',
+          en: 'Payment required',
+          fr: 'Paiement requis',
+          es: 'Pago requerido',
         );
+      case 'cancelled':
       case 'canceled':
         return _t(
           nl: 'Geannuleerd',
-          en: 'Canceled',
+          en: 'Cancelled',
           fr: 'Annulé',
           es: 'Cancelado',
+        );
+      case 'inactive':
+        return _t(
+          nl: 'Inactief',
+          en: 'Inactive',
+          fr: 'Inactif',
+          es: 'Inactivo',
         );
       case 'suspended':
         return _t(
@@ -3861,17 +3904,75 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
+  String _featureLabel(String rawKey) {
+    switch (rawKey.trim().toLowerCase()) {
+      case 'compliance_dashboard':
+        return _t(
+          nl: 'Complianceoverzicht',
+          en: 'Compliance dashboard',
+          fr: 'Tableau de conformité',
+          es: 'Panel de cumplimiento',
+        );
+      case 'receipt_pdf':
+        return _t(
+          nl: 'PDF-ritbonnen',
+          en: 'PDF receipts',
+          fr: 'Reçus PDF',
+          es: 'Recibos PDF',
+        );
+      case 'whatsapp_email_receipts':
+        return _t(
+          nl: 'WhatsApp/e-mail ritbonnen',
+          en: 'WhatsApp/email receipts',
+          fr: 'Reçus WhatsApp/e-mail',
+          es: 'Recibos por WhatsApp/e-mail',
+        );
+      default:
+        final normalized = rawKey
+            .trim()
+            .replaceAll('_', ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .toLowerCase();
+        if (normalized.isEmpty) {
+          return _t(
+            nl: 'Onbekend',
+            en: 'Unknown',
+            fr: 'Inconnu',
+            es: 'Desconocido',
+          );
+        }
+        final words = normalized.split(' ');
+        return words
+            .map(
+              (w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}',
+            )
+            .join(' ');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          _t(
-            nl: 'Abonnement & facturatie',
-            en: 'Subscription & billing',
-            fr: 'Abonnement & facturation',
-            es: 'Suscripción y facturación',
-          ),
+        title: LayoutBuilder(
+          builder: (context, constraints) {
+            return SizedBox(
+              height: 26,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _t(
+                    nl: 'Abonnement & facturatie',
+                    en: 'Subscription & billing',
+                    fr: 'Abonnement & facturation',
+                    es: 'Suscripción y facturación',
+                  ),
+                  maxLines: 1,
+                ),
+              ),
+            );
+          },
         ),
       ),
       body: FutureBuilder<BackendSubscriptionProfile>(
@@ -3900,7 +4001,7 @@ class _CompanySubscriptionBillingPageState
           final profile = snap.data ?? BackendSubscriptionProfile.defaults();
           final enabledFeatures = profile.features.entries
               .where((e) => e.value == true)
-              .map((e) => e.key)
+              .map((e) => _featureLabel(e.key))
               .toList(growable: false);
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -3912,76 +4013,136 @@ class _CompanySubscriptionBillingPageState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _row(
-                        _t(nl: 'Plan', en: 'Plan', fr: 'Plan', es: 'Plan'),
-                        profile.plan,
+                      _buildInfoItem(
+                        label: _t(
+                          nl: 'Plan',
+                          en: 'Plan',
+                          fr: 'Plan',
+                          es: 'Plan',
+                        ),
+                        value: _planLabel(profile.plan),
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Status',
                           en: 'Status',
                           fr: 'Statut',
                           es: 'Estado',
                         ),
-                        _statusLabel(profile.status),
+                        value: _statusLabel(profile.status),
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Proefperiode start/einde',
                           en: 'Trial start/end',
                           fr: 'Début/fin essai',
                           es: 'Inicio/fin de prueba',
                         ),
-                        '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}',
+                        value:
+                            '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}',
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Facturatie-email',
                           en: 'Billing email',
                           fr: 'E-mail de facturation',
                           es: 'Correo de facturación',
                         ),
-                        profile.billingEmail,
+                        value: profile.billingEmail,
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Inbegrepen voertuigen',
                           en: 'Included vehicles',
                           fr: 'Véhicules inclus',
                           es: 'Vehículos incluidos',
                         ),
-                        profile.includedVehicles.toString(),
+                        value: profile.includedVehicles.toString(),
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Max voertuigen',
                           en: 'Max vehicles',
                           fr: 'Véhicules max',
                           es: 'Máx vehículos',
                         ),
-                        profile.maxVehicles.toString(),
+                        value: profile.maxVehicles.toString(),
                       ),
-                      _row(
-                        _t(
+                      _buildInfoItem(
+                        label: _t(
                           nl: 'Max chauffeurs',
                           en: 'Max drivers',
                           fr: 'Chauffeurs max',
                           es: 'Máx conductores',
                         ),
-                        profile.maxDrivers.toString(),
+                        value: profile.maxDrivers.toString(),
                       ),
-                      _row(
-                        _t(
-                          nl: 'Ingeschakelde modules',
-                          en: 'Enabled modules',
-                          fr: 'Modules actifs',
-                          es: 'Módulos habilitados',
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Ingeschakelde modules',
+                                en: 'Enabled modules',
+                                fr: 'Modules actifs',
+                                es: 'Módulos habilitados',
+                              ),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            if (enabledFeatures.isEmpty)
+                              const Text(
+                                '—',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              )
+                            else
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: enabledFeatures
+                                    .map(
+                                      (feature) => Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.08),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withOpacity(
+                                              0.20,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          feature,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                              ),
+                          ],
                         ),
-                        enabledFeatures.isEmpty
-                            ? '—'
-                            : enabledFeatures.join(', '),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       Text(
                         _t(
                           nl: 'In deze fase worden limieten alleen weergegeven. Harde blokkering volgt later.',
