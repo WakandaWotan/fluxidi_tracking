@@ -2592,25 +2592,25 @@ class _LocalComplianceLedgerSectionState
   String _backendChipLabel(bool? value) {
     if (value == true) {
       return _t(
-        nl: 'Backend: bevestigd',
-        en: 'Backend: confirmed',
-        fr: 'Backend: confirmé',
-        es: 'Backend: confirmado',
+        nl: 'Systeem: bevestigd',
+        en: 'System: confirmed',
+        fr: 'Système : confirmé',
+        es: 'Sistema: confirmado',
       );
     }
     if (value == false) {
       return _t(
-        nl: 'Backend: niet bevestigd',
-        en: 'Backend: not confirmed',
-        fr: 'Backend: non confirmé',
-        es: 'Backend: no confirmado',
+        nl: 'Systeem: niet bevestigd',
+        en: 'System: not confirmed',
+        fr: 'Système : non confirmé',
+        es: 'Sistema: no confirmado',
       );
     }
     return _t(
-      nl: 'Backend: onbekend',
-      en: 'Backend: unknown',
-      fr: 'Backend: inconnu',
-      es: 'Backend: desconocido',
+      nl: 'Systeem: onbekend',
+      en: 'System: unknown',
+      fr: 'Système : inconnu',
+      es: 'Sistema: desconocido',
     );
   }
 
@@ -2644,10 +2644,10 @@ class _LocalComplianceLedgerSectionState
     switch (_ledgerToken(raw)) {
       case 'exportable':
         return _t(
-          nl: 'Exporteerbaar',
-          en: 'Exportable',
-          fr: 'Exportable',
-          es: 'Exportable',
+          nl: 'klaar voor export',
+          en: 'ready to export',
+          fr: 'prêt à exporter',
+          es: 'listo para exportar',
         );
       case 'blocked':
         return _t(
@@ -2914,6 +2914,10 @@ class _LocalComplianceLedgerSectionState
     return _t(nl: 'Bedrag', en: 'Amount', fr: 'Montant', es: 'Importe');
   }
 
+  String _statusLabel() {
+    return _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado');
+  }
+
   String _auditHistoryLabel() {
     return _t(
       nl: 'Auditgeschiedenis',
@@ -2921,6 +2925,11 @@ class _LocalComplianceLedgerSectionState
       fr: 'Historique d’audit',
       es: 'Historial de auditoría',
     );
+  }
+
+  String _labelValue(String label, String value) {
+    if (widget.lang == AppLanguage.fr) return '$label : $value';
+    return '$label: $value';
   }
 
   String? _ledgerKeyPart(String prefix, String value) {
@@ -3170,30 +3179,64 @@ class _LocalComplianceLedgerSectionState
             spacing: 6,
             runSpacing: 6,
             children: [
-              _chip(
-                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(entry.validationState)}',
-              ),
+              if (entry.isPaymentUpdate &&
+                  _ledgerToken(entry.validationState) == 'payment_update')
+                _chip(_paymentUpdatedLabel())
+              else
+                _chip(
+                  _labelValue(
+                    _statusLabel(),
+                    _validationStateLabel(entry.validationState),
+                  ),
+                ),
               _chip(_backendChipLabel(entry.backendConfirmed)),
               if (hasLaterPaymentUpdate) _chip(_paymentUpdatedLaterLabel()),
               if (!hasLaterPaymentUpdate) ...[
                 if (entry.paymentStatus.trim().isNotEmpty)
                   _chip(
-                    '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_paymentStatusLabel(entry.paymentStatus)}',
+                    _labelValue(
+                      _t(
+                        nl: 'Betaling',
+                        en: 'Payment',
+                        fr: 'Paiement',
+                        es: 'Pago',
+                      ),
+                      _paymentStatusLabel(entry.paymentStatus),
+                    ),
                   ),
                 if (entry.paymentMethod.trim().isNotEmpty &&
                     _ledgerToken(entry.paymentMethod) != 'unknown')
                   _chip(
-                    '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_paymentMethodLabel(entry.paymentMethod)}',
+                    _labelValue(
+                      _t(
+                        nl: 'Methode',
+                        en: 'Method',
+                        fr: 'Méthode',
+                        es: 'Método',
+                      ),
+                      _paymentMethodLabel(entry.paymentMethod),
+                    ),
                   ),
                 if (entry.paymentSource.trim().isNotEmpty &&
                     _ledgerToken(entry.paymentSource) != 'unknown')
                   _chip(
-                    '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(entry.paymentSource)}',
+                    _labelValue(
+                      _t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen'),
+                      _paymentSourceLabel(entry.paymentSource),
+                    ),
                   ),
                 if (entry.paymentProvider.trim().isNotEmpty &&
                     _ledgerToken(entry.paymentProvider) != 'unknown')
                   _chip(
-                    '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_paymentProviderLabel(entry.paymentProvider)}',
+                    _labelValue(
+                      _t(
+                        nl: 'Provider',
+                        en: 'Provider',
+                        fr: 'Fournisseur',
+                        es: 'Proveedor',
+                      ),
+                      _paymentProviderLabel(entry.paymentProvider),
+                    ),
                   ),
               ],
             ],
@@ -3259,18 +3302,18 @@ class _LocalComplianceLedgerSectionState
           ),
           const SizedBox(height: 6),
           Text(
-            '${_driverLabel()}: ${_driverDisplayForGroup(group)}',
+            _labelValue(_driverLabel(), _driverDisplayForGroup(group)),
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
           Text(
-            '${_vehicleLabel()}: ${_vehicleDisplayForGroup(group)}',
+            _labelValue(_vehicleLabel(), _vehicleDisplayForGroup(group)),
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
           if (fare != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                '${_amountLabel()}: $fare',
+                _labelValue(_amountLabel(), fare),
                 style: const TextStyle(
                   color: Color(0xFFFFD54F),
                   fontWeight: FontWeight.w700,
@@ -3284,26 +3327,51 @@ class _LocalComplianceLedgerSectionState
             runSpacing: 6,
             children: [
               _chip(
-                '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_paymentStatusLabel(effectivePayment.paymentStatus)}',
+                _labelValue(
+                  _t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago'),
+                  _paymentStatusLabel(effectivePayment.paymentStatus),
+                ),
               ),
               if (effectivePayment.paymentMethod.trim().isNotEmpty &&
                   _ledgerToken(effectivePayment.paymentMethod) != 'unknown')
                 _chip(
-                  '${_t(nl: 'Methode', en: 'Method', fr: 'Méthode', es: 'Método')}: ${_paymentMethodLabel(effectivePayment.paymentMethod)}',
+                  _labelValue(
+                    _t(
+                      nl: 'Methode',
+                      en: 'Method',
+                      fr: 'Méthode',
+                      es: 'Método',
+                    ),
+                    _paymentMethodLabel(effectivePayment.paymentMethod),
+                  ),
                 ),
               if (effectivePayment.paymentSource.trim().isNotEmpty &&
                   _ledgerToken(effectivePayment.paymentSource) != 'unknown')
                 _chip(
-                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen')}: ${_paymentSourceLabel(effectivePayment.paymentSource)}',
+                  _labelValue(
+                    _t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Origen'),
+                    _paymentSourceLabel(effectivePayment.paymentSource),
+                  ),
                 ),
               if (effectivePayment.paymentProvider.trim().isNotEmpty &&
                   _ledgerToken(effectivePayment.paymentProvider) != 'unknown')
                 _chip(
-                  '${_t(nl: 'Provider', en: 'Provider', fr: 'Fournisseur', es: 'Proveedor')}: ${_paymentProviderLabel(effectivePayment.paymentProvider)}',
+                  _labelValue(
+                    _t(
+                      nl: 'Provider',
+                      en: 'Provider',
+                      fr: 'Fournisseur',
+                      es: 'Proveedor',
+                    ),
+                    _paymentProviderLabel(effectivePayment.paymentProvider),
+                  ),
                 ),
               _chip(_backendChipLabel(summary.backendConfirmed)),
               _chip(
-                '${_t(nl: 'Validatie', en: 'Validation', fr: 'Validation', es: 'Validación')}: ${_validationStateLabel(summary.validationState)}',
+                _labelValue(
+                  _statusLabel(),
+                  _validationStateLabel(summary.validationState),
+                ),
               ),
               if (latestPaymentUpdate != null) _chip(_paymentUpdatedLabel()),
             ],
