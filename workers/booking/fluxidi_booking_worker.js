@@ -267,6 +267,7 @@ function _requireAdmin(request, url, env) {
 
 const TENANT_BUSINESS_PROFILE_KEY = "tenant:business_profile:v1";
 const TENANT_TAX_PROFILE_KEY = "tenant:tax_profile:v1";
+const TENANT_SUBSCRIPTION_PROFILE_KEY = "tenant:subscription:v1";
 const TENANT_COMMUNICATION_TEMPLATES_KEY = "tenant:communication_templates:v1";
 
 const DEFAULT_BUSINESS_PROFILE = {
@@ -305,6 +306,33 @@ const DEFAULT_TAX_PROFILE = {
     fr: "TVA",
     es: "IVA",
   },
+};
+
+const DEFAULT_SUBSCRIPTION_PROFILE = {
+  version: 1,
+  tenant_id: "",
+  company_id: "",
+  plan: "starter",
+  status: "trialing",
+  trial_started_at: "",
+  trial_ends_at: "",
+  billing_email: "",
+  included_vehicles: 1,
+  max_vehicles: 1,
+  max_drivers: 3,
+  features: {
+    ai_assistant: false,
+    airport_module: false,
+    live_dispatch: false,
+    ev_dispatch: false,
+    compliance_dashboard: true,
+    white_label_branding: false,
+    public_booking: false,
+    receipt_pdf: true,
+    whatsapp_email_receipts: true,
+  },
+  created_at: "",
+  updated_at: "",
 };
 
 const DEFAULT_COMMUNICATION_TEMPLATES = {
@@ -458,6 +486,56 @@ function normalizeTaxProfile(input = {}) {
   };
 }
 
+function normalizeSubscriptionProfile(input = {}, scope = null) {
+  const source = input && typeof input === "object" ? input : {};
+  const scopeTenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const scopeCompany = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  let tenantId = sanitizeTenantString(
+    source.tenant_id ?? source.tenantId ?? scopeTenant ?? "",
+    80,
+  );
+  let companyId = sanitizeTenantString(
+    source.company_id ?? source.companyId ?? scopeCompany ?? "",
+    80,
+  );
+  if (!tenantId && companyId) tenantId = companyId;
+  if (!companyId && tenantId) companyId = tenantId;
+
+  const allowedPlans = new Set(["starter", "pro", "business", "enterprise"]);
+  const allowedStatuses = new Set(["trialing", "active", "past_due", "canceled", "suspended"]);
+  const rawPlan = sanitizeTenantString(source.plan ?? DEFAULT_SUBSCRIPTION_PROFILE.plan, 32).toLowerCase();
+  const rawStatus = sanitizeTenantString(source.status ?? DEFAULT_SUBSCRIPTION_PROFILE.status, 32).toLowerCase();
+  const inFeatures = source.features && typeof source.features === "object" ? source.features : {};
+  const defaultFeatures = DEFAULT_SUBSCRIPTION_PROFILE.features;
+
+  return {
+    version: 1,
+    tenant_id: tenantId,
+    company_id: companyId,
+    plan: allowedPlans.has(rawPlan) ? rawPlan : DEFAULT_SUBSCRIPTION_PROFILE.plan,
+    status: allowedStatuses.has(rawStatus) ? rawStatus : DEFAULT_SUBSCRIPTION_PROFILE.status,
+    trial_started_at: sanitizeTenantString(source.trial_started_at ?? source.trialStartedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.trial_started_at, 48),
+    trial_ends_at: sanitizeTenantString(source.trial_ends_at ?? source.trialEndsAt ?? DEFAULT_SUBSCRIPTION_PROFILE.trial_ends_at, 48),
+    billing_email: sanitizeTenantString(source.billing_email ?? source.billingEmail ?? DEFAULT_SUBSCRIPTION_PROFILE.billing_email, 160),
+    included_vehicles: Math.max(0, clampInt(source.included_vehicles ?? source.includedVehicles, DEFAULT_SUBSCRIPTION_PROFILE.included_vehicles)),
+    max_vehicles: Math.max(0, clampInt(source.max_vehicles ?? source.maxVehicles, DEFAULT_SUBSCRIPTION_PROFILE.max_vehicles)),
+    max_drivers: Math.max(0, clampInt(source.max_drivers ?? source.maxDrivers, DEFAULT_SUBSCRIPTION_PROFILE.max_drivers)),
+    features: {
+      ai_assistant: typeof inFeatures.ai_assistant === "boolean" ? inFeatures.ai_assistant : defaultFeatures.ai_assistant,
+      airport_module: typeof inFeatures.airport_module === "boolean" ? inFeatures.airport_module : defaultFeatures.airport_module,
+      live_dispatch: typeof inFeatures.live_dispatch === "boolean" ? inFeatures.live_dispatch : defaultFeatures.live_dispatch,
+      ev_dispatch: typeof inFeatures.ev_dispatch === "boolean" ? inFeatures.ev_dispatch : defaultFeatures.ev_dispatch,
+      compliance_dashboard: typeof inFeatures.compliance_dashboard === "boolean" ? inFeatures.compliance_dashboard : defaultFeatures.compliance_dashboard,
+      white_label_branding: typeof inFeatures.white_label_branding === "boolean" ? inFeatures.white_label_branding : defaultFeatures.white_label_branding,
+      public_booking: typeof inFeatures.public_booking === "boolean" ? inFeatures.public_booking : defaultFeatures.public_booking,
+      receipt_pdf: typeof inFeatures.receipt_pdf === "boolean" ? inFeatures.receipt_pdf : defaultFeatures.receipt_pdf,
+      whatsapp_email_receipts: typeof inFeatures.whatsapp_email_receipts === "boolean" ? inFeatures.whatsapp_email_receipts : defaultFeatures.whatsapp_email_receipts,
+    },
+    created_at: sanitizeTenantString(source.created_at ?? source.createdAt ?? DEFAULT_SUBSCRIPTION_PROFILE.created_at, 48),
+    updated_at: sanitizeTenantString(source.updated_at ?? source.updatedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.updated_at, 48),
+  };
+}
+
 function normalizeCommunicationTemplates(input = {}) {
   const source = input && typeof input === "object" ? input : {};
   const sourceTemplates = source.templates && typeof source.templates === "object"
@@ -527,6 +605,7 @@ function buildScopedSettingsKeys(scope) {
     businessProfileKey: `tenant:${tenantId}:company:${companyId}:business_profile:v1`,
     taxProfileKey: `tenant:${tenantId}:company:${companyId}:tax_profile:v1`,
     pricingProfileKey: `tenant:${tenantId}:company:${companyId}:pricing:v1`,
+    subscriptionProfileKey: `tenant:${tenantId}:company:${companyId}:subscription:v1`,
   };
 }
 
@@ -580,6 +659,44 @@ async function saveTaxProfile(env, profile, scope = null) {
     tax_profile: normalized,
   }));
   return normalized;
+}
+
+async function loadSubscriptionProfile(env, scope = null) {
+  if (!env?.BOOKING_KV) return normalizeSubscriptionProfile(DEFAULT_SUBSCRIPTION_PROFILE, scope);
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys) {
+    raw = await env.BOOKING_KV.get(scopedKeys.subscriptionProfileKey, { type: "json" });
+  }
+  if (!raw) {
+    raw = await env.BOOKING_KV.get(TENANT_SUBSCRIPTION_PROFILE_KEY, { type: "json" });
+  }
+  return normalizeSubscriptionProfile(raw?.subscription_profile ?? raw ?? DEFAULT_SUBSCRIPTION_PROFILE, scope);
+}
+
+async function saveSubscriptionProfile(env, profile, scope = null) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const nowIso = new Date().toISOString();
+  const normalized = normalizeSubscriptionProfile({
+    ...profile,
+    updated_at: nowIso,
+  }, scope);
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  const targetKey = scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY;
+  await env.BOOKING_KV.put(targetKey, JSON.stringify({
+    version: 1,
+    updated_at: nowIso,
+    subscription_profile: {
+      ...normalized,
+      created_at: normalized.created_at || nowIso,
+      updated_at: nowIso,
+    },
+  }));
+  return {
+    ...normalized,
+    created_at: normalized.created_at || nowIso,
+    updated_at: nowIso,
+  };
 }
 
 async function loadCommunicationTemplates(env) {
@@ -1059,6 +1176,7 @@ const SAFE_RESET_PROTECTED_BOOKING_KV_EXACT_KEYS = [
   "tenant:pricing:v1",
   "tenant:business_profile:v1",
   "tenant:tax_profile:v1",
+  "tenant:subscription:v1",
   "tenant:communication_templates:v1",
   "fleet:vehicles:v1",
   "partners:directory:v1",
@@ -1886,6 +2004,32 @@ GET /oauth/callback
           ok: true,
           key: TENANT_TAX_PROFILE_KEY,
           tax_profile: profile,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/subscription/profile" && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        const scope = resolveAdminSettingsScope({ request, url });
+        const profile = await loadSubscriptionProfile(env, scope);
+        return json({
+          ok: true,
+          key: TENANT_SUBSCRIPTION_PROFILE_KEY,
+          subscription_profile: profile,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/subscription/profile" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scope = resolveAdminSettingsScope({ request, url, body });
+        const incoming = body?.subscription_profile && typeof body.subscription_profile === "object"
+          ? body.subscription_profile
+          : body;
+        const profile = await saveSubscriptionProfile(env, incoming, scope);
+        return json({
+          ok: true,
+          key: TENANT_SUBSCRIPTION_PROFILE_KEY,
+          subscription_profile: profile,
         }, 200);
       }
 

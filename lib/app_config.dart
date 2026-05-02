@@ -431,6 +431,168 @@ class BackendTaxProfile {
   };
 }
 
+class BackendSubscriptionProfile {
+  final String tenantId;
+  final String companyId;
+  final String plan;
+  final String status;
+  final String trialStartedAt;
+  final String trialEndsAt;
+  final String billingEmail;
+  final int includedVehicles;
+  final int maxVehicles;
+  final int maxDrivers;
+  final Map<String, bool> features;
+  final String createdAt;
+  final String updatedAt;
+
+  const BackendSubscriptionProfile({
+    required this.tenantId,
+    required this.companyId,
+    required this.plan,
+    required this.status,
+    required this.trialStartedAt,
+    required this.trialEndsAt,
+    required this.billingEmail,
+    required this.includedVehicles,
+    required this.maxVehicles,
+    required this.maxDrivers,
+    required this.features,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory BackendSubscriptionProfile.defaults() =>
+      const BackendSubscriptionProfile(
+        tenantId: '',
+        companyId: '',
+        plan: 'starter',
+        status: 'trialing',
+        trialStartedAt: '',
+        trialEndsAt: '',
+        billingEmail: '',
+        includedVehicles: 1,
+        maxVehicles: 1,
+        maxDrivers: 3,
+        features: <String, bool>{
+          'ai_assistant': false,
+          'airport_module': false,
+          'live_dispatch': false,
+          'ev_dispatch': false,
+          'compliance_dashboard': true,
+          'white_label_branding': false,
+          'public_booking': false,
+          'receipt_pdf': true,
+          'whatsapp_email_receipts': true,
+        },
+        createdAt: '',
+        updatedAt: '',
+      );
+
+  factory BackendSubscriptionProfile.fromJson(Map<String, dynamic> json) {
+    final fallback = BackendSubscriptionProfile.defaults();
+    final featuresRaw = json['features'];
+    final featuresIn = featuresRaw is Map
+        ? Map<String, dynamic>.from(featuresRaw)
+        : const <String, dynamic>{};
+    bool feature(String key, bool fallbackValue) {
+      final v = featuresIn[key];
+      return v is bool ? v : fallbackValue;
+    }
+
+    int intVal(String snake, String camel, int fallbackValue) {
+      final raw = json[snake] ?? json[camel];
+      final n = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+      if (n == null || n < 0) return fallbackValue;
+      return n;
+    }
+
+    String text(String snake, String camel, String fallbackValue) =>
+        (json[snake] ?? json[camel] ?? fallbackValue).toString();
+
+    return BackendSubscriptionProfile(
+      tenantId: text('tenant_id', 'tenantId', fallback.tenantId),
+      companyId: text('company_id', 'companyId', fallback.companyId),
+      plan: text('plan', 'plan', fallback.plan).trim().toLowerCase(),
+      status: text('status', 'status', fallback.status).trim().toLowerCase(),
+      trialStartedAt: text(
+        'trial_started_at',
+        'trialStartedAt',
+        fallback.trialStartedAt,
+      ),
+      trialEndsAt: text('trial_ends_at', 'trialEndsAt', fallback.trialEndsAt),
+      billingEmail: text(
+        'billing_email',
+        'billingEmail',
+        fallback.billingEmail,
+      ),
+      includedVehicles: intVal(
+        'included_vehicles',
+        'includedVehicles',
+        fallback.includedVehicles,
+      ),
+      maxVehicles: intVal('max_vehicles', 'maxVehicles', fallback.maxVehicles),
+      maxDrivers: intVal('max_drivers', 'maxDrivers', fallback.maxDrivers),
+      features: <String, bool>{
+        'ai_assistant': feature(
+          'ai_assistant',
+          fallback.features['ai_assistant'] ?? false,
+        ),
+        'airport_module': feature(
+          'airport_module',
+          fallback.features['airport_module'] ?? false,
+        ),
+        'live_dispatch': feature(
+          'live_dispatch',
+          fallback.features['live_dispatch'] ?? false,
+        ),
+        'ev_dispatch': feature(
+          'ev_dispatch',
+          fallback.features['ev_dispatch'] ?? false,
+        ),
+        'compliance_dashboard': feature(
+          'compliance_dashboard',
+          fallback.features['compliance_dashboard'] ?? true,
+        ),
+        'white_label_branding': feature(
+          'white_label_branding',
+          fallback.features['white_label_branding'] ?? false,
+        ),
+        'public_booking': feature(
+          'public_booking',
+          fallback.features['public_booking'] ?? false,
+        ),
+        'receipt_pdf': feature(
+          'receipt_pdf',
+          fallback.features['receipt_pdf'] ?? true,
+        ),
+        'whatsapp_email_receipts': feature(
+          'whatsapp_email_receipts',
+          fallback.features['whatsapp_email_receipts'] ?? true,
+        ),
+      },
+      createdAt: text('created_at', 'createdAt', fallback.createdAt),
+      updatedAt: text('updated_at', 'updatedAt', fallback.updatedAt),
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'tenant_id': tenantId,
+    'company_id': companyId,
+    'plan': plan,
+    'status': status,
+    'trial_started_at': trialStartedAt,
+    'trial_ends_at': trialEndsAt,
+    'billing_email': billingEmail,
+    'included_vehicles': includedVehicles,
+    'max_vehicles': maxVehicles,
+    'max_drivers': maxDrivers,
+    'features': features,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+}
+
 class ActiveVatConfig {
   final bool vatEnabled;
   final double vatRate;
@@ -1512,6 +1674,64 @@ Future<BackendTaxProfile> saveBackendTaxProfile(
   final saved = decoded['tax_profile'];
   if (saved is! Map) throw Exception('Missing tax_profile');
   return BackendTaxProfile.fromJson(Map<String, dynamic>.from(saved));
+}
+
+Future<BackendSubscriptionProfile> fetchBackendSubscriptionProfile({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/subscription/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
+  BackendSubscriptionProfile profile, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/subscription/profile'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'subscription_profile': profile.toJson(),
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  final saved = decoded['subscription_profile'];
+  if (saved is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(Map<String, dynamic>.from(saved));
 }
 
 Future<void> loadLocalTenantState() async {
