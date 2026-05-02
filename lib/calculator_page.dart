@@ -824,7 +824,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final vatPct = (vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw);
     final durationForTimeCost =
         parseNum(breakdown['duration_min']) ?? parseNum(durationMin) ?? 0.0;
+    final distanceForCost =
+        parseNum(breakdown['distance_km']) ?? parseNum(distanceKm) ?? 0.0;
+    final perKmRateEx = parseNum(breakdown['per_km_ex']) ?? 0.0;
     final perMinRateEx = parseNum(breakdown['per_min_ex']) ?? 0.0;
+    final distanceCostEx =
+        parseNum(breakdown['distance_cost_ex']) ??
+        parseNum(breakdown['per_km_total_ex']) ??
+        (distanceForCost * perKmRateEx);
     final timeCostEx =
         parseNum(breakdown['time_cost_ex']) ??
         parseNum(breakdown['per_min_total_ex']) ??
@@ -837,7 +844,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
       ),
       MapEntry<String, String>(
         _breakdownLabelFor('base_drive_ex'),
-        fmtMoneyVal(breakdown['base_drive_ex']),
+        fmtMoneyVal(distanceCostEx),
       ),
       MapEntry<String, String>(
         _breakdownLabelFor('per_min_ex'),
