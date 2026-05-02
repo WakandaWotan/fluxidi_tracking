@@ -4803,7 +4803,8 @@ function calcPrice({
   const surchargeCap = profile.surcharge_cap_rate;
   if (surchargeRate > surchargeCap) surchargeRate = surchargeCap;
 
-  const baseDriveEx = startFee + (distance_km * perKm) + (duration_min * perMin);
+  const timeCostEx = duration_min * perMin;
+  const baseDriveEx = startFee + (distance_km * perKm) + timeCostEx;
   const returnFee = apply_return_fee ? profile.return_fee : 0;
   const fuelSurcharge = profile.fuel_surcharge;
 
@@ -4839,6 +4840,8 @@ function calcPrice({
       start_fee_ex: to2(startFee),
       per_km_ex: to2(perKm),
       per_min_ex: to2(perMin),
+      per_min_total_ex: to2(timeCostEx),
+      time_cost_ex: to2(timeCostEx),
 
       distance_km: round1(distance_km),
       duration_min: Math.round(duration_min),

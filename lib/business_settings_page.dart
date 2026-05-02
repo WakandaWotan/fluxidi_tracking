@@ -266,6 +266,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendVatLabelEnCtrl.text = p.vatLabels['en'] ?? 'VAT';
     _backendVatLabelFrCtrl.text = p.vatLabels['fr'] ?? 'TVA';
     _backendVatLabelEsCtrl.text = p.vatLabels['es'] ?? 'IVA';
+    final vat = resolveActiveVatConfig(
+      settings: businessSettingsNotifier.value,
+      taxProfile: p,
+    );
+    _vatRatePricingCtrl.text = vat.vatRate.toStringAsFixed(2);
+    _pricingVatMode = vat.vatMode;
   }
 
   void _mergeLocalIntoGeneralControllersIfEligible() {
@@ -578,6 +584,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       });
       // Refresh local cache with the server-confirmed result, best-effort.
       unawaited(updateLocalBackendTaxProfileCache(saved));
+      final pricingScope = _activeSettingsScope();
+      unawaited(
+        syncPricingProfileToBackend(
+          tenantId: pricingScope.tenantId,
+          companyId: pricingScope.companyId,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       // Local cache stays intact (saved above); just surface the existing
@@ -601,6 +614,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   void _save() {
     final current = businessSettingsNotifier.value;
     final scope = _activeSettingsScope();
+    final vat = _activeVatConfig();
     updateBusinessSettings(
       current.copyWith(
         companyName: _companyCtrl.text.trim(),
@@ -639,11 +653,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           _fuelSurchargeCtrl.text,
           current.pricingFuelSurcharge,
         ),
-        pricingVatRate: _toMoney(
-          _vatRatePricingCtrl.text,
-          current.pricingVatRate,
-        ),
-        pricingVatMode: _pricingVatMode,
+        pricingVatRate: vat.vatRate,
+        pricingVatMode: vat.vatMode,
         pricingBagFeeEach: _toMoney(
           _bagFeeCtrl.text,
           current.pricingBagFeeEach,
@@ -1137,6 +1148,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return (tenantId: companyId, companyId: companyId);
   }
 
+  ActiveVatConfig _activeVatConfig() {
+    return resolveActiveVatConfig(
+      settings: businessSettingsNotifier.value,
+      taxProfile: localBackendTaxProfileNotifier.value,
+    );
+  }
+
   String _preparedPublicBookingUrl(String companyId) {
     final safeCompanyId = companyId.trim().isEmpty
         ? kTenantId
@@ -1160,6 +1178,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     String label, {
     ValueChanged<String>? onChanged,
     int maxLines = 1,
+    bool readOnly = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1167,6 +1186,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         controller: ctrl,
         onChanged: onChanged,
         maxLines: maxLines,
+        readOnly: readOnly,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           labelText: label,
@@ -2180,11 +2200,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _txt(
                     _vatRatePricingCtrl,
                     _t(
-                      nl: 'BTW/VAT tarief (0-1)',
-                      en: 'VAT rate (0-1)',
-                      fr: 'Taux TVA (0-1)',
-                      es: 'Tasa IVA (0-1)',
+                      nl: 'BTW/VAT tarief (afgeleid uit BTW-instellingen)',
+                      en: 'VAT rate (derived from VAT settings)',
+                      fr: 'Taux TVA (dérivé des paramètres TVA)',
+                      es: 'Tasa IVA (derivada de ajustes de IVA)',
                     ),
+                    readOnly: true,
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
@@ -2193,16 +2214,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       DropdownMenuItem(value: 'excl', child: Text('Excl VAT')),
                       DropdownMenuItem(value: 'incl', child: Text('Incl VAT')),
                     ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _pricingVatMode = v);
-                    },
+                    onChanged: null,
                     decoration: InputDecoration(
                       labelText: _t(
-                        nl: 'BTW modus',
-                        en: 'VAT mode',
-                        fr: 'Mode TVA',
-                        es: 'Modo IVA',
+                        nl: 'BTW modus (afgeleid uit BTW-instellingen)',
+                        en: 'VAT mode (derived from VAT settings)',
+                        fr: 'Mode TVA (dérivé des paramètres TVA)',
+                        es: 'Modo IVA (derivado de ajustes de IVA)',
                       ),
                       floatingLabelBehavior: FloatingLabelBehavior.always,
                       contentPadding: const EdgeInsets.symmetric(
@@ -2213,6 +2231,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       fillColor: const Color(0xFF0B0B0B),
                     ),
                     dropdownColor: const Color(0xFF111111),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      _t(
+                        nl: 'Pas BTW-instellingen aan om tarief-BTW te wijzigen.',
+                        en: 'Change VAT settings to update pricing VAT.',
+                        fr: 'Modifiez les paramètres TVA pour ajuster la TVA tarifaire.',
+                        es: 'Modifica los ajustes de IVA para actualizar el IVA de tarifas.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
                   _txt(
                     _bagFeeCtrl,

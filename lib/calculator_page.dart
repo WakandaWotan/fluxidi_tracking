@@ -70,9 +70,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
   bool _returnTrip = false;
   int _waitMin = 0;
 
-  // VAT (keep simple; your worker is source of truth anyway)
-  double _vatRate = appConfig.defaultVatRate;
-
   bool _loading = false;
   String? _error;
   Map<String, dynamic>? _lastQuote;
@@ -84,6 +81,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
   AppLanguage get _lang => appConfig.currentLanguage;
   AppStrings get _s => appConfig.strings;
   BusinessSettingsState get _business => businessSettingsNotifier.value;
+  ActiveVatConfig get _activeVatConfig => resolveActiveVatConfig(
+    settings: _business,
+    taxProfile: localBackendTaxProfileNotifier.value,
+  );
   bool get _returnFeatureEnabled => _business.pricingReturnEnabled;
 
   String get _currencySymbol {
@@ -331,6 +332,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   Map<String, dynamic> _buildQuotePayload(DateTime dt) {
+    final vat = _activeVatConfig;
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
     final returnDt =
         _returnPickupDateTime ??
@@ -355,7 +357,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "return_date": returnEnabled ? _fmtDateYmd(returnDt) : '',
       "return_time": returnEnabled ? _fmtTimeHm(returnDt) : '',
       "return_pickup_iso": returnEnabled ? _isoLikeLocal(returnDt) : '',
-      "vat_rate": _vatRate,
+      "vat_rate": vat.vatRate,
+      "vat_mode": vat.vatMode,
       "pricing_profile": <String, dynamic>{
         "base_fare": _business.pricingBaseFare,
         "price_per_km": _business.pricingPerKm,
@@ -365,6 +368,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
         "return_enabled": _business.pricingReturnEnabled,
         "return_fee": _business.pricingReturnFee,
         "fuel_surcharge": _business.pricingFuelSurcharge,
+        "vat_rate": vat.vatRate,
+        "vat_mode": vat.vatMode,
       },
       "surcharge_fuel": _business.pricingFuelSurcharge,
       "return_fee": returnEnabled ? _business.pricingReturnFee : 0,
@@ -409,6 +414,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     super.initState();
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
+    localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
   }
 
   void _onLanguageChanged() {
@@ -425,10 +431,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
     setState(() {});
   }
 
+  void _onVatProfileChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void dispose() {
     appLanguageNotifier.removeListener(_onLanguageChanged);
     businessSettingsNotifier.removeListener(_onBusinessSettingsChanged);
+    localBackendTaxProfileNotifier.removeListener(_onVatProfileChanged);
     _fromDebounce?.cancel();
     _toDebounce?.cancel();
     _fromCtrl.dispose();
@@ -792,8 +804,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
               ? (q['pricing_profile'] as Map)['vat_rate']
               : null,
         ) ??
-        _vatRate;
+        _activeVatConfig.vatRate;
     final vatPct = (vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw);
+    final durationForTimeCost =
+        parseNum(breakdown['duration_min']) ?? parseNum(durationMin) ?? 0.0;
+    final perMinRateEx = parseNum(breakdown['per_min_ex']) ?? 0.0;
+    final timeCostEx =
+        parseNum(breakdown['time_cost_ex']) ??
+        parseNum(breakdown['per_min_total_ex']) ??
+        (durationForTimeCost * perMinRateEx);
     String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
     final detailsRows = <MapEntry<String, String>>[
       MapEntry<String, String>(
@@ -806,7 +825,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
       ),
       MapEntry<String, String>(
         _breakdownLabelFor('per_min_ex'),
-        fmtMoneyVal(breakdown['per_min_ex']),
+        fmtMoneyVal(timeCostEx),
       ),
       MapEntry<String, String>(
         _breakdownLabelFor('waiting_ex'),

@@ -431,6 +431,47 @@ class BackendTaxProfile {
   };
 }
 
+class ActiveVatConfig {
+  final bool vatEnabled;
+  final double vatRate;
+  final String vatMode;
+
+  const ActiveVatConfig({
+    required this.vatEnabled,
+    required this.vatRate,
+    required this.vatMode,
+  });
+}
+
+ActiveVatConfig resolveActiveVatConfig({
+  BusinessSettingsState? settings,
+  BackendTaxProfile? taxProfile,
+}) {
+  final fallbackSettings = settings ?? businessSettingsNotifier.value;
+  final fallbackRateRaw = fallbackSettings.pricingVatRate;
+  final fallbackRate = fallbackRateRaw.isFinite
+      ? fallbackRateRaw.clamp(0.0, 1.0).toDouble()
+      : appConfig.defaultVatRate;
+  final fallbackMode =
+      fallbackSettings.pricingVatMode.trim().toLowerCase() == 'incl'
+      ? 'incl'
+      : 'excl';
+
+  final source = taxProfile ?? localBackendTaxProfileNotifier.value;
+  final enabled = source?.vatEnabled ?? true;
+  final mode =
+      (source?.vatDisplayMode ?? fallbackMode).trim().toLowerCase() == 'incl'
+      ? 'incl'
+      : 'excl';
+  final rateRaw = source?.vatRate ?? fallbackRate;
+  final rate = rateRaw.isFinite ? rateRaw.clamp(0.0, 1.0).toDouble() : 0.0;
+  return ActiveVatConfig(
+    vatEnabled: enabled,
+    vatRate: enabled ? rate : 0.0,
+    vatMode: mode,
+  );
+}
+
 class VehicleProfile {
   final String id;
   final String vehicleName;
@@ -1257,6 +1298,7 @@ Uri _withAdminTenantCompanyScope(
 }
 
 Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
+  final vat = resolveActiveVatConfig(settings: s);
   return <String, dynamic>{
     'base_fare': s.pricingBaseFare,
     'price_per_km': s.pricingPerKm,
@@ -1266,8 +1308,8 @@ Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
     'return_enabled': s.pricingReturnEnabled,
     'return_fee': s.pricingReturnFee,
     'fuel_surcharge': s.pricingFuelSurcharge,
-    'vat_rate': s.pricingVatRate,
-    'vat_mode': s.pricingVatMode,
+    'vat_rate': vat.vatRate,
+    'vat_mode': vat.vatMode,
     'bag_fee_each': s.pricingBagFeeEach,
     'stop_fee_each': s.pricingStopFeeEach,
     'tier_fee_comfort': s.pricingTierFeeComfort,
