@@ -2368,11 +2368,15 @@ GET /oauth/callback
 
       if (url.pathname === "/admin/pricing/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const scope = resolveAdminSettingsScope({ request, url });
-        const profile = await _loadTenantPricingProfile(env, scope);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await _loadTenantPricingProfile(env, explicitScope);
         return json({
           ok: true,
-          key: TENANT_PRICING_PROFILE_KEY,
+          key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
           pricing_profile: profile,
         }, 200);
       }
@@ -2381,25 +2385,33 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const scope = resolveAdminSettingsScope({ request, url, body });
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = body?.pricing_profile && typeof body.pricing_profile === "object"
           ? body.pricing_profile
           : body;
-        const normalized = await _saveTenantPricingProfile(env, incoming, scope);
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const normalized = await _saveTenantPricingProfile(env, incoming, explicitScope);
         return json({
           ok: true,
-          key: TENANT_PRICING_PROFILE_KEY,
+          key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
           pricing_profile: normalized,
         }, 200);
       }
 
       if (url.pathname === "/admin/business/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const scope = resolveAdminSettingsScope({ request, url });
-        const profile = await loadBusinessProfile(env, scope);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await loadBusinessProfile(env, explicitScope);
         return json({
           ok: true,
-          key: TENANT_BUSINESS_PROFILE_KEY,
+          key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
         }, 200);
       }
@@ -2407,25 +2419,33 @@ GET /oauth/callback
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const scope = resolveAdminSettingsScope({ request, url, body });
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = body?.business_profile && typeof body.business_profile === "object"
           ? body.business_profile
           : body;
-        const profile = await saveBusinessProfile(env, incoming, scope);
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await saveBusinessProfile(env, incoming, explicitScope);
         return json({
           ok: true,
-          key: TENANT_BUSINESS_PROFILE_KEY,
+          key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
         }, 200);
       }
 
       if (url.pathname === "/admin/tax/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const scope = resolveAdminSettingsScope({ request, url });
-        const profile = await loadTaxProfile(env, scope);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await loadTaxProfile(env, explicitScope);
         return json({
           ok: true,
-          key: TENANT_TAX_PROFILE_KEY,
+          key: scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY,
           tax_profile: profile,
         }, 200);
       }
@@ -2433,25 +2453,33 @@ GET /oauth/callback
       if (url.pathname === "/admin/tax/profile" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const scope = resolveAdminSettingsScope({ request, url, body });
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = body?.tax_profile && typeof body.tax_profile === "object"
           ? body.tax_profile
           : body;
-        const profile = await saveTaxProfile(env, incoming, scope);
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await saveTaxProfile(env, incoming, explicitScope);
         return json({
           ok: true,
-          key: TENANT_TAX_PROFILE_KEY,
+          key: scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY,
           tax_profile: profile,
         }, 200);
       }
 
       if (url.pathname === "/admin/subscription/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const scope = resolveAdminSettingsScope({ request, url });
-        const profile = await loadSubscriptionProfile(env, scope);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await loadSubscriptionProfile(env, explicitScope);
         return json({
           ok: true,
-          key: TENANT_SUBSCRIPTION_PROFILE_KEY,
+          key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
           subscription_profile: profile,
         }, 200);
       }
@@ -2459,14 +2487,18 @@ GET /oauth/callback
       if (url.pathname === "/admin/subscription/profile" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const scope = resolveAdminSettingsScope({ request, url, body });
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = body?.subscription_profile && typeof body.subscription_profile === "object"
           ? body.subscription_profile
           : body;
-        const profile = await saveSubscriptionProfile(env, incoming, scope);
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const profile = await saveSubscriptionProfile(env, incoming, explicitScope);
         return json({
           ok: true,
-          key: TENANT_SUBSCRIPTION_PROFILE_KEY,
+          key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
           subscription_profile: profile,
         }, 200);
       }
