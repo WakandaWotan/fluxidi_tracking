@@ -9712,6 +9712,109 @@ async function nextInvoiceNumber(env, pickupIsoOrDate = null, scope = null) {
   return `FLX-${yyyy}-${mm}-${seq}`;
 }
 
+function findExistingInvoiceNumber(source) {
+  return safeStr(
+    source?.invoice_number ||
+      source?.invoiceNumber ||
+      source?.invoice?.invoice_number ||
+      source?.invoice?.invoiceNumber ||
+      source?.invoice?.number ||
+      source?.booking?.invoice_number ||
+      source?.booking?.invoiceNumber ||
+      source?.booking?.invoice?.number,
+    120,
+  );
+}
+
+function resolveInvoiceBookingId(bookingInput) {
+  const out = [];
+  const seen = new Set();
+  const add = (value) => {
+    const text = safeStr(value, 160);
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    out.push(text);
+  };
+
+  add(bookingInput?.bookingId);
+  add(bookingInput?.booking_id);
+  add(bookingInput?.bookingPublicId);
+  add(bookingInput?.public_booking_id);
+  add(bookingInput?.__booking_id);
+  add(bookingInput?.booking_uuid);
+
+  add(bookingInput?.booking?.bookingId);
+  add(bookingInput?.booking?.booking_id);
+  add(bookingInput?.booking?.bookingPublicId);
+  add(bookingInput?.booking?.public_booking_id);
+  add(bookingInput?.booking?.__booking_id);
+  add(bookingInput?.booking?.booking_uuid);
+
+  return out;
+}
+
+async function loadInvoiceBookingRecord(env, bookingInput) {
+  const candidates = resolveInvoiceBookingId(bookingInput);
+  if (!env?.BOOKING_KV) {
+    return { booking_id: candidates[0] || null, key: null, rec: null };
+  }
+  for (const bookingId of candidates) {
+    const key = `booking:${bookingId}`;
+    try {
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (rec && typeof rec === "object") {
+        return { booking_id: bookingId, key, rec };
+      }
+    } catch (_) {
+      // Try next candidate.
+    }
+  }
+  return { booking_id: candidates[0] || null, key: null, rec: null };
+}
+
+async function persistInvoiceNumberForBooking(env, bookingRecordInfo, invoiceNumber, invoiceScope = null) {
+  const key = safeStr(bookingRecordInfo?.key);
+  if (!key || !env?.BOOKING_KV) {
+    console.log("[INVOICE_SEQ][PERSIST_SKIP] reason=missing_booking_record");
+    return { ok: false, skipped: true };
+  }
+  try {
+    const latest = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latest || typeof latest !== "object") {
+      console.log("[INVOICE_SEQ][PERSIST_SKIP] reason=record_not_found");
+      return { ok: false, skipped: true };
+    }
+    const existing = findExistingInvoiceNumber(latest);
+    if (existing) {
+      console.log("[INVOICE_SEQ][PERSIST_SKIP] reason=already_exists");
+      return { ok: true, skipped: true, invoice_number: existing };
+    }
+    const issuedAt = new Date().toISOString();
+    latest.invoice_number = invoiceNumber;
+    latest.invoiceNumber = invoiceNumber;
+    latest.invoice_issued_at = issuedAt;
+    latest.invoiceIssuedAt = issuedAt;
+    if (latest.booking && typeof latest.booking === "object") {
+      latest.booking.invoice_number = invoiceNumber;
+      latest.booking.invoiceNumber = invoiceNumber;
+    }
+    if (invoiceScope?.tenant_id && invoiceScope?.company_id) {
+      latest.invoice_scope = {
+        tenant_id: invoiceScope.tenant_id,
+        company_id: invoiceScope.company_id,
+      };
+    }
+    await env.BOOKING_KV.put(key, JSON.stringify(latest));
+    console.log("[INVOICE_SEQ][PERSISTED] ok=true");
+    return { ok: true, persisted: true, invoice_number: invoiceNumber };
+  } catch (err) {
+    console.log(
+      `[INVOICE_SEQ][PERSIST_ERROR] reason=${safeStr(err?.message || err).slice(0, 120) || "unknown"}`,
+    );
+    return { ok: false, error: safeStr(err?.message || err) || "persist_error" };
+  }
+}
+
 function todayNL() {
   const d = new Date();
   const dd = String(d.getDate()).padStart(2, "0");
@@ -10234,7 +10337,31 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       : null;
     const commProfile = await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
-    const invoiceNumber = await nextInvoiceNumber(env, bookingInput.pickupStartIso, invoiceScope);
+    const bookingRecordInfo = await loadInvoiceBookingRecord(env, bookingInput);
+    const existingInvoiceNumber =
+      findExistingInvoiceNumber(bookingRecordInfo?.rec) ||
+      findExistingInvoiceNumber(bookingInput);
+    let invoiceNumber = existingInvoiceNumber || "";
+    let allocatedNow = false;
+    if (invoiceNumber) {
+      console.log("[INVOICE_SEQ][REUSE] source=existing_record");
+    } else {
+      invoiceNumber = await nextInvoiceNumber(env, bookingInput.pickupStartIso, invoiceScope);
+      allocatedNow = true;
+      console.log("[INVOICE_SEQ][ALLOCATED] source=sequence_allocator");
+    }
+    if (allocatedNow) {
+      const persisted = await persistInvoiceNumberForBooking(
+        env,
+        bookingRecordInfo,
+        invoiceNumber,
+        invoiceScope,
+      );
+      if (persisted?.invoice_number && persisted.invoice_number !== invoiceNumber) {
+        invoiceNumber = persisted.invoice_number;
+        console.log("[INVOICE_SEQ][REUSE] source=persisted_record");
+      }
+    }
     const invoiceDate = todayNL();
     const parseAmount = (value) => {
       const num = Number(value);
