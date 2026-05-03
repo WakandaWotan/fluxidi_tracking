@@ -818,6 +818,42 @@ function buildScopedSettingsKeys(scope) {
   };
 }
 
+function communicationTemplatesScopedKeyForScope(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return "";
+  return `tenant:${tenantId}:company:${companyId}:communication_templates:v1`;
+}
+
+function resolveAdminExplicitTenantCompanyScope({ request, url, body = null } = {}) {
+  const resolved = resolveAdminSettingsScope({ request, url, body });
+  const tenantExplicit = sanitizeTenantString(
+    url?.searchParams?.get("tenant_id") ??
+      url?.searchParams?.get("tenantId") ??
+      body?.tenant_id ??
+      body?.tenantId ??
+      request?.headers?.get?.("x-tenant-id") ??
+      request?.headers?.get?.("x-tenant"),
+    80,
+  );
+  const companyExplicit = sanitizeTenantString(
+    url?.searchParams?.get("company_id") ??
+      url?.searchParams?.get("companyId") ??
+      body?.company_id ??
+      body?.companyId ??
+      request?.headers?.get?.("x-company-id") ??
+      request?.headers?.get?.("x-company"),
+    80,
+  );
+  if (!tenantExplicit || !companyExplicit) return null;
+  return {
+    tenant_id: tenantExplicit,
+    company_id: companyExplicit,
+    hasScope: true,
+    resolved_scope: resolved,
+  };
+}
+
 async function loadBusinessProfile(env, scope = null) {
   if (!env?.BOOKING_KV) return normalizeBusinessProfile(DEFAULT_BUSINESS_PROFILE);
   const scopedKeys = buildScopedSettingsKeys(scope);
@@ -908,16 +944,39 @@ async function saveSubscriptionProfile(env, profile, scope = null) {
   };
 }
 
-async function loadCommunicationTemplates(env) {
+async function loadCommunicationTemplates(env, scopeOrTenant = null, companyIdArg = null) {
   if (!env?.BOOKING_KV) return normalizeCommunicationTemplates(DEFAULT_COMMUNICATION_TEMPLATES);
-  const raw = await env.BOOKING_KV.get(TENANT_COMMUNICATION_TEMPLATES_KEY, { type: "json" });
+  const scope =
+    scopeOrTenant && typeof scopeOrTenant === "object" && !Array.isArray(scopeOrTenant)
+      ? scopeOrTenant
+      : {
+          tenant_id: scopeOrTenant,
+          company_id: companyIdArg,
+        };
+  const scopedKey = communicationTemplatesScopedKeyForScope(scope);
+  let raw = null;
+  if (scopedKey) {
+    raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+  }
+  if (!raw) {
+    raw = await env.BOOKING_KV.get(TENANT_COMMUNICATION_TEMPLATES_KEY, { type: "json" });
+  }
   return normalizeCommunicationTemplates(raw?.communication_templates ?? raw ?? DEFAULT_COMMUNICATION_TEMPLATES);
 }
 
-async function saveCommunicationTemplates(env, templates) {
+async function saveCommunicationTemplates(env, templates, scopeOrTenant = null, companyIdArg = null) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const scope =
+    scopeOrTenant && typeof scopeOrTenant === "object" && !Array.isArray(scopeOrTenant)
+      ? scopeOrTenant
+      : {
+          tenant_id: scopeOrTenant,
+          company_id: companyIdArg,
+        };
+  const scopedKey = communicationTemplatesScopedKeyForScope(scope);
+  if (!scopedKey) throw new Error("missing_tenant_scope");
   const normalized = normalizeCommunicationTemplates(templates);
-  await env.BOOKING_KV.put(TENANT_COMMUNICATION_TEMPLATES_KEY, JSON.stringify({
+  await env.BOOKING_KV.put(scopedKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
     communication_templates: normalized,
@@ -1312,7 +1371,10 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
     businessProfile = null;
   }
   try {
-    communicationTemplates = await loadCommunicationTemplates(env);
+    communicationTemplates = await loadCommunicationTemplates(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
   } catch (_) {
     communicationTemplates = null;
   }
@@ -2411,10 +2473,15 @@ GET /oauth/callback
 
       if (url.pathname === "/admin/communication/templates" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const templates = await loadCommunicationTemplates(env);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKey = communicationTemplatesScopedKeyForScope(explicitScope);
+        const templates = await loadCommunicationTemplates(env, explicitScope);
         return json({
           ok: true,
-          key: TENANT_COMMUNICATION_TEMPLATES_KEY,
+          key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
           communication_templates: templates,
         }, 200);
       }
@@ -2422,13 +2489,18 @@ GET /oauth/callback
       if (url.pathname === "/admin/communication/templates" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
         const incoming = body?.communication_templates && typeof body.communication_templates === "object"
           ? body.communication_templates
           : body;
-        const templates = await saveCommunicationTemplates(env, incoming);
+        const scopedKey = communicationTemplatesScopedKeyForScope(explicitScope);
+        const templates = await saveCommunicationTemplates(env, incoming, explicitScope);
         return json({
           ok: true,
-          key: TENANT_COMMUNICATION_TEMPLATES_KEY,
+          key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
           communication_templates: templates,
         }, 200);
       }
