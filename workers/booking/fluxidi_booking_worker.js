@@ -2036,7 +2036,26 @@ GET /oauth/callback
           return json({ ok: false, error: "Missing fields: from, to, date, time" }, 400);
         }
 
-        const quoteScope = resolveAdminSettingsScope({ request, url, body });
+        const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+        const quoteScope = resolveExplicitBookingRequestScope({
+          request,
+          url,
+          body,
+          allowLegacyFallback: allowLegacyScopeFallback,
+        });
+        if (!quoteScope?.hasScope) {
+          return json(
+            quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            400,
+          );
+        }
+        body = {
+          ...body,
+          tenant_id: quoteScope.tenant_id,
+          tenantId: quoteScope.tenant_id,
+          company_id: quoteScope.company_id,
+          companyId: quoteScope.company_id,
+        };
         const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
         const vat_rate = clampNumber(
           pricingProfile?.vat_rate,
@@ -2239,7 +2258,27 @@ GET /oauth/callback
       // BOOK
       if (url.pathname === "/book" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await handleBooking(body, env, request);
+        const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+        const requestScope = resolveExplicitBookingRequestScope({
+          request,
+          url,
+          body,
+          allowLegacyFallback: allowLegacyScopeFallback,
+        });
+        if (!requestScope?.hasScope) {
+          return json(
+            requestScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            400,
+          );
+        }
+        const normalizedBody = {
+          ...body,
+          tenant_id: requestScope.tenant_id,
+          tenantId: requestScope.tenant_id,
+          company_id: requestScope.company_id,
+          companyId: requestScope.company_id,
+        };
+        const out = await handleBooking(normalizedBody, env, request);
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
         return json(out, 200);
@@ -2965,6 +3004,87 @@ function extractBookingTenantScope({ request, url, body = null } = {}) {
 
 function missingTenantScopeError() {
   return { ok: false, error: "missing_tenant_scope" };
+}
+
+function scopeConflictError() {
+  return { ok: false, error: "tenant_scope_conflict" };
+}
+
+function _scopeDistinctNonEmpty(...values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const text = _scopeText(value);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+
+function resolveExplicitBookingRequestScope({ request, url, body = null, allowLegacyFallback = false } = {}) {
+  const search = url?.searchParams;
+  const tenantBodySnake = _scopeText(body?.tenant_id);
+  const tenantBodyCamel = _scopeText(body?.tenantId);
+  const companyBodySnake = _scopeText(body?.company_id);
+  const companyBodyCamel = _scopeText(body?.companyId);
+  const tenantQuerySnake = _scopeText(search?.get("tenant_id"));
+  const tenantQueryCamel = _scopeText(search?.get("tenantId"));
+  const companyQuerySnake = _scopeText(search?.get("company_id"));
+  const companyQueryCamel = _scopeText(search?.get("companyId"));
+  const tenantHeaderPrimary = _scopeText(request?.headers?.get?.("x-tenant-id"));
+  const tenantHeaderAlias = _scopeText(request?.headers?.get?.("x-tenant"));
+  const companyHeaderPrimary = _scopeText(request?.headers?.get?.("x-company-id"));
+  const companyHeaderAlias = _scopeText(request?.headers?.get?.("x-company"));
+
+  if (tenantBodySnake && tenantBodyCamel && tenantBodySnake !== tenantBodyCamel) return scopeConflictError();
+  if (companyBodySnake && companyBodyCamel && companyBodySnake !== companyBodyCamel) return scopeConflictError();
+  if (tenantQuerySnake && tenantQueryCamel && tenantQuerySnake !== tenantQueryCamel) return scopeConflictError();
+  if (companyQuerySnake && companyQueryCamel && companyQuerySnake !== companyQueryCamel) return scopeConflictError();
+  if (tenantHeaderPrimary && tenantHeaderAlias && tenantHeaderPrimary !== tenantHeaderAlias) return scopeConflictError();
+  if (companyHeaderPrimary && companyHeaderAlias && companyHeaderPrimary !== companyHeaderAlias) return scopeConflictError();
+
+  const tenantValues = _scopeDistinctNonEmpty(
+    tenantBodySnake,
+    tenantBodyCamel,
+    tenantQuerySnake,
+    tenantQueryCamel,
+    tenantHeaderPrimary,
+    tenantHeaderAlias,
+  );
+  const companyValues = _scopeDistinctNonEmpty(
+    companyBodySnake,
+    companyBodyCamel,
+    companyQuerySnake,
+    companyQueryCamel,
+    companyHeaderPrimary,
+    companyHeaderAlias,
+  );
+  if (tenantValues.length > 1 || companyValues.length > 1) {
+    return scopeConflictError();
+  }
+
+  const tenantId = tenantValues[0] || "";
+  const companyId = companyValues[0] || "";
+
+  if (!tenantId && !companyId) {
+    if (allowLegacyFallback) {
+      return {
+        tenant_id: "fluxidi",
+        company_id: "fluxidi",
+        hasScope: true,
+        legacy_fallback: true,
+      };
+    }
+    return missingTenantScopeError();
+  }
+  if (!tenantId || !companyId) return missingTenantScopeError();
+
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: true,
+  };
 }
 
 function isLegacyTenantScopeRequest(requestedScope) {
@@ -3866,8 +3986,16 @@ async function mollieCreatePayment(payload, env, request) {
     // (which uses this same worker as source-of-truth), we can reuse it to avoid a second
     // Mapbox call and reduce the chance of geocode hiccups.
     const payloadClean = { ...(payload || {}) };
+    const paymentTenantId = safeStr(payload?.tenant_id ?? payload?.tenantId, 80);
+    const paymentCompanyId = safeStr(payload?.company_id ?? payload?.companyId, 80);
     const clientQuote = payloadClean.quote;
-    const quotePayload = { ...payloadClean, date, time };
+    const quotePayload = {
+      ...payloadClean,
+      date,
+      time,
+      ...(paymentTenantId ? { tenant_id: paymentTenantId, tenantId: paymentTenantId } : {}),
+      ...(paymentCompanyId ? { company_id: paymentCompanyId, companyId: paymentCompanyId } : {}),
+    };
 
     // 1) payment booking id (internal, used for Mollie + status polling)
     const bookingId = crypto.randomUUID();
@@ -3958,7 +4086,7 @@ async function mollieCreatePayment(payload, env, request) {
     // webhookUrl: points to this worker
     const webhookUrl = `${base}/webhook/mollie`;
 
-    const commProfile = await resolveTenantCommunicationProfile(env);
+    const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
     const description = `${safeBrandName(commProfile?.brandName, "Fluxidi Taxi")} booking ${bookingId}`;
 
     const mollieRes = await fetch("https://api.mollie.com/v2/payments", {
@@ -4891,6 +5019,10 @@ async function handleBooking(payload, env, request) {
             __booking_id: canonicalBookingId,
             __public_booking_reference: publicBookingReference,
             bookingId: canonicalBookingId,
+            tenant_id: tenantContext.tenant_id,
+            tenantId: tenantContext.tenant_id,
+            company_id: tenantContext.company_id,
+            companyId: tenantContext.company_id,
             total_incl_vat: totalPricing.price_incl_vat,
             total_ex_vat: totalPricing.price_ex_vat,
             vat_amount: totalPricing.price_vat,
@@ -5104,6 +5236,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           __booking_id: canonicalBookingId,
           __public_booking_reference: publicBookingReference,
           bookingId: canonicalBookingId,
+          tenant_id: tenantContext.tenant_id,
+          tenantId: tenantContext.tenant_id,
+          company_id: tenantContext.company_id,
+          companyId: tenantContext.company_id,
           total_incl_vat: totalPricing.price_incl_vat,
           total_ex_vat: totalPricing.price_ex_vat,
           vat_amount: totalPricing.price_vat,
@@ -9203,7 +9339,11 @@ async function sendPushbulletNote(env, { title, body, device_iden = "" }) {
 async function sendBookingEmails({ env, booking }) {
   const apiKey = safeStr(env.RESEND_API_KEY);
   const emailFrom = safeStr(env.EMAIL_FROM);
-  const commProfile = await resolveTenantCommunicationProfile(env);
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    safeStr(booking?.tenant_id ?? booking?.tenantId, 80),
+    safeStr(booking?.company_id ?? booking?.companyId, 80),
+  );
   const ownerEmail = pickFirstValidEmail(
     commProfile.bookingEmail,
     commProfile.notificationEmail,
