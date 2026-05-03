@@ -14,6 +14,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -55,6 +56,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   List<_PlaceSuggestion> _fromSuggestions = const <_PlaceSuggestion>[];
   List<_PlaceSuggestion> _toSuggestions = const <_PlaceSuggestion>[];
+  int _fromAutocompleteRequestId = 0;
+  int _toAutocompleteRequestId = 0;
+  bool _addressSearchUnavailable = false;
 
   // Business rules (Tesla Model 3)
   int _pax = 1; // max 3
@@ -462,10 +466,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   // ---------- Mapbox helpers ----------
-  Future<List<_PlaceSuggestion>> _searchPlaces(String query) async {
-    if (widget.mapboxToken.trim().isEmpty) return const <_PlaceSuggestion>[];
+  Future<({List<_PlaceSuggestion> results, bool hadError})> _searchPlaces(
+    String query,
+  ) async {
+    if (widget.mapboxToken.trim().isEmpty) {
+      return (results: const <_PlaceSuggestion>[], hadError: false);
+    }
     final q = query.trim();
-    if (q.isEmpty) return const <_PlaceSuggestion>[];
+    if (q.isEmpty)
+      return (results: const <_PlaceSuggestion>[], hadError: false);
 
     // Bias around Belgium by default. You can tweak later.
     final url = Uri.parse(
@@ -477,22 +486,53 @@ class _CalculatorPageState extends State<CalculatorPage> {
       '&limit=6',
     );
 
-    final res = await http.get(url);
-    if (res.statusCode != 200) return const <_PlaceSuggestion>[];
+    try {
+      final res = await http.get(url).timeout(const Duration(seconds: 7));
+      if (res.statusCode != 200) {
+        return (results: const <_PlaceSuggestion>[], hadError: true);
+      }
 
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final features = (data['features'] as List?) ?? const [];
-    return features
-        .map<_PlaceSuggestion>((f) {
-          final m = f as Map<String, dynamic>;
-          final placeName = (m['place_name'] ?? '') as String;
-          final center = (m['center'] as List?) ?? const [];
-          final lon = center.isNotEmpty ? (center[0] as num).toDouble() : null;
-          final lat = center.length > 1 ? (center[1] as num).toDouble() : null;
-          return _PlaceSuggestion(label: placeName, lon: lon, lat: lat);
-        })
-        .toList(growable: false);
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final features = (data['features'] as List?) ?? const [];
+      final out = features
+          .map<_PlaceSuggestion>((f) {
+            final m = f as Map<String, dynamic>;
+            final placeName = (m['place_name'] ?? '') as String;
+            final center = (m['center'] as List?) ?? const [];
+            final lon = center.isNotEmpty
+                ? (center[0] as num).toDouble()
+                : null;
+            final lat = center.length > 1
+                ? (center[1] as num).toDouble()
+                : null;
+            return _PlaceSuggestion(label: placeName, lon: lon, lat: lat);
+          })
+          .toList(growable: false);
+      return (results: out, hadError: false);
+    } on SocketException {
+      debugPrint('[MAPBOX][GEOCODE][ERROR] reason=network');
+      return (results: const <_PlaceSuggestion>[], hadError: true);
+    } on http.ClientException {
+      debugPrint('[MAPBOX][GEOCODE][ERROR] reason=client_exception');
+      return (results: const <_PlaceSuggestion>[], hadError: true);
+    } on TimeoutException {
+      debugPrint('[MAPBOX][GEOCODE][TIMEOUT]');
+      return (results: const <_PlaceSuggestion>[], hadError: true);
+    } on FormatException {
+      debugPrint('[MAPBOX][GEOCODE][ERROR] reason=format');
+      return (results: const <_PlaceSuggestion>[], hadError: true);
+    } catch (_) {
+      debugPrint('[MAPBOX][GEOCODE][ERROR] reason=unexpected');
+      return (results: const <_PlaceSuggestion>[], hadError: true);
+    }
   }
+
+  String _addressSearchUnavailableMessage() => _labelFor(
+    nl: 'Adres zoeken lukt even niet. Controleer je verbinding of vul het adres handmatig in.',
+    en: 'Address search is temporarily unavailable. Check your connection or enter the address manually.',
+    fr: 'La recherche d’adresse est temporairement indisponible. Vérifiez votre connexion ou saisissez l’adresse manuellement.',
+    es: 'La búsqueda de direcciones no está disponible temporalmente. Comprueba tu conexión o introduce la dirección manualmente.',
+  );
 
   Future<String?> _reverseGeocode(double lat, double lon) async {
     if (widget.mapboxToken.trim().isEmpty) return null;
@@ -1051,18 +1091,29 @@ class _CalculatorPageState extends State<CalculatorPage> {
               ),
               onChanged: (v) {
                 _fromDebounce?.cancel();
+                final requestId = ++_fromAutocompleteRequestId;
                 if (v.trim().isEmpty) {
                   setState(() {
                     _fromSuggestions = const <_PlaceSuggestion>[];
+                    _addressSearchUnavailable = false;
                   });
                   return;
                 }
+                final query = v.trim();
                 _fromDebounce = Timer(
                   const Duration(milliseconds: 220),
                   () async {
-                    final list = await _searchPlaces(v);
+                    final result = await _searchPlaces(query);
                     if (!mounted) return;
-                    setState(() => _fromSuggestions = list);
+                    if (requestId != _fromAutocompleteRequestId ||
+                        _fromCtrl.text.trim() != query) {
+                      debugPrint('[MAPBOX][GEOCODE][STALE_SKIP] field=from');
+                      return;
+                    }
+                    setState(() {
+                      _fromSuggestions = result.results;
+                      _addressSearchUnavailable = result.hadError;
+                    });
                   },
                 );
               },
@@ -1096,18 +1147,29 @@ class _CalculatorPageState extends State<CalculatorPage> {
               ),
               onChanged: (v) {
                 _toDebounce?.cancel();
+                final requestId = ++_toAutocompleteRequestId;
                 if (v.trim().isEmpty) {
                   setState(() {
                     _toSuggestions = const <_PlaceSuggestion>[];
+                    _addressSearchUnavailable = false;
                   });
                   return;
                 }
+                final query = v.trim();
                 _toDebounce = Timer(
                   const Duration(milliseconds: 220),
                   () async {
-                    final list = await _searchPlaces(v);
+                    final result = await _searchPlaces(query);
                     if (!mounted) return;
-                    setState(() => _toSuggestions = list);
+                    if (requestId != _toAutocompleteRequestId ||
+                        _toCtrl.text.trim() != query) {
+                      debugPrint('[MAPBOX][GEOCODE][STALE_SKIP] field=to');
+                      return;
+                    }
+                    setState(() {
+                      _toSuggestions = result.results;
+                      _addressSearchUnavailable = result.hadError;
+                    });
                   },
                 );
               },
@@ -1116,8 +1178,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
               setState(() {
                 _toCtrl.text = s.label;
                 _toSuggestions = const <_PlaceSuggestion>[];
+                _addressSearchUnavailable = false;
               });
             }),
+            if (_addressSearchUnavailable) ...[
+              const SizedBox(height: 8),
+              Text(
+                _addressSearchUnavailableMessage(),
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
 
             const SizedBox(height: 14),
 
