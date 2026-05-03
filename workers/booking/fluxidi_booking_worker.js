@@ -3892,6 +3892,219 @@ function resolveBookingTenantContext({ payload, request, env }) {
   };
 }
 
+const BOOKING_INTENT_TTL_SECONDS = 20 * 60;
+
+function _bookingIntentNormalizeText(value, maxLen = 240) {
+  const raw = safeStr(value, maxLen).toLowerCase();
+  if (!raw) return "";
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function _bookingIntentNormalizeBool(value) {
+  if (value === true) return "1";
+  if (value === false) return "0";
+  const raw = _bookingIntentNormalizeText(value, 24);
+  if (!raw) return "0";
+  if (raw === "1" || raw === "true" || raw === "yes" || raw === "ja" || raw === "on") {
+    return "1";
+  }
+  return "0";
+}
+
+function _bookingIntentNormalizeInt(value, fallback = 0, min = 0, max = 9999) {
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) {
+    return String(Math.max(min, Math.min(max, Math.trunc(asNumber))));
+  }
+  const raw = _bookingIntentNormalizeText(value, 24);
+  if (!raw) return String(fallback);
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return String(fallback);
+  return String(Math.max(min, Math.min(max, parsed)));
+}
+
+function _bookingIntentStableValue(value) {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) => _bookingIntentStableValue(item));
+  }
+  if (typeof value === "object") {
+    const out = {};
+    const keys = Object.keys(value).sort();
+    for (const key of keys) {
+      out[key] = _bookingIntentStableValue(value[key]);
+    }
+    return out;
+  }
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return Number(value.toFixed(6));
+  }
+  return _bookingIntentNormalizeText(String(value), 240);
+}
+
+function _bookingIntentNormalizeStops(stops) {
+  if (!Array.isArray(stops) || !stops.length) return "[]";
+  const normalized = stops.map((item) => _bookingIntentStableValue(item));
+  return JSON.stringify(normalized);
+}
+
+function _bookingIntentScopePart(value, fallback) {
+  const raw = _bookingIntentNormalizeText(value, 120);
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+function _bookingIntentHash(parts = []) {
+  // FNV-1a 32-bit (fast, deterministic, sufficient for short-lived dedupe keying)
+  const input = parts.join("|");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function _bookingIntentMask(value) {
+  const raw = safeStr(value, 128);
+  if (!raw) return "";
+  if (raw.length <= 6) return raw;
+  return `${raw.slice(0, 3)}...${raw.slice(-3)}`;
+}
+
+function _bookingIntentScopeMask(scope = {}) {
+  return {
+    tenant: _bookingIntentMask(scope?.tenant_id),
+    company: _bookingIntentMask(scope?.company_id),
+  };
+}
+
+function buildBookingIntentDescriptor({
+  tenant_id,
+  company_id,
+  pickup_iso,
+  from,
+  to,
+  customer_email,
+  customer_phone,
+  service,
+  extra_service,
+  extra_service_key,
+  wait_min,
+  return_flag,
+  return_enabled,
+  return_from,
+  return_to,
+  return_pickup_iso,
+  stop_count,
+  stops,
+  tier,
+  pax,
+  bags,
+} = {}) {
+  const tenantPart = _bookingIntentScopePart(tenant_id, "fluxidi");
+  const companyPart = _bookingIntentScopePart(company_id || tenant_id, tenantPart);
+  const normalizedPickupIso = _bookingIntentNormalizeText(pickup_iso, 80);
+  const normalizedFrom = _bookingIntentNormalizeText(from, 240);
+  const normalizedTo = _bookingIntentNormalizeText(to, 240);
+  const normalizedEmail = _bookingIntentNormalizeText(customer_email, 180);
+  const normalizedPhone = _bookingIntentNormalizeText(customer_phone, 64);
+  const normalizedService = _bookingIntentNormalizeText(service, 32);
+  const normalizedExtraService = _bookingIntentNormalizeText(extra_service, 64);
+  const normalizedExtraServiceKey = _bookingIntentNormalizeText(extra_service_key, 64);
+  const normalizedWaitMin = _bookingIntentNormalizeInt(wait_min, 0, 0, 9999);
+  const normalizedReturnEnabled = _bookingIntentNormalizeBool(
+    return_enabled != null ? return_enabled : return_flag,
+  );
+  const normalizedReturnFrom = _bookingIntentNormalizeText(return_from, 240);
+  const normalizedReturnTo = _bookingIntentNormalizeText(return_to, 240);
+  const normalizedReturnPickupIso = _bookingIntentNormalizeText(return_pickup_iso, 80);
+  const normalizedStopCount = _bookingIntentNormalizeInt(stop_count, 0, 0, 99);
+  const normalizedStops = _bookingIntentNormalizeStops(stops);
+  const normalizedTier = _bookingIntentNormalizeText(tier, 32);
+  const normalizedPax = String(clampInt(pax, 1, 12));
+  const normalizedBags = String(Math.max(0, clampInt(bags, 0, 99)));
+  const contact = normalizedEmail || normalizedPhone || "";
+  const hash = _bookingIntentHash([
+    tenantPart,
+    companyPart,
+    normalizedPickupIso,
+    normalizedFrom,
+    normalizedTo,
+    contact,
+    normalizedService,
+    normalizedExtraService,
+    normalizedExtraServiceKey,
+    normalizedWaitMin,
+    normalizedReturnEnabled,
+    normalizedReturnFrom,
+    normalizedReturnTo,
+    normalizedReturnPickupIso,
+    normalizedStopCount,
+    normalizedStops,
+    normalizedTier,
+    normalizedPax,
+    normalizedBags,
+  ]);
+  const key = `booking_intent:${tenantPart}:${companyPart}:${hash}`;
+  return {
+    key,
+    hash,
+    tenantPart,
+    companyPart,
+  };
+}
+
+function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ||
+      rec?.publicBookingReference ||
+      rec?.booking_reference ||
+      rec?.bookingReference ||
+      rec?.public_reference ||
+      rec?.publicReference ||
+      booking?.public_booking_reference ||
+      booking?.publicBookingReference ||
+      booking?.booking_reference ||
+      booking?.bookingReference ||
+      booking?.public_reference ||
+      booking?.publicReference,
+  );
+  const planningReference = safeStr(
+    rec?.planning_reference ||
+      rec?.planningReference ||
+      booking?.planning_reference ||
+      booking?.planningReference,
+  );
+  const paymentStatus = safeStr(
+    rec?.payment_status ||
+      rec?.paymentStatus ||
+      booking?.payment_status ||
+      booking?.paymentStatus,
+  );
+  return {
+    ok: true,
+    booking_id: canonicalBookingId,
+    bookingId: canonicalBookingId,
+    public_booking_id: canonicalBookingId,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    booking_reference: publicBookingReference || undefined,
+    bookingReference: publicBookingReference || undefined,
+    public_reference: publicBookingReference || undefined,
+    publicReference: publicBookingReference || undefined,
+    planning_reference: planningReference || undefined,
+    planningReference: planningReference || undefined,
+    status: _normLifecycleStatus(rec?.status || rec?.stage || null),
+    payment_status: paymentStatus || undefined,
+    paymentStatus: paymentStatus || undefined,
+  };
+}
+
 async function handleBooking(payload, env, request) {
   try {
     if (!env?.BOOKING_KV) {
@@ -3990,6 +4203,60 @@ async function handleBooking(payload, env, request) {
     }
 
     if (!pickup_iso) return { ok: false, error: "Could not create pickup_iso" };
+
+    const bookingIntent = buildBookingIntentDescriptor({
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      pickup_iso,
+      from,
+      to,
+      customer_email: customerContact.email,
+      customer_phone: customerContact.phone,
+      service,
+      extra_service: payload?.extra_service,
+      extra_service_key: extra?.key || payload?.extra_service_key,
+      wait_min,
+      return_flag: payload?.return,
+      return_enabled: payload?.return_enabled ?? payload?.returnEnabled,
+      return_from: payload?.return_from ?? payload?.returnFrom,
+      return_to: payload?.return_to ?? payload?.returnTo,
+      return_pickup_iso: payload?.return_pickup_iso ?? payload?.returnPickupIso,
+      stop_count,
+      stops,
+      tier,
+      pax,
+      bags,
+    });
+    const idempotencyScope = {
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      hasScope: true,
+    };
+    const mappedCanonicalId = safeStr(await env.BOOKING_KV.get(bookingIntent.key));
+    if (mappedCanonicalId) {
+      const mappedRecord = await env.BOOKING_KV.get(`booking:${mappedCanonicalId}`, { type: "json" });
+      if (mappedRecord && bookingMatchesRequestedTenantScope(mappedRecord, idempotencyScope)) {
+        const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+        console.log(
+          `[BOOKING][IDEMPOTENCY][HIT] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
+        );
+        return buildIdempotentBookingHitResponse(mappedCanonicalId, mappedRecord);
+      }
+      const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+      console.log(
+        `[BOOKING][IDEMPOTENCY][STALE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
+      );
+      try {
+        await env.BOOKING_KV.delete(bookingIntent.key);
+      } catch (_) {
+        // Best-effort cleanup only.
+      }
+    } else {
+      const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+      console.log(
+        `[BOOKING][IDEMPOTENCY][MISS] tenant=${maskedScope.tenant} company=${maskedScope.company}`,
+      );
+    }
 
     // =========================
     // BOOKING ID (human + uuid)
@@ -4735,6 +5002,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         }
       }
       throw persistErr;
+    }
+    try {
+      await env.BOOKING_KV.put(
+        bookingIntent.key,
+        booking.bookingId,
+        { expirationTtl: BOOKING_INTENT_TTL_SECONDS },
+      );
+      const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+      console.log(
+        `[BOOKING][IDEMPOTENCY][STORE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(booking.bookingId)}`,
+      );
+    } catch (_) {
+      // Best-effort only; booking persistence already succeeded.
     }
 
     // Bridge website-created bookings into tracking index so they appear in /track/bookings.
