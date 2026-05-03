@@ -281,8 +281,8 @@ export class FleetAllocatorDO {
 }
 
 export class BookingReferenceSequenceDO {
-  constructor(state, env) {
-    this.state = state;
+  constructor(stateOrCtx, env) {
+    this.state = stateOrCtx;
     this.env = env;
   }
 
@@ -311,9 +311,12 @@ export class BookingReferenceSequenceDO {
       return this._json({ ok: false, error: "Unable to resolve year_month" }, 400);
     }
 
-    const current = clampInt(await this.state.storage.get("counter"), 0, 0, 999999999);
-    const next = current + 1;
-    await this.state.storage.put("counter", next);
+    const next = await this.state.storage.transaction(async (txn) => {
+      const current = clampInt(await txn.get("next"), 0, 999999999);
+      const nextValue = current + 1;
+      await txn.put("next", nextValue);
+      return nextValue;
+    });
 
     const publicBookingReference = `${yearMonth}-${String(next).padStart(6, "0")}`;
     return this._json({
@@ -3899,13 +3902,13 @@ async function handleBooking(payload, env, request) {
     );
     const booking_uuid = (crypto?.randomUUID ? crypto.randomUUID() : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`);
     const canonicalBookingId = providedId || await nextHumanBookingId(env, pickup_iso);
-    const publicBookingReference =
-      providedPublicBookingReference ||
-      (await allocatePublicBookingReference(env, {
-        tenant_id: tenantContext.tenant_id,
-        company_id: tenantContext.company_id,
-        pickup_iso,
-      }));
+    const publicBookingReference = await allocateAndReservePublicBookingReference(env, {
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      pickup_iso,
+      canonical_booking_id: canonicalBookingId,
+      preferred_reference: providedPublicBookingReference || null,
+    });
     attachPublicBookingReferenceAliases(payload, publicBookingReference);
     payload.__public_booking_reference = publicBookingReference;
 
@@ -4589,12 +4592,6 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
-      await putPublicBookingReferenceIndex(env, {
-        tenant_id: tenantContext.tenant_id,
-        company_id: tenantContext.company_id,
-        public_booking_reference: publicBookingReference,
-        canonical_booking_id: booking.bookingId,
-      });
     } catch (persistErr) {
       if (availabilityMode === "multi_vehicle") {
         try {
@@ -7962,8 +7959,55 @@ async function allocatePublicBookingReference(env, params = {}) {
   return publicBookingReference;
 }
 
+async function allocateAndReservePublicBookingReference(env, params = {}) {
+  const tenantId = safeStr(params?.tenant_id, 120) || "fluxidi";
+  const companyId = safeStr(params?.company_id, 120) || tenantId;
+  const canonicalBookingId = safeStr(
+    params?.canonical_booking_id || params?.canonicalBookingId || params?.booking_id,
+  );
+  if (!canonicalBookingId) {
+    throw new Error("Missing canonical booking id for public booking reference allocation");
+  }
+
+  const maxAttempts = clampInt(params?.max_attempts, 10, 20);
+  let candidate = safeStr(
+    params?.preferred_reference ||
+      params?.public_booking_reference ||
+      params?.publicBookingReference,
+  );
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (!candidate) {
+      candidate = await allocatePublicBookingReference(env, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        pickup_iso: params?.pickup_iso || params?.pickupIso || null,
+        year_month: params?.year_month || params?.yearMonth || null,
+      });
+    }
+
+    const indexed = await putPublicBookingReferenceIndex(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+      public_booking_reference: candidate,
+      canonical_booking_id: canonicalBookingId,
+    });
+    if (indexed?.ok) return candidate;
+    if (!indexed?.collision) {
+      throw new Error(
+        safeStr(indexed?.error) || "Failed to reserve public booking reference index",
+      );
+    }
+    candidate = "";
+  }
+
+  throw new Error(
+    `Public booking reference allocation failed after ${maxAttempts} attempts (tenant=${tenantId}, company=${companyId})`,
+  );
+}
+
 async function putPublicBookingReferenceIndex(env, params = {}) {
-  if (!env?.BOOKING_KV) return;
+  if (!env?.BOOKING_KV) return { ok: false, error: "Missing BOOKING_KV binding" };
   const tenantPart = bookingReferenceScopePart(params?.tenant_id, "fluxidi");
   const companyPart = bookingReferenceScopePart(params?.company_id || params?.tenant_id, tenantPart);
   const publicBookingReference = safeStr(
@@ -7972,14 +8016,17 @@ async function putPublicBookingReferenceIndex(env, params = {}) {
   const canonicalBookingId = safeStr(
     params?.canonical_booking_id || params?.canonicalBookingId || params?.booking_id,
   );
-  if (!publicBookingReference || !canonicalBookingId) return;
+  if (!publicBookingReference || !canonicalBookingId) {
+    return { ok: false, error: "Missing public_booking_reference or canonical booking id" };
+  }
 
   const key = `booking_ref:${tenantPart}:${companyPart}:${publicBookingReference}`;
   const existing = safeStr(await env.BOOKING_KV.get(key));
   if (existing && existing !== canonicalBookingId) {
-    throw new Error(`Public booking reference index collision for ${key}`);
+    return { ok: false, collision: true, existing, key };
   }
   await env.BOOKING_KV.put(key, canonicalBookingId);
+  return { ok: true, key, existing: existing || canonicalBookingId };
 }
 
 /* ===================== PUSHBULLET ===================== */
