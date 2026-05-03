@@ -10185,6 +10185,69 @@ function toStr(x) { return String(x ?? ""); }
 // ===============================
 // PAY STATUS (fallback finalizer)
 // ===============================
+function _payStatusExplicitScope(tenantValue, companyValue) {
+  const tenantId = _scopeText(tenantValue);
+  const companyId = _scopeText(companyValue);
+  if (!tenantId || !companyId) return null;
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: true,
+  };
+}
+
+function _payStatusScopeMatches(a, b) {
+  if (!a?.hasScope || !b?.hasScope) return false;
+  return (
+    _scopeText(a?.tenant_id) === _scopeText(b?.tenant_id) &&
+    _scopeText(a?.company_id) === _scopeText(b?.company_id)
+  );
+}
+
+function _payStatusScopeFromBookingRecord(rec) {
+  return _payStatusExplicitScope(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      rec?.booking?.tenant_id ??
+      rec?.booking?.tenantId,
+    rec?.company_id ??
+      rec?.companyId ??
+      rec?.booking?.company_id ??
+      rec?.booking?.companyId,
+  );
+}
+
+function _payStatusScopeFromPaymentRecord(rec) {
+  return _payStatusExplicitScope(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      rec?.payload?.tenant_id ??
+      rec?.payload?.tenantId,
+    rec?.company_id ??
+      rec?.companyId ??
+      rec?.payload?.company_id ??
+      rec?.payload?.companyId,
+  );
+}
+
+function _payStatusBookingIdCandidates(data, id, includeRawId = false) {
+  const out = [];
+  const add = (value) => {
+    const bookingId = safeStr(value, 160);
+    if (!bookingId) return;
+    if (!out.includes(bookingId)) out.push(bookingId);
+  };
+  add(data?.booking_id);
+  add(data?.bookingId);
+  add(data?.public_booking_id);
+  add(data?.publicBookingId);
+  add(data?.payload?.__booking_id);
+  add(data?.payload?.booking_id);
+  add(data?.payload?.bookingId);
+  if (includeRawId) add(id);
+  return out;
+}
+
 async function payStatus(request, env) {
   const url = new URL(request.url);
   const id = (url.searchParams.get("id") || "").trim();
@@ -10204,6 +10267,60 @@ async function payStatus(request, env) {
     data = await env.BOOKING_KV.get(kvKeyPayment, "json");
   }
   if (!data) return json({ ok: false, error: "not found" }, 404);
+
+  const requestedScopeRaw = extractBookingTenantScope({ request, url });
+  const requestedTenant = _scopeText(requestedScopeRaw?.tenant_id);
+  const requestedCompany = _scopeText(requestedScopeRaw?.company_id);
+  if ((requestedTenant || requestedCompany) && !(requestedTenant && requestedCompany)) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const requestedScope = requestedTenant && requestedCompany
+    ? {
+        tenant_id: requestedTenant,
+        company_id: requestedCompany,
+        hasScope: true,
+      }
+    : null;
+
+  let linkedBooking = null;
+  const bookingCandidates = _payStatusBookingIdCandidates(data, id, !hasPaymentKey);
+  for (const bookingId of bookingCandidates) {
+    try {
+      const loaded = await loadBookingRecord(env, bookingId);
+      if (loaded?.rec) {
+        linkedBooking = { booking_id: bookingId, key: loaded.key, rec: loaded.rec };
+        break;
+      }
+    } catch (_) {
+      // Try next candidate.
+    }
+  }
+
+  const bookingScope = _payStatusScopeFromBookingRecord(linkedBooking?.rec);
+  const paymentScope = _payStatusScopeFromPaymentRecord(data);
+
+  if (requestedScope) {
+    if (bookingScope && !_payStatusScopeMatches(bookingScope, requestedScope)) {
+      return json({ ok: false, error: "forbidden" }, 403);
+    }
+    if (paymentScope && !_payStatusScopeMatches(paymentScope, requestedScope)) {
+      return json({ ok: false, error: "forbidden" }, 403);
+    }
+    if (!bookingScope && !paymentScope) {
+      return json({ ok: false, error: "forbidden" }, 403);
+    }
+    if (linkedBooking?.rec && !bookingMatchesRequestedTenantScope(linkedBooking.rec, requestedScope)) {
+      return json({ ok: false, error: "forbidden" }, 403);
+    }
+  } else if (
+    bookingScope &&
+    paymentScope &&
+    !_payStatusScopeMatches(bookingScope, paymentScope)
+  ) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+
+  const effectiveScope = requestedScope || bookingScope || paymentScope || null;
 
   // Helper: clear stale confirming lock
   const clearStaleLockIfNeeded = () => {
@@ -10251,6 +10368,20 @@ async function payStatus(request, env) {
 
       // If paid and not yet confirmed -> finalize here (single source of truth)
       if (status === "paid" && !data.confirmed_at) {
+        if (!effectiveScope?.hasScope) {
+          data.confirm_error = data.confirm_error || "missing_tenant_scope_for_finalization";
+          data.confirming_at = null;
+          return json({ ok: false, error: "missing_tenant_scope_for_finalization" }, 400);
+        }
+        if (!data.payload || typeof data.payload !== "object") {
+          data.payload = {};
+        }
+        if (!safeStr(data.payload.tenant_id || data.payload.tenantId, 80)) {
+          data.payload.tenant_id = effectiveScope.tenant_id;
+        }
+        if (!safeStr(data.payload.company_id || data.payload.companyId, 80)) {
+          data.payload.company_id = effectiveScope.company_id;
+        }
         data.paid_at = data.paid_at || new Date().toISOString();
         data.paidAt = data.paidAt || data.paid_at;
         data.payment_status = "paid";
@@ -10350,28 +10481,28 @@ async function payStatus(request, env) {
           safeStr(data?.payment_id || data?.paymentId || data?.mollie?.payment_id || data?.mollie?.id) || null,
         paid_at: safeStr(data?.paid_at || data?.paidAt) || null,
         currency: safeStr(data?.currency || data?.payload?.currency || "EUR") || "EUR",
-        tenant_id:
-          safeStr(data?.tenant_id || data?.tenantId || data?.payload?.tenant_id || data?.payload?.tenantId || data?.company_id || data?.companyId) ||
-          "fluxidi",
-        company_id:
-          safeStr(data?.company_id || data?.companyId || data?.payload?.company_id || data?.payload?.companyId || data?.tenant_id || data?.tenantId) ||
-          "fluxidi",
+        tenant_id: effectiveScope?.tenant_id || null,
+        company_id: effectiveScope?.company_id || null,
       };
-      const complianceEvent = buildBookingPaymentUpdateComplianceEvent(
-        data,
-        complianceBookingId,
-        compliancePaymentPayload,
-      );
-      if (complianceEvent) {
-        const emitted = await emitComplianceEventBestEffort(env, complianceEvent, {
-          timeoutMs: 1500,
-          logLabel: "planned_mollie_payment_update",
-        });
-        if (emitted?.ok) {
-          data.compliance_payment_update_emitted_at = new Date().toISOString();
+      if (effectiveScope?.hasScope) {
+        const complianceEvent = buildBookingPaymentUpdateComplianceEvent(
+          data,
+          complianceBookingId,
+          compliancePaymentPayload,
+        );
+        if (complianceEvent) {
+          const emitted = await emitComplianceEventBestEffort(env, complianceEvent, {
+            timeoutMs: 1500,
+            logLabel: "planned_mollie_payment_update",
+          });
+          if (emitted?.ok) {
+            data.compliance_payment_update_emitted_at = new Date().toISOString();
+          }
+        } else {
+          console.log("[COMPLIANCE_EMIT][planned_mollie_payment_update] skipped reason=builder_null");
         }
       } else {
-        console.log("[COMPLIANCE_EMIT][planned_mollie_payment_update] skipped reason=builder_null");
+        console.log("[COMPLIANCE_EMIT][planned_mollie_payment_update] skipped reason=missing_tenant_scope");
       }
     }
   } catch (e) {
