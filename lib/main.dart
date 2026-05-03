@@ -461,20 +461,72 @@ const String kTripsArchivePath = '/trips/archive';
 /// Implement later in Worker: POST { from, to } -> { coords:[[lon,lat],...], distance_m, duration_s }
 const String kWorkerRoutePath = '/track/route';
 
+String _localScopePathSegment(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return 'default';
+  final sanitized = trimmed.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+  if (sanitized.isEmpty) return 'default';
+  return sanitized;
+}
+
+String _maskLocalScopeId(String value) {
+  final trimmed = value.trim();
+  if (trimmed.length <= 6) return trimmed;
+  return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
+}
+
+({String tenantId, String companyId}) _activeLocalScopeIds() {
+  final resolvedId = resolvedCompanyId.trim();
+  final tenantId = resolvedId.isNotEmpty
+      ? resolvedId
+      : kOutboundTenantId.trim();
+  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
+  return (tenantId: tenantId, companyId: companyId);
+}
+
 /// Phase 0b local-only compliance ledger sink (append-only JSONL).
 /// Best-effort by design: write failures must never break ride UX.
 class _ComplianceRideLedgerStore {
   static const String _fileName = 'compliance_ledger_v1.jsonl';
 
-  static Future<File> _file() async {
+  static Future<File> _legacyFile() async {
     final base = await getApplicationDocumentsDirectory();
     return File('${base.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final scopedDir = Directory(
+      '${base.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_localScopePathSegment(tenantId)}${Platform.pathSeparator}company_${_localScopePathSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[LOCAL_SCOPE][COMPLIANCE_FILTER] target=write tenant=${_maskLocalScopeId(tenantId)} company=${_maskLocalScopeId(companyId)} file=${file.path}',
+    );
+    return file;
+  }
+
+  static Future<File> _fileForRecord(Map<String, dynamic> record) async {
+    final activeScope = _activeLocalScopeIds();
+    final tenantId = (record['tenant_id'] ?? '').toString().trim().isNotEmpty
+        ? (record['tenant_id'] ?? '').toString().trim()
+        : activeScope.tenantId;
+    final companyId = (record['company_id'] ?? '').toString().trim().isNotEmpty
+        ? (record['company_id'] ?? '').toString().trim()
+        : activeScope.companyId;
+    return _scopedFile(tenantId: tenantId, companyId: companyId);
   }
 
   static Future<void> append(Map<String, dynamic> record) async {
     if (kIsWeb) return;
     try {
-      final file = await _file();
+      final file = await _fileForRecord(record);
       if (!await file.exists()) {
         await file.create(recursive: true);
       }
@@ -504,15 +556,93 @@ Future<void> _writeComplianceLedgerRecord({
 class _LocalDirectTripHistoryStore {
   static const String _fileName = 'local_direct_trip_history_v1.jsonl';
 
-  static Future<File> _file() async {
+  static Future<File> _legacyFile() async {
     final base = await getApplicationDocumentsDirectory();
     return File('${base.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final scopedDir = Directory(
+      '${base.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_localScopePathSegment(tenantId)}${Platform.pathSeparator}company_${_localScopePathSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<File> _fileForRecord(Map<String, dynamic> record) async {
+    final activeScope = _activeLocalScopeIds();
+    final tenantId = (record['tenant_id'] ?? '').toString().trim().isNotEmpty
+        ? (record['tenant_id'] ?? '').toString().trim()
+        : activeScope.tenantId;
+    final companyId = (record['company_id'] ?? '').toString().trim().isNotEmpty
+        ? (record['company_id'] ?? '').toString().trim()
+        : activeScope.companyId;
+    return _scopedFile(tenantId: tenantId, companyId: companyId);
+  }
+
+  static bool _matchesScope(
+    Map<String, dynamic> row, {
+    required String tenantId,
+    required String companyId,
+    required bool allowLegacyWithoutScope,
+  }) {
+    final rowTenant = (row['tenant_id'] ?? '').toString().trim();
+    final rowCompany = (row['company_id'] ?? '').toString().trim();
+    if (rowTenant.isEmpty && rowCompany.isEmpty) {
+      return allowLegacyWithoutScope;
+    }
+    if (rowTenant.isNotEmpty && rowTenant != tenantId.trim()) return false;
+    if (rowCompany.isNotEmpty && rowCompany != companyId.trim()) return false;
+    return true;
+  }
+
+  static Future<List<Map<String, dynamic>>> _readFromFile(
+    File file, {
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required int limit,
+    required bool allowLegacyWithoutScope,
+  }) async {
+    if (!await file.exists()) return const <Map<String, dynamic>>[];
+    final lines = await file.readAsLines();
+    final parsed = <Map<String, dynamic>>[];
+    for (final raw in lines) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is! Map) continue;
+        final map = Map<String, dynamic>.from(decoded);
+        final rowDriver = (map['driver_id'] ?? '').toString().trim();
+        if (rowDriver != driverId.trim()) continue;
+        if (!_matchesScope(
+          map,
+          tenantId: tenantId,
+          companyId: companyId,
+          allowLegacyWithoutScope: allowLegacyWithoutScope,
+        )) {
+          continue;
+        }
+        parsed.add(map);
+      } catch (_) {
+        // Ignore malformed JSONL entries to keep history resilient.
+      }
+    }
+    if (parsed.length <= limit) return parsed;
+    return parsed.sublist(parsed.length - limit);
   }
 
   static Future<void> append(Map<String, dynamic> record) async {
     if (kIsWeb) return;
     try {
-      final file = await _file();
+      final file = await _fileForRecord(record);
       if (!await file.exists()) {
         await file.create(recursive: true);
       }
@@ -533,29 +663,30 @@ class _LocalDirectTripHistoryStore {
   }) async {
     if (kIsWeb) return const <Map<String, dynamic>>[];
     try {
-      final file = await _file();
-      if (!await file.exists()) return const <Map<String, dynamic>>[];
-      final lines = await file.readAsLines();
-      final parsed = <Map<String, dynamic>>[];
-      for (final raw in lines) {
-        final line = raw.trim();
-        if (line.isEmpty) continue;
-        try {
-          final decoded = jsonDecode(line);
-          if (decoded is! Map) continue;
-          final map = Map<String, dynamic>.from(decoded);
-          final rowTenant = (map['tenant_id'] ?? '').toString().trim();
-          final rowDriver = (map['driver_id'] ?? '').toString().trim();
-          if (rowTenant != tenantId.trim() || rowDriver != driverId.trim()) {
-            continue;
-          }
-          parsed.add(map);
-        } catch (_) {
-          // Ignore malformed JSONL entries to keep history resilient.
-        }
+      final activeScope = _activeLocalScopeIds();
+      final scopedFile = await _scopedFile(
+        tenantId: tenantId.trim().isNotEmpty ? tenantId : activeScope.tenantId,
+        companyId: activeScope.companyId,
+      );
+      if (await scopedFile.exists()) {
+        return _readFromFile(
+          scopedFile,
+          tenantId: tenantId,
+          companyId: activeScope.companyId,
+          driverId: driverId,
+          limit: limit,
+          allowLegacyWithoutScope: true,
+        );
       }
-      if (parsed.length <= limit) return parsed;
-      return parsed.sublist(parsed.length - limit);
+      final legacyFile = await _legacyFile();
+      return _readFromFile(
+        legacyFile,
+        tenantId: tenantId,
+        companyId: activeScope.companyId,
+        driverId: driverId,
+        limit: limit,
+        allowLegacyWithoutScope: true,
+      );
     } catch (_) {
       return const <Map<String, dynamic>>[];
     }

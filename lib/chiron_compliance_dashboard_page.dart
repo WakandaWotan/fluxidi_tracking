@@ -2843,12 +2843,13 @@ class _RemoteComplianceEventsSectionState
               );
             }
 
+            final effective = _effectiveTenantCompanyIds();
             final result =
                 snapshot.data ??
                 RemoteComplianceEventsResponse(
                   ok: false,
-                  tenantId: kTenantId,
-                  companyId: kCompanyId,
+                  tenantId: effective.tenantId,
+                  companyId: effective.companyId,
                   limit: 10,
                   count: 0,
                   malformedCount: 0,
@@ -2999,8 +3000,22 @@ class _LocalComplianceLedgerSectionState
     });
   }
 
+  ({String tenantId, String companyId}) _effectiveTenantCompanyIds() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final resolvedId = resolvedCompanyId.trim();
+    final effectiveTenantId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    final effectiveCompanyId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    return (tenantId: effectiveTenantId, companyId: effectiveCompanyId);
+  }
+
   Future<void> _clearLocalTestData() async {
     if (_isClearingLocalTestData) return;
+    final effective = _effectiveTenantCompanyIds();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3014,10 +3029,10 @@ class _LocalComplianceLedgerSectionState
         ),
         content: Text(
           _t(
-            nl: 'Dit wist alleen lokale testdata op dit toestel voor het rittenregister/Chiron-overzicht. Bedrijfsinstellingen, voertuigen, chauffeurs en backenddata blijven behouden.',
-            en: 'This only clears local test data on this device for the ride register/Chiron overview. Company settings, vehicles, drivers and backend data are kept.',
-            fr: 'Cela efface uniquement les données de test locales sur cet appareil pour le registre des courses / aperçu Chiron. Les paramètres d’entreprise, véhicules, chauffeurs et données backend sont conservés.',
-            es: 'Esto solo borra los datos de prueba locales en este dispositivo para el registro de viajes / vista Chiron. La configuración de empresa, vehículos, conductores y datos backend se conservan.',
+            nl: 'Dit wist alleen lokale rittenregister/Chiron-testdata voor tenant/bedrijf ${effective.companyId} op dit toestel. Bedrijfsinstellingen, voertuigen, chauffeurs en backenddata blijven behouden.',
+            en: 'This only clears local ride-register/Chiron test data for tenant/company ${effective.companyId} on this device. Company settings, vehicles, drivers and backend data are kept.',
+            fr: 'Cela efface uniquement les données de test locales du registre des courses/aperçu Chiron pour le tenant/société ${effective.companyId} sur cet appareil. Les paramètres d’entreprise, véhicules, chauffeurs et données backend sont conservés.',
+            es: 'Esto solo borra los datos de prueba locales del registro de viajes/vista Chiron para el tenant/empresa ${effective.companyId} en este dispositivo. La configuración de empresa, vehículos, conductores y datos backend se conservan.',
           ),
         ),
         actions: [
@@ -3039,6 +3054,9 @@ class _LocalComplianceLedgerSectionState
     if (confirmed != true || !mounted) return;
     setState(() => _isClearingLocalTestData = true);
     try {
+      debugPrint(
+        '[LOCAL_SCOPE][CLEANUP] source=chiron_local_register tenant=${effective.tenantId} company=${effective.companyId}',
+      );
       await _reader.clearLocalTestData();
       if (!mounted) return;
       _refresh();
@@ -3077,6 +3095,7 @@ class _LocalComplianceLedgerSectionState
 
   Future<void> _clearLocalCustomerBookings() async {
     if (_isClearingLocalCustomerBookings) return;
+    final effective = _effectiveTenantCompanyIds();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3090,10 +3109,10 @@ class _LocalComplianceLedgerSectionState
         ),
         content: Text(
           _t(
-            nl: 'Dit wist alleen lokale testboekingen op dit toestel (Klant > Mijn boekingen). Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en backend operationele boekingen blijven behouden.',
-            en: 'This only clears local test bookings on this device (Customer > My bookings). Company settings, drivers, vehicles, pricing and backend operational bookings are kept.',
-            fr: 'Cela efface uniquement les réservations de test locales sur cet appareil (Client > Mes réservations). Les paramètres société, chauffeurs, véhicules, tarifs et réservations backend restent conservés.',
-            es: 'Esto solo borra reservas de prueba locales en este dispositivo (Cliente > Mis reservas). La configuración de empresa, conductores, vehículos, precios y reservas operativas del backend se conservan.',
+            nl: 'Dit wist alleen lokale testboekingen voor tenant/bedrijf ${effective.companyId} op dit toestel (Klant > Mijn boekingen). Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en backend operationele boekingen blijven behouden.',
+            en: 'This only clears local test bookings for tenant/company ${effective.companyId} on this device (Customer > My bookings). Company settings, drivers, vehicles, pricing and backend operational bookings are kept.',
+            fr: 'Cela efface uniquement les réservations de test locales pour le tenant/société ${effective.companyId} sur cet appareil (Client > Mes réservations). Les paramètres société, chauffeurs, véhicules, tarifs et réservations backend restent conservés.',
+            es: 'Esto solo borra reservas de prueba locales para el tenant/empresa ${effective.companyId} en este dispositivo (Cliente > Mis reservas). La configuración de empresa, conductores, vehículos, precios y reservas operativas del backend se conservan.',
           ),
         ),
         actions: [
@@ -3115,6 +3134,9 @@ class _LocalComplianceLedgerSectionState
     if (confirmed != true || !mounted) return;
     setState(() => _isClearingLocalCustomerBookings = true);
     try {
+      debugPrint(
+        '[LOCAL_SCOPE][CLEANUP] source=chiron_customer_bookings tenant=${effective.tenantId} company=${effective.companyId}',
+      );
       await CustomerBookingsStore.instance.clearLocalTestData();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

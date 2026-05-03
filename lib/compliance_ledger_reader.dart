@@ -1,8 +1,31 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:path_provider/path_provider.dart';
+
+String _sanitizeScopeSegment(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return 'default';
+  final sanitized = trimmed.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+  if (sanitized.isEmpty) return 'default';
+  return sanitized;
+}
+
+String _maskScope(String value) {
+  final trimmed = value.trim();
+  if (trimmed.length <= 6) return trimmed;
+  return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
+}
+
+({String tenantId, String companyId}) _activeComplianceScope() {
+  final resolvedId = resolvedCompanyId.trim();
+  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
+  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
+  return (tenantId: tenantId, companyId: companyId);
+}
 
 class ComplianceLedgerEntry {
   const ComplianceLedgerEntry({
@@ -104,8 +127,14 @@ class ComplianceLedgerEntry {
       rideId: readText('ride_id'),
       rideType: readText('ride_type'),
       lifecycleStatus: readText('lifecycle_status'),
-      tenantId: readText('tenant_id'),
-      companyId: readText('company_id'),
+      tenantId: _firstNonEmptyText(<Object?>[
+        raw['tenant_id'],
+        raw['tenantId'],
+      ]),
+      companyId: _firstNonEmptyText(<Object?>[
+        raw['company_id'],
+        raw['companyId'],
+      ]),
       driverId: readText('driver_id'),
       vehicleId: readText('vehicle_id'),
       bookingId: readText('booking_id'),
@@ -229,28 +258,165 @@ class ComplianceLedgerReader {
   static const String localDirectHistoryFileName =
       'local_direct_trip_history_v1.jsonl';
 
-  static Future<File> _file() async {
+  static Future<Directory> _rootDir() async {
     final base = await getApplicationDocumentsDirectory();
-    return File('${base.path}${Platform.pathSeparator}$fileName');
+    return Directory(base.path);
+  }
+
+  static Future<File> _legacyFile() async {
+    final root = await _rootDir();
+    return File('${root.path}${Platform.pathSeparator}$fileName');
+  }
+
+  static Future<File> _legacyLocalDirectHistoryFile() async {
+    final root = await _rootDir();
+    return File(
+      '${root.path}${Platform.pathSeparator}$localDirectHistoryFileName',
+    );
+  }
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _rootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_sanitizeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_sanitizeScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File('${scopedDir.path}${Platform.pathSeparator}$fileName');
+  }
+
+  static Future<File> _scopedLocalDirectHistoryFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _rootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_sanitizeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_sanitizeScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File(
+      '${scopedDir.path}${Platform.pathSeparator}$localDirectHistoryFileName',
+    );
+  }
+
+  static Future<File> _file() async {
+    final scope = _activeComplianceScope();
+    return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
   }
 
   static Future<File> _localDirectHistoryFile() async {
-    final base = await getApplicationDocumentsDirectory();
-    return File(
-      '${base.path}${Platform.pathSeparator}$localDirectHistoryFileName',
+    final scope = _activeComplianceScope();
+    return _scopedLocalDirectHistoryFile(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
     );
+  }
+
+  bool _entryMatchesScope(
+    ComplianceLedgerEntry entry, {
+    required String tenantId,
+    required String companyId,
+    required bool allowLegacyWithoutScope,
+  }) {
+    final rowTenant = entry.tenantId.trim();
+    final rowCompany = entry.companyId.trim();
+    final activeTenant = tenantId.trim();
+    final activeCompany = companyId.trim();
+    if (rowTenant.isEmpty && rowCompany.isEmpty) {
+      return allowLegacyWithoutScope;
+    }
+    if (rowTenant.isNotEmpty && rowTenant != activeTenant) return false;
+    if (rowCompany.isNotEmpty && rowCompany != activeCompany) return false;
+    return true;
+  }
+
+  Future<List<Map<String, dynamic>>> _readRawMaps(File file) async {
+    if (!await file.exists()) return const <Map<String, dynamic>>[];
+    final rawLines = await file.readAsLines();
+    final out = <Map<String, dynamic>>[];
+    for (final raw in rawLines) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is! Map) continue;
+        out.add(Map<String, dynamic>.from(decoded));
+      } catch (_) {
+        // Ignore malformed legacy lines for cleanup operations.
+      }
+    }
+    return out;
+  }
+
+  Future<void> _pruneLegacyForScope({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final legacyLedger = await _legacyFile();
+    final legacyDirect = await _legacyLocalDirectHistoryFile();
+    await _pruneLegacyFileForScope(
+      file: legacyLedger,
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    await _pruneLegacyFileForScope(
+      file: legacyDirect,
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+  }
+
+  Future<void> _pruneLegacyFileForScope({
+    required File file,
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final rows = await _readRawMaps(file);
+    if (rows.isEmpty) return;
+    final retained = rows
+        .where((row) {
+          final entry = ComplianceLedgerEntry.fromRaw(row, sourceLineIndex: -1);
+          return !_entryMatchesScope(
+            entry,
+            tenantId: tenantId,
+            companyId: companyId,
+            allowLegacyWithoutScope: true,
+          );
+        })
+        .toList(growable: false);
+    if (retained.length == rows.length) return;
+    final buffer = StringBuffer();
+    for (final row in retained) {
+      buffer.writeln(jsonEncode(row));
+    }
+    await file.writeAsString(buffer.toString(), flush: true);
   }
 
   Future<void> clearLocalTestData() async {
     if (kIsWeb) return;
+    final scope = _activeComplianceScope();
+    final tenantId = scope.tenantId.trim();
+    final companyId = scope.companyId.trim();
     final ledgerFile = await _file();
     final localDirectFile = await _localDirectHistoryFile();
-    if (await ledgerFile.exists()) {
-      await ledgerFile.delete();
+    if (!await ledgerFile.exists()) {
+      await ledgerFile.create(recursive: true);
     }
-    if (await localDirectFile.exists()) {
-      await localDirectFile.delete();
+    if (!await localDirectFile.exists()) {
+      await localDirectFile.create(recursive: true);
     }
+    await ledgerFile.writeAsString('', flush: true);
+    await localDirectFile.writeAsString('', flush: true);
+    await _pruneLegacyForScope(tenantId: tenantId, companyId: companyId);
+    debugPrint(
+      '[LOCAL_SCOPE][CLEANUP] target=compliance tenant=${_maskScope(tenantId)} company=${_maskScope(companyId)}',
+    );
   }
 
   Future<ComplianceLedgerReadResult> readLatest({int limit = 20}) async {
@@ -262,7 +428,13 @@ class ComplianceLedgerReader {
       );
     }
 
-    final file = await _file();
+    final scope = _activeComplianceScope();
+    final tenantId = scope.tenantId.trim();
+    final companyId = scope.companyId.trim();
+    final scopedFile = await _file();
+    final legacyFile = await _legacyFile();
+    final useScoped = await scopedFile.exists();
+    final file = useScoped ? scopedFile : legacyFile;
     if (!await file.exists()) {
       return const ComplianceLedgerReadResult(
         entries: <ComplianceLedgerEntry>[],
@@ -285,7 +457,16 @@ class ComplianceLedgerReader {
           continue;
         }
         final map = Map<String, dynamic>.from(decoded);
-        parsed.add(ComplianceLedgerEntry.fromRaw(map, sourceLineIndex: i));
+        final entry = ComplianceLedgerEntry.fromRaw(map, sourceLineIndex: i);
+        if (!_entryMatchesScope(
+          entry,
+          tenantId: tenantId,
+          companyId: companyId,
+          allowLegacyWithoutScope: true,
+        )) {
+          continue;
+        }
+        parsed.add(entry);
       } catch (_) {
         skippedMalformedLines += 1;
       }
@@ -308,6 +489,9 @@ class ComplianceLedgerReader {
 
     final effectiveLimit = limit <= 0 ? 20 : limit;
     final latest = parsed.take(effectiveLimit).toList(growable: false);
+    debugPrint(
+      '[LOCAL_SCOPE][COMPLIANCE_FILTER] tenant=${_maskScope(tenantId)} company=${_maskScope(companyId)} source=${useScoped ? 'scoped' : 'legacy'} kept=${latest.length} malformed=$skippedMalformedLines',
+    );
 
     return ComplianceLedgerReadResult(
       entries: latest,

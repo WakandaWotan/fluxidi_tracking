@@ -3,6 +3,8 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 class CustomerSavedBooking {
   const CustomerSavedBooking({
     required this.bookingId,
+    required this.tenantId,
+    required this.companyId,
     required this.customerId,
     required this.createdAt,
     required this.pickupIso,
@@ -17,6 +19,8 @@ class CustomerSavedBooking {
   });
 
   final String bookingId;
+  final String tenantId;
+  final String companyId;
   final String customerId;
   final String createdAt;
   final String pickupIso;
@@ -46,6 +50,8 @@ class CustomerSavedBooking {
         : <String, dynamic>{};
     return CustomerSavedBooking(
       bookingId: read('bookingId'),
+      tenantId: read('tenantId'),
+      companyId: read('companyId'),
       customerId: read('customerId'),
       createdAt: read('createdAt'),
       pickupIso: read('pickupIso'),
@@ -63,6 +69,8 @@ class CustomerSavedBooking {
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'bookingId': bookingId,
+      'tenantId': tenantId,
+      'companyId': companyId,
       'customerId': customerId,
       'createdAt': createdAt,
       'pickupIso': pickupIso,
@@ -79,6 +87,8 @@ class CustomerSavedBooking {
 
   CustomerSavedBooking copyWith({
     String? bookingId,
+    String? tenantId,
+    String? companyId,
     String? customerId,
     String? createdAt,
     String? pickupIso,
@@ -94,6 +104,8 @@ class CustomerSavedBooking {
   }) {
     return CustomerSavedBooking(
       bookingId: bookingId ?? this.bookingId,
+      tenantId: tenantId ?? this.tenantId,
+      companyId: companyId ?? this.companyId,
       customerId: customerId ?? this.customerId,
       createdAt: createdAt ?? this.createdAt,
       pickupIso: pickupIso ?? this.pickupIso,
@@ -173,6 +185,10 @@ class CustomerBookingStore {
   CustomerSavedBooking _fromCanonical(StoredCustomerBooking item) {
     final raw = <String, dynamic>{
       'booking_id': item.bookingId,
+      'tenant_id': item.tenantId,
+      'tenantId': item.tenantId,
+      'company_id': item.companyId,
+      'companyId': item.companyId,
       'public_booking_id': item.publicBookingId,
       'public_booking_reference': item.publicBookingId,
       'publicBookingReference': item.publicBookingId,
@@ -194,6 +210,8 @@ class CustomerBookingStore {
     };
     return CustomerSavedBooking(
       bookingId: item.bookingId,
+      tenantId: item.tenantId,
+      companyId: item.companyId,
       customerId: '',
       createdAt: item.createdAt,
       pickupIso: item.pickupIso,
@@ -225,6 +243,16 @@ class CustomerBookingStore {
 
     return StoredCustomerBooking(
       bookingId: booking.bookingId,
+      tenantId: firstNonEmpty([
+        booking.tenantId,
+        booking.rawSnapshot['tenant_id'],
+        booking.rawSnapshot['tenantId'],
+      ]),
+      companyId: firstNonEmpty([
+        booking.companyId,
+        booking.rawSnapshot['company_id'],
+        booking.rawSnapshot['companyId'],
+      ]),
       publicBookingId: firstNonEmpty([
         booking.rawSnapshot['public_booking_id'],
         booking.rawSnapshot['public_booking_reference'],
