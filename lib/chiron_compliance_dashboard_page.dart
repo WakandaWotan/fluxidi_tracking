@@ -5,6 +5,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:http/http.dart' as http;
 
@@ -1552,6 +1553,7 @@ class _RemoteComplianceEventsSection extends StatefulWidget {
 class _RemoteComplianceEventsSectionState
     extends State<_RemoteComplianceEventsSection> {
   late Future<RemoteComplianceEventsResponse> _future;
+  bool _isResettingRemoteEvents = false;
 
   @override
   void initState() {
@@ -1594,6 +1596,19 @@ class _RemoteComplianceEventsSectionState
   }
 
   String _text(dynamic value) => (value ?? '').toString().trim();
+
+  ({String tenantId, String companyId}) _effectiveTenantCompanyIds() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final resolvedId = resolvedCompanyId.trim();
+    final effectiveTenantId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    final effectiveCompanyId = activeCompanyId.isNotEmpty
+        ? activeCompanyId
+        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    return (tenantId: effectiveTenantId, companyId: effectiveCompanyId);
+  }
 
   String _localizedUnknown() {
     return _t(nl: 'onbekend', en: 'unknown', fr: 'inconnu', es: 'desconocido');
@@ -1808,15 +1823,9 @@ class _RemoteComplianceEventsSectionState
   }
 
   Future<RemoteComplianceEventsResponse> _loadRemoteEvents() async {
-    final activeCompanyId =
-        companyProfileNotifier.value?.companyId.trim() ?? '';
-    final resolvedId = resolvedCompanyId.trim();
-    final effectiveTenantId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
-    final effectiveCompanyId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+    final effective = _effectiveTenantCompanyIds();
+    final effectiveTenantId = effective.tenantId;
+    final effectiveCompanyId = effective.companyId;
 
     final token = _complianceAdminToken.trim();
     if (token.isEmpty) {
@@ -1922,6 +1931,154 @@ class _RemoteComplianceEventsSectionState
           es: 'No se pueden cargar eventos de cumplimiento backend. Verifica red/token.',
         ),
       );
+    }
+  }
+
+  Future<void> _resetRemoteComplianceEvents() async {
+    if (_isResettingRemoteEvents) return;
+    final token = _complianceAdminToken.trim();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Admin token ontbreekt voor backend cleanup.',
+              en: 'Admin token is missing for backend cleanup.',
+              fr: 'Le jeton admin manque pour le nettoyage backend.',
+              es: 'Falta el token admin para la limpieza del backend.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final effective = _effectiveTenantCompanyIds();
+    final query = <String, String>{
+      'tenant_id': effective.tenantId,
+      'company_id': effective.companyId,
+    };
+    try {
+      setState(() => _isResettingRemoteEvents = true);
+      final dryRunUri = Uri.parse(
+        '$_complianceApiBaseUrl/admin/dev/reset-compliance-events/dry-run',
+      ).replace(queryParameters: query);
+      final dryRunRes = await http
+          .get(
+            dryRunUri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      final dryRunPayload = jsonDecode(dryRunRes.body);
+      final dryRunMap = dryRunPayload is Map
+          ? Map<String, dynamic>.from(dryRunPayload)
+          : <String, dynamic>{};
+      if (dryRunRes.statusCode < 200 || dryRunRes.statusCode >= 300) {
+        throw Exception(_text(dryRunMap['error']));
+      }
+      final dryRunCounts = dryRunMap['counts'] is Map
+          ? Map<String, dynamic>.from(dryRunMap['counts'] as Map)
+          : const <String, dynamic>{};
+      final totalCount =
+          int.tryParse(_text(dryRunMap['totalCount'])) ??
+          int.tryParse(_text(dryRunCounts['complianceEvents'])) ??
+          0;
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(
+            _t(
+              nl: 'Backend test-events wissen?',
+              en: 'Clear backend test events?',
+              fr: 'Effacer les événements de test backend ?',
+              es: '¿Borrar eventos de prueba del backend?',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'Dit verwijdert alleen compliance/backendmeldingen voor tenant/bedrijf ${effective.tenantId}. Gevonden events: $totalCount. Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en abonnement blijven behouden.',
+              en: 'This only removes compliance/backend messages for tenant/company ${effective.tenantId}. Found events: $totalCount. Company settings, drivers, vehicles, pricing and subscription remain untouched.',
+              fr: 'Cela supprime uniquement les messages de conformité/backend pour le tenant/société ${effective.tenantId}. Événements trouvés : $totalCount. Les paramètres société, chauffeurs, véhicules, tarifs et abonnement restent inchangés.',
+              es: 'Esto solo elimina mensajes de cumplimiento/backend para el tenant/empresa ${effective.tenantId}. Eventos encontrados: $totalCount. La configuración de empresa, conductores, vehículos, precios y suscripción no se modifican.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final resetUri = Uri.parse(
+        '$_complianceApiBaseUrl/admin/dev/reset-compliance-events',
+      ).replace(queryParameters: query);
+      final resetRes = await http
+          .post(
+            resetUri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'x-admin-token': token,
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      final resetPayload = jsonDecode(resetRes.body);
+      final resetMap = resetPayload is Map
+          ? Map<String, dynamic>.from(resetPayload)
+          : <String, dynamic>{};
+      if (resetRes.statusCode < 200 || resetRes.statusCode >= 300) {
+        throw Exception(_text(resetMap['error']));
+      }
+      if (!mounted) return;
+      _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Backendmeldingen testdata gewist.',
+              en: 'Backend test events cleared.',
+              fr: 'Données de test backend effacées.',
+              es: 'Datos de prueba del backend borrados.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Backend cleanup mislukt. Controleer token/verbinding.',
+              en: 'Backend cleanup failed. Check token/connection.',
+              fr: 'Le nettoyage backend a échoué. Vérifiez le jeton/la connexion.',
+              es: 'Error en la limpieza del backend. Verifica token/conexión.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isResettingRemoteEvents = false);
+      }
     }
   }
 
@@ -2641,6 +2798,24 @@ class _RemoteComplianceEventsSectionState
               onPressed: _refresh,
               icon: const Icon(Icons.refresh, color: Colors.white70),
             ),
+            IconButton(
+              tooltip: _t(
+                nl: 'Backend test-events wissen',
+                en: 'Clear backend test events',
+                fr: 'Effacer les événements de test backend',
+                es: 'Borrar eventos de prueba del backend',
+              ),
+              onPressed: _isResettingRemoteEvents
+                  ? null
+                  : _resetRemoteComplianceEvents,
+              icon: _isResettingRemoteEvents
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_forever, color: Colors.white70),
+            ),
           ],
         ),
         FutureBuilder<RemoteComplianceEventsResponse>(
@@ -2810,6 +2985,7 @@ class _LocalComplianceLedgerSectionState
   late Future<ComplianceLedgerReadResult> _future;
   final ComplianceLedgerReader _reader = ComplianceLedgerReader();
   bool _isClearingLocalTestData = false;
+  bool _isClearingLocalCustomerBookings = false;
 
   @override
   void initState() {
@@ -2895,6 +3071,81 @@ class _LocalComplianceLedgerSectionState
     } finally {
       if (mounted) {
         setState(() => _isClearingLocalTestData = false);
+      }
+    }
+  }
+
+  Future<void> _clearLocalCustomerBookings() async {
+    if (_isClearingLocalCustomerBookings) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Lokale klantboekingen wissen?',
+            en: 'Clear local customer bookings?',
+            fr: 'Effacer les réservations client locales ?',
+            es: '¿Borrar reservas locales del cliente?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Dit wist alleen lokale testboekingen op dit toestel (Klant > Mijn boekingen). Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en backend operationele boekingen blijven behouden.',
+            en: 'This only clears local test bookings on this device (Customer > My bookings). Company settings, drivers, vehicles, pricing and backend operational bookings are kept.',
+            fr: 'Cela efface uniquement les réservations de test locales sur cet appareil (Client > Mes réservations). Les paramètres société, chauffeurs, véhicules, tarifs et réservations backend restent conservés.',
+            es: 'Esto solo borra reservas de prueba locales en este dispositivo (Cliente > Mis reservas). La configuración de empresa, conductores, vehículos, precios y reservas operativas del backend se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isClearingLocalCustomerBookings = true);
+    try {
+      await CustomerBookingsStore.instance.clearLocalTestData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Lokale klantboekingen gewist.',
+              en: 'Local customer bookings cleared.',
+              fr: 'Réservations client locales effacées.',
+              es: 'Reservas locales del cliente borradas.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Wissen mislukt. Probeer opnieuw.',
+              en: 'Clear failed. Please try again.',
+              fr: 'Échec de l’effacement. Réessayez.',
+              es: 'Error al borrar. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isClearingLocalCustomerBookings = false);
       }
     }
   }
@@ -4261,6 +4512,24 @@ class _LocalComplianceLedgerSectionState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.delete_sweep, color: Colors.white70),
+                ),
+                IconButton(
+                  tooltip: _t(
+                    nl: 'Lokale klantboekingen wissen',
+                    en: 'Clear local customer bookings',
+                    fr: 'Effacer les réservations client locales',
+                    es: 'Borrar reservas locales del cliente',
+                  ),
+                  onPressed: _isClearingLocalCustomerBookings
+                      ? null
+                      : _clearLocalCustomerBookings,
+                  icon: _isClearingLocalCustomerBookings
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.person_remove, color: Colors.white70),
                 ),
               ],
             ),

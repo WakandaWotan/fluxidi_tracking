@@ -11,6 +11,8 @@ const SCHEMA_VERSION = "compliance_event_v1";
 const SYNC_STATE = "not_configured";
 const APPEND_PATH = "/compliance/events/append";
 const RECENT_PATH = "/compliance/events/recent";
+const ADMIN_RESET_PATH = "/admin/dev/reset-compliance-events";
+const ADMIN_RESET_DRY_RUN_PATH = "/admin/dev/reset-compliance-events/dry-run";
 
 function jsonResponse(payload, status = 200, origin = "*") {
   return new Response(JSON.stringify(payload), {
@@ -435,6 +437,155 @@ async function handleRecent(request, url, env, origin) {
   );
 }
 
+async function listScopedComplianceEventKeys(env, prefix) {
+  const pageSize = 500;
+  const maxScanKeys = 10000;
+  const keyNames = [];
+  const seen = new Set();
+  let cursor = undefined;
+  let listComplete = false;
+
+  while (!listComplete && keyNames.length < maxScanKeys) {
+    const listed = await env.COMPLIANCE_KV.list({
+      prefix,
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    });
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const entry of keys) {
+      const keyName = cleanText(entry?.name, 1024);
+      if (!keyName || seen.has(keyName)) continue;
+      seen.add(keyName);
+      keyNames.push(keyName);
+      if (keyNames.length >= maxScanKeys) break;
+    }
+    listComplete = listed?.list_complete === true;
+    cursor = cleanText(listed?.cursor, 1024) || undefined;
+    if (!listComplete && !cursor) break;
+  }
+
+  return keyNames;
+}
+
+function buildCompliancePrefixForScope(tenantSegment, companySegment) {
+  return [
+    "compliance_event_v1",
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "",
+  ].join("/");
+}
+
+async function handleAdminResetComplianceEvents(request, url, env, origin, dryRun) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+
+  if (!env || !env.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
+  }
+
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+
+  const tenantId = tenant.value;
+  const companyId = company.value;
+  const prefix = buildCompliancePrefixForScope(tenantId, companyId);
+
+  let keys;
+  try {
+    keys = await listScopedComplianceEventKeys(env, prefix);
+  } catch (_) {
+    return jsonResponse(
+      { ok: false, error: "Failed to list scoped compliance event keys." },
+      500,
+      origin,
+    );
+  }
+
+  const previewLimit = 20;
+  const counts = {
+    complianceEvents: keys.length,
+    indexes: 0,
+  };
+  const totalCount = counts.complianceEvents + counts.indexes;
+
+  if (dryRun) {
+    return jsonResponse(
+      {
+        ok: true,
+        dryRun: true,
+        tenant_id: tenantId,
+        company_id: companyId,
+        counts,
+        totalCount,
+        keys: {
+          preview: keys.slice(0, previewLimit),
+          previewCount: Math.min(previewLimit, keys.length),
+        },
+        message: "Dry-run only. No compliance events were deleted.",
+      },
+      200,
+      origin,
+    );
+  }
+
+  if (typeof env.COMPLIANCE_KV.delete !== "function") {
+    return jsonResponse(
+      { ok: false, error: "Compliance storage delete operation is unavailable." },
+      500,
+      origin,
+    );
+  }
+
+  let deleted = 0;
+  const failedKeys = [];
+  for (const key of keys) {
+    try {
+      await env.COMPLIANCE_KV.delete(key);
+      deleted += 1;
+    } catch (_) {
+      failedKeys.push(key);
+    }
+  }
+
+  const ok = failedKeys.length === 0;
+  return jsonResponse(
+    {
+      ok,
+      dryRun: false,
+      tenant_id: tenantId,
+      company_id: companyId,
+      deleted: {
+        complianceEvents: deleted,
+        indexes: 0,
+      },
+      totalDeleted: deleted,
+      failedCount: failedKeys.length,
+      failedPreview: failedKeys.slice(0, previewLimit),
+      message: ok
+        ? "Scoped compliance events deleted."
+        : "Scoped compliance events deleted with partial failures.",
+    },
+    ok ? 200 : 207,
+    origin,
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -452,7 +603,12 @@ export default {
       });
     }
 
-    if (url.pathname !== APPEND_PATH && url.pathname !== RECENT_PATH) {
+    if (
+      url.pathname !== APPEND_PATH &&
+      url.pathname !== RECENT_PATH &&
+      url.pathname !== ADMIN_RESET_PATH &&
+      url.pathname !== ADMIN_RESET_DRY_RUN_PATH
+    ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
         404,
@@ -466,6 +622,18 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleAppend(request, env, origin);
+      }
+      if (url.pathname === ADMIN_RESET_DRY_RUN_PATH) {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleAdminResetComplianceEvents(request, url, env, origin, true);
+      }
+      if (url.pathname === ADMIN_RESET_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleAdminResetComplianceEvents(request, url, env, origin, false);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);

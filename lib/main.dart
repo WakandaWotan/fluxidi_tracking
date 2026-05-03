@@ -4723,6 +4723,16 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     }
   }
 
+  Set<String> _aliasesForSavedBooking(CustomerSavedBooking booking) {
+    return _customerBookingDeleteAliases(
+      bookingId: booking.bookingId,
+      publicBookingReference: booking.publicReference,
+      bookingReference: booking.publicReference,
+      publicReference: booking.publicReference,
+      source: booking.rawSnapshot,
+    );
+  }
+
   String _formatPickup(String iso) {
     if (iso.trim().isEmpty) return '-';
     final dt = DateTime.tryParse(iso);
@@ -4800,6 +4810,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   Future<void> _openSavedBooking(CustomerSavedBooking booking) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
+    final beforeCount = _bookings.length;
+    final aliases = _aliasesForSavedBooking(booking);
     try {
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
@@ -4811,7 +4823,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
           final view = CustomerBookingView.fromResponse(id, decoded);
           if (!mounted) return;
-          await Navigator.of(context).push(
+          final deleted = await Navigator.of(context).push<bool>(
             MaterialPageRoute(
               builder: (_) => CustomerBookingDetailPage(
                 bookingId: id,
@@ -4820,6 +4832,26 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               ),
             ),
           );
+          if (deleted == true) {
+            if (mounted) {
+              setState(() {
+                _bookings = _bookings
+                    .where(
+                      (item) => !_customerAliasesIntersect(
+                        _aliasesForSavedBooking(item),
+                        aliases,
+                      ),
+                    )
+                    .toList(growable: false);
+              });
+            }
+            await _loadLocal();
+          }
+          if (mounted) {
+            debugPrint(
+              '[CUSTOMER_BOOKINGS][DETAIL_RETURN] deleted=${deleted == true} beforeCount=$beforeCount afterCount=${_bookings.length}',
+            );
+          }
           return;
         }
       }
@@ -4846,7 +4878,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       updatedAt: booking.createdAt,
     );
     if (!mounted) return;
-    await Navigator.of(context).push(
+    final deleted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CustomerBookingDetailPage(
           bookingId: id,
@@ -4855,164 +4887,270 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         ),
       ),
     );
+    if (deleted == true) {
+      if (mounted) {
+        setState(() {
+          _bookings = _bookings
+              .where(
+                (item) => !_customerAliasesIntersect(
+                  _aliasesForSavedBooking(item),
+                  aliases,
+                ),
+              )
+              .toList(growable: false);
+        });
+      }
+      await _loadLocal();
+    }
+    if (mounted) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][DETAIL_RETURN] deleted=${deleted == true} beforeCount=$beforeCount afterCount=${_bookings.length}',
+      );
+    }
+  }
+
+  Future<void> _clearAllLocalBookings() async {
+    debugPrint('[CUSTOMER_BOOKINGS][CLEAR_ALL_REQ] count=${_bookings.length}');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Alle boekingen verwijderen?',
+            en: 'Remove all bookings?',
+            fr: 'Supprimer toutes les réservations ?',
+            es: '¿Eliminar todas las reservas?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Hiermee verwijder je alleen de boekingen uit je lokale overzicht op dit toestel. De bedrijfsadministratie, ritgeschiedenis en betalingen blijven bewaard.',
+            en: 'This only removes the bookings from your local overview on this device. Company records, ride history and payments remain stored.',
+            fr: 'Cela supprime uniquement les réservations de votre aperçu local sur cet appareil. L’administration, l’historique des trajets et les paiements restent conservés.',
+            es: 'Esto solo elimina las reservas de tu vista local en este dispositivo. La administración de la empresa, el historial de viajes y los pagos se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Alles verwijderen',
+                en: 'Remove all',
+                fr: 'Tout supprimer',
+                es: 'Eliminar todo',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await CustomerBookingStore.instance.clearLocalTestData();
+      if (!mounted) return;
+      setState(() {
+        _bookings = const <CustomerSavedBooking>[];
+      });
+      await _loadLocal();
+      if (!mounted) return;
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][CLEAR_ALL_OK] remaining=${_bookings.length}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Alle lokale boekingen zijn verwijderd.',
+              en: 'All local bookings have been removed.',
+              fr: 'Toutes les réservations locales ont été supprimées.',
+              es: 'Todas las reservas locales han sido eliminadas.',
+            ),
+          ),
+        ),
+      );
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][CLEAR_ALL_ERROR] err=$err');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        appBar: AppBar(
+      builder: (context, _, __) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][VISIBLE_BUILD] count=${_bookings.length}',
+        );
+        return Scaffold(
           backgroundColor: const Color(0xFF0B1020),
-          title: Text(
-            _t(
-              nl: 'Mijn boekingen',
-              en: 'My bookings',
-              fr: 'Mes reservations',
-              es: 'Mis reservas',
-            ),
-          ),
-          actions: [
-            IconButton(
-              tooltip: _t(
-                nl: 'Vernieuwen',
-                en: 'Refresh',
-                fr: 'Actualiser',
-                es: 'Actualizar',
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0B1020),
+            title: Text(
+              _t(
+                nl: 'Mijn boekingen',
+                en: 'My bookings',
+                fr: 'Mes reservations',
+                es: 'Mis reservas',
               ),
-              onPressed: _loadLocal,
-              icon: const Icon(Icons.refresh),
             ),
-          ],
-        ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (_error != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.red.withOpacity(0.4)),
-                  ),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(color: Color(0xFFFFB4B4)),
-                  ),
+            actions: [
+              IconButton(
+                tooltip: _t(
+                  nl: 'Alles verwijderen',
+                  en: 'Remove all',
+                  fr: 'Tout supprimer',
+                  es: 'Eliminar todo',
                 ),
-                const SizedBox(height: 12),
-              ],
-              if (_loading)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: CircularProgressIndicator(),
-                  ),
-                )
-              else if (_bookings.isEmpty)
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF141B2F),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Text(
-                    _t(
-                      nl: 'Nog geen boekingen op dit toestel.',
-                      en: 'No bookings on this device yet.',
-                      fr: 'Aucune réservation sur cet appareil pour le moment.',
-                      es: 'Aún no hay reservas en este dispositivo.',
+                onPressed: _bookings.isEmpty ? null : _clearAllLocalBookings,
+                icon: const Icon(Icons.delete_sweep),
+              ),
+              IconButton(
+                tooltip: _t(
+                  nl: 'Vernieuwen',
+                  en: 'Refresh',
+                  fr: 'Actualiser',
+                  es: 'Actualizar',
+                ),
+                onPressed: _loadLocal,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                if (_error != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withOpacity(0.4)),
                     ),
-                    style: const TextStyle(color: Colors.white70),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Color(0xFFFFB4B4)),
+                    ),
                   ),
-                )
-              else
-                ..._bookings.map(
-                  (booking) => Card(
-                    color: const Color(0xFF141B2F),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    shape: RoundedRectangleBorder(
+                  const SizedBox(height: 12),
+                ],
+                if (_loading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: CircularProgressIndicator(),
+                    ),
+                  )
+                else if (_bookings.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141B2F),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => _openSavedBooking(booking),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${booking.from.trim().isEmpty ? '-' : booking.from} → ${booking.to.trim().isEmpty ? '-' : booking.to}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
+                    child: Text(
+                      _t(
+                        nl: 'Nog geen boekingen op dit toestel.',
+                        en: 'No bookings on this device yet.',
+                        fr: 'Aucune réservation sur cet appareil pour le moment.',
+                        es: 'Aún no hay reservas en este dispositivo.',
+                      ),
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  )
+                else
+                  ..._bookings.map(
+                    (booking) => Card(
+                      color: const Color(0xFF141B2F),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => _openSavedBooking(booking),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${booking.from.trim().isEmpty ? '-' : booking.from} → ${booking.to.trim().isEmpty ? '-' : booking.to}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              '${_t(nl: 'Ophaal', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${_formatPickup(booking.pickupIso)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.82),
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_t(nl: 'Ophaal', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${_formatPickup(booking.pickupIso)}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.82),
+                              Text(
+                                '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.82),
+                              Text(
+                                '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Boekingsstatus', en: 'Booking status', fr: 'Statut de réservation', es: 'Estado de la reserva')}: ${_bookingStatusLabel(booking)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.82),
+                              Text(
+                                '${_t(nl: 'Boekingsstatus', en: 'Booking status', fr: 'Statut de réservation', es: 'Estado de la reserva')}: ${_bookingStatusLabel(booking)}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia')}: ${(booking.publicReference.trim().isNotEmpty ? booking.publicReference.trim() : booking.bookingId.trim())}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.82),
+                              Text(
+                                '${_t(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia')}: ${(booking.publicReference.trim().isNotEmpty ? booking.publicReference.trim() : booking.bookingId.trim())}',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.search_outlined),
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const CustomerBookingLookupPage(),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.search_outlined),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CustomerBookingLookupPage(),
+                      ),
+                    ),
+                    label: Text(
+                      _t(
+                        nl: 'Boeking handmatig zoeken',
+                        en: 'Find booking manually',
+                        fr: 'Rechercher une réservation manuellement',
+                        es: 'Buscar reserva manualmente',
+                      ),
                     ),
                   ),
-                  label: Text(
-                    _t(
-                      nl: 'Boeking handmatig zoeken',
-                      en: 'Find booking manually',
-                      fr: 'Rechercher une réservation manuellement',
-                      es: 'Buscar reserva manualmente',
-                    ),
-                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -5022,6 +5160,168 @@ class CustomerBookingsPage extends StatefulWidget {
 
   @override
   State<CustomerBookingsPage> createState() => _CustomerBookingsPageState();
+}
+
+dynamic _customerBookingValueAtPath(Map<String, dynamic> root, String path) {
+  dynamic current = root;
+  for (final segment in path.split('.')) {
+    if (current is Map && current.containsKey(segment)) {
+      current = current[segment];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
+  const aliasPaths = <String>[
+    'booking_id',
+    'bookingId',
+    'id',
+    'public_booking_reference',
+    'publicBookingReference',
+    'booking_reference',
+    'bookingReference',
+    'public_reference',
+    'publicReference',
+    'planning_reference',
+    'planningReference',
+    'receipt_reference',
+    'receiptReference',
+    'booking.booking_id',
+    'booking.bookingId',
+    'booking.id',
+    'booking.public_booking_reference',
+    'booking.publicBookingReference',
+    'booking.booking_reference',
+    'booking.bookingReference',
+    'booking.public_reference',
+    'booking.publicReference',
+    'booking.planning_reference',
+    'booking.planningReference',
+    'booking.receipt_reference',
+    'booking.receiptReference',
+    'record.booking_id',
+    'record.bookingId',
+    'record.id',
+    'record.booking.booking_id',
+    'record.booking.bookingId',
+    'record.booking.id',
+    'record.references.public_booking_reference',
+    'record.references.publicBookingReference',
+    'record.references.booking_reference',
+    'record.references.bookingReference',
+    'record.references.public_reference',
+    'record.references.publicReference',
+    'record.references.planning_reference',
+    'record.references.planningReference',
+    'record.references.receipt_reference',
+    'record.references.receiptReference',
+    'payload.booking_id',
+    'payload.bookingId',
+    'payload.id',
+    'payload.booking.booking_id',
+    'payload.booking.bookingId',
+    'payload.booking.id',
+    'payload.references.public_booking_reference',
+    'payload.references.publicBookingReference',
+    'payload.references.booking_reference',
+    'payload.references.bookingReference',
+    'payload.references.public_reference',
+    'payload.references.publicReference',
+    'payload.references.planning_reference',
+    'payload.references.planningReference',
+    'payload.references.receipt_reference',
+    'payload.references.receiptReference',
+    'references.public_booking_reference',
+    'references.publicBookingReference',
+    'references.booking_reference',
+    'references.bookingReference',
+    'references.public_reference',
+    'references.publicReference',
+    'references.planning_reference',
+    'references.planningReference',
+    'references.receipt_reference',
+    'references.receiptReference',
+  ];
+  final aliases = <String>{};
+  void addAlias(dynamic value) {
+    final text = _cleanBusinessReferenceText(value?.toString());
+    if (text == null) return;
+    aliases.add(text.toLowerCase());
+  }
+
+  for (final path in aliasPaths) {
+    addAlias(_customerBookingValueAtPath(source, path));
+  }
+  return aliases;
+}
+
+Set<String> _customerBookingDeleteAliases({
+  String? bookingId,
+  String? publicBookingReference,
+  String? bookingReference,
+  String? publicReference,
+  String? planningReference,
+  String? receiptReference,
+  String? paymentBookingId,
+  Map<String, dynamic>? source,
+}) {
+  final aliases = <String>{};
+  void addAlias(String? value) {
+    final text = _cleanBusinessReferenceText(value);
+    if (text == null) return;
+    aliases.add(text.toLowerCase());
+  }
+
+  addAlias(bookingId);
+  addAlias(publicBookingReference);
+  addAlias(bookingReference);
+  addAlias(publicReference);
+  addAlias(planningReference);
+  addAlias(receiptReference);
+  addAlias(paymentBookingId);
+  if (source != null && source.isNotEmpty) {
+    aliases.addAll(_customerBookingAliasesFromSource(source));
+  }
+  return aliases;
+}
+
+Set<String> _customerBookingAliasesFromStored(StoredCustomerBooking booking) {
+  return _customerBookingDeleteAliases(
+    bookingId: booking.bookingId,
+    publicBookingReference: booking.publicBookingReference,
+    bookingReference: booking.bookingReference,
+    publicReference: booking.publicReference,
+    planningReference: booking.planningReference,
+    receiptReference: booking.receiptReference,
+    paymentBookingId: booking.paymentBookingId,
+  );
+}
+
+bool _customerAliasesIntersect(Set<String> a, Set<String> b) {
+  for (final value in a) {
+    if (b.contains(value)) return true;
+  }
+  return false;
+}
+
+Future<({bool removed, bool storeA, bool storeB, int remaining})>
+_removeLocalCustomerBookingEverywhere({
+  required String bookingForLog,
+  required Set<String> aliases,
+}) async {
+  final sortedAliases = aliases.toList(growable: false)..sort();
+  debugPrint(
+    '[CUSTOMER_BOOKING][DELETE_REQ] booking=${_safeRefPreview(bookingForLog)} aliases=${sortedAliases.join(',')}',
+  );
+  final result = await CustomerBookingStore.instance
+      .removeLocalBookingByAnyReference(aliases);
+  debugPrint(
+    '[CUSTOMER_BOOKING][DELETE_RESULT] removed=${result.removed} storeA=${result.storeA} storeB=${result.storeB} remaining=${result.remaining}',
+  );
+  return result;
 }
 
 class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
@@ -5057,6 +5357,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         _loading = false;
         _lastUpdated = DateTime.now();
       });
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][RELOAD_AFTER_DELETE] count=${items.length}',
+      );
     } catch (err) {
       if (!mounted) return;
       setState(() {
@@ -5213,7 +5516,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   Future<void> _openDetails(StoredCustomerBooking booking) async {
     final id = booking.canonicalBookingId.trim();
     if (id.isEmpty) return;
-    await Navigator.of(context).push(
+    final aliases = _customerBookingAliasesFromStored(booking);
+    final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CustomerBookingDetailPage(
           bookingId: id,
@@ -5222,7 +5526,184 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         ),
       ),
     );
+    if (result == true) {
+      if (mounted) {
+        setState(() {
+          _bookings = _bookings
+              .where(
+                (item) => !_customerAliasesIntersect(
+                  _customerBookingAliasesFromStored(item),
+                  aliases,
+                ),
+              )
+              .toList(growable: false);
+        });
+      }
+      await _loadLocal();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Boeking verwijderd uit je lokale overzicht.',
+              en: 'Booking removed from your local overview.',
+              fr: 'Réservation supprimée de votre aperçu local.',
+              es: 'Reserva eliminada de tu vista local.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     await _loadLocal();
+  }
+
+  Future<void> _removeFromMyBookings(StoredCustomerBooking booking) async {
+    final bookingId = booking.canonicalBookingId.trim();
+    if (bookingId.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Boeking verwijderen?',
+            en: 'Remove booking?',
+            fr: 'Supprimer la réservation ?',
+            es: '¿Eliminar reserva?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze boeking wordt alleen uit jouw lokale overzicht verwijderd. De bedrijfsadministratie en ritgeschiedenis blijven bewaard.',
+            en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
+            fr: 'Cette réservation sera supprimée uniquement de votre aperçu local. L’administration de l’entreprise et l’historique des trajets restent conservés.',
+            es: 'Esta reserva solo se eliminará de tu vista local. La administración de la empresa y el historial del viaje se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Remove',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await _removeLocalCustomerBookingEverywhere(
+      bookingForLog: bookingId,
+      aliases: _customerBookingDeleteAliases(
+        bookingId: booking.bookingId,
+        publicBookingReference: booking.publicBookingReference,
+        bookingReference: booking.bookingReference,
+        publicReference: booking.publicReference,
+        planningReference: booking.planningReference,
+        receiptReference: booking.receiptReference,
+        paymentBookingId: booking.paymentBookingId,
+      ),
+    );
+    await _loadLocal();
+    if (!mounted) return;
+    final message = result.removed
+        ? _t(
+            nl: 'Boeking verwijderd uit je lokale overzicht.',
+            en: 'Booking removed from your local overview.',
+            fr: 'Réservation supprimée de votre aperçu local.',
+            es: 'Reserva eliminada de tu vista local.',
+          )
+        : _t(
+            nl: 'Boeking niet gevonden in lokale opslag.',
+            en: 'Booking not found in local storage.',
+            fr: 'Réservation introuvable dans le stockage local.',
+            es: 'Reserva no encontrada en el almacenamiento local.',
+          );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _removeAllFromMyBookings() async {
+    debugPrint('[CUSTOMER_BOOKINGS][CLEAR_ALL_REQ]');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Alle boekingen verwijderen?',
+            en: 'Remove all bookings?',
+            fr: 'Supprimer toutes les réservations ?',
+            es: '¿Eliminar todas las reservas?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Hiermee verwijder je alleen de boekingen uit je lokale overzicht op dit toestel. De bedrijfsadministratie, ritgeschiedenis en betalingen blijven bewaard.',
+            en: 'This only removes the bookings from your local overview on this device. Company records, ride history and payments remain stored.',
+            fr: 'Cela supprime uniquement les réservations de votre aperçu local sur cet appareil. L’administration, l’historique des trajets et les paiements restent conservés.',
+            es: 'Esto solo elimina las reservas de tu vista local en este dispositivo. La administración de la empresa, el historial de viajes y los pagos se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Alles verwijderen',
+                en: 'Remove all',
+                fr: 'Tout supprimer',
+                es: 'Eliminar todo',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await CustomerBookingStore.instance.clearLocalTestData();
+      if (!mounted) return;
+      setState(() {
+        _bookings = const <StoredCustomerBooking>[];
+        _lastUpdated = DateTime.now();
+      });
+      await _loadLocal();
+      if (!mounted) return;
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][CLEAR_ALL_OK] remaining=${_bookings.length}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Alle lokale boekingen zijn verwijderd.',
+              en: 'All local bookings have been removed.',
+              fr: 'Toutes les réservations locales ont été supprimées.',
+              es: 'Todas las reservas locales han sido eliminadas.',
+            ),
+          ),
+        ),
+      );
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][CLEAR_ALL_ERROR] err=$err');
+    }
   }
 
   @override
@@ -5272,6 +5753,24 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.65),
                     fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _bookings.isEmpty
+                        ? null
+                        : _removeAllFromMyBookings,
+                    icon: const Icon(Icons.delete_sweep, size: 18),
+                    label: Text(
+                      _t(
+                        nl: 'Alles verwijderen',
+                        en: 'Remove all',
+                        fr: 'Tout supprimer',
+                        es: 'Eliminar todo',
+                      ),
+                    ),
                   ),
                 ),
                 if (_error != null) ...[
@@ -5397,19 +5896,34 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                               ],
                             ),
                             const SizedBox(height: 10),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: OutlinedButton(
-                                onPressed: () => _openDetails(booking),
-                                child: Text(
-                                  _t(
-                                    nl: 'Boeking bekijken',
-                                    en: 'View booking',
-                                    fr: 'Voir la reservation',
-                                    es: 'Ver reserva',
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                OutlinedButton(
+                                  onPressed: () =>
+                                      _removeFromMyBookings(booking),
+                                  child: Text(
+                                    _t(
+                                      nl: 'Verwijder uit mijn boekingen',
+                                      en: 'Remove from my bookings',
+                                      fr: 'Supprimer de mes réservations',
+                                      es: 'Eliminar de mis reservas',
+                                    ),
                                   ),
                                 ),
-                              ),
+                                const SizedBox(width: 8),
+                                OutlinedButton(
+                                  onPressed: () => _openDetails(booking),
+                                  child: Text(
+                                    _t(
+                                      nl: 'Boeking bekijken',
+                                      en: 'View booking',
+                                      fr: 'Voir la reservation',
+                                      es: 'Ver reserva',
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -6960,6 +7474,100 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     }
   }
 
+  Future<void> _removeFromMyBookings() async {
+    final bookingId = widget.bookingId.trim();
+    if (bookingId.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Boeking verwijderen?',
+            en: 'Remove booking?',
+            fr: 'Supprimer la réservation ?',
+            es: '¿Eliminar reserva?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze boeking wordt alleen uit jouw lokale overzicht verwijderd. De bedrijfsadministratie en ritgeschiedenis blijven bewaard.',
+            en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
+            fr: 'Cette réservation sera supprimée uniquement de votre aperçu local. L’administration de l’entreprise et l’historique des trajets restent conservés.',
+            es: 'Esta reserva solo se eliminará de tu vista local. La administración de la empresa y el historial del viaje se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Remove',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await _removeLocalCustomerBookingEverywhere(
+      bookingForLog: bookingId,
+      aliases: _customerBookingDeleteAliases(
+        bookingId: bookingId,
+        publicBookingReference: _view.publicBookingReference,
+        bookingReference: _view.publicBookingReference,
+        publicReference: _view.publicBookingReference,
+        planningReference: _view.planningReference,
+        receiptReference: _view.receiptReference,
+        source: _view.source,
+      ),
+    );
+    final aliases = _customerBookingDeleteAliases(
+      bookingId: bookingId,
+      publicBookingReference: _view.publicBookingReference,
+      bookingReference: _view.publicBookingReference,
+      publicReference: _view.publicBookingReference,
+      planningReference: _view.planningReference,
+      receiptReference: _view.receiptReference,
+      source: _view.source,
+    );
+    final localAfterDelete = await CustomerBookingsStore.instance.loadAll();
+    final stillExists = localAfterDelete.any(
+      (entry) => _customerAliasesIntersect(
+        _customerBookingAliasesFromStored(entry),
+        aliases,
+      ),
+    );
+    if (!mounted) return;
+    if (result.removed || !stillExists) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][DELETE_POP] booking=${_safeRefPreview(bookingId)} reason=${result.removed ? 'removed' : 'already_absent'}',
+      );
+      Navigator.of(context).pop(true);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Boeking niet gevonden in lokale opslag.',
+            en: 'Booking not found in local storage.',
+            fr: 'Réservation introuvable dans le stockage local.',
+            es: 'Reserva no encontrada en el almacenamiento local.',
+          ),
+        ),
+      ),
+    );
+  }
+
   String _lifecycleLabel(String s) {
     switch (s) {
       case 'COMPLETED':
@@ -7154,6 +7762,16 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               ),
             ),
             actions: [
+              IconButton(
+                tooltip: _t(
+                  nl: 'Verwijder uit mijn boekingen',
+                  en: 'Remove from my bookings',
+                  fr: 'Supprimer de mes réservations',
+                  es: 'Eliminar de mis reservas',
+                ),
+                onPressed: _removeFromMyBookings,
+                icon: const Icon(Icons.delete_outline),
+              ),
               IconButton(
                 tooltip: _t(
                   nl: 'Vernieuwen',

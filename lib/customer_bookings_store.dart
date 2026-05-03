@@ -1139,12 +1139,87 @@ class CustomerBookingsStore {
   Future<void> remove(String bookingId) async {
     final id = bookingId.trim();
     if (id.isEmpty) return;
-    final list = await loadAll();
-    list.removeWhere((item) => item.bookingId.trim() == id);
-    await _saveAll(list);
+    await removeByAnyReferenceAliases(<String>{id});
   }
 
   Future<void> clear() async {
     await _saveAll(const <StoredCustomerBooking>[]);
+  }
+
+  String _normalizedReference(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  Set<String> _normalizedReferenceSet(Iterable<String> values) {
+    final out = <String>{};
+    for (final value in values) {
+      final text = _normalizedReference(value);
+      if (text.isEmpty) continue;
+      out.add(text);
+    }
+    return out;
+  }
+
+  Set<String> _bookingAliases(StoredCustomerBooking item) {
+    return _normalizedReferenceSet(<String>[
+      item.bookingId,
+      item.canonicalBookingId,
+      item.publicBookingId,
+      item.publicBookingReference,
+      item.planningReference,
+      item.bookingReference,
+      item.publicReference,
+      item.receiptReference,
+      item.paymentBookingId,
+    ]);
+  }
+
+  Future<({bool removed, int removedCount, int remaining})>
+  removeByAnyReferenceAliases(Set<String> aliases) async {
+    final normalizedAliases = _normalizedReferenceSet(aliases);
+    if (normalizedAliases.isEmpty) {
+      final current = await loadAll();
+      return (removed: false, removedCount: 0, remaining: current.length);
+    }
+    final list = await loadAll();
+    var removedCount = 0;
+    list.removeWhere((item) {
+      final itemAliases = _bookingAliases(item);
+      final matches = itemAliases.any(normalizedAliases.contains);
+      if (matches) removedCount += 1;
+      return matches;
+    });
+    if (removedCount > 0) {
+      await _saveAll(list);
+    }
+    return (
+      removed: removedCount > 0,
+      removedCount: removedCount,
+      remaining: list.length,
+    );
+  }
+
+  Future<void> clearLocalTestData() async {
+    _cache = <StoredCustomerBooking>[];
+    await _enqueueWrite(() async {
+      try {
+        final file = await _file();
+        final tempFile = File('${file.path}.tmp');
+        final swapFile = File(
+          '${file.parent.path}${Platform.pathSeparator}$_fileName.swap',
+        );
+        if (await file.exists()) {
+          await file.delete();
+        }
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
+        if (await swapFile.exists()) {
+          await swapFile.delete();
+        }
+      } catch (err) {
+        debugPrint('[CUSTOMER_BOOKINGS][CLEAR_LOCAL_TEST_DATA_ERROR] $err');
+      }
+    });
   }
 }

@@ -134,8 +134,28 @@ class CustomerBookingStore {
     await CustomerBookingsStore.instance.remove(id);
   }
 
+  Future<({bool removed, bool storeA, bool storeB, int remaining})>
+  removeLocalBookingByAnyReference(Set<String> aliases) async {
+    final normalizedAliases = aliases
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    final result = await CustomerBookingsStore.instance
+        .removeByAnyReferenceAliases(normalizedAliases);
+    return (
+      removed: result.removed,
+      storeA: result.removed,
+      storeB: result.removed,
+      remaining: result.remaining,
+    );
+  }
+
   Future<void> clear() async {
     await CustomerBookingsStore.instance.clear();
+  }
+
+  Future<void> clearLocalTestData() async {
+    await CustomerBookingsStore.instance.clearLocalTestData();
   }
 
   Future<void> markPaid({
