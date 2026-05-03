@@ -314,29 +314,55 @@ async function handleRecent(request, url, env, origin) {
     "",
   ].join("/");
 
-  let listed;
-  try {
-    const internalLimit = Math.min(1000, Math.max(requestedLimit, requestedLimit * 5));
-    listed = await env.COMPLIANCE_KV.list({ prefix, limit: internalLimit });
-  } catch (_) {
-    return jsonResponse({ ok: false, error: "Failed to list compliance events." }, 500, origin);
-  }
+  const pageSize = 250;
+  const maxScanKeys = 5000;
+  const scannedKeyNames = [];
+  const seenKeys = new Set();
+  let cursor = undefined;
+  let listComplete = false;
+  let hitScanCap = false;
 
-  const keys = Array.isArray(listed?.keys) ? listed.keys : [];
-  const sortedKeys = keys
-    .map((entry) => cleanText(entry?.name, 1024))
-    .filter(Boolean)
-    .sort((a, b) => b.localeCompare(a))
-    .slice(0, requestedLimit);
+  while (!listComplete && scannedKeyNames.length < maxScanKeys) {
+    let listed;
+    try {
+      listed = await env.COMPLIANCE_KV.list({
+        prefix,
+        limit: pageSize,
+        ...(cursor ? { cursor } : {}),
+      });
+    } catch (_) {
+      return jsonResponse({ ok: false, error: "Failed to list compliance events." }, 500, origin);
+    }
+
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    for (const entry of keys) {
+      const keyName = cleanText(entry?.name, 1024);
+      if (!keyName || seenKeys.has(keyName)) continue;
+      seenKeys.add(keyName);
+      scannedKeyNames.push(keyName);
+      if (scannedKeyNames.length >= maxScanKeys) break;
+    }
+
+    listComplete = listed?.list_complete === true;
+    cursor = cleanText(listed?.cursor, 1024) || undefined;
+    if (!listComplete && !cursor) {
+      // Defensive stop for unexpected KV list response shapes.
+      break;
+    }
+    if (scannedKeyNames.length >= maxScanKeys && !listComplete) {
+      hitScanCap = true;
+    }
+  }
 
   const events = [];
   let malformedCount = 0;
-  for (const key of sortedKeys) {
+  for (const key of scannedKeyNames) {
     let raw;
     try {
       raw = await env.COMPLIANCE_KV.get(key);
     } catch (_) {
-      return jsonResponse({ ok: false, error: "Failed to read compliance events." }, 500, origin);
+      malformedCount += 1;
+      continue;
     }
     if (!raw) {
       malformedCount += 1;
@@ -350,15 +376,51 @@ async function handleRecent(request, url, env, origin) {
     }
   }
 
+  const parseMaybeDate = (value) => {
+    const text = cleanText(value, 64);
+    if (!text) return null;
+    const parsed = Date.parse(text);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
+
+  const eventTimestamp = (event) => {
+    const ts = event && typeof event.timestamps === "object" && event.timestamps
+      ? event.timestamps
+      : {};
+    return (
+      parseMaybeDate(event?.created_at_utc) ??
+      parseMaybeDate(ts.recorded_at_utc) ??
+      parseMaybeDate(ts.event_at_utc) ??
+      parseMaybeDate(ts.paid_at_utc) ??
+      parseMaybeDate(ts.stopped_at_utc) ??
+      parseMaybeDate(ts.started_at_utc) ??
+      null
+    );
+  };
+
+  const sortedEvents = [...events].sort((a, b) => {
+    const aTs = eventTimestamp(a);
+    const bTs = eventTimestamp(b);
+    if (aTs != null && bTs != null && aTs !== bTs) return bTs - aTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
+  });
+  const limitedEvents = sortedEvents.slice(0, requestedLimit);
+  const hasMoreCandidates = hitScanCap || sortedEvents.length > requestedLimit;
+
   return jsonResponse(
     {
       ok: true,
       tenant_id: tenantId,
       company_id: companyId,
       limit: requestedLimit,
-      count: events.length,
+      count: limitedEvents.length,
       malformed_count: malformedCount,
-      events,
+      events: limitedEvents,
+      scanned_count: scannedKeyNames.length,
+      has_more_candidates: hasMoreCandidates,
     },
     200,
     origin,
