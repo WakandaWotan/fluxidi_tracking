@@ -4835,9 +4835,12 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     });
     try {
       final items = await CustomerBookingStore.instance.loadAll();
+      final visible = items
+          .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
+          .toList(growable: false);
       if (!mounted) return;
       setState(() {
-        _bookings = items;
+        _bookings = visible;
         _loading = false;
       });
     } catch (err) {
@@ -4954,7 +4957,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
           final view = CustomerBookingView.fromResponse(id, decoded);
           if (!mounted) return;
-          final deleted = await Navigator.of(context).push<bool>(
+          final result = await Navigator.of(context).push<dynamic>(
             MaterialPageRoute(
               builder: (_) => CustomerBookingDetailPage(
                 bookingId: id,
@@ -4963,7 +4966,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               ),
             ),
           );
-          if (deleted == true) {
+          final action = _customerDetailResultAction(result);
+          if (action == _customerDetailResultRemovedLocal ||
+              action == _customerDetailResultCancelledServer) {
             if (mounted) {
               setState(() {
                 _bookings = _bookings
@@ -4980,7 +4985,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           }
           if (mounted) {
             debugPrint(
-              '[CUSTOMER_BOOKINGS][DETAIL_RETURN] deleted=${deleted == true} beforeCount=$beforeCount afterCount=${_bookings.length}',
+              '[CUSTOMER_BOOKINGS][DETAIL_RETURN] action=${action ?? "-"} beforeCount=$beforeCount afterCount=${_bookings.length}',
             );
           }
           return;
@@ -5009,7 +5014,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       updatedAt: booking.createdAt,
     );
     if (!mounted) return;
-    final deleted = await Navigator.of(context).push<bool>(
+    final result = await Navigator.of(context).push<dynamic>(
       MaterialPageRoute(
         builder: (_) => CustomerBookingDetailPage(
           bookingId: id,
@@ -5018,7 +5023,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         ),
       ),
     );
-    if (deleted == true) {
+    final action = _customerDetailResultAction(result);
+    if (action == _customerDetailResultRemovedLocal ||
+        action == _customerDetailResultCancelledServer) {
       if (mounted) {
         setState(() {
           _bookings = _bookings
@@ -5035,7 +5042,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     }
     if (mounted) {
       debugPrint(
-        '[CUSTOMER_BOOKINGS][DETAIL_RETURN] deleted=${deleted == true} beforeCount=$beforeCount afterCount=${_bookings.length}',
+        '[CUSTOMER_BOOKINGS][DETAIL_RETURN] action=${action ?? "-"} beforeCount=$beforeCount afterCount=${_bookings.length}',
       );
     }
   }
@@ -5431,6 +5438,30 @@ Set<String> _customerBookingAliasesFromStored(StoredCustomerBooking booking) {
   );
 }
 
+const String _customerDetailResultRemovedLocal = 'removed_local';
+const String _customerDetailResultCancelledServer = 'cancelled_server';
+
+String? _customerDetailResultAction(dynamic result) {
+  if (result == true) return _customerDetailResultRemovedLocal;
+  if (result is String && result.trim().isNotEmpty) return result.trim();
+  if (result is Map) {
+    final action = result['action']?.toString().trim();
+    if (action != null && action.isNotEmpty) return action;
+  }
+  return null;
+}
+
+bool _isActiveCustomerLifecycleStatus(String status) {
+  final s = status.trim().toUpperCase();
+  if (s.isEmpty) return true;
+  return s != 'CANCELLED' &&
+      s != 'COMPLETED' &&
+      s != 'DELETED' &&
+      s != 'FAILED' &&
+      s != 'EXPIRED' &&
+      s != 'DECLINED';
+}
+
 bool _customerAliasesIntersect(Set<String> a, Set<String> b) {
   for (final value in a) {
     if (b.contains(value)) return true;
@@ -5482,14 +5513,17 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     });
     try {
       final items = await CustomerBookingsStore.instance.loadAll();
+      final visible = items
+          .where((item) => _isActiveCustomerLifecycleStatus(item.status))
+          .toList(growable: false);
       if (!mounted) return;
       setState(() {
-        _bookings = items;
+        _bookings = visible;
         _loading = false;
         _lastUpdated = DateTime.now();
       });
       debugPrint(
-        '[CUSTOMER_BOOKINGS][RELOAD_AFTER_DELETE] count=${items.length}',
+        '[CUSTOMER_BOOKINGS][RELOAD_AFTER_DELETE] count=${visible.length}',
       );
     } catch (err) {
       if (!mounted) return;
@@ -5538,9 +5572,12 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         }
       }
       final refreshed = await CustomerBookingsStore.instance.loadAll();
+      final visible = refreshed
+          .where((item) => _isActiveCustomerLifecycleStatus(item.status))
+          .toList(growable: false);
       if (!mounted) return;
       setState(() {
-        _bookings = refreshed;
+        _bookings = visible;
         _refreshing = false;
         _lastUpdated = DateTime.now();
       });
@@ -5648,7 +5685,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     final id = booking.canonicalBookingId.trim();
     if (id.isEmpty) return;
     final aliases = _customerBookingAliasesFromStored(booking);
-    final result = await Navigator.of(context).push<bool>(
+    final result = await Navigator.of(context).push<dynamic>(
       MaterialPageRoute(
         builder: (_) => CustomerBookingDetailPage(
           bookingId: id,
@@ -5657,7 +5694,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         ),
       ),
     );
-    if (result == true) {
+    final action = _customerDetailResultAction(result);
+    if (action == _customerDetailResultRemovedLocal ||
+        action == _customerDetailResultCancelledServer) {
       if (mounted) {
         setState(() {
           _bookings = _bookings
@@ -5672,18 +5711,17 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       }
       await _loadLocal();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Boeking verwijderd uit je lokale overzicht.',
-              en: 'Booking removed from your local overview.',
-              fr: 'Réservation supprimée de votre aperçu local.',
-              es: 'Reserva eliminada de tu vista local.',
-            ),
-          ),
-        ),
-      );
+      if (action == _customerDetailResultRemovedLocal) {
+        final message = _t(
+          nl: 'Boeking verwijderd uit je lokale overzicht.',
+          en: 'Booking removed from your local overview.',
+          fr: 'Réservation supprimée de votre aperçu local.',
+          es: 'Reserva eliminada de tu vista local.',
+        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
       return;
     }
     await _loadLocal();
@@ -7288,6 +7326,7 @@ class CustomerBookingDetailPage extends StatefulWidget {
 class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   late CustomerBookingView _view = widget.initialView;
   bool _refreshing = false;
+  bool _cancelling = false;
   String? _refreshError;
   late bool _usingLocalCache = widget.startsFromLocalCache;
 
@@ -7682,7 +7721,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       debugPrint(
         '[CUSTOMER_BOOKING][DELETE_POP] booking=${_safeRefPreview(bookingId)} reason=${result.removed ? 'removed' : 'already_absent'}',
       );
-      Navigator.of(context).pop(true);
+      Navigator.of(
+        context,
+      ).pop(<String, dynamic>{'action': _customerDetailResultRemovedLocal});
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -7697,6 +7738,170 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         ),
       ),
     );
+  }
+
+  Map<String, String> _cancelHeaders() {
+    final h = <String, String>{'Content-Type': 'application/json'};
+    if (kAdminToken.trim().isNotEmpty) {
+      h['x-admin-token'] = kAdminToken.trim();
+    }
+    return h;
+  }
+
+  bool get _canCancelBooking {
+    final status = _view.lifecycleStatus.trim().toUpperCase();
+    return status != 'CANCELLED' &&
+        status != 'COMPLETED' &&
+        status != 'DELETED' &&
+        status != 'FAILED' &&
+        status != 'EXPIRED' &&
+        status != 'DECLINED';
+  }
+
+  Future<void> _cancelBookingServerSide() async {
+    final bookingId = widget.bookingId.trim();
+    if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Boeking annuleren',
+            en: 'Cancel booking',
+            fr: 'Annuler la réservation',
+            es: 'Cancelar reserva',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Weet je zeker dat je deze boeking wil annuleren?',
+            en: 'Are you sure you want to cancel this booking?',
+            fr: 'Voulez-vous vraiment annuler cette réservation ?',
+            es: '¿Seguro que quieres cancelar esta reserva?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(
+                nl: 'Niet annuleren',
+                en: 'Keep booking',
+                fr: 'Garder',
+                es: 'Mantener',
+              ),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Annuleren',
+                en: 'Cancel booking',
+                fr: 'Annuler',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    setState(() {
+      _cancelling = true;
+      _refreshError = null;
+    });
+    final scope = _activeBookingScopeQuery();
+    final payload = <String, dynamic>{
+      'booking_id': bookingId,
+      'status': 'CANCELLED',
+      'tenant_id': scope['tenant_id'],
+      'company_id': scope['company_id'],
+      'tenantId': scope['tenantId'],
+      'companyId': scope['companyId'],
+      'actor_role': 'customer',
+      'actorRole': 'customer',
+    };
+    final uri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)}',
+    );
+    try {
+      final res = await http
+          .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 15));
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_RES] booking=${_safeRefPreview(bookingId)} code=${res.statusCode}',
+      );
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      final ok = decoded is Map ? decoded['ok'] == true : false;
+      if (res.statusCode != 200 || !ok) {
+        throw Exception('HTTP ${res.statusCode}: ${res.body}');
+      }
+
+      final aliases = _customerBookingDeleteAliases(
+        bookingId: bookingId,
+        publicBookingReference: _view.publicBookingReference,
+        bookingReference: _view.publicBookingReference,
+        publicReference: _view.publicBookingReference,
+        planningReference: _view.planningReference,
+        receiptReference: _view.receiptReference,
+        source: _view.source,
+      );
+      final localResult = await _removeLocalCustomerBookingEverywhere(
+        bookingForLog: bookingId,
+        aliases: aliases,
+      );
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_LOCAL_UPDATE] booking=${_safeRefPreview(bookingId)} removed=${localResult.removed} remaining=${localResult.remaining}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Boeking geannuleerd.',
+              en: 'Booking cancelled.',
+              fr: 'Réservation annulée.',
+              es: 'Reserva cancelada.',
+            ),
+          ),
+        ),
+      );
+      Navigator.of(
+        context,
+      ).pop(<String, dynamic>{'action': _customerDetailResultCancelledServer});
+    } catch (err) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_ERROR] booking=${_safeRefPreview(bookingId)} error=$err',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Annuleren mislukt. Probeer opnieuw.',
+              en: 'Cancellation failed. Please try again.',
+              fr: 'Échec de l’annulation. Réessayez.',
+              es: 'No se pudo cancelar. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _cancelling = false);
+      }
+    }
   }
 
   String _lifecycleLabel(String s) {
@@ -7895,6 +8100,24 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             actions: [
               IconButton(
                 tooltip: _t(
+                  nl: 'Boeking annuleren',
+                  en: 'Cancel booking',
+                  fr: 'Annuler la réservation',
+                  es: 'Cancelar reserva',
+                ),
+                onPressed: (!_canCancelBooking || _cancelling)
+                    ? null
+                    : _cancelBookingServerSide,
+                icon: _cancelling
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cancel_outlined),
+              ),
+              IconButton(
+                tooltip: _t(
                   nl: 'Verwijder uit mijn boekingen',
                   en: 'Remove from my bookings',
                   fr: 'Supprimer de mes réservations',
@@ -7961,6 +8184,34 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         style: const TextStyle(color: Colors.white),
                       ),
                     ),
+                  if (_canCancelBooking) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _cancelling
+                            ? null
+                            : _cancelBookingServerSide,
+                        icon: _cancelling
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.cancel_outlined),
+                        label: Text(
+                          _t(
+                            nl: 'Boeking annuleren',
+                            en: 'Cancel booking',
+                            fr: 'Annuler la réservation',
+                            es: 'Cancelar reserva',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     padding: const EdgeInsets.all(14),
