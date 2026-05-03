@@ -9903,10 +9903,12 @@ async function sendInvoiceEmailWithPdf({
   const hasCustomerEmail = isValidEmail(customerEmail);
   const hasInvoiceEmail = !!adminCopyEmail;
   const shouldSendCustomerEmail = sendCustomerEmail !== false;
+  const attachmentBase64 = bytesToBase64Chunked(pdfBytes);
+  const hasAttachment = !!attachmentBase64;
 
   if (shouldSendCustomerEmail) {
     console.log(
-      `[EMAIL][INVOICE_CUSTOMER][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasCustomerEmail=${hasCustomerEmail}`,
+      `[EMAIL][INVOICE_CUSTOMER][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasCustomerEmail=${hasCustomerEmail} attachment_included=${hasAttachment}`,
     );
   } else {
     console.log(
@@ -9914,7 +9916,7 @@ async function sendInvoiceEmailWithPdf({
     );
   }
   console.log(
-    `[EMAIL][INVOICE_ADMIN][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasInvoiceEmail=${hasInvoiceEmail}`,
+    `[EMAIL][INVOICE_ADMIN][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasInvoiceEmail=${hasInvoiceEmail} attachment_included=${hasAttachment}`,
   );
   if (!apiKey || !emailFrom) {
     if (shouldSendCustomerEmail) {
@@ -9934,20 +9936,20 @@ async function sendInvoiceEmailWithPdf({
   }
 
   const subject = `${brandName} factuur ${invoiceNumber}`;
+  const invoiceMessage = hasAttachment
+    ? `In bijlage vindt u uw factuur van ${escapeHtml(brandName)}.`
+    : "Uw betaling werd ontvangen, maar de factuur-PDF kon niet automatisch als bijlage worden toegevoegd. Neem contact op indien u de PDF nodig heeft.";
   const htmlBody = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.6">
       <h2 style="margin:0 0 10px">Factuur ${escapeHtml(invoiceNumber)}</h2>
       <p style="margin:0 0 12px;color:#444">
-        In bijlage vindt u uw factuur van ${escapeHtml(brandName)}.
+        ${invoiceMessage}
       </p>
       <p style="margin:12px 0 0;color:#666;font-size:12px">
         ${escapeHtml(footerLine)}
       </p>
     </div>
   `;
-
-  const attachmentBase64 = bytesToBase64Chunked(pdfBytes);
-  const hasAttachment = !!attachmentBase64;
   const payloadFor = (to, mailSubject) => ({
     from: emailFrom,
     to: [to],
@@ -10019,6 +10021,7 @@ async function sendInvoiceEmailWithPdf({
   return {
     enabled: true,
     sent: !!(customerSend.sent || adminCopy.sent),
+    attachment_included: hasAttachment,
     customer: customerSend,
     admin_copy: adminCopy,
   };
