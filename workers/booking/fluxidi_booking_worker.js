@@ -1550,49 +1550,192 @@ async function handleSafeResetDryRun(request, url, env) {
   }, 200);
 }
 
-async function handleSafeResetOperationalData(request, url, env) {
-  _requireAdmin(request, url, env);
-  const plan = await collectSafeResetKeys(env);
-  console.log(
-    `[SAFE_RESET][DRY_RUN] total=${plan.totalCount} protectedSkipped=${plan.protectedSkipped}`
+function isExplicitTenantCompanyScope(scope) {
+  const tenantId = _scopeText(scope?.tenant_id);
+  const companyId = _scopeText(scope?.company_id);
+  return !!(tenantId && companyId);
+}
+
+async function collectScopedResetBookingIds(env, requestedScope) {
+  if (!env?.BOOKING_KV) return { bookingIds: [], skipped: 0 };
+  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
+  const bookingIds = [];
+  let skipped = 0;
+  for (const item of listed?.keys || []) {
+    const key = String(item?.name || "");
+    if (!key.startsWith("booking:")) continue;
+    const rec = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      skipped += 1;
+      continue;
+    }
+    if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
+      skipped += 1;
+      continue;
+    }
+    const bookingId = key.slice("booking:".length);
+    if (!bookingId) {
+      skipped += 1;
+      continue;
+    }
+    bookingIds.push(bookingId);
+  }
+  return { bookingIds, skipped };
+}
+
+async function scopedResetTrackingByBookingIds(env, bookingIds = []) {
+  if (!env?.FLUXIDI_TRACKING) {
+    return { deletedTrackingKeys: 0, skippedUnscopedOrUnknown: 0 };
+  }
+  let deletedTrackingKeys = 0;
+  let skippedUnscopedOrUnknown = 0;
+  const uniqueBookingIds = Array.from(
+    new Set((bookingIds || []).map((v) => String(v || "").trim()).filter(Boolean)),
   );
-  if (plan.protectedSkipped > 0) {
-    console.log(`[SAFE_RESET][PROTECTED_SKIPPED] count=${plan.protectedSkipped}`);
+  const deletedBookingIdSet = new Set(uniqueBookingIds);
+
+  for (const bookingId of uniqueBookingIds) {
+    const mapKey = `booking:${bookingId}:session`;
+    let mapRaw = null;
+    try {
+      mapRaw = await env.FLUXIDI_TRACKING.get(mapKey);
+    } catch (_) {
+      skippedUnscopedOrUnknown += 1;
+      continue;
+    }
+    if (mapRaw == null) {
+      continue;
+    }
+    await env.FLUXIDI_TRACKING.delete(mapKey);
+    deletedTrackingKeys += 1;
+
+    let map = null;
+    try {
+      map = JSON.parse(mapRaw);
+    } catch (_) {
+      map = null;
+    }
+    if (!map || typeof map !== "object") {
+      skippedUnscopedOrUnknown += 1;
+      continue;
+    }
+
+    const sessionId = safeStr(map?.session_id || map?.sessionId, 160);
+    if (sessionId) {
+      await env.FLUXIDI_TRACKING.delete(`session:${sessionId}`);
+      deletedTrackingKeys += 1;
+      await env.FLUXIDI_TRACKING.delete(`ping:${sessionId}:last`);
+      deletedTrackingKeys += 1;
+    } else {
+      skippedUnscopedOrUnknown += 1;
+    }
+
+    const publicToken = safeStr(map?.public_token || map?.publicToken, 200);
+    if (publicToken) {
+      await env.FLUXIDI_TRACKING.delete(`public:${publicToken}:booking`);
+      deletedTrackingKeys += 1;
+    }
   }
 
-  let deleted = 0;
-  let reservationsReleased = 0;
-  for (const item of plan.keys) {
-    try {
-      if (item.namespace === "BOOKING_KV" && item.key.startsWith("booking:")) {
-        if (await releaseSafeResetBookingReservation(env, item.key)) {
-          reservationsReleased += 1;
-        }
+  try {
+    const rawIdx = await env.FLUXIDI_TRACKING.get("booking_index");
+    if (rawIdx != null) {
+      let idx = [];
+      try {
+        idx = JSON.parse(rawIdx || "[]");
+      } catch (_) {
+        idx = [];
       }
-      const namespace = item.namespace === "BOOKING_KV"
-        ? env.BOOKING_KV
-        : env.FLUXIDI_TRACKING;
-      if (!namespace) continue;
-      await namespace.delete(item.key);
-      deleted += 1;
-      console.log(`[SAFE_RESET][DELETE] namespace=${item.namespace} category=${item.category}`);
-    } catch (err) {
+      if (Array.isArray(idx)) {
+        const next = idx.filter((id) => !deletedBookingIdSet.has(String(id || "").trim()));
+        if (next.length !== idx.length) {
+          await env.FLUXIDI_TRACKING.put(
+            "booking_index",
+            JSON.stringify(next),
+            { expirationTtl: 60 * 60 * 24 * 30 },
+          );
+          deletedTrackingKeys += 1;
+        }
+      } else {
+        skippedUnscopedOrUnknown += 1;
+      }
+    }
+  } catch (_) {
+    skippedUnscopedOrUnknown += 1;
+  }
+
+  return { deletedTrackingKeys, skippedUnscopedOrUnknown };
+}
+
+async function handleSafeResetOperationalData(request, url, env) {
+  _requireAdmin(request, url, env);
+  if (String(env?.ALLOW_DEV_RESET || "").trim() !== "true") {
+    return json({ ok: false, error: "dev_reset_disabled" }, 403);
+  }
+  const body = await safeJson(request);
+  const requestedScope = extractBookingTenantScope({ request, url, body });
+  if (!isExplicitTenantCompanyScope(requestedScope)) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const requestedTenant = _scopeText(requestedScope?.tenant_id);
+  const requestedCompany = _scopeText(requestedScope?.company_id);
+  if (requestedTenant === "fluxidi" || requestedCompany === "fluxidi") {
+    return json({ ok: false, error: "unsafe_legacy_scope_not_allowed" }, 400);
+  }
+
+  const collected = await collectScopedResetBookingIds(env, requestedScope);
+  let deletedBookings = 0;
+  const deletedBookingIds = [];
+  let deletedTrackingKeys = 0;
+  let skippedUnscopedOrUnknown = Number(collected?.skipped || 0);
+  let reservationsReleased = 0;
+  for (const bookingId of collected.bookingIds || []) {
+    const key = `booking:${bookingId}`;
+    try {
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        skippedUnscopedOrUnknown += 1;
+        continue;
+      }
+      if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
+        skippedUnscopedOrUnknown += 1;
+        continue;
+      }
+      if (await releaseSafeResetBookingReservation(env, key)) {
+        reservationsReleased += 1;
+      }
+      await env.BOOKING_KV.delete(key);
+      deletedBookings += 1;
+      deletedBookingIds.push(bookingId);
       console.log(
-        `[SAFE_RESET][DELETE] namespace=${item.namespace} category=${item.category} failed=${String(err?.message || err)}`
+        `[SAFE_RESET][SCOPED_DELETE][BOOKING] tenant=${requestedTenant} company=${requestedCompany} booking=${_bookingIntentMask(bookingId)}`,
+      );
+    } catch (err) {
+      skippedUnscopedOrUnknown += 1;
+      console.log(
+        `[SAFE_RESET][SCOPED_DELETE][BOOKING][ERROR] tenant=${requestedTenant} company=${requestedCompany} booking=${_bookingIntentMask(bookingId)} failed=${String(err?.message || err)}`
       );
     }
   }
 
+  const trackingReset = await scopedResetTrackingByBookingIds(env, deletedBookingIds);
+  deletedTrackingKeys += Number(trackingReset?.deletedTrackingKeys || 0);
+  skippedUnscopedOrUnknown += Number(trackingReset?.skippedUnscopedOrUnknown || 0);
+
   console.log(
-    `[SAFE_RESET][DONE] deleted=${deleted} protectedSkipped=${plan.protectedSkipped} reservationsReleased=${reservationsReleased}`
+    `[SAFE_RESET][SCOPED_DONE] tenant=${requestedTenant} company=${requestedCompany} deletedBookings=${deletedBookings} deletedTrackingKeys=${deletedTrackingKeys} skipped=${skippedUnscopedOrUnknown} reservationsReleased=${reservationsReleased}`
   );
 
   return json({
     ok: true,
-    deleted,
-    protectedSkipped: plan.protectedSkipped,
+    scoped: true,
+    tenant_id: requestedTenant,
+    company_id: requestedCompany,
+    deleted_bookings: deletedBookings,
+    deleted_tracking_keys: deletedTrackingKeys,
+    skipped_unscoped_or_unknown: skippedUnscopedOrUnknown,
     reservationsReleased,
-    message: "Operational test data reset completed safely",
+    message: "Scoped operational test data reset completed safely",
   }, 200);
 }
 
