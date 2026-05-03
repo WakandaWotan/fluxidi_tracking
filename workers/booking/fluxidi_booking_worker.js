@@ -5371,6 +5371,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         pickupTime: time,
         bookingPublicId: booking.bookingId,
         bookingId: booking.booking_uuid,
+        tenant_id: safeStr(booking.tenant_id || booking.tenantId || tenantContext?.tenant_id, 120),
+        company_id: safeStr(booking.company_id || booking.companyId || tenantContext?.company_id, 120),
 
         // route
         from: booking.from,
@@ -8044,6 +8046,20 @@ async function updateBookingPaymentAuthoritative(
             pickupTime: safeStr(booking?.pickupTime || booking?.time || pickupParts.time),
             bookingPublicId: safeStr(booking?.bookingId || bookingId),
             bookingId: safeStr(booking?.booking_uuid || booking?.bookingId || bookingId),
+            tenant_id: safeStr(
+              booking?.tenant_id ??
+                booking?.tenantId ??
+                rec?.tenant_id ??
+                rec?.tenantId,
+              120,
+            ),
+            company_id: safeStr(
+              booking?.company_id ??
+                booking?.companyId ??
+                rec?.company_id ??
+                rec?.companyId,
+              120,
+            ),
             from: safeStr(booking?.from),
             to: safeStr(booking?.to),
             stops: Array.isArray(booking?.stops) ? booking.stops : [],
@@ -8314,6 +8330,20 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       pickupTime: safeStr(booking?.pickupTime || booking?.time || pickupParts.time),
       bookingPublicId: safeStr(booking?.bookingId || bookingId),
       bookingId: safeStr(booking?.booking_uuid || booking?.bookingId || bookingId),
+      tenant_id: safeStr(
+        booking?.tenant_id ??
+          booking?.tenantId ??
+          rec?.tenant_id ??
+          rec?.tenantId,
+        120,
+      ),
+      company_id: safeStr(
+        booking?.company_id ??
+          booking?.companyId ??
+          rec?.company_id ??
+          rec?.companyId,
+        120,
+      ),
       from: safeStr(booking?.from),
       to: safeStr(booking?.to),
       stops: Array.isArray(booking?.stops) ? booking.stops : [],
@@ -9594,23 +9624,78 @@ function normalizeInvoiceInputForTest(body) {
 }
 
 /**
- * ✅ NEW: monthly invoice numbers via KV
- * Format: FLX-YYYY-MM-0001
- * KV key: invoice:YYYY-MM
- * KV value: last counter (e.g. "1")
+ * Invoice numbers keep display format FLX-YYYY-MM-####
+ * - Scoped path: DOCUMENT_REFERENCE_SEQUENCE (atomic, tenant/company + month)
+ * - Legacy fallback: INVOICE_KV key invoice:YYYY-MM when scope is missing
  */
-async function nextInvoiceNumber(env, pickupIsoOrDate = null) {
-  const kv = env.INVOICE_KV;
-
+function invoiceYearMonthPartsFromInput(pickupIsoOrDate = null) {
   let d = null;
   if (pickupIsoOrDate) {
     const tmp = new Date(pickupIsoOrDate);
     if (!isNaN(tmp.getTime())) d = tmp;
   }
   if (!d) d = new Date();
-
   const yyyy = String(d.getFullYear());
   const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return { yyyy, mm };
+}
+
+async function allocateScopedInvoiceSequence(env, { tenant_id, company_id, pickup_iso } = {}) {
+  if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+    throw new Error("Missing DOCUMENT_REFERENCE_SEQUENCE binding");
+  }
+  const tenantId = safeStr(tenant_id, 120);
+  const companyId = safeStr(company_id, 120);
+  if (!tenantId || !companyId) {
+    throw new Error("missing_tenant_scope");
+  }
+  const parts = invoiceYearMonthPartsFromInput(pickup_iso || null);
+  const yyyy = parts.yyyy;
+  const mm = parts.mm;
+  const sequenceType = `invoice_${yyyy}_${mm}`;
+  const instanceName = documentReferenceScopeName(tenantId, companyId, sequenceType, yyyy);
+  const stub = env.DOCUMENT_REFERENCE_SEQUENCE.get(
+    env.DOCUMENT_REFERENCE_SEQUENCE.idFromName(instanceName),
+  );
+  const resp = await stub.fetch("https://do/allocate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "allocate",
+      tenant_id: tenantId,
+      company_id: companyId,
+      sequence_type: sequenceType,
+      prefix: "FLX",
+      year: yyyy,
+      pickup_iso: pickup_iso || null,
+    }),
+  });
+  const body = await resp.json().catch(() => ({}));
+  const seqNum = Number(body?.seq);
+  if (!resp.ok || !Number.isFinite(seqNum) || seqNum <= 0) {
+    throw new Error(
+      safeStr(body?.error) || `Scoped invoice sequence allocation failed (${resp.status})`,
+    );
+  }
+  const seq = String(Math.trunc(seqNum)).padStart(4, "0");
+  return `FLX-${yyyy}-${mm}-${seq}`;
+}
+
+async function nextInvoiceNumber(env, pickupIsoOrDate = null, scope = null) {
+  const scopeTenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 120);
+  const scopeCompany = safeStr(scope?.company_id ?? scope?.companyId, 120);
+  if (scopeTenant && scopeCompany) {
+    return await allocateScopedInvoiceSequence(env, {
+      tenant_id: scopeTenant,
+      company_id: scopeCompany,
+      pickup_iso: pickupIsoOrDate,
+    });
+  }
+  console.log("[INVOICE_SEQ][LEGACY_FALLBACK] reason=missing_scope");
+  const kv = env.INVOICE_KV;
+  const parts = invoiceYearMonthPartsFromInput(pickupIsoOrDate);
+  const yyyy = parts.yyyy;
+  const mm = parts.mm;
   const key = `invoice:${yyyy}-${mm}`;
 
   if (!kv) {
@@ -10134,9 +10219,22 @@ async function sendInvoiceEmailWithPdf({
 async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
   try {
     const bookingInput = booking && typeof booking === "object" ? booking : {};
-    const commProfile = await resolveTenantCommunicationProfile(env);
+    const invoiceTenantId = safeStr(
+      bookingInput.tenant_id ??
+        bookingInput.tenantId,
+      120,
+    );
+    const invoiceCompanyId = safeStr(
+      bookingInput.company_id ??
+        bookingInput.companyId,
+      120,
+    );
+    const invoiceScope = invoiceTenantId && invoiceCompanyId
+      ? { tenant_id: invoiceTenantId, company_id: invoiceCompanyId }
+      : null;
+    const commProfile = await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
-    const invoiceNumber = await nextInvoiceNumber(env, bookingInput.pickupStartIso);
+    const invoiceNumber = await nextInvoiceNumber(env, bookingInput.pickupStartIso, invoiceScope);
     const invoiceDate = todayNL();
     const parseAmount = (value) => {
       const num = Number(value);
