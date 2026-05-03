@@ -2595,28 +2595,52 @@ GET /oauth/callback
       // Get booking + quote/pricing for a given booking_id (used by the apps)
       if (url.pathname === "/tracking/booking" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await trackingGetBooking(body, env);
-        return json(out, 200);
+        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const out = await trackingGetBooking(body, env, tenantScope);
+        return json(
+          out,
+          out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
+            ? 400
+            : (out?.error === "forbidden" ? 403 : 200),
+        );
       }
 
       // Start a tracking session (creates trip_id, persists on booking)
       if (url.pathname === "/tracking/start" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await trackingStart(body, env);
-        return json(out, 200);
+        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const out = await trackingStart(body, env, tenantScope);
+        return json(
+          out,
+          out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
+            ? 400
+            : (out?.error === "forbidden" ? 403 : 200),
+        );
       }
 
       // GPS ping from driver phone
       if (url.pathname === "/tracking/ping" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await trackingPing(body, env);
-        return json(out, 200);
+        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const out = await trackingPing(body, env, tenantScope);
+        return json(
+          out,
+          out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
+            ? 400
+            : (out?.error === "forbidden" ? 403 : 200),
+        );
       }
 
       // Read last GPS ping (tablet + diagnostics)
       if (url.pathname === "/tracking/last" && request.method === "GET") {
-        const out = await trackingLast(url, env);
-        return json(out, 200);
+        const tenantScope = extractBookingTenantScope({ request, url });
+        const out = await trackingLast(url, env, tenantScope);
+        return json(
+          out,
+          out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
+            ? 400
+            : (out?.error === "forbidden" ? 403 : 200),
+        );
       }
 
       return new Response("Not Found", { status: 404, headers: corsHeaders() });
@@ -6380,10 +6404,47 @@ async function loadBookingRecord(env, bookingId) {
   return { key, rec };
 }
 
-async function trackingGetBooking(body, env) {
+function ensureTrackingScopeForRecord(rec, requestedScope) {
+  if (!requestedScope?.hasScope) return missingTenantScopeError();
+  if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  return null;
+}
+
+async function _resolveTrackingBookingBySessionId(env, sessionOrTripId) {
+  const wanted = String(sessionOrTripId || "").trim();
+  if (!wanted) return null;
+  if (!env?.BOOKING_KV) return null;
+  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
+  for (const k of listed?.keys || []) {
+    const key = String(k?.name || "");
+    if (!key.startsWith("booking:")) continue;
+    const rec = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!rec || typeof rec !== "object") continue;
+    const recTripId = safeStr(
+      rec?.trip?.trip_id ||
+        rec?.trip?.session_id ||
+        rec?.tracking_last?.trip_id ||
+        rec?.tracking_last?.session_id,
+      160,
+    );
+    if (!recTripId || recTripId !== wanted) continue;
+    return {
+      booking_id: key.slice("booking:".length),
+      key,
+      rec,
+    };
+  }
+  return null;
+}
+
+async function trackingGetBooking(body, env, requestedScope = null) {
   try {
     const booking_id = requireStr(body?.booking_id || body?.bookingId, "booking_id");
     const { rec } = await loadBookingRecord(env, booking_id);
+    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
+    if (scopeBlock) return scopeBlock;
 
     // The booking record already contains the canonical quote from your /book flow.
     // We simply return it so the app can display pricing + options consistently.
@@ -6414,10 +6475,12 @@ async function trackingGetBooking(body, env) {
   }
 }
 
-async function trackingStart(body, env) {
+async function trackingStart(body, env, requestedScope = null) {
   try {
     const booking_id = requireStr(body?.booking_id || body?.bookingId, "booking_id");
     const { key, rec } = await loadBookingRecord(env, booking_id);
+    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
+    if (scopeBlock) return scopeBlock;
 
     const trip_id = crypto?.randomUUID ? crypto.randomUUID() : `trip_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     rec.trip = {
@@ -6434,9 +6497,16 @@ async function trackingStart(body, env) {
   }
 }
 
-async function trackingPing(body, env) {
+async function trackingPing(body, env, requestedScope = null) {
   try {
-    const booking_id = requireStr(body?.booking_id || body?.bookingId, "booking_id");
+    const booking_id = safeStr(body?.booking_id || body?.bookingId);
+    const session_id = safeStr(
+      body?.session_id ||
+        body?.sessionId ||
+        body?.trip_id ||
+        body?.tripId,
+      160,
+    );
     const lat = Number(body?.lat);
     const lng = Number(body?.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("lat/lng are required numbers");
@@ -6445,7 +6515,23 @@ async function trackingPing(body, env) {
     const accuracy = body?.accuracy == null ? null : Number(body.accuracy);
     const heading = body?.heading == null ? null : Number(body.heading);
 
-    const { key, rec } = await loadBookingRecord(env, booking_id);
+    let resolvedBookingId = booking_id;
+    let loaded = null;
+    if (resolvedBookingId) {
+      loaded = await loadBookingRecord(env, resolvedBookingId);
+    } else if (session_id) {
+      const resolved = await _resolveTrackingBookingBySessionId(env, session_id);
+      if (!resolved?.booking_id || !resolved?.rec) {
+        throw new Error("Booking not found");
+      }
+      resolvedBookingId = resolved.booking_id;
+      loaded = { key: resolved.key, rec: resolved.rec };
+    } else {
+      throw new Error("booking_id is required");
+    }
+    const { key, rec } = loaded;
+    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
+    if (scopeBlock) return scopeBlock;
 
     rec.tracking_last = {
       lat,
@@ -6459,18 +6545,49 @@ async function trackingPing(body, env) {
 
     await env.BOOKING_KV.put(key, JSON.stringify(rec));
 
-    return { ok: true, booking_id,
+    return { ok: true, booking_id: resolvedBookingId,
       build: FLUXIDI_BUILD, tracking_last: rec.tracking_last };
   } catch (err) {
     return { ok: false, error: err?.message || "trackingPing failed" };
   }
 }
 
-async function trackingLast(url, env) {
+async function trackingLast(url, env, requestedScope = null) {
   try {
-    const booking_id = requireStr(url?.searchParams?.get("booking_id") || url?.searchParams?.get("bookingId"), "booking_id");
-    const { rec } = await loadBookingRecord(env, booking_id);
-    return { ok: true, booking_id,
+    if (!requestedScope?.hasScope) {
+      return missingTenantScopeError();
+    }
+    const booking_id = safeStr(
+      url?.searchParams?.get("booking_id") ||
+        url?.searchParams?.get("bookingId"),
+    );
+    const session_id = safeStr(
+      url?.searchParams?.get("session_id") ||
+        url?.searchParams?.get("sessionId") ||
+        url?.searchParams?.get("trip_id") ||
+        url?.searchParams?.get("tripId"),
+      160,
+    );
+
+    let resolvedBookingId = booking_id;
+    let rec = null;
+    if (resolvedBookingId) {
+      const loaded = await loadBookingRecord(env, resolvedBookingId);
+      rec = loaded.rec;
+    } else if (session_id) {
+      const resolved = await _resolveTrackingBookingBySessionId(env, session_id);
+      if (!resolved?.booking_id || !resolved?.rec) {
+        return { ok: false, error: "missing_tracking_booking_scope" };
+      }
+      resolvedBookingId = resolved.booking_id;
+      rec = resolved.rec;
+    } else {
+      return { ok: false, error: "missing_tracking_booking_scope" };
+    }
+    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
+    if (scopeBlock) return scopeBlock;
+
+    return { ok: true, booking_id: resolvedBookingId,
       build: FLUXIDI_BUILD, tracking_last: rec?.tracking_last || null, trip: rec?.trip || null };
   } catch (err) {
     return { ok: false, error: err?.message || "trackingLast failed" };
