@@ -121,6 +121,16 @@ function _fleetAllocatorScopeKey(pickupIso, scope = null) {
   }
 }
 
+function _bookingLifecycleValue(rec) {
+  return (
+    rec?.status ??
+    rec?.stage ??
+    rec?.booking?.status ??
+    rec?.booking?.stage ??
+    null
+  );
+}
+
 export class FleetAllocatorDO {
   constructor(state, env) {
     this.state = state;
@@ -157,16 +167,43 @@ export class FleetAllocatorDO {
     const tenantScope = normalizeFleetTenantScope(body);
     const req = { pickupMs, serviceMin, tier, pax, bags, tenantScope };
     const reservations = await this._loadReservations();
+    let reservationsDirty = false;
 
     // Idempotency for retried booking confirmation
     if (reservations[bookingId]?.vehicle_id) {
-      return this._json({
-        ok: true,
-        allowed: true,
-        booking_id: bookingId,
-        assigned_vehicle_id: reservations[bookingId].vehicle_id,
-        source: "existing_reservation",
-      });
+      let keepReservation = true;
+      try {
+        const linked = await this.env.BOOKING_KV.get(`booking:${bookingId}`, {
+          type: "json",
+        });
+        if (!linked || isTerminalLifecycleStatus(_bookingLifecycleValue(linked))) {
+          delete reservations[bookingId];
+          reservationsDirty = true;
+          keepReservation = false;
+          console.log(
+            `[FLEET][ALLOCATOR][PRUNE_STALE_RESERVATION] booking=${_bookingIntentMask(bookingId)} reason=${!linked ? "missing_booking" : "terminal_booking"}`,
+          );
+        }
+      } catch (_) {
+        // Best-effort stale-prune check only.
+      }
+      if (keepReservation) {
+        if (reservationsDirty) {
+          await this._saveReservations(reservations);
+          reservationsDirty = false;
+        }
+        return this._json({
+          ok: true,
+          allowed: true,
+          booking_id: bookingId,
+          assigned_vehicle_id: reservations[bookingId].vehicle_id,
+          source: "existing_reservation",
+        });
+      }
+    }
+    if (reservationsDirty) {
+      await this._saveReservations(reservations);
+      reservationsDirty = false;
     }
 
     const vehicles = await _loadVehicleInventory(this.env, { scope: tenantScope });
@@ -192,8 +229,7 @@ export class FleetAllocatorDO {
       const rec = await this.env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
       if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, tenantScope)) continue;
-      const lifecycle = _normLifecycleStatus(rec?.status || rec?.stage || null);
-      if (lifecycle === "COMPLETED" || lifecycle === "CANCELLED") continue;
+      if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
       const d = _bookingDemandFromRecord(rec, this.env);
       if (!Number.isFinite(d.pickupMs)) continue;
       if (!_windowsOverlap(req.pickupMs, req.serviceMin, d.pickupMs, d.serviceMin)) continue;
@@ -210,6 +246,19 @@ export class FleetAllocatorDO {
     // Serialized in-flight reservations inside DO
     for (const [id, r] of Object.entries(reservations)) {
       if (!r || id === bookingId) continue;
+      try {
+        const linked = await this.env.BOOKING_KV.get(`booking:${id}`, { type: "json" });
+        if (!linked || isTerminalLifecycleStatus(_bookingLifecycleValue(linked))) {
+          delete reservations[id];
+          reservationsDirty = true;
+          console.log(
+            `[FLEET][ALLOCATOR][PRUNE_STALE_RESERVATION] booking=${_bookingIntentMask(id)} reason=${!linked ? "missing_booking" : "terminal_booking"}`,
+          );
+          continue;
+        }
+      } catch (_) {
+        // Best-effort stale-prune check only.
+      }
       const rPickup = Number(r.pickup_ms);
       const rService = Math.max(1, Number(r.service_min) || 1);
       if (!Number.isFinite(rPickup)) continue;
@@ -218,6 +267,10 @@ export class FleetAllocatorDO {
       if (rv && suitableIds.has(rv)) {
         occupiedAssignedIds.add(rv);
       }
+    }
+    if (reservationsDirty) {
+      await this._saveReservations(reservations);
+      reservationsDirty = false;
     }
 
     const freeVehicles = suitableVehicles
@@ -4236,20 +4289,33 @@ async function handleBooking(payload, env, request) {
     if (mappedCanonicalId) {
       const mappedRecord = await env.BOOKING_KV.get(`booking:${mappedCanonicalId}`, { type: "json" });
       if (mappedRecord && bookingMatchesRequestedTenantScope(mappedRecord, idempotencyScope)) {
+        if (isTerminalLifecycleStatus(_bookingLifecycleValue(mappedRecord))) {
+          const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+          console.log(
+            `[BOOKING][IDEMPOTENCY][STALE_TERMINAL] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
+          );
+          try {
+            await env.BOOKING_KV.delete(bookingIntent.key);
+          } catch (_) {
+            // Best-effort cleanup only.
+          }
+        } else {
+          const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+          console.log(
+            `[BOOKING][IDEMPOTENCY][HIT] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
+          );
+          return buildIdempotentBookingHitResponse(mappedCanonicalId, mappedRecord);
+        }
+      } else {
         const maskedScope = _bookingIntentScopeMask(idempotencyScope);
         console.log(
-          `[BOOKING][IDEMPOTENCY][HIT] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
+          `[BOOKING][IDEMPOTENCY][STALE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
         );
-        return buildIdempotentBookingHitResponse(mappedCanonicalId, mappedRecord);
-      }
-      const maskedScope = _bookingIntentScopeMask(idempotencyScope);
-      console.log(
-        `[BOOKING][IDEMPOTENCY][STALE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(mappedCanonicalId)}`,
-      );
-      try {
-        await env.BOOKING_KV.delete(bookingIntent.key);
-      } catch (_) {
-        // Best-effort cleanup only.
+        try {
+          await env.BOOKING_KV.delete(bookingIntent.key);
+        } catch (_) {
+          // Best-effort cleanup only.
+        }
       }
     } else {
       const maskedScope = _bookingIntentScopeMask(idempotencyScope);
@@ -6420,6 +6486,65 @@ function _normLifecycleStatus(v) {
   return "PENDING";
 }
 
+const TERMINAL_BOOKING_LIFECYCLE_STATUSES = new Set([
+  "COMPLETED",
+  "CANCELLED",
+  "CANCELED",
+  "DELETED",
+  "DECLINED",
+  "FAILED",
+  "EXPIRED",
+]);
+
+function isTerminalLifecycleStatus(value) {
+  const raw = String(value || "").toUpperCase().trim();
+  if (TERMINAL_BOOKING_LIFECYCLE_STATUSES.has(raw)) return true;
+  const normalized = _normLifecycleStatus(raw);
+  return normalized === "COMPLETED" || normalized === "CANCELLED";
+}
+
+function bookingPickupIsoFromRecord(rec) {
+  return safeStr(
+    rec?.booking?.pickupStartIso ||
+      rec?.booking?.pickup_iso ||
+      rec?.quote?.pickup_iso ||
+      rec?.payload?.pickup_iso ||
+      rec?.payload?.pickupIso,
+  );
+}
+
+async function releaseAllocatorReservationForBooking({
+  env,
+  bookingId,
+  rec,
+  logTag,
+}) {
+  if (!env?.FLEET_ALLOCATOR || !env?.BOOKING_KV) return false;
+  const canonicalBookingId = safeStr(bookingId);
+  const pickupIso = bookingPickupIsoFromRecord(rec);
+  if (!canonicalBookingId || !pickupIso) return false;
+  const tenantScope = normalizeFleetTenantScope(resolveBookingTenantScopeFromRecord(rec));
+  const assignedVehicleId = safeStr(_assignedVehicleIdFromRecord(rec));
+  const maskedScope = _bookingIntentScopeMask(tenantScope);
+  try {
+    await _allocatorRequest(env, pickupIso, {
+      action: "release",
+      booking_id: canonicalBookingId,
+      assigned_vehicle_id: assignedVehicleId || undefined,
+      tenantScope,
+    });
+    console.log(
+      `[FLEET][ALLOCATOR][${logTag}][OK] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(canonicalBookingId)}`,
+    );
+    return true;
+  } catch (err) {
+    console.log(
+      `[FLEET][ALLOCATOR][${logTag}][ERROR] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(canonicalBookingId)} reason=${safeStr(err?.message || err, 140) || "unknown"}`,
+    );
+    return false;
+  }
+}
+
 function _pick(obj, path, fb = null) {
   let cur = obj;
   for (const key of path) {
@@ -7023,8 +7148,7 @@ async function _evaluateFleetAvailability(env, req) {
     if (!rec || typeof rec !== "object") continue;
     if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope)) continue;
 
-    const lifecycle = _normLifecycleStatus(rec?.status || rec?.stage || null);
-    if (lifecycle === "COMPLETED" || lifecycle === "CANCELLED") continue;
+    if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
 
     const d = _bookingDemandFromRecord(rec, env);
     if (!Number.isFinite(d.pickupMs)) continue;
@@ -7345,6 +7469,14 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
     await cleanupBookingCalendarEvents(env, rec);
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  if (isTerminalLifecycleStatus(normalized)) {
+    await releaseAllocatorReservationForBooking({
+      env,
+      bookingId,
+      rec,
+      logTag: "RELEASE_ON_TERMINAL",
+    });
+  }
   return { ok: true, booking_id: bookingId, status: normalized };
 }
 
@@ -7953,6 +8085,12 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
     return { ok: false, error: "forbidden" };
   }
   await cleanupBookingCalendarEvents(env, rec);
+  await releaseAllocatorReservationForBooking({
+    env,
+    bookingId,
+    rec,
+    logTag: "RELEASE_ON_DELETE",
+  });
   await env.BOOKING_KV.delete(key);
   return { ok: true, booking_id: bookingId, deleted: true };
 }
