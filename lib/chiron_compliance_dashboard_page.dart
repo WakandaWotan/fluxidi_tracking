@@ -1385,6 +1385,8 @@ class RemoteComplianceEvent {
     required this.eventType,
     required this.rideType,
     required this.bookingId,
+    required this.publicBookingReference,
+    required this.receiptReference,
     required this.tripId,
     required this.syncState,
     required this.createdAtUtc,
@@ -1399,6 +1401,8 @@ class RemoteComplianceEvent {
   final String eventType;
   final String rideType;
   final String bookingId;
+  final String publicBookingReference;
+  final String receiptReference;
   final String tripId;
   final String syncState;
   final String createdAtUtc;
@@ -1421,6 +1425,20 @@ class RemoteComplianceEvent {
       eventType: text('event_type'),
       rideType: text('ride_type'),
       bookingId: text('booking_id'),
+      publicBookingReference: text('public_booking_reference').isNotEmpty
+          ? text('public_booking_reference')
+          : (text('publicBookingReference').isNotEmpty
+                ? text('publicBookingReference')
+                : (text('booking_reference').isNotEmpty
+                      ? text('booking_reference')
+                      : (text('bookingReference').isNotEmpty
+                            ? text('bookingReference')
+                            : (text('public_reference').isNotEmpty
+                                  ? text('public_reference')
+                                  : text('publicReference'))))),
+      receiptReference: text('receipt_reference').isNotEmpty
+          ? text('receipt_reference')
+          : text('receiptReference'),
       tripId: text('trip_id'),
       syncState: text('sync_state'),
       createdAtUtc: text('created_at_utc'),
@@ -2103,6 +2121,15 @@ class _RemoteComplianceEventsSectionState
     );
   }
 
+  String _localizedInternalBookingLabel() {
+    return _t(
+      nl: 'Interne boeking',
+      en: 'Internal booking',
+      fr: 'Réservation interne',
+      es: 'Reserva interna',
+    );
+  }
+
   String _labelValue(String label, String value) {
     if (appConfig.currentLanguage == AppLanguage.fr) return '$label : $value';
     return '$label: $value';
@@ -2110,9 +2137,39 @@ class _RemoteComplianceEventsSectionState
 
   ({String label, String value}) _businessReferenceForRemoteCard({
     required String rideType,
+    required String publicBookingReference,
+    required String receiptReference,
     required String bookingId,
     required String tripId,
   }) {
+    final publicBookingIsBusiness =
+        publicBookingReference.isNotEmpty &&
+        !_isTechnicalInternalReference(publicBookingReference);
+    if (publicBookingIsBusiness) {
+      return (
+        label: _t(
+          nl: 'Boeking',
+          en: 'Booking',
+          fr: 'Réservation',
+          es: 'Reserva',
+        ),
+        value: publicBookingReference,
+      );
+    }
+    final receiptIsBusiness =
+        receiptReference.isNotEmpty &&
+        !_isTechnicalInternalReference(receiptReference);
+    if (receiptIsBusiness) {
+      return (
+        label: _t(
+          nl: 'Boeking',
+          en: 'Booking',
+          fr: 'Réservation',
+          es: 'Reserva',
+        ),
+        value: receiptReference,
+      );
+    }
     final bookingIsBusiness =
         bookingId.isNotEmpty && !_isTechnicalInternalReference(bookingId);
     if (bookingIsBusiness) {
@@ -2344,15 +2401,27 @@ class _RemoteComplianceEventsSectionState
     final bookingId = sorted
         .map((event) => event.bookingId.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
+    final publicBookingReference = sorted
+        .map((event) => event.publicBookingReference.trim())
+        .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
+    final receiptReference = sorted
+        .map((event) => event.receiptReference.trim())
+        .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
     final tripId = sorted
         .map((event) => event.tripId.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
     final payment = _effectivePaymentForEvent(latest, latestPaymentUpdates);
     final reference = _businessReferenceForRemoteCard(
       rideType: latest.rideType,
+      publicBookingReference: publicBookingReference,
+      receiptReference: receiptReference,
       bookingId: bookingId,
       tripId: tripId,
     );
+    final showInternalBooking =
+        bookingId.isNotEmpty &&
+        bookingId != reference.value &&
+        !_isTechnicalInternalReference(bookingId);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2380,6 +2449,15 @@ class _RemoteComplianceEventsSectionState
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
+          if (showInternalBooking) ...[
+            const SizedBox(height: 2),
+            Text(
+              _labelValue(_localizedInternalBookingLabel(), bookingId),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+          ],
           const SizedBox(height: 4),
           Text(
             '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: ${_fmtDateTime(latest.createdAtUtc)}',

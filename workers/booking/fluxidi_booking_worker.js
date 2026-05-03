@@ -3259,6 +3259,32 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
     !hasReliableExternalPaymentId &&
     normalizedProvider === "mollie";
   const compliancePaymentProvider = shouldSanitizeManualProvider ? "manual" : normalizedProvider;
+  const publicBookingReference = safeStr(
+    payment?.public_booking_reference ||
+      payment?.publicBookingReference ||
+      payment?.booking_reference ||
+      payment?.bookingReference ||
+      payment?.public_reference ||
+      payment?.publicReference ||
+      rec?.public_booking_reference ||
+      rec?.publicBookingReference ||
+      rec?.booking_reference ||
+      rec?.bookingReference ||
+      rec?.public_reference ||
+      rec?.publicReference ||
+      booking?.public_booking_reference ||
+      booking?.publicBookingReference ||
+      booking?.booking_reference ||
+      booking?.bookingReference ||
+      booking?.public_reference ||
+      booking?.publicReference,
+  );
+  const receiptReference = safeStr(
+    rec?.receipt_reference ||
+      rec?.receiptReference ||
+      booking?.receipt_reference ||
+      booking?.receiptReference,
+  ) || publicBookingReference || undefined;
 
   return {
     event_type: "payment_update",
@@ -3266,12 +3292,14 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
     company_id: companyId,
     booking_id: safeStr(bookingId) || undefined,
     trip_id: safeStr(rec?.trip_id || rec?.tripId || booking?.trip_id || booking?.tripId) || undefined,
-    receipt_reference: safeStr(
-      rec?.receipt_reference ||
-        rec?.receiptReference ||
-        booking?.receipt_reference ||
-        booking?.receiptReference,
-    ) || undefined,
+    receipt_reference: receiptReference,
+    receiptReference: receiptReference,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    booking_reference: publicBookingReference || undefined,
+    bookingReference: publicBookingReference || undefined,
+    public_reference: publicBookingReference || undefined,
+    publicReference: publicBookingReference || undefined,
     ride_type: "planned",
     lifecycle_status: "payment_updated",
     timestamps: {
