@@ -340,6 +340,80 @@ export class BookingReferenceSequenceDO {
   }
 }
 
+export class DocumentReferenceSequenceDO {
+  constructor(stateOrCtx, env) {
+    this.state = stateOrCtx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const action = String(body?.action || "").trim().toLowerCase();
+    if (action !== "allocate") {
+      return this._json({ ok: false, error: "Unknown action" }, 400);
+    }
+    return this._allocate(body);
+  }
+
+  async _allocate(body) {
+    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120) || "fluxidi";
+    const companyId = safeStr(body?.company_id || body?.companyId, 120) || tenantId;
+    const sequenceType = documentReferenceTypePart(
+      body?.sequence_type || body?.sequenceType || body?.type,
+      "",
+    );
+    if (!sequenceType) {
+      return this._json({ ok: false, error: "Missing sequence_type" }, 400);
+    }
+    const prefix = safeStr(
+      body?.prefix || body?.reference_prefix || body?.referencePrefix,
+      16,
+    ).toUpperCase();
+    if (!prefix) {
+      return this._json({ ok: false, error: "Missing prefix" }, 400);
+    }
+    const year =
+      normalizeDocumentReferenceYear(body?.year) ||
+      documentReferenceYearFromPickupIso(body?.pickup_iso || body?.pickupIso) ||
+      documentReferenceYearFromPickupIso(new Date().toISOString());
+    if (!year) {
+      return this._json({ ok: false, error: "Unable to resolve year" }, 400);
+    }
+
+    const next = await this.state.storage.transaction(async (txn) => {
+      const current = clampInt(await txn.get("next"), 0, 999999999);
+      const nextValue = current + 1;
+      await txn.put("next", nextValue);
+      return nextValue;
+    });
+
+    const documentReference = `${prefix}-${year}-${String(next).padStart(6, "0")}`;
+    return this._json({
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      sequence_type: sequenceType,
+      prefix,
+      year,
+      seq: next,
+      document_reference: documentReference,
+      documentReference,
+    });
+  }
+
+  _json(obj, status = 200) {
+    return new Response(JSON.stringify(obj), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+}
+
 function _requireAdmin(request, url, env) {
   const expected = (env.ADMIN_TOKEN || "").trim();
   if (!expected) throw new Error("ADMIN_TOKEN is not configured");
@@ -3536,6 +3610,8 @@ async function mollieCreatePayment(payload, env, request) {
         publicBookingReference: publicBookingReference || null,
         booking_reference: publicBookingReference || null,
         bookingReference: publicBookingReference || null,
+        planning_reference: safeStr(payloadClean?.__planning_reference) || null,
+        planningReference: safeStr(payloadClean?.__planning_reference) || null,
         payload: payloadClean,
         quote,
         mollie: null,
@@ -3928,6 +4004,11 @@ async function handleBooking(payload, env, request) {
         payload?.public_reference ||
         payload?.publicReference,
     );
+    const providedPlanningReference = safeStr(
+      payload?.__planning_reference ||
+        payload?.planning_reference ||
+        payload?.planningReference,
+    );
     const booking_uuid = (crypto?.randomUUID ? crypto.randomUUID() : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`);
     const canonicalBookingId = providedId || await nextHumanBookingId(env, pickup_iso);
     const publicBookingReference = await allocateAndReservePublicBookingReference(env, {
@@ -3939,6 +4020,17 @@ async function handleBooking(payload, env, request) {
     });
     attachPublicBookingReferenceAliases(payload, publicBookingReference);
     payload.__public_booking_reference = publicBookingReference;
+    const planningReference = await allocateAndReserveDocumentReference(env, {
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+      sequence_type: "planning",
+      prefix: "PLN",
+      pickup_iso,
+      canonical_booking_id: canonicalBookingId,
+      preferred_reference: providedPlanningReference || null,
+    });
+    attachPlanningReferenceAliases(payload, planningReference);
+    payload.__planning_reference = planningReference;
 
 
 
@@ -4214,6 +4306,8 @@ async function handleBooking(payload, env, request) {
           bookingReference: publicBookingReference,
           public_reference: publicBookingReference,
           publicReference: publicBookingReference,
+          planning_reference: planningReference,
+          planningReference: planningReference,
           payment_booking_id: pay.bookingId || null,
           paymentBookingId: pay.bookingId || null,
           requiresPayment: true,
@@ -4425,6 +4519,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         bookingReference: publicBookingReference,
         public_reference: publicBookingReference,
         publicReference: publicBookingReference,
+        planning_reference: planningReference,
+        planningReference: planningReference,
         payment_booking_id: pay.bookingId || null,
         paymentBookingId: pay.bookingId || null,
         requiresPayment: true,
@@ -4448,6 +4544,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       publicBookingReference: publicBookingReference,
       booking_reference: publicBookingReference,
       bookingReference: publicBookingReference,
+      planning_reference: planningReference,
+      planningReference: planningReference,
       booking_source: tenantContext.booking_source,
       entry_channel: tenantContext.entry_channel,
       source_context: tenantContext.source_context,
@@ -4531,6 +4629,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       publicBookingReference: publicBookingReference,
       booking_reference: publicBookingReference,
       bookingReference: publicBookingReference,
+      planning_reference: planningReference,
+      planningReference: planningReference,
       booking_source: tenantContext.booking_source,
       entry_channel: tenantContext.entry_channel,
       source_context: tenantContext.source_context,
@@ -4548,6 +4648,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         publicBookingReference: publicBookingReference,
         booking_reference: publicBookingReference,
         bookingReference: publicBookingReference,
+        planning_reference: planningReference,
+        planningReference: planningReference,
         booking_source: tenantContext.booking_source,
         entry_channel: tenantContext.entry_channel,
         source_context: tenantContext.source_context,
@@ -4716,6 +4818,8 @@ return {
       bookingReference: publicBookingReference,
       public_reference: publicBookingReference,
       publicReference: publicBookingReference,
+      planning_reference: planningReference,
+      planningReference: planningReference,
       booking_uuid: booking.booking_uuid,
       push,
 
@@ -7918,6 +8022,41 @@ function bookingReferenceYearMonthFromPickupIso(pickupIso) {
   return `${yyyy}-${mm}`;
 }
 
+function normalizeDocumentReferenceYear(value) {
+  const raw = safeStr(value);
+  if (!raw) return "";
+  const m = raw.match(/^([0-9]{4})$/);
+  if (!m) return "";
+  return m[1];
+}
+
+function documentReferenceYearFromPickupIso(pickupIso) {
+  // Keep the same Brussels/business date source that booking references use.
+  const parts = brusselsDateTimePartsFromIso(pickupIso || new Date().toISOString());
+  let yyyy = "";
+
+  if (safeStr(parts?.date).includes("/")) {
+    const seg = String(parts.date).split("/");
+    if (seg.length === 3) {
+      yyyy = safeStr(seg[2]);
+    }
+  }
+
+  if (!yyyy) {
+    const m = safeStr(parts?.date).match(/^([0-9]{4})-([0-9]{2})-/);
+    if (m) {
+      yyyy = m[1];
+    }
+  }
+
+  if (!yyyy) {
+    const d = new Date();
+    yyyy = String(d.getUTCFullYear());
+  }
+
+  return yyyy;
+}
+
 function bookingReferenceScopePart(value, fallback) {
   const raw = safeStr(value, 120).toLowerCase();
   if (!raw) return fallback;
@@ -7931,6 +8070,20 @@ function bookingReferenceScopeName(tenantId, companyId, yearMonth) {
   return `booking_ref:${tenantPart}:${companyPart}:${yearMonth}`;
 }
 
+function documentReferenceTypePart(value, fallback) {
+  const raw = safeStr(value, 64).toLowerCase();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+function documentReferenceScopeName(tenantId, companyId, sequenceType, year) {
+  const tenantPart = bookingReferenceScopePart(tenantId, "fluxidi");
+  const companyPart = bookingReferenceScopePart(companyId || tenantId, tenantPart);
+  const typePart = documentReferenceTypePart(sequenceType, "generic");
+  return `doc_ref_seq:${tenantPart}:${companyPart}:${typePart}:${year}`;
+}
+
 function attachPublicBookingReferenceAliases(target, publicBookingReference) {
   if (!target || typeof target !== "object") return target;
   const value = safeStr(publicBookingReference);
@@ -7941,6 +8094,15 @@ function attachPublicBookingReferenceAliases(target, publicBookingReference) {
   target.bookingReference = value;
   target.public_reference = value;
   target.publicReference = value;
+  return target;
+}
+
+function attachPlanningReferenceAliases(target, planningReference) {
+  if (!target || typeof target !== "object") return target;
+  const value = safeStr(planningReference);
+  if (!value) return target;
+  target.planning_reference = value;
+  target.planningReference = value;
   return target;
 }
 
@@ -8055,6 +8217,137 @@ async function putPublicBookingReferenceIndex(env, params = {}) {
   }
   await env.BOOKING_KV.put(key, canonicalBookingId);
   return { ok: true, key, existing: existing || canonicalBookingId };
+}
+
+async function allocateDocumentReference(env, params = {}) {
+  if (!env?.DOCUMENT_REFERENCE_SEQUENCE) {
+    throw new Error("Missing DOCUMENT_REFERENCE_SEQUENCE binding");
+  }
+  const tenantId = safeStr(params?.tenant_id, 120) || "fluxidi";
+  const companyId = safeStr(params?.company_id, 120) || tenantId;
+  const sequenceType = documentReferenceTypePart(
+    params?.sequence_type || params?.sequenceType || params?.type,
+    "",
+  );
+  if (!sequenceType) throw new Error("Cannot allocate document reference: missing sequence_type");
+  const prefix = safeStr(params?.prefix || params?.reference_prefix || params?.referencePrefix, 16).toUpperCase();
+  if (!prefix) throw new Error("Cannot allocate document reference: missing prefix");
+  const year =
+    normalizeDocumentReferenceYear(params?.year) ||
+    documentReferenceYearFromPickupIso(params?.pickup_iso || params?.pickupIso || new Date().toISOString());
+  if (!year) throw new Error("Cannot allocate document reference: missing year");
+
+  const instanceName = documentReferenceScopeName(tenantId, companyId, sequenceType, year);
+  const stub = env.DOCUMENT_REFERENCE_SEQUENCE.get(
+    env.DOCUMENT_REFERENCE_SEQUENCE.idFromName(instanceName),
+  );
+  const resp = await stub.fetch("https://do/allocate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "allocate",
+      tenant_id: tenantId,
+      company_id: companyId,
+      sequence_type: sequenceType,
+      prefix,
+      year,
+      pickup_iso: params?.pickup_iso || params?.pickupIso || null,
+    }),
+  });
+  const body = await resp.json().catch(() => ({}));
+  const documentReference = safeStr(body?.document_reference || body?.documentReference);
+  if (!resp.ok || !documentReference) {
+    throw new Error(
+      safeStr(body?.error) || `Document reference allocation failed (${resp.status})`,
+    );
+  }
+  return documentReference;
+}
+
+async function putDocumentReferenceIndex(env, params = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "Missing BOOKING_KV binding" };
+  const tenantPart = bookingReferenceScopePart(params?.tenant_id, "fluxidi");
+  const companyPart = bookingReferenceScopePart(params?.company_id || params?.tenant_id, tenantPart);
+  const sequenceType = documentReferenceTypePart(
+    params?.sequence_type || params?.sequenceType || params?.type,
+    "",
+  );
+  const documentReference = safeStr(
+    params?.document_reference || params?.documentReference || params?.reference,
+  );
+  const canonicalBookingId = safeStr(
+    params?.canonical_booking_id || params?.canonicalBookingId || params?.booking_id,
+  );
+  if (!sequenceType || !documentReference || !canonicalBookingId) {
+    return {
+      ok: false,
+      error: "Missing sequence_type, document_reference, or canonical booking id",
+    };
+  }
+
+  const key = `doc_ref:${tenantPart}:${companyPart}:${sequenceType}:${documentReference}`;
+  const existing = safeStr(await env.BOOKING_KV.get(key));
+  if (existing && existing !== canonicalBookingId) {
+    return { ok: false, collision: true, existing, key };
+  }
+  await env.BOOKING_KV.put(key, canonicalBookingId);
+  return { ok: true, key, existing: existing || canonicalBookingId };
+}
+
+async function allocateAndReserveDocumentReference(env, params = {}) {
+  const tenantId = safeStr(params?.tenant_id, 120) || "fluxidi";
+  const companyId = safeStr(params?.company_id, 120) || tenantId;
+  const sequenceType = documentReferenceTypePart(
+    params?.sequence_type || params?.sequenceType || params?.type,
+    "",
+  );
+  if (!sequenceType) {
+    throw new Error("Missing sequence_type for document reference allocation");
+  }
+  const canonicalBookingId = safeStr(
+    params?.canonical_booking_id || params?.canonicalBookingId || params?.booking_id,
+  );
+  if (!canonicalBookingId) {
+    throw new Error("Missing canonical booking id for document reference allocation");
+  }
+  const maxAttempts = clampInt(params?.max_attempts, 10, 20);
+  let candidate = safeStr(
+    params?.preferred_reference ||
+      params?.document_reference ||
+      params?.documentReference,
+  );
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (!candidate) {
+      candidate = await allocateDocumentReference(env, {
+        tenant_id: tenantId,
+        company_id: companyId,
+        sequence_type: sequenceType,
+        prefix: params?.prefix,
+        year: params?.year,
+        pickup_iso: params?.pickup_iso || params?.pickupIso || null,
+      });
+    }
+
+    const indexed = await putDocumentReferenceIndex(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+      sequence_type: sequenceType,
+      document_reference: candidate,
+      canonical_booking_id: canonicalBookingId,
+    });
+    if (indexed?.ok) return candidate;
+    if (!indexed?.collision) {
+      throw new Error(
+        safeStr(indexed?.error) || "Failed to reserve document reference index",
+      );
+    }
+    candidate = "";
+  }
+
+  throw new Error(
+    `Document reference allocation failed after ${maxAttempts} attempts (tenant=${tenantId}, company=${companyId}, type=${sequenceType})`,
+  );
 }
 
 /* ===================== PUSHBULLET ===================== */
