@@ -1122,7 +1122,7 @@ class CustomerBookingsStore {
       final legacyItems = await _readFileItems(legacyFile);
       if (legacyItems.isEmpty) {
         _cache = <StoredCustomerBooking>[];
-        return const <StoredCustomerBooking>[];
+        return <StoredCustomerBooking>[];
       }
       final migrated =
           _filterForScope(
@@ -1158,7 +1158,7 @@ class CustomerBookingsStore {
     } catch (err) {
       debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] $err');
       _cache = <StoredCustomerBooking>[];
-      return const <StoredCustomerBooking>[];
+      return <StoredCustomerBooking>[];
     }
   }
 
@@ -1277,7 +1277,7 @@ class CustomerBookingsStore {
   }
 
   Future<void> upsert(StoredCustomerBooking booking) async {
-    final list = await loadAll();
+    final list = List<StoredCustomerBooking>.from(await loadAll());
     final index = _findIndex(list, booking);
     final now = DateTime.now().toIso8601String();
     final scope = _activeLocalScope();
