@@ -154,6 +154,16 @@ class CustomerBookingStore {
     final raw = <String, dynamic>{
       'booking_id': item.bookingId,
       'public_booking_id': item.publicBookingId,
+      'public_booking_reference': item.publicBookingId,
+      'publicBookingReference': item.publicBookingId,
+      'planning_reference': item.planningReference,
+      'planningReference': item.planningReference,
+      'booking_reference': item.bookingReference,
+      'bookingReference': item.bookingReference,
+      'public_reference': item.publicReference,
+      'publicReference': item.publicReference,
+      'receipt_reference': item.receiptReference,
+      'receiptReference': item.receiptReference,
       'payment_booking_id': item.paymentBookingId,
       'payment_status': item.paymentStatus,
       'status': item.status,
@@ -173,15 +183,54 @@ class CustomerBookingStore {
       currency: item.currency,
       paymentStatus: item.paymentStatus,
       bookingStatus: item.status,
-      publicReference: item.publicBookingId,
+      publicReference: [
+        item.publicBookingId,
+        item.receiptReference,
+        item.planningReference,
+        item.bookingReference,
+        item.publicReference,
+      ].firstWhere((value) => value.trim().isNotEmpty, orElse: () => ''),
       rawSnapshot: raw,
     );
   }
 
   StoredCustomerBooking _toCanonical(CustomerSavedBooking booking) {
+    String firstNonEmpty(List<dynamic> values) {
+      for (final value in values) {
+        final text = (value ?? '').toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
     return StoredCustomerBooking(
       bookingId: booking.bookingId,
-      publicBookingId: booking.publicReference,
+      publicBookingId: firstNonEmpty([
+        booking.rawSnapshot['public_booking_id'],
+        booking.rawSnapshot['public_booking_reference'],
+        booking.rawSnapshot['publicBookingReference'],
+        booking.rawSnapshot['booking_reference'],
+        booking.rawSnapshot['bookingReference'],
+        booking.rawSnapshot['public_reference'],
+        booking.rawSnapshot['publicReference'],
+        booking.publicReference,
+      ]),
+      planningReference: firstNonEmpty([
+        booking.rawSnapshot['planning_reference'],
+        booking.rawSnapshot['planningReference'],
+      ]),
+      bookingReference: firstNonEmpty([
+        booking.rawSnapshot['booking_reference'],
+        booking.rawSnapshot['bookingReference'],
+      ]),
+      publicReference: firstNonEmpty([
+        booking.rawSnapshot['public_reference'],
+        booking.rawSnapshot['publicReference'],
+      ]),
+      receiptReference: firstNonEmpty([
+        booking.rawSnapshot['receipt_reference'],
+        booking.rawSnapshot['receiptReference'],
+      ]),
       paymentBookingId: (booking.rawSnapshot['payment_booking_id'] ?? '')
           .toString()
           .trim(),

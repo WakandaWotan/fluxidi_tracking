@@ -8,6 +8,10 @@ class StoredCustomerBooking {
   const StoredCustomerBooking({
     required this.bookingId,
     this.publicBookingId = '',
+    this.planningReference = '',
+    this.bookingReference = '',
+    this.publicReference = '',
+    this.receiptReference = '',
     this.paymentBookingId = '',
     this.customerName = '',
     this.customerPhone = '',
@@ -36,6 +40,10 @@ class StoredCustomerBooking {
 
   final String bookingId;
   final String publicBookingId;
+  final String planningReference;
+  final String bookingReference;
+  final String publicReference;
+  final String receiptReference;
   final String paymentBookingId;
   final String customerName;
   final String customerPhone;
@@ -67,9 +75,17 @@ class StoredCustomerBooking {
     return publicBookingId.trim();
   }
 
+  String get publicBookingReference {
+    return publicBookingId.trim();
+  }
+
   StoredCustomerBooking copyWith({
     String? bookingId,
     String? publicBookingId,
+    String? planningReference,
+    String? bookingReference,
+    String? publicReference,
+    String? receiptReference,
     String? paymentBookingId,
     String? customerName,
     String? customerPhone,
@@ -99,6 +115,10 @@ class StoredCustomerBooking {
     return StoredCustomerBooking(
       bookingId: bookingId ?? this.bookingId,
       publicBookingId: publicBookingId ?? this.publicBookingId,
+      planningReference: planningReference ?? this.planningReference,
+      bookingReference: bookingReference ?? this.bookingReference,
+      publicReference: publicReference ?? this.publicReference,
+      receiptReference: receiptReference ?? this.receiptReference,
       paymentBookingId: paymentBookingId ?? this.paymentBookingId,
       customerName: customerName ?? this.customerName,
       customerPhone: customerPhone ?? this.customerPhone,
@@ -235,6 +255,32 @@ class StoredCustomerBooking {
       response['public_reference'],
       response['publicReference'],
     ]);
+    final publicBookingReference = _firstNonEmpty([
+      response['public_booking_reference'],
+      response['publicBookingReference'],
+      response['booking_reference'],
+      response['bookingReference'],
+      response['public_reference'],
+      response['publicReference'],
+      bookingMap['public_booking_reference'],
+      bookingMap['publicBookingReference'],
+      bookingMap['booking_reference'],
+      bookingMap['bookingReference'],
+      bookingMap['public_reference'],
+      bookingMap['publicReference'],
+    ]);
+    final planningReference = _firstNonEmpty([
+      response['planning_reference'],
+      response['planningReference'],
+      bookingMap['planning_reference'],
+      bookingMap['planningReference'],
+    ]);
+    final receiptReference = _firstNonEmpty([
+      response['receipt_reference'],
+      response['receiptReference'],
+      bookingMap['receipt_reference'],
+      bookingMap['receiptReference'],
+    ]);
     final paymentBookingId = _firstNonEmpty([
       response['payment_booking_id'],
       response['paymentBookingId'],
@@ -271,7 +317,23 @@ class StoredCustomerBooking {
     );
     return StoredCustomerBooking(
       bookingId: bookingId,
-      publicBookingId: bookingId,
+      publicBookingId: _firstNonEmpty([publicBookingReference, bookingId]),
+      planningReference: planningReference,
+      bookingReference: _firstNonEmpty([
+        response['booking_reference'],
+        response['bookingReference'],
+        bookingMap['booking_reference'],
+        bookingMap['bookingReference'],
+        publicBookingReference,
+      ]),
+      publicReference: _firstNonEmpty([
+        response['public_reference'],
+        response['publicReference'],
+        bookingMap['public_reference'],
+        bookingMap['publicReference'],
+        publicBookingReference,
+      ]),
+      receiptReference: receiptReference,
       paymentBookingId: paymentBookingId,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
@@ -417,9 +479,63 @@ class StoredCustomerBooking {
     return StoredCustomerBooking(
       bookingId: resolvedBookingId,
       publicBookingId: _firstNonEmpty([
+        response['public_booking_reference'],
+        response['publicBookingReference'],
+        response['booking_reference'],
+        response['bookingReference'],
+        response['public_reference'],
+        response['publicReference'],
+        rec['public_booking_reference'],
+        rec['publicBookingReference'],
+        rec['booking_reference'],
+        rec['bookingReference'],
+        rec['public_reference'],
+        rec['publicReference'],
+        booking['public_booking_reference'],
+        booking['publicBookingReference'],
+        booking['booking_reference'],
+        booking['bookingReference'],
+        booking['public_reference'],
+        booking['publicReference'],
         response['booking_id'],
         response['public_booking_id'],
         resolvedBookingId,
+      ]),
+      planningReference: _firstNonEmpty([
+        response['planning_reference'],
+        response['planningReference'],
+        rec['planning_reference'],
+        rec['planningReference'],
+        booking['planning_reference'],
+        booking['planningReference'],
+        fallback?.planningReference,
+      ]),
+      bookingReference: _firstNonEmpty([
+        response['booking_reference'],
+        response['bookingReference'],
+        rec['booking_reference'],
+        rec['bookingReference'],
+        booking['booking_reference'],
+        booking['bookingReference'],
+        fallback?.bookingReference,
+      ]),
+      publicReference: _firstNonEmpty([
+        response['public_reference'],
+        response['publicReference'],
+        rec['public_reference'],
+        rec['publicReference'],
+        booking['public_reference'],
+        booking['publicReference'],
+        fallback?.publicReference,
+      ]),
+      receiptReference: _firstNonEmpty([
+        response['receipt_reference'],
+        response['receiptReference'],
+        rec['receipt_reference'],
+        rec['receiptReference'],
+        booking['receipt_reference'],
+        booking['receiptReference'],
+        fallback?.receiptReference,
       ]),
       paymentBookingId: _firstNonEmpty([
         rec['payment_booking_id'],
@@ -650,7 +766,19 @@ class StoredCustomerBooking {
   factory StoredCustomerBooking.fromJson(Map<String, dynamic> json) {
     return StoredCustomerBooking(
       bookingId: _string(json['booking_id']),
-      publicBookingId: _string(json['public_booking_id']),
+      publicBookingId: _firstNonEmpty([
+        json['public_booking_id'],
+        json['public_booking_reference'],
+        json['publicBookingReference'],
+        json['booking_reference'],
+        json['bookingReference'],
+        json['public_reference'],
+        json['publicReference'],
+      ]),
+      planningReference: _string(json['planning_reference']),
+      bookingReference: _string(json['booking_reference']),
+      publicReference: _string(json['public_reference']),
+      receiptReference: _string(json['receipt_reference']),
       paymentBookingId: _string(json['payment_booking_id']),
       customerName: _string(json['customer_name']),
       customerPhone: _string(json['customer_phone']),
@@ -682,6 +810,16 @@ class StoredCustomerBooking {
     return <String, dynamic>{
       'booking_id': bookingId,
       'public_booking_id': publicBookingId,
+      'public_booking_reference': publicBookingId,
+      'publicBookingReference': publicBookingId,
+      'planning_reference': planningReference,
+      'planningReference': planningReference,
+      'booking_reference': bookingReference,
+      'bookingReference': bookingReference,
+      'public_reference': publicReference,
+      'publicReference': publicReference,
+      'receipt_reference': receiptReference,
+      'receiptReference': receiptReference,
       'payment_booking_id': paymentBookingId,
       'customer_name': customerName,
       'customer_phone': customerPhone,
@@ -897,6 +1035,18 @@ class CustomerBookingsStore {
         publicBookingId: incoming.publicBookingId.isNotEmpty
             ? incoming.publicBookingId
             : existing.publicBookingId,
+        planningReference: incoming.planningReference.isNotEmpty
+            ? incoming.planningReference
+            : existing.planningReference,
+        bookingReference: incoming.bookingReference.isNotEmpty
+            ? incoming.bookingReference
+            : existing.bookingReference,
+        publicReference: incoming.publicReference.isNotEmpty
+            ? incoming.publicReference
+            : existing.publicReference,
+        receiptReference: incoming.receiptReference.isNotEmpty
+            ? incoming.receiptReference
+            : existing.receiptReference,
         paymentBookingId: incoming.paymentBookingId.isNotEmpty
             ? incoming.paymentBookingId
             : existing.paymentBookingId,

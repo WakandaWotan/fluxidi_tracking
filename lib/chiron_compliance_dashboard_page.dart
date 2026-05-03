@@ -1386,6 +1386,7 @@ class RemoteComplianceEvent {
     required this.rideType,
     required this.bookingId,
     required this.publicBookingReference,
+    required this.planningReference,
     required this.receiptReference,
     required this.tripId,
     required this.syncState,
@@ -1402,6 +1403,7 @@ class RemoteComplianceEvent {
   final String rideType;
   final String bookingId;
   final String publicBookingReference;
+  final String planningReference;
   final String receiptReference;
   final String tripId;
   final String syncState;
@@ -1436,6 +1438,9 @@ class RemoteComplianceEvent {
                             : (text('public_reference').isNotEmpty
                                   ? text('public_reference')
                                   : text('publicReference'))))),
+      planningReference: text('planning_reference').isNotEmpty
+          ? text('planning_reference')
+          : text('planningReference'),
       receiptReference: text('receipt_reference').isNotEmpty
           ? text('receipt_reference')
           : text('receiptReference'),
@@ -2112,6 +2117,15 @@ class _RemoteComplianceEventsSectionState
     );
   }
 
+  String _localizedReceiptNumberLabel() {
+    return _t(
+      nl: 'Bonnummer',
+      en: 'Receipt no.',
+      fr: 'N° de reçu',
+      es: 'N.º de recibo',
+    );
+  }
+
   String _localizedDraftReceiptLabel() {
     return _t(
       nl: 'Conceptbon',
@@ -2130,63 +2144,140 @@ class _RemoteComplianceEventsSectionState
     );
   }
 
+  String _localizedPlanningLabel() {
+    return _t(
+      nl: 'Planningnummer',
+      en: 'Planning no.',
+      fr: 'N° de planning',
+      es: 'N.º de planificación',
+    );
+  }
+
+  String _localizedBookingNumberLabel() {
+    return _t(
+      nl: 'Boekingsnummer',
+      en: 'Booking no.',
+      fr: 'N° de réservation',
+      es: 'N.º de reserva',
+    );
+  }
+
+  String _localizedInternalTripLabel() {
+    return _t(
+      nl: 'Interne rit',
+      en: 'Internal trip',
+      fr: 'Course interne',
+      es: 'Viaje interno',
+    );
+  }
+
   String _labelValue(String label, String value) {
     if (appConfig.currentLanguage == AppLanguage.fr) return '$label : $value';
     return '$label: $value';
   }
 
+  bool _sameReference(String? a, String? b) {
+    final left = _text(a);
+    final right = _text(b);
+    if (left.isEmpty || right.isEmpty) return false;
+    return _normalizeToken(left) == _normalizeToken(right);
+  }
+
+  bool _isLegacyTripReceiptNumber(String? value) {
+    final text = _text(value);
+    if (text.isEmpty) return false;
+    final token = _normalizeToken(text);
+    if (token.startsWith('planne-')) return true;
+    return RegExp(r'^planne-[a-z0-9]{3,}$').hasMatch(token);
+  }
+
+  bool _isDerivedPlannedTripReference({
+    required String candidate,
+    String? bookingId,
+    String? tripId,
+  }) {
+    final token = _normalizeToken(candidate);
+    if (token.startsWith('planned_')) return true;
+    final booking = _text(bookingId);
+    if (booking.isNotEmpty && _sameReference(candidate, 'planned_$booking')) {
+      return true;
+    }
+    final trip = _text(tripId);
+    if (trip.isNotEmpty &&
+        _sameReference(candidate, trip) &&
+        token.startsWith('planned_')) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _isRealReceiptReference({
+    required String candidate,
+    String? bookingId,
+    String? tripId,
+    String? planningReference,
+    String? publicBookingReference,
+  }) {
+    final value = _text(candidate);
+    if (value.isEmpty) return false;
+    if (_isTechnicalInternalReference(value)) return false;
+    if (_sameReference(value, bookingId)) return false;
+    if (_sameReference(value, tripId)) return false;
+    if (_sameReference(value, planningReference)) return false;
+    if (_sameReference(value, publicBookingReference)) return false;
+    if (_isLegacyTripReceiptNumber(value)) return false;
+    if (_isDerivedPlannedTripReference(
+      candidate: value,
+      bookingId: bookingId,
+      tripId: tripId,
+    )) {
+      return false;
+    }
+    return true;
+  }
+
   ({String label, String value}) _businessReferenceForRemoteCard({
     required String rideType,
     required String publicBookingReference,
+    required String planningReference,
     required String receiptReference,
     required String bookingId,
     required String tripId,
   }) {
+    final receiptIsBusiness = _isRealReceiptReference(
+      candidate: receiptReference,
+      bookingId: bookingId,
+      tripId: tripId,
+      planningReference: planningReference,
+      publicBookingReference: publicBookingReference,
+    );
+    if (receiptIsBusiness) {
+      return (label: _localizedReceiptNumberLabel(), value: receiptReference);
+    }
+    final planningIsBusiness =
+        planningReference.isNotEmpty &&
+        !_isTechnicalInternalReference(planningReference);
+    if (planningIsBusiness) {
+      return (label: _localizedPlanningLabel(), value: planningReference);
+    }
     final publicBookingIsBusiness =
         publicBookingReference.isNotEmpty &&
         !_isTechnicalInternalReference(publicBookingReference);
     if (publicBookingIsBusiness) {
       return (
-        label: _t(
-          nl: 'Boeking',
-          en: 'Booking',
-          fr: 'Réservation',
-          es: 'Reserva',
-        ),
+        label: _localizedBookingNumberLabel(),
         value: publicBookingReference,
-      );
-    }
-    final receiptIsBusiness =
-        receiptReference.isNotEmpty &&
-        !_isTechnicalInternalReference(receiptReference);
-    if (receiptIsBusiness) {
-      return (
-        label: _t(
-          nl: 'Boeking',
-          en: 'Booking',
-          fr: 'Réservation',
-          es: 'Reserva',
-        ),
-        value: receiptReference,
       );
     }
     final bookingIsBusiness =
         bookingId.isNotEmpty && !_isTechnicalInternalReference(bookingId);
     if (bookingIsBusiness) {
-      return (
-        label: _t(
-          nl: 'Boeking',
-          en: 'Booking',
-          fr: 'Réservation',
-          es: 'Reserva',
-        ),
-        value: bookingId,
-      );
+      return (label: _localizedInternalBookingLabel(), value: bookingId);
     }
     final tripIsBusiness =
         tripId.isNotEmpty && !_isTechnicalInternalReference(tripId);
     if (tripIsBusiness) {
-      return (label: _localizedReferenceLabel(), value: tripId);
+      return (label: _localizedInternalTripLabel(), value: tripId);
     }
     final rideToken = _normalizeToken(rideType);
     if (rideToken == 'direct' || rideToken == 'planned') {
@@ -2404,6 +2495,9 @@ class _RemoteComplianceEventsSectionState
     final publicBookingReference = sorted
         .map((event) => event.publicBookingReference.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
+    final planningReference = sorted
+        .map((event) => event.planningReference.trim())
+        .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
     final receiptReference = sorted
         .map((event) => event.receiptReference.trim())
         .firstWhere((id) => _isMeaningfulIdentity(id), orElse: () => '');
@@ -2414,6 +2508,7 @@ class _RemoteComplianceEventsSectionState
     final reference = _businessReferenceForRemoteCard(
       rideType: latest.rideType,
       publicBookingReference: publicBookingReference,
+      planningReference: planningReference,
       receiptReference: receiptReference,
       bookingId: bookingId,
       tripId: tripId,
@@ -2714,6 +2809,7 @@ class _LocalComplianceLedgerSectionState
     extends State<_LocalComplianceLedgerSection> {
   late Future<ComplianceLedgerReadResult> _future;
   final ComplianceLedgerReader _reader = ComplianceLedgerReader();
+  bool _isClearingLocalTestData = false;
 
   @override
   void initState() {
@@ -2725,6 +2821,82 @@ class _LocalComplianceLedgerSectionState
     setState(() {
       _future = _reader.readLatest(limit: 20);
     });
+  }
+
+  Future<void> _clearLocalTestData() async {
+    if (_isClearingLocalTestData) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Lokale rittenregister-testdata wissen?',
+            en: 'Clear local ride-register test data?',
+            fr: 'Effacer les données de test locales du registre des courses ?',
+            es: '¿Borrar los datos de prueba locales del registro de viajes?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Dit wist alleen lokale testdata op dit toestel voor het rittenregister/Chiron-overzicht. Bedrijfsinstellingen, voertuigen, chauffeurs en backenddata blijven behouden.',
+            en: 'This only clears local test data on this device for the ride register/Chiron overview. Company settings, vehicles, drivers and backend data are kept.',
+            fr: 'Cela efface uniquement les données de test locales sur cet appareil pour le registre des courses / aperçu Chiron. Les paramètres d’entreprise, véhicules, chauffeurs et données backend sont conservés.',
+            es: 'Esto solo borra los datos de prueba locales en este dispositivo para el registro de viajes / vista Chiron. La configuración de empresa, vehículos, conductores y datos backend se conservan.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isClearingLocalTestData = true);
+    try {
+      await _reader.clearLocalTestData();
+      if (!mounted) return;
+      _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Lokale rittenregister-testdata gewist.',
+              en: 'Local ride-register test data cleared.',
+              fr: 'Données de test locales du registre effacées.',
+              es: 'Datos de prueba locales del registro borrados.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Wissen mislukt. Probeer opnieuw.',
+              en: 'Clear failed. Please try again.',
+              fr: 'Échec de l’effacement. Réessayez.',
+              es: 'Error al borrar. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isClearingLocalTestData = false);
+      }
+    }
   }
 
   String _t({
@@ -2998,7 +3170,39 @@ class _LocalComplianceLedgerSectionState
   }
 
   String _receiptLabel() {
-    return _t(nl: 'Bon', en: 'Receipt', fr: 'Reçu', es: 'Recibo');
+    return _t(
+      nl: 'Bonnummer',
+      en: 'Receipt no.',
+      fr: 'N° de reçu',
+      es: 'N.º de recibo',
+    );
+  }
+
+  String _planningLabel() {
+    return _t(
+      nl: 'Planningnummer',
+      en: 'Planning no.',
+      fr: 'N° de planning',
+      es: 'N.º de planificación',
+    );
+  }
+
+  String _bookingLabel() {
+    return _t(
+      nl: 'Boekingsnummer',
+      en: 'Booking no.',
+      fr: 'N° de réservation',
+      es: 'N.º de reserva',
+    );
+  }
+
+  String _localizedInternalBookingLabel() {
+    return _t(
+      nl: 'Interne boeking',
+      en: 'Internal booking',
+      fr: 'Réservation interne',
+      es: 'Reserva interna',
+    );
   }
 
   String _draftReceiptLabel() {
@@ -3007,6 +3211,15 @@ class _LocalComplianceLedgerSectionState
       en: 'Draft receipt',
       fr: 'Reçu provisoire',
       es: 'Recibo provisional',
+    );
+  }
+
+  String _internalTripLabel() {
+    return _t(
+      nl: 'Interne rit',
+      en: 'Internal trip',
+      fr: 'Course interne',
+      es: 'Viaje interno',
     );
   }
 
@@ -3035,20 +3248,148 @@ class _LocalComplianceLedgerSectionState
     return false;
   }
 
-  String? _bestBusinessReference(ComplianceLedgerEntry entry) {
-    final candidates = <String>[
-      entry.receiptReference.trim(),
-      entry.bookingId.trim(),
-      entry.tripId.trim(),
-      entry.rideId.trim(),
-      entry.eventId.trim(),
-    ];
-    for (final candidate in candidates) {
-      if (candidate.isEmpty) continue;
-      if (_looksTechnicalInternalReference(candidate)) continue;
-      return candidate;
+  bool _sameReference(String? a, String? b) {
+    final left = _meaningfulDisplayToken(a);
+    final right = _meaningfulDisplayToken(b);
+    if (left == null || right == null) return false;
+    return _ledgerToken(left) == _ledgerToken(right);
+  }
+
+  bool _isLegacyTripReceiptNumber(String? value) {
+    final text = _meaningfulDisplayToken(value);
+    if (text == null) return false;
+    final token = _ledgerToken(text);
+    if (token.startsWith('planne-')) return true;
+    return RegExp(r'^planne-[a-z0-9]{3,}$').hasMatch(token);
+  }
+
+  bool _isDerivedPlannedTripReference({
+    required String candidate,
+    String? bookingId,
+    String? tripId,
+  }) {
+    final token = _ledgerToken(candidate);
+    if (token.startsWith('planned_')) return true;
+    final canonical = _meaningfulDisplayToken(bookingId);
+    if (canonical != null && _sameReference(candidate, 'planned_$canonical')) {
+      return true;
     }
-    return null;
+    final trip = _meaningfulDisplayToken(tripId);
+    if (trip != null &&
+        _sameReference(candidate, trip) &&
+        _ledgerToken(candidate).startsWith('planned_')) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _isRealReceiptReference({
+    required String candidate,
+    String? bookingId,
+    String? tripId,
+    String? planningReference,
+    String? publicBookingReference,
+  }) {
+    final value = _meaningfulDisplayToken(candidate);
+    if (value == null) return false;
+    if (_sameReference(value, bookingId)) return false;
+    if (_sameReference(value, tripId)) return false;
+    if (_sameReference(value, planningReference)) return false;
+    if (_sameReference(value, publicBookingReference)) return false;
+    if (_isLegacyTripReceiptNumber(value)) return false;
+    if (_isDerivedPlannedTripReference(
+      candidate: value,
+      bookingId: bookingId,
+      tripId: tripId,
+    )) {
+      return false;
+    }
+    return true;
+  }
+
+  ({String label, String value, String? internalBooking})
+  _businessReferenceForLocalCard(ComplianceLedgerEntry entry) {
+    final receiptRef = entry.receiptReference.trim();
+    final planningRef = entry.planningReference.trim();
+    final publicBookingRef = entry.publicBookingReference.trim();
+    if (_isRealReceiptReference(
+      candidate: receiptRef,
+      bookingId: entry.bookingId,
+      tripId: entry.tripId,
+      planningReference: planningRef,
+      publicBookingReference: publicBookingRef,
+    )) {
+      final canonical = entry.bookingId.trim();
+      final showInternal =
+          canonical.isNotEmpty &&
+          canonical != receiptRef &&
+          !_looksTechnicalInternalReference(canonical);
+      return (
+        label: _receiptLabel(),
+        value: receiptRef,
+        internalBooking: showInternal ? canonical : null,
+      );
+    }
+    if (planningRef.isNotEmpty &&
+        !_looksTechnicalInternalReference(planningRef)) {
+      final canonical = entry.bookingId.trim();
+      final showInternal =
+          canonical.isNotEmpty &&
+          canonical != planningRef &&
+          !_looksTechnicalInternalReference(canonical);
+      return (
+        label: _planningLabel(),
+        value: planningRef,
+        internalBooking: showInternal ? canonical : null,
+      );
+    }
+    if (publicBookingRef.isNotEmpty &&
+        !_looksTechnicalInternalReference(publicBookingRef)) {
+      final canonical = entry.bookingId.trim();
+      final showInternal =
+          canonical.isNotEmpty &&
+          canonical != publicBookingRef &&
+          !_looksTechnicalInternalReference(canonical);
+      return (
+        label: _bookingLabel(),
+        value: publicBookingRef,
+        internalBooking: showInternal ? canonical : null,
+      );
+    }
+    final bookingId = entry.bookingId.trim();
+    if (bookingId.isNotEmpty && !_looksTechnicalInternalReference(bookingId)) {
+      return (
+        label: _localizedInternalBookingLabel(),
+        value: bookingId,
+        internalBooking: null,
+      );
+    }
+    final tripId = entry.tripId.trim();
+    if (tripId.isNotEmpty && !_looksTechnicalInternalReference(tripId)) {
+      return (
+        label: _internalTripLabel(),
+        value: tripId,
+        internalBooking: null,
+      );
+    }
+    final rideType = _ledgerToken(entry.rideType);
+    if (rideType == 'direct' || rideType == 'planned') {
+      return (
+        label: _receiptLabel(),
+        value: _draftReceiptLabel(),
+        internalBooking: null,
+      );
+    }
+    return (
+      label: _t(
+        nl: 'Referentie',
+        en: 'Reference',
+        fr: 'Référence',
+        es: 'Referencia',
+      ),
+      value: '—',
+      internalBooking: null,
+    );
   }
 
   Widget _chip(String label) {
@@ -3564,18 +3905,6 @@ class _LocalComplianceLedgerSectionState
     return '—';
   }
 
-  String _referenceDisplay(ComplianceLedgerEntry entry) {
-    final businessReference = _bestBusinessReference(entry);
-    if (businessReference != null) {
-      return '${_receiptLabel()} $businessReference';
-    }
-    final rideType = _ledgerToken(entry.rideType);
-    if (rideType == 'direct' || rideType == 'planned') {
-      return _draftReceiptLabel();
-    }
-    return '—';
-  }
-
   String? _fareDisplay(ComplianceLedgerEntry entry) {
     if (entry.fareTotalEur == null) return null;
     final currency = entry.currency.trim().isEmpty
@@ -3701,8 +4030,9 @@ class _LocalComplianceLedgerSectionState
     final summary = _summaryLedgerEntry(group);
     final latestPaymentUpdate = _latestPaymentUpdateInGroup(group);
     final effectivePayment = latestPaymentUpdate ?? summary;
+    final businessReference = _businessReferenceForLocalCard(summary);
     final title =
-        '${_rideTypeLabel(summary.rideType)} • ${_referenceDisplay(summary)}';
+        '${_rideTypeLabel(summary.rideType)} • ${_labelValue(businessReference.label, businessReference.value)}';
     final route = _routeDisplay(summary);
     final rideTime = _fmtDateTime(_ledgerSortTime(summary));
     final latestTime = _fmtDateTime(_ledgerSortTime(newest));
@@ -3734,6 +4064,18 @@ class _LocalComplianceLedgerSectionState
               fontSize: 13,
             ),
           ),
+          if ((businessReference.internalBooking ?? '').isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              _labelValue(
+                _localizedInternalBookingLabel(),
+                businessReference.internalBooking!,
+              ),
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
           const SizedBox(height: 4),
           Text(
             '${_t(nl: 'Laatste melding', en: 'Latest message', fr: 'Dernier message', es: 'Último mensaje')}: $latestTime',
@@ -3901,6 +4243,24 @@ class _LocalComplianceLedgerSectionState
                   ),
                   onPressed: _refresh,
                   icon: const Icon(Icons.refresh, color: Colors.white70),
+                ),
+                IconButton(
+                  tooltip: _t(
+                    nl: 'Lokale testdata wissen',
+                    en: 'Clear local test data',
+                    fr: 'Effacer les données de test locales',
+                    es: 'Borrar datos de prueba locales',
+                  ),
+                  onPressed: _isClearingLocalTestData
+                      ? null
+                      : _clearLocalTestData,
+                  icon: _isClearingLocalTestData
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_sweep, color: Colors.white70),
                 ),
               ],
             ),

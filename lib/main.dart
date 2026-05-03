@@ -713,6 +713,34 @@ String _receiptText(String key) {
         fr: 'Numéro de reçu',
         es: 'Número de recibo',
       );
+    case 'planningNumber':
+      return _tr(
+        nl: 'Planningnummer',
+        en: 'Planning no.',
+        fr: 'N° de planning',
+        es: 'N.º de planificación',
+      );
+    case 'bookingNumber':
+      return _tr(
+        nl: 'Boekingsnummer',
+        en: 'Booking no.',
+        fr: 'N° de réservation',
+        es: 'N.º de reserva',
+      );
+    case 'internalBooking':
+      return _tr(
+        nl: 'Interne boeking',
+        en: 'Internal booking',
+        fr: 'Réservation interne',
+        es: 'Reserva interna',
+      );
+    case 'internalTrip':
+      return _tr(
+        nl: 'Interne rit',
+        en: 'Internal trip',
+        fr: 'Course interne',
+        es: 'Viaje interno',
+      );
     case 'tripId':
       return _tr(nl: 'Trip ID', en: 'Trip ID', fr: 'ID course', es: 'ID viaje');
     case 'bookingId':
@@ -6422,6 +6450,114 @@ class CustomerBookingView {
     ]).toLowerCase();
   }
 
+  String get receiptReference => _firstPathValue(const <String>[
+    'receipt_reference',
+    'receiptReference',
+    'booking.receipt_reference',
+    'booking.receiptReference',
+    'record.receipt_reference',
+    'record.receiptReference',
+    'record.booking.receipt_reference',
+    'record.booking.receiptReference',
+    'record.references.receipt_reference',
+    'record.references.receiptReference',
+    'payload.receipt_reference',
+    'payload.receiptReference',
+    'payload.booking.receipt_reference',
+    'payload.booking.receiptReference',
+    'payload.references.receipt_reference',
+    'payload.references.receiptReference',
+  ]);
+
+  String get planningReference => _firstPathValue(const <String>[
+    'planning_reference',
+    'planningReference',
+    'booking.planning_reference',
+    'booking.planningReference',
+    'record.planning_reference',
+    'record.planningReference',
+    'record.booking.planning_reference',
+    'record.booking.planningReference',
+    'record.references.planning_reference',
+    'record.references.planningReference',
+    'payload.planning_reference',
+    'payload.planningReference',
+    'payload.booking.planning_reference',
+    'payload.booking.planningReference',
+    'payload.references.planning_reference',
+    'payload.references.planningReference',
+  ]);
+
+  String get publicBookingReference => _firstPathValue(const <String>[
+    'public_booking_reference',
+    'publicBookingReference',
+    'booking_reference',
+    'bookingReference',
+    'public_reference',
+    'publicReference',
+    'booking.public_booking_reference',
+    'booking.publicBookingReference',
+    'booking.booking_reference',
+    'booking.bookingReference',
+    'booking.public_reference',
+    'booking.publicReference',
+    'record.public_booking_reference',
+    'record.publicBookingReference',
+    'record.booking_reference',
+    'record.bookingReference',
+    'record.public_reference',
+    'record.publicReference',
+    'record.booking.public_booking_reference',
+    'record.booking.publicBookingReference',
+    'record.booking.booking_reference',
+    'record.booking.bookingReference',
+    'record.booking.public_reference',
+    'record.booking.publicReference',
+    'record.references.public_booking_reference',
+    'record.references.publicBookingReference',
+    'record.references.booking_reference',
+    'record.references.bookingReference',
+    'record.references.public_reference',
+    'record.references.publicReference',
+    'payload.public_booking_reference',
+    'payload.publicBookingReference',
+    'payload.booking_reference',
+    'payload.bookingReference',
+    'payload.public_reference',
+    'payload.publicReference',
+    'payload.booking.public_booking_reference',
+    'payload.booking.publicBookingReference',
+    'payload.booking.booking_reference',
+    'payload.booking.bookingReference',
+    'payload.booking.public_reference',
+    'payload.booking.publicReference',
+    'payload.references.public_booking_reference',
+    'payload.references.publicBookingReference',
+    'payload.references.booking_reference',
+    'payload.references.bookingReference',
+    'payload.references.public_reference',
+    'payload.references.publicReference',
+  ]);
+
+  String get internalBookingId => _firstNonEmpty([
+    bookingId,
+    _firstPathValue(const <String>[
+      'booking_id',
+      'bookingId',
+      'id',
+      'booking.booking_id',
+      'booking.bookingId',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.booking_id',
+      'record.booking.bookingId',
+      'payload.booking_id',
+      'payload.bookingId',
+      'payload.booking.booking_id',
+      'payload.booking.bookingId',
+    ]),
+  ]);
+
   bool get _methodImpliesPaid {
     const inCarPaidMethods = <String>{'cash', 'bancontact', 'qr', 'card'};
     return inCarPaidMethods.contains(paymentMethod);
@@ -6639,6 +6775,62 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     es: 'Aún no completado',
   );
 
+  ({String label, String value, String? internalSecondary})
+  _customerBookingReferenceDisplay(CustomerBookingView view) {
+    final publicRef = view.publicBookingReference.trim();
+    final planningRef = view.planningReference.trim();
+    final receiptRef = view.receiptReference.trim();
+    final internalRef = view.internalBookingId.trim();
+
+    final selectedValue = publicRef.isNotEmpty
+        ? publicRef
+        : (receiptRef.isNotEmpty
+              ? receiptRef
+              : (planningRef.isNotEmpty
+                    ? planningRef
+                    : (internalRef.isNotEmpty ? internalRef : '-')));
+    final selectedLabel = publicRef.isNotEmpty
+        ? _t(
+            nl: 'Boekingsnummer',
+            en: 'Booking no.',
+            fr: 'N° de réservation',
+            es: 'N.º de reserva',
+          )
+        : (receiptRef.isNotEmpty
+              ? _t(
+                  nl: 'Bonnummer',
+                  en: 'Receipt no.',
+                  fr: 'N° de reçu',
+                  es: 'N.º de recibo',
+                )
+              : (planningRef.isNotEmpty
+                    ? _t(
+                        nl: 'Planningnummer',
+                        en: 'Planning no.',
+                        fr: 'N° de planning',
+                        es: 'N.º de planificación',
+                      )
+                    : _t(
+                        nl: 'Interne boeking',
+                        en: 'Internal booking',
+                        fr: 'Réservation interne',
+                        es: 'Reserva interna',
+                      )));
+    final internalSecondary =
+        internalRef.isNotEmpty && internalRef != selectedValue
+        ? internalRef
+        : null;
+
+    debugPrint(
+      '[CUSTOMER_BOOKING][REF_SELECTED] booking=${_safeRefPreview(internalRef)} public=$publicRef planning=$planningRef receipt=$receiptRef selected=$selectedValue',
+    );
+    return (
+      label: selectedLabel,
+      value: selectedValue,
+      internalSecondary: internalSecondary,
+    );
+  }
+
   Future<void> _openExternalUrl(BuildContext context, String rawUrl) async {
     final uri = Uri.tryParse(rawUrl.trim());
     if (uri == null) return;
@@ -6660,9 +6852,31 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   _TripHistoryItem _asTripHistoryItem() {
+    final publicRef = _view.publicBookingReference.trim();
+    final planningRef = _view.planningReference.trim();
+    final receiptRef = _view.receiptReference.trim();
+    final refs = <String, dynamic>{};
+    void setRef(String key, String value) {
+      if (value.isEmpty) return;
+      refs[key] = value;
+    }
+
+    setRef('public_booking_reference', publicRef);
+    setRef('publicBookingReference', publicRef);
+    setRef('booking_reference', publicRef);
+    setRef('bookingReference', publicRef);
+    setRef('public_reference', publicRef);
+    setRef('publicReference', publicRef);
+    setRef('planning_reference', planningRef);
+    setRef('planningReference', planningRef);
+    setRef('receipt_reference', receiptRef);
+    setRef('receiptReference', receiptRef);
+
     final bookingDetails = <String, dynamic>{
       ..._view.source,
       'booking_id': _view.bookingId,
+      'bookingId': _view.bookingId,
+      ...refs,
       'customer_name': _view.customerName,
       'customer_phone': _view.customerPhone,
       'customer_email': _view.customerEmail,
@@ -6684,7 +6898,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'invoice_address': _view.invoiceAddress,
       'extras': _view.extraOptions,
       'scheduled_pickup_at': _view.pickupIso,
+      'references': refs,
       'booking': <String, dynamic>{
+        ...refs,
+        'booking_id': _view.bookingId,
         'bookingId': _view.bookingId,
         'customer_name': _view.customerName,
         'customer_phone': _view.customerPhone,
@@ -7078,15 +7295,24 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       es: 'Reserva',
                     ),
                     children: [
-                      _kv(
-                        _t(
-                          nl: 'Boeking ID',
-                          en: 'Booking ID',
-                          fr: 'ID reservation',
-                          es: 'ID reserva',
-                        ),
-                        v.bookingId,
-                      ),
+                      (() {
+                        final bookingRef = _customerBookingReferenceDisplay(v);
+                        return Column(
+                          children: [
+                            _kv(bookingRef.label, bookingRef.value),
+                            if (bookingRef.internalSecondary != null)
+                              _kv(
+                                _t(
+                                  nl: 'Interne boeking',
+                                  en: 'Internal booking',
+                                  fr: 'Réservation interne',
+                                  es: 'Reserva interna',
+                                ),
+                                bookingRef.internalSecondary!,
+                              ),
+                          ],
+                        );
+                      })(),
                       _kv(
                         _t(
                           nl: 'Status',
@@ -8320,6 +8546,33 @@ class _TripHistoryItem {
     required this.customerEmail,
   });
 
+  _TripHistoryItem copyWith({
+    Map<String, dynamic>? bookingDetails,
+    Map<String, dynamic>? rawSource,
+  }) {
+    return _TripHistoryItem(
+      tripId: tripId,
+      kind: kind,
+      bookingId: bookingId,
+      driverId: driverId,
+      vehicleId: vehicleId,
+      startedAt: startedAt,
+      stoppedAt: stoppedAt,
+      origin: origin,
+      destination: destination,
+      kmTotal: kmTotal,
+      waitSecondsTotal: waitSecondsTotal,
+      totalEur: totalEur,
+      status: status,
+      currency: currency,
+      bookingDetails: bookingDetails ?? this.bookingDetails,
+      rawSource: rawSource ?? this.rawSource,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      customerEmail: customerEmail,
+    );
+  }
+
   factory _TripHistoryItem.fromJson(Map<String, dynamic> json) {
     final origin = json['origin'];
     final destination = json['destination'];
@@ -8357,6 +8610,355 @@ class _TripHistoryItem {
     copyRootDetail('paymentProvider', 'paymentProvider');
     copyRootDetail('payment_id', 'payment_id');
     copyRootDetail('paymentId', 'paymentId');
+    final tripIdRaw = (json['trip_id'] ?? '').toString().trim();
+    String? resolveReference(List<String> paths) {
+      return _resolveScalarLabel(json, paths);
+    }
+
+    void setIfMeaningful(
+      Map<String, dynamic> target,
+      String key,
+      String? value,
+    ) {
+      final text = _cleanBusinessReferenceText(value);
+      if (text == null) return;
+      target[key] = text;
+    }
+
+    bool shouldAcceptReceiptReference(
+      String? candidate, {
+      required String? bookingId,
+      required String? planningReference,
+      required String? publicBookingReference,
+    }) {
+      final normalized = _cleanBusinessReferenceText(candidate);
+      if (normalized == null) return false;
+      return _isRealReceiptReference(
+        candidate: normalized,
+        canonicalBookingId: bookingId,
+        tripId: tripIdRaw.isEmpty ? null : tripIdRaw,
+        planningReference: planningReference,
+        publicBookingReference: publicBookingReference,
+        legacyTripReceiptNumber: tripIdRaw.isEmpty
+            ? null
+            : _legacyTripReceiptNumber(tripIdRaw),
+      );
+    }
+
+    final resolvedBookingId = _resolveScalarLabel(json, const <String>[
+      'booking_id',
+      'bookingId',
+      'id',
+      'booking.booking_id',
+      'booking.bookingId',
+      'booking.id',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.booking_id',
+      'record.booking.bookingId',
+      'record.booking.id',
+      'payload.booking_id',
+      'payload.bookingId',
+      'payload.booking.booking_id',
+      'payload.booking.bookingId',
+      'data.record.booking_id',
+      'data.record.bookingId',
+      'data.record.booking.booking_id',
+      'data.record.booking.bookingId',
+      'data.booking.booking_id',
+      'data.booking.bookingId',
+      'response.record.booking_id',
+      'response.record.bookingId',
+      'response.record.booking.booking_id',
+      'response.record.booking.bookingId',
+      'response.booking.booking_id',
+      'response.booking.bookingId',
+      'public_reference',
+      'publicReference',
+      'receipt_reference',
+      'receiptReference',
+      'booking.public_reference',
+      'booking.publicReference',
+      'booking.receipt_reference',
+      'booking.receiptReference',
+    ]);
+    final planningReference = resolveReference(const <String>[
+      'planning_reference',
+      'planningReference',
+      'references.planning_reference',
+      'references.planningReference',
+      'booking.planning_reference',
+      'booking.planningReference',
+      'record.planning_reference',
+      'record.planningReference',
+      'record.references.planning_reference',
+      'record.references.planningReference',
+      'record.booking.planning_reference',
+      'record.booking.planningReference',
+      'payload.planning_reference',
+      'payload.planningReference',
+      'payload.references.planning_reference',
+      'payload.references.planningReference',
+      'payload.booking.planning_reference',
+      'payload.booking.planningReference',
+      'data.record.planning_reference',
+      'data.record.planningReference',
+      'data.record.references.planning_reference',
+      'data.record.references.planningReference',
+      'data.booking.planning_reference',
+      'data.booking.planningReference',
+      'response.record.planning_reference',
+      'response.record.planningReference',
+      'response.record.references.planning_reference',
+      'response.record.references.planningReference',
+      'response.booking.planning_reference',
+      'response.booking.planningReference',
+    ]);
+    final publicBookingReference = resolveReference(const <String>[
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'public_reference',
+      'publicReference',
+      'references.public_booking_reference',
+      'references.publicBookingReference',
+      'references.booking_reference',
+      'references.bookingReference',
+      'references.public_reference',
+      'references.publicReference',
+      'booking.public_booking_reference',
+      'booking.publicBookingReference',
+      'booking.booking_reference',
+      'booking.bookingReference',
+      'booking.public_reference',
+      'booking.publicReference',
+      'record.public_booking_reference',
+      'record.publicBookingReference',
+      'record.booking_reference',
+      'record.bookingReference',
+      'record.public_reference',
+      'record.publicReference',
+      'record.references.public_booking_reference',
+      'record.references.publicBookingReference',
+      'record.references.booking_reference',
+      'record.references.bookingReference',
+      'record.references.public_reference',
+      'record.references.publicReference',
+      'record.booking.public_booking_reference',
+      'record.booking.publicBookingReference',
+      'record.booking.booking_reference',
+      'record.booking.bookingReference',
+      'record.booking.public_reference',
+      'record.booking.publicReference',
+      'payload.public_booking_reference',
+      'payload.publicBookingReference',
+      'payload.booking_reference',
+      'payload.bookingReference',
+      'payload.public_reference',
+      'payload.publicReference',
+      'payload.references.public_booking_reference',
+      'payload.references.publicBookingReference',
+      'payload.references.booking_reference',
+      'payload.references.bookingReference',
+      'payload.references.public_reference',
+      'payload.references.publicReference',
+      'payload.booking.public_booking_reference',
+      'payload.booking.publicBookingReference',
+      'payload.booking.booking_reference',
+      'payload.booking.bookingReference',
+      'payload.booking.public_reference',
+      'payload.booking.publicReference',
+      'data.record.public_booking_reference',
+      'data.record.publicBookingReference',
+      'data.record.booking_reference',
+      'data.record.bookingReference',
+      'data.record.public_reference',
+      'data.record.publicReference',
+      'data.booking.public_booking_reference',
+      'data.booking.publicBookingReference',
+      'data.booking.booking_reference',
+      'data.booking.bookingReference',
+      'data.booking.public_reference',
+      'data.booking.publicReference',
+      'response.record.public_booking_reference',
+      'response.record.publicBookingReference',
+      'response.record.booking_reference',
+      'response.record.bookingReference',
+      'response.record.public_reference',
+      'response.record.publicReference',
+      'response.booking.public_booking_reference',
+      'response.booking.publicBookingReference',
+      'response.booking.booking_reference',
+      'response.booking.bookingReference',
+      'response.booking.public_reference',
+      'response.booking.publicReference',
+    ]);
+    final bookingReference = resolveReference(const <String>[
+      'booking_reference',
+      'bookingReference',
+      'references.booking_reference',
+      'references.bookingReference',
+      'booking.booking_reference',
+      'booking.bookingReference',
+      'record.booking_reference',
+      'record.bookingReference',
+      'record.references.booking_reference',
+      'record.references.bookingReference',
+      'record.booking.booking_reference',
+      'record.booking.bookingReference',
+      'payload.booking_reference',
+      'payload.bookingReference',
+      'payload.references.booking_reference',
+      'payload.references.bookingReference',
+      'payload.booking.booking_reference',
+      'payload.booking.bookingReference',
+      'data.record.booking_reference',
+      'data.record.bookingReference',
+      'data.booking.booking_reference',
+      'data.booking.bookingReference',
+      'response.record.booking_reference',
+      'response.record.bookingReference',
+      'response.booking.booking_reference',
+      'response.booking.bookingReference',
+    ]);
+    final publicReference = resolveReference(const <String>[
+      'public_reference',
+      'publicReference',
+      'references.public_reference',
+      'references.publicReference',
+      'booking.public_reference',
+      'booking.publicReference',
+      'record.public_reference',
+      'record.publicReference',
+      'record.references.public_reference',
+      'record.references.publicReference',
+      'record.booking.public_reference',
+      'record.booking.publicReference',
+      'payload.public_reference',
+      'payload.publicReference',
+      'payload.references.public_reference',
+      'payload.references.publicReference',
+      'payload.booking.public_reference',
+      'payload.booking.publicReference',
+      'data.record.public_reference',
+      'data.record.publicReference',
+      'data.booking.public_reference',
+      'data.booking.publicReference',
+      'response.record.public_reference',
+      'response.record.publicReference',
+      'response.booking.public_reference',
+      'response.booking.publicReference',
+    ]);
+    final receiptReference = resolveReference(const <String>[
+      'receipt_reference',
+      'receiptReference',
+      'references.receipt_reference',
+      'references.receiptReference',
+      'booking.receipt_reference',
+      'booking.receiptReference',
+      'record.receipt_reference',
+      'record.receiptReference',
+      'record.references.receipt_reference',
+      'record.references.receiptReference',
+      'record.booking.receipt_reference',
+      'record.booking.receiptReference',
+      'payload.receipt_reference',
+      'payload.receiptReference',
+      'payload.references.receipt_reference',
+      'payload.references.receiptReference',
+      'payload.booking.receipt_reference',
+      'payload.booking.receiptReference',
+      'data.record.receipt_reference',
+      'data.record.receiptReference',
+      'data.booking.receipt_reference',
+      'data.booking.receiptReference',
+      'response.record.receipt_reference',
+      'response.record.receiptReference',
+      'response.booking.receipt_reference',
+      'response.booking.receiptReference',
+    ]);
+    setIfMeaningful(bookingDetails, 'planning_reference', planningReference);
+    setIfMeaningful(bookingDetails, 'planningReference', planningReference);
+    setIfMeaningful(
+      bookingDetails,
+      'public_booking_reference',
+      publicBookingReference,
+    );
+    setIfMeaningful(
+      bookingDetails,
+      'publicBookingReference',
+      publicBookingReference,
+    );
+    setIfMeaningful(bookingDetails, 'booking_reference', bookingReference);
+    setIfMeaningful(bookingDetails, 'bookingReference', bookingReference);
+    setIfMeaningful(bookingDetails, 'public_reference', publicReference);
+    setIfMeaningful(bookingDetails, 'publicReference', publicReference);
+    if (shouldAcceptReceiptReference(
+      receiptReference,
+      bookingId: resolvedBookingId,
+      planningReference: planningReference,
+      publicBookingReference: publicBookingReference,
+    )) {
+      setIfMeaningful(bookingDetails, 'receipt_reference', receiptReference);
+      setIfMeaningful(bookingDetails, 'receiptReference', receiptReference);
+    }
+    final referencesMap = bookingDetails['references'] is Map
+        ? Map<String, dynamic>.from(bookingDetails['references'] as Map)
+        : <String, dynamic>{};
+    setIfMeaningful(referencesMap, 'planning_reference', planningReference);
+    setIfMeaningful(referencesMap, 'planningReference', planningReference);
+    setIfMeaningful(
+      referencesMap,
+      'public_booking_reference',
+      publicBookingReference,
+    );
+    setIfMeaningful(
+      referencesMap,
+      'publicBookingReference',
+      publicBookingReference,
+    );
+    setIfMeaningful(referencesMap, 'booking_reference', bookingReference);
+    setIfMeaningful(referencesMap, 'bookingReference', bookingReference);
+    setIfMeaningful(referencesMap, 'public_reference', publicReference);
+    setIfMeaningful(referencesMap, 'publicReference', publicReference);
+    if (shouldAcceptReceiptReference(
+      receiptReference,
+      bookingId: resolvedBookingId,
+      planningReference: planningReference,
+      publicBookingReference: publicBookingReference,
+    )) {
+      setIfMeaningful(referencesMap, 'receipt_reference', receiptReference);
+      setIfMeaningful(referencesMap, 'receiptReference', receiptReference);
+    }
+    if (referencesMap.isNotEmpty) {
+      bookingDetails['references'] = referencesMap;
+    }
+    setIfMeaningful(rawSource, 'planning_reference', planningReference);
+    setIfMeaningful(rawSource, 'planningReference', planningReference);
+    setIfMeaningful(
+      rawSource,
+      'public_booking_reference',
+      publicBookingReference,
+    );
+    setIfMeaningful(
+      rawSource,
+      'publicBookingReference',
+      publicBookingReference,
+    );
+    setIfMeaningful(rawSource, 'booking_reference', bookingReference);
+    setIfMeaningful(rawSource, 'bookingReference', bookingReference);
+    setIfMeaningful(rawSource, 'public_reference', publicReference);
+    setIfMeaningful(rawSource, 'publicReference', publicReference);
+    if (shouldAcceptReceiptReference(
+      receiptReference,
+      bookingId: resolvedBookingId,
+      planningReference: planningReference,
+      publicBookingReference: publicBookingReference,
+    )) {
+      setIfMeaningful(rawSource, 'receipt_reference', receiptReference);
+      setIfMeaningful(rawSource, 'receiptReference', receiptReference);
+    }
     final customerName = _resolveScalarLabel(json, const <String>[
       'customer.name',
       'customer_name',
@@ -8491,31 +9093,6 @@ class _TripHistoryItem {
       return int.tryParse((value ?? '').toString()) ?? 0;
     }
 
-    final resolvedBookingId = _resolveScalarLabel(json, const <String>[
-      'booking_id',
-      'bookingId',
-      'id',
-      'booking.booking_id',
-      'booking.bookingId',
-      'booking.id',
-      'record.booking_id',
-      'record.bookingId',
-      'record.booking.booking_id',
-      'record.booking.bookingId',
-      'record.booking.id',
-      'payload.booking_id',
-      'payload.bookingId',
-      'payload.booking.booking_id',
-      'payload.booking.bookingId',
-      'public_reference',
-      'publicReference',
-      'receipt_reference',
-      'receiptReference',
-      'booking.public_reference',
-      'booking.publicReference',
-      'booking.receipt_reference',
-      'booking.receiptReference',
-    ]);
     final rootKmTotal = asDouble(json['km_total']);
 
     return _TripHistoryItem(
@@ -8657,8 +9234,10 @@ class _TripHistoryItem {
   }
 
   String get receiptNumber {
-    if (tripId.length <= 10) return tripId;
-    return '${tripId.substring(0, 6)}-${tripId.substring(tripId.length - 4)}';
+    return _businessReferenceDisplayForItem(
+      this,
+      source: 'trip_item_receipt_number',
+    ).value;
   }
 
   String get kindLabel {
@@ -8757,6 +9336,576 @@ String? _paymentUpdateField(Map<String, dynamic> fields, List<String> keys) {
   return null;
 }
 
+String? _cleanBusinessReferenceText(dynamic value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return null;
+  final token = text.toLowerCase();
+  if (token == 'null' ||
+      token == 'undefined' ||
+      token == 'unknown' ||
+      token == '-' ||
+      token == '—') {
+    return null;
+  }
+  return text;
+}
+
+String? _businessReferenceAtPath(Map<String, dynamic> root, List<String> path) {
+  dynamic current = root;
+  for (final key in path) {
+    if (current is Map && current.containsKey(key)) {
+      current = current[key];
+    } else {
+      return null;
+    }
+  }
+  return _cleanBusinessReferenceText(current);
+}
+
+String? _pickReferenceAliasFromMaps(
+  List<Map<String, dynamic>> maps,
+  List<List<String>> paths,
+) {
+  for (final map in maps) {
+    if (map.isEmpty) continue;
+    for (final path in paths) {
+      final value = _businessReferenceAtPath(map, path);
+      if (value != null) return value;
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic>? _referenceMapAtPath(
+  Map<String, dynamic> root,
+  List<String> path,
+) {
+  dynamic current = root;
+  for (final key in path) {
+    if (current is Map && current.containsKey(key)) {
+      current = current[key];
+    } else {
+      return null;
+    }
+  }
+  if (current is Map) {
+    return Map<String, dynamic>.from(current);
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> _referenceMapsFromRoot(Map<String, dynamic> root) {
+  const nestedPaths = <List<String>>[
+    <String>['references'],
+    <String>['booking'],
+    <String>['record'],
+    <String>['record', 'references'],
+    <String>['record', 'booking'],
+    <String>['record', 'payload'],
+    <String>['record', 'payload', 'references'],
+    <String>['record', 'payload', 'booking'],
+    <String>['payload'],
+    <String>['payload', 'references'],
+    <String>['payload', 'booking'],
+    <String>['data'],
+    <String>['data', 'record'],
+    <String>['data', 'record', 'references'],
+    <String>['data', 'record', 'booking'],
+    <String>['data', 'booking'],
+    <String>['data', 'booking', 'references'],
+    <String>['response'],
+    <String>['response', 'record'],
+    <String>['response', 'record', 'references'],
+    <String>['response', 'record', 'booking'],
+    <String>['response', 'booking'],
+    <String>['response', 'booking', 'references'],
+  ];
+  final out = <Map<String, dynamic>>[root];
+  for (final path in nestedPaths) {
+    final map = _referenceMapAtPath(root, path);
+    if (map != null && map.isNotEmpty) out.add(map);
+  }
+  return out;
+}
+
+List<Map<String, dynamic>> _referenceLookupMaps(
+  List<Map<String, dynamic>> roots,
+) {
+  final out = <Map<String, dynamic>>[];
+  for (final root in roots) {
+    if (root.isEmpty) continue;
+    out.addAll(_referenceMapsFromRoot(root));
+  }
+  return out;
+}
+
+const List<List<String>> _receiptReferenceAliasPaths = <List<String>>[
+  <String>['receipt_reference'],
+  <String>['receiptReference'],
+];
+
+const List<List<String>> _planningReferenceAliasPaths = <List<String>>[
+  <String>['planning_reference'],
+  <String>['planningReference'],
+];
+
+const List<List<String>> _publicBookingReferenceAliasPaths = <List<String>>[
+  <String>['public_booking_reference'],
+  <String>['publicBookingReference'],
+  <String>['booking_reference'],
+  <String>['bookingReference'],
+  <String>['public_reference'],
+  <String>['publicReference'],
+];
+
+const List<List<String>> _bookingReferenceAliasPaths = <List<String>>[
+  <String>['booking_reference'],
+  <String>['bookingReference'],
+];
+
+const List<List<String>> _publicReferenceAliasPaths = <List<String>>[
+  <String>['public_reference'],
+  <String>['publicReference'],
+];
+
+({
+  String? receipt,
+  String? planning,
+  String? publicBooking,
+  String? booking,
+  String? publicRef,
+})
+_extractBusinessReferenceAliasesFromMaps(List<Map<String, dynamic>> maps) {
+  final receipt = _pickReferenceAliasFromMaps(
+    maps,
+    _receiptReferenceAliasPaths,
+  );
+  final planning = _pickReferenceAliasFromMaps(
+    maps,
+    _planningReferenceAliasPaths,
+  );
+  final publicBooking = _pickReferenceAliasFromMaps(
+    maps,
+    _publicBookingReferenceAliasPaths,
+  );
+  final bookingRef = _pickReferenceAliasFromMaps(
+    maps,
+    _bookingReferenceAliasPaths,
+  );
+  final publicRef = _pickReferenceAliasFromMaps(
+    maps,
+    _publicReferenceAliasPaths,
+  );
+  return (
+    receipt: receipt,
+    planning: planning,
+    publicBooking: publicBooking,
+    booking: bookingRef,
+    publicRef: publicRef,
+  );
+}
+
+Map<String, dynamic> _mergeBusinessReferencesIntoSource({
+  required Map<String, dynamic> source,
+  required Map<String, dynamic> authoritative,
+  String? canonicalBookingId,
+  String? tripId,
+  required String sourceTag,
+}) {
+  final merged = Map<String, dynamic>.from(source);
+  final sourceMaps = _referenceLookupMaps(<Map<String, dynamic>>[merged]);
+  final authoritativeMaps = _referenceLookupMaps(<Map<String, dynamic>>[
+    authoritative,
+  ]);
+  final existing = _extractBusinessReferenceAliasesFromMaps(sourceMaps);
+  final incoming = _extractBusinessReferenceAliasesFromMaps(authoritativeMaps);
+  final selectedPlanning = incoming.planning ?? existing.planning;
+  final selectedPublicBooking =
+      incoming.publicBooking ?? existing.publicBooking;
+  final selectedBooking = incoming.booking ?? existing.booking;
+  final selectedPublic = incoming.publicRef ?? existing.publicRef;
+  final existingReceipt = existing.receipt;
+  final incomingReceipt = incoming.receipt;
+  final resolvedReceipt =
+      (incomingReceipt != null &&
+          _isRealReceiptReference(
+            candidate: incomingReceipt,
+            canonicalBookingId: canonicalBookingId,
+            tripId: tripId,
+            planningReference: selectedPlanning,
+            publicBookingReference: selectedPublicBooking,
+            legacyTripReceiptNumber: tripId == null
+                ? null
+                : _legacyTripReceiptNumber(tripId),
+          ))
+      ? incomingReceipt
+      : existingReceipt;
+
+  void setIfMeaningful(Map<String, dynamic> target, String key, String? value) {
+    final text = _cleanBusinessReferenceText(value);
+    if (text == null) return;
+    target[key] = text;
+  }
+
+  final references = merged['references'] is Map
+      ? Map<String, dynamic>.from(merged['references'] as Map)
+      : <String, dynamic>{};
+  final booking = merged['booking'] is Map
+      ? Map<String, dynamic>.from(merged['booking'] as Map)
+      : <String, dynamic>{};
+
+  setIfMeaningful(merged, 'planning_reference', selectedPlanning);
+  setIfMeaningful(merged, 'planningReference', selectedPlanning);
+  setIfMeaningful(merged, 'public_booking_reference', selectedPublicBooking);
+  setIfMeaningful(merged, 'publicBookingReference', selectedPublicBooking);
+  setIfMeaningful(merged, 'booking_reference', selectedBooking);
+  setIfMeaningful(merged, 'bookingReference', selectedBooking);
+  setIfMeaningful(merged, 'public_reference', selectedPublic);
+  setIfMeaningful(merged, 'publicReference', selectedPublic);
+  setIfMeaningful(merged, 'receipt_reference', resolvedReceipt);
+  setIfMeaningful(merged, 'receiptReference', resolvedReceipt);
+
+  setIfMeaningful(references, 'planning_reference', selectedPlanning);
+  setIfMeaningful(references, 'planningReference', selectedPlanning);
+  setIfMeaningful(
+    references,
+    'public_booking_reference',
+    selectedPublicBooking,
+  );
+  setIfMeaningful(references, 'publicBookingReference', selectedPublicBooking);
+  setIfMeaningful(references, 'booking_reference', selectedBooking);
+  setIfMeaningful(references, 'bookingReference', selectedBooking);
+  setIfMeaningful(references, 'public_reference', selectedPublic);
+  setIfMeaningful(references, 'publicReference', selectedPublic);
+  setIfMeaningful(references, 'receipt_reference', resolvedReceipt);
+  setIfMeaningful(references, 'receiptReference', resolvedReceipt);
+
+  setIfMeaningful(booking, 'planning_reference', selectedPlanning);
+  setIfMeaningful(booking, 'planningReference', selectedPlanning);
+  setIfMeaningful(booking, 'public_booking_reference', selectedPublicBooking);
+  setIfMeaningful(booking, 'publicBookingReference', selectedPublicBooking);
+  setIfMeaningful(booking, 'booking_reference', selectedBooking);
+  setIfMeaningful(booking, 'bookingReference', selectedBooking);
+  setIfMeaningful(booking, 'public_reference', selectedPublic);
+  setIfMeaningful(booking, 'publicReference', selectedPublic);
+  setIfMeaningful(booking, 'receipt_reference', resolvedReceipt);
+  setIfMeaningful(booking, 'receiptReference', resolvedReceipt);
+
+  if (references.isNotEmpty) merged['references'] = references;
+  if (booking.isNotEmpty) merged['booking'] = booking;
+
+  debugPrint(
+    '[RECEIPT][REF_ENRICH] source=$sourceTag booking=${_safeRefPreview(canonicalBookingId ?? '')} planning=${selectedPlanning ?? ''} public=${selectedPublicBooking ?? ''} receipt=${resolvedReceipt ?? ''}',
+  );
+  return merged;
+}
+
+String _safeRefPreview(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '';
+  if (text.length <= 10) return text;
+  return '${text.substring(0, 4)}…${text.substring(text.length - 4)}';
+}
+
+void _debugReceiptReferenceSelection({
+  required String source,
+  required _TripHistoryItem item,
+  required String selected,
+}) {
+  final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+    item.rawSource,
+    item.bookingDetails,
+  ]);
+  final refs = _extractBusinessReferenceAliasesFromMaps(maps);
+  debugPrint(
+    '[RECEIPT][REF_SELECTED] booking=${_safeRefPreview(item.bookingId ?? '')} receipt=${refs.receipt ?? ''} planning=${refs.planning ?? ''} public=${refs.publicBooking ?? ''} selected=$selected source=$source',
+  );
+}
+
+String _legacyTripReceiptNumber(String tripId) {
+  final normalized = tripId.trim();
+  if (normalized.length <= 10) return normalized;
+  return '${normalized.substring(0, 6)}-${normalized.substring(normalized.length - 4)}';
+}
+
+bool _sameReference(String? a, String? b) {
+  final left = _cleanBusinessReferenceText(a);
+  final right = _cleanBusinessReferenceText(b);
+  if (left == null || right == null) return false;
+  return left.trim().toLowerCase() == right.trim().toLowerCase();
+}
+
+bool _isLegacyTripReceiptNumber(String? value) {
+  final text = _cleanBusinessReferenceText(value);
+  if (text == null) return false;
+  final lower = text.toLowerCase();
+  if (lower.startsWith('planne-')) return true;
+  return RegExp(r'^planne-[a-z0-9]{3,}$').hasMatch(lower);
+}
+
+bool _isDerivedPlannedTripReference({
+  required String candidate,
+  String? canonicalBookingId,
+  String? tripId,
+}) {
+  final lower = candidate.trim().toLowerCase();
+  if (lower.startsWith('planned_')) return true;
+  final canonical = _cleanBusinessReferenceText(canonicalBookingId);
+  if (canonical != null && _sameReference(candidate, 'planned_$canonical')) {
+    return true;
+  }
+  if (tripId != null &&
+      _sameReference(candidate, tripId) &&
+      lower.startsWith('planned_')) {
+    return true;
+  }
+  return false;
+}
+
+bool _isRealReceiptReference({
+  required String candidate,
+  String? canonicalBookingId,
+  String? tripId,
+  String? planningReference,
+  String? publicBookingReference,
+  String? legacyTripReceiptNumber,
+}) {
+  final normalized = _cleanBusinessReferenceText(candidate);
+  if (normalized == null) return false;
+  if (_sameReference(normalized, canonicalBookingId)) return false;
+  if (_sameReference(normalized, tripId)) return false;
+  if (_sameReference(normalized, planningReference)) return false;
+  if (_sameReference(normalized, publicBookingReference)) return false;
+  if (_sameReference(normalized, legacyTripReceiptNumber)) return false;
+  if (_isLegacyTripReceiptNumber(normalized)) return false;
+  if (_isDerivedPlannedTripReference(
+    candidate: normalized,
+    canonicalBookingId: canonicalBookingId,
+    tripId: tripId,
+  )) {
+    return false;
+  }
+  return true;
+}
+
+String _pickBusinessReference({
+  required Map<String, dynamic> rawSource,
+  Map<String, dynamic> details = const <String, dynamic>{},
+  String? bookingId,
+  String? tripId,
+  String? legacyFallback,
+}) {
+  final maps = _referenceLookupMaps(<Map<String, dynamic>>[rawSource, details]);
+
+  const receiptPaths = <List<String>>[
+    <String>['receipt_reference'],
+    <String>['receiptReference'],
+    <String>['references', 'receipt_reference'],
+    <String>['references', 'receiptReference'],
+    <String>['booking', 'receipt_reference'],
+    <String>['booking', 'receiptReference'],
+  ];
+  const planningPaths = <List<String>>[
+    <String>['planning_reference'],
+    <String>['planningReference'],
+    <String>['references', 'planning_reference'],
+    <String>['references', 'planningReference'],
+    <String>['booking', 'planning_reference'],
+    <String>['booking', 'planningReference'],
+  ];
+  const publicBookingPaths = <List<String>>[
+    <String>['public_booking_reference'],
+    <String>['publicBookingReference'],
+    <String>['booking_reference'],
+    <String>['bookingReference'],
+    <String>['public_reference'],
+    <String>['publicReference'],
+    <String>['references', 'public_booking_reference'],
+    <String>['references', 'publicBookingReference'],
+    <String>['references', 'booking_reference'],
+    <String>['references', 'bookingReference'],
+    <String>['references', 'public_reference'],
+    <String>['references', 'publicReference'],
+    <String>['booking', 'public_booking_reference'],
+    <String>['booking', 'publicBookingReference'],
+    <String>['booking', 'booking_reference'],
+    <String>['booking', 'bookingReference'],
+    <String>['booking', 'public_reference'],
+    <String>['booking', 'publicReference'],
+  ];
+  const canonicalBookingPaths = <List<String>>[
+    <String>['booking_id'],
+    <String>['bookingId'],
+    <String>['references', 'booking_id'],
+    <String>['references', 'bookingId'],
+    <String>['booking', 'booking_id'],
+    <String>['booking', 'bookingId'],
+    <String>['id'],
+  ];
+  const tripPaths = <List<String>>[
+    <String>['trip_id'],
+    <String>['tripId'],
+    <String>['references', 'trip_id'],
+    <String>['references', 'tripId'],
+    <String>['booking', 'trip_id'],
+    <String>['booking', 'tripId'],
+  ];
+
+  final canonicalBookingId =
+      _cleanBusinessReferenceText(bookingId) ??
+      _pickReferenceAliasFromMaps(maps, canonicalBookingPaths);
+  final effectiveTripId =
+      _cleanBusinessReferenceText(tripId) ??
+      _pickReferenceAliasFromMaps(maps, tripPaths);
+  final planningRef = _pickReferenceAliasFromMaps(maps, planningPaths);
+  final publicBookingRef = _pickReferenceAliasFromMaps(
+    maps,
+    publicBookingPaths,
+  );
+  final receiptRef = _pickReferenceAliasFromMaps(maps, receiptPaths);
+  final legacyTripReceiptNumber =
+      _cleanBusinessReferenceText(legacyFallback) ??
+      (effectiveTripId == null
+          ? null
+          : _legacyTripReceiptNumber(effectiveTripId));
+  if (receiptRef != null &&
+      _isRealReceiptReference(
+        candidate: receiptRef,
+        canonicalBookingId: canonicalBookingId,
+        tripId: effectiveTripId,
+        planningReference: planningRef,
+        publicBookingReference: publicBookingRef,
+        legacyTripReceiptNumber: legacyTripReceiptNumber,
+      )) {
+    return receiptRef;
+  }
+
+  if (planningRef != null) return planningRef;
+  if (publicBookingRef != null) return publicBookingRef;
+  if (canonicalBookingId != null) return canonicalBookingId;
+  if (effectiveTripId != null) return effectiveTripId;
+
+  final fallback = _cleanBusinessReferenceText(legacyTripReceiptNumber);
+  return fallback ?? '—';
+}
+
+enum _BusinessReferenceKind {
+  receipt,
+  planning,
+  publicBooking,
+  canonicalBooking,
+  internalTrip,
+  unknown,
+}
+
+_BusinessReferenceKind _classifyBusinessReferenceSelection({
+  required String selectedValue,
+  required Map<String, dynamic> rawSource,
+  required Map<String, dynamic> details,
+  String? bookingId,
+  String? tripId,
+}) {
+  final selected = _cleanBusinessReferenceText(selectedValue);
+  if (selected == null) return _BusinessReferenceKind.unknown;
+  final maps = _referenceLookupMaps(<Map<String, dynamic>>[rawSource, details]);
+  final refs = _extractBusinessReferenceAliasesFromMaps(maps);
+  final canonicalBookingId =
+      _cleanBusinessReferenceText(bookingId) ??
+      _pickReferenceAliasFromMaps(maps, const [
+        ['booking_id'],
+        ['bookingId'],
+        ['id'],
+      ]);
+  final effectiveTripId =
+      _cleanBusinessReferenceText(tripId) ??
+      _pickReferenceAliasFromMaps(maps, const [
+        ['trip_id'],
+        ['tripId'],
+      ]);
+  if (_sameReference(selected, refs.receipt) &&
+      _isRealReceiptReference(
+        candidate: selected,
+        canonicalBookingId: canonicalBookingId,
+        tripId: effectiveTripId,
+        planningReference: refs.planning,
+        publicBookingReference: refs.publicBooking,
+        legacyTripReceiptNumber: effectiveTripId == null
+            ? null
+            : _legacyTripReceiptNumber(effectiveTripId),
+      )) {
+    return _BusinessReferenceKind.receipt;
+  }
+  if (_sameReference(selected, refs.planning)) {
+    return _BusinessReferenceKind.planning;
+  }
+  if (_sameReference(selected, refs.publicBooking) ||
+      _sameReference(selected, refs.booking) ||
+      _sameReference(selected, refs.publicRef)) {
+    return _BusinessReferenceKind.publicBooking;
+  }
+  if (_sameReference(selected, canonicalBookingId)) {
+    return _BusinessReferenceKind.canonicalBooking;
+  }
+  if (_sameReference(selected, effectiveTripId) ||
+      _isLegacyTripReceiptNumber(selected) ||
+      _isDerivedPlannedTripReference(
+        candidate: selected,
+        canonicalBookingId: canonicalBookingId,
+        tripId: effectiveTripId,
+      )) {
+    return _BusinessReferenceKind.internalTrip;
+  }
+  return _BusinessReferenceKind.unknown;
+}
+
+String _receiptReferenceLabelForKind(_BusinessReferenceKind kind) {
+  switch (kind) {
+    case _BusinessReferenceKind.receipt:
+      return _receiptText('receiptNumber');
+    case _BusinessReferenceKind.planning:
+      return _receiptText('planningNumber');
+    case _BusinessReferenceKind.publicBooking:
+      return _receiptText('bookingNumber');
+    case _BusinessReferenceKind.canonicalBooking:
+      return _receiptText('internalBooking');
+    case _BusinessReferenceKind.internalTrip:
+      return _receiptText('internalTrip');
+    case _BusinessReferenceKind.unknown:
+      return _receiptText('reference');
+  }
+}
+
+({String label, String value, _BusinessReferenceKind kind})
+_businessReferenceDisplayForItem(
+  _TripHistoryItem item, {
+  required String source,
+}) {
+  final selected = _pickBusinessReference(
+    rawSource: item.rawSource,
+    details: item.bookingDetails,
+    bookingId: item.bookingId,
+    tripId: item.tripId,
+    legacyFallback: _legacyTripReceiptNumber(item.tripId),
+  );
+  final kind = _classifyBusinessReferenceSelection(
+    selectedValue: selected,
+    rawSource: item.rawSource,
+    details: item.bookingDetails,
+    bookingId: item.bookingId,
+    tripId: item.tripId,
+  );
+  _debugReceiptReferenceSelection(
+    source: source,
+    item: item,
+    selected: selected,
+  );
+  return (
+    label: _receiptReferenceLabelForKind(kind),
+    value: selected,
+    kind: kind,
+  );
+}
+
 String? _paymentUpdatePaidAtUtc(Map<String, dynamic> fields) {
   final raw = _paymentUpdateField(fields, const [
     'paid_at_utc',
@@ -8823,9 +9972,54 @@ Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
     'payment_id',
     'paymentId',
   ]);
-  final reference = bookingId.isNotEmpty
-      ? bookingId
-      : (tripId.isNotEmpty ? tripId : item.receiptNumber.trim());
+  final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+    paymentFields,
+    item.bookingDetails,
+    item.rawSource,
+  ]);
+  final receiptReference = _pickReferenceAliasFromMaps(maps, const [
+    ['receipt_reference'],
+    ['receiptReference'],
+  ]);
+  final planningReference = _pickReferenceAliasFromMaps(maps, const [
+    ['planning_reference'],
+    ['planningReference'],
+  ]);
+  final publicBookingReference = _pickReferenceAliasFromMaps(maps, const [
+    ['public_booking_reference'],
+    ['publicBookingReference'],
+    ['booking_reference'],
+    ['bookingReference'],
+    ['public_reference'],
+    ['publicReference'],
+  ]);
+  final bookingReference = _pickReferenceAliasFromMaps(maps, const [
+    ['booking_reference'],
+    ['bookingReference'],
+  ]);
+  final publicReference = _pickReferenceAliasFromMaps(maps, const [
+    ['public_reference'],
+    ['publicReference'],
+  ]);
+  final reference = _pickBusinessReference(
+    rawSource: item.rawSource,
+    details: item.bookingDetails,
+    bookingId: bookingId,
+    tripId: tripId,
+    legacyFallback: _legacyTripReceiptNumber(item.tripId),
+  );
+  final effectiveReceiptReference =
+      (receiptReference != null &&
+          _isRealReceiptReference(
+            candidate: receiptReference,
+            canonicalBookingId: bookingId,
+            tripId: tripId,
+            planningReference: planningReference,
+            publicBookingReference: publicBookingReference,
+            legacyTripReceiptNumber: _legacyTripReceiptNumber(item.tripId),
+          ))
+      ? receiptReference
+      : reference;
   final eventKey = reference.isEmpty
       ? eventAt.toUtc().millisecondsSinceEpoch
       : reference;
@@ -8857,7 +10051,13 @@ Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
       'paid_at_utc': paidAtUtc,
     },
     'references': <String, dynamic>{
-      'receipt_reference': reference.isEmpty ? null : reference,
+      'receipt_reference': effectiveReceiptReference.isEmpty
+          ? null
+          : effectiveReceiptReference,
+      'planning_reference': planningReference,
+      'public_booking_reference': publicBookingReference,
+      'booking_reference': bookingReference,
+      'public_reference': publicReference,
       'invoice_reference': null,
     },
     'provenance': <String, dynamic>{
@@ -10448,6 +11648,34 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: bookingId,
         contextLabel: 'STATUS_AFTER_WRITE',
       );
+      final authoritativeFields = await _fetchPaymentFieldsForHistory(
+        bookingId,
+      );
+      if (authoritativeFields.isNotEmpty && mounted) {
+        setState(() {
+          final idx = _bookings.indexWhere((x) => x.bookingId == bookingId);
+          if (idx >= 0) {
+            final mergedDetails = _mergeBusinessReferencesIntoSource(
+              source: Map<String, dynamic>.from(_bookings[idx].details),
+              authoritative: authoritativeFields,
+              canonicalBookingId: bookingId,
+              tripId: null,
+              sourceTag: 'status_after_write_booking_list',
+            )..addAll(authoritativeFields);
+            _bookings[idx] = _bookings[idx].copyWith(details: mergedDetails);
+          }
+          if (_activeBooking?.bookingId == bookingId) {
+            final mergedDetails = _mergeBusinessReferencesIntoSource(
+              source: Map<String, dynamic>.from(_activeBooking!.details),
+              authoritative: authoritativeFields,
+              canonicalBookingId: bookingId,
+              tripId: null,
+              sourceTag: 'status_after_write_active_booking',
+            )..addAll(authoritativeFields);
+            _activeBooking = _activeBooking!.copyWith(details: mergedDetails);
+          }
+        });
+      }
       await _refreshBookings(force: true, trigger: 'status_change');
     } catch (e) {
       _toast('❌ Status update failed: $e');
@@ -10709,6 +11937,17 @@ class _DriverHomePageState extends State<DriverHomePage>
             dataBooking['payment_id'] ??
             dataBooking['paymentId'],
       );
+      final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+        root,
+        data,
+        record,
+        booking,
+        dataRecord,
+        dataBooking,
+        recordBooking,
+        dataRecordBooking,
+      ]);
+      final refs = _extractBusinessReferenceAliasesFromMaps(maps);
 
       return <String, dynamic>{
         if (paymentStatus != null) ...{
@@ -10724,6 +11963,26 @@ class _DriverHomePageState extends State<DriverHomePage>
           'payment_id': paymentId,
           'paymentId': paymentId,
         },
+        if (refs.receipt != null) ...{
+          'receipt_reference': refs.receipt,
+          'receiptReference': refs.receipt,
+        },
+        if (refs.planning != null) ...{
+          'planning_reference': refs.planning,
+          'planningReference': refs.planning,
+        },
+        if (refs.publicBooking != null) ...{
+          'public_booking_reference': refs.publicBooking,
+          'publicBookingReference': refs.publicBooking,
+        },
+        if (refs.booking != null) ...{
+          'booking_reference': refs.booking,
+          'bookingReference': refs.booking,
+        },
+        if (refs.publicRef != null) ...{
+          'public_reference': refs.publicRef,
+          'publicReference': refs.publicRef,
+        },
       };
     }
 
@@ -10738,7 +11997,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       final root = Map<String, dynamic>.from(decoded);
       var parsed = parsePayment(root);
-      if (parsed['payment_status'] != null) return parsed;
+      if (parsed.isNotEmpty) return parsed;
 
       // Fallback shape: /bookings?limit=... returns a list under items/data/items.
       final candidateLists = <List<dynamic>>[
@@ -11344,6 +12603,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         });
       }
     }
+    final refMaps = _referenceLookupMaps(<Map<String, dynamic>>[
+      detailMap,
+      bookingMap,
+      payload,
+      quote,
+      record,
+      recordPayload,
+      payloadBooking,
+    ]);
+    final refs = _extractBusinessReferenceAliasesFromMaps(refMaps);
 
     return <String, dynamic>{
       if (pickupAddress != null) 'pickup_address': pickupAddress,
@@ -11392,6 +12661,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (paymentId != null) ...{
         'payment_id': paymentId,
         'paymentId': paymentId,
+      },
+      if (refs.receipt != null) ...{
+        'receipt_reference': refs.receipt,
+        'receiptReference': refs.receipt,
+      },
+      if (refs.planning != null) ...{
+        'planning_reference': refs.planning,
+        'planningReference': refs.planning,
+      },
+      if (refs.publicBooking != null) ...{
+        'public_booking_reference': refs.publicBooking,
+        'publicBookingReference': refs.publicBooking,
+      },
+      if (refs.booking != null) ...{
+        'booking_reference': refs.booking,
+        'bookingReference': refs.booking,
+      },
+      if (refs.publicRef != null) ...{
+        'public_reference': refs.publicRef,
+        'publicReference': refs.publicRef,
       },
       if (totalPackage != null) 'booking_total_eur': totalPackage,
       if (segmentPrice != null) 'segment_price_eur': segmentPrice,
@@ -11547,34 +12836,47 @@ class _DriverHomePageState extends State<DriverHomePage>
     required DateTime stoppedAt,
   }) async {
     try {
-      final bookingDetails = _plannedBookingDetailsPayload(booking);
-      final authoritativePayment = await _fetchPaymentFieldsForHistory(
+      var bookingDetails = _plannedBookingDetailsPayload(booking);
+      final authoritativeFields = await _fetchPaymentFieldsForHistory(
         booking.bookingId,
       );
-      if (authoritativePayment.isNotEmpty) {
-        bookingDetails.addAll(authoritativePayment);
+      if (authoritativeFields.isNotEmpty) {
+        bookingDetails = _mergeBusinessReferencesIntoSource(
+          source: bookingDetails,
+          authoritative: authoritativeFields,
+          canonicalBookingId: booking.bookingId,
+          tripId: null,
+          sourceTag: 'planned_trip_stop_authoritative_fields',
+        );
+        bookingDetails.addAll(authoritativeFields);
         final existingBooking = bookingDetails['booking'];
         if (existingBooking is Map) {
-          final mergedBooking = Map<String, dynamic>.from(existingBooking);
-          if (authoritativePayment['payment_status'] != null) {
+          final mergedBooking = _mergeBusinessReferencesIntoSource(
+            source: Map<String, dynamic>.from(existingBooking),
+            authoritative: authoritativeFields,
+            canonicalBookingId: booking.bookingId,
+            tripId: null,
+            sourceTag: 'planned_trip_stop_booking_nested',
+          );
+          if (authoritativeFields['payment_status'] != null) {
             mergedBooking['payment_status'] =
-                authoritativePayment['payment_status'];
+                authoritativeFields['payment_status'];
             mergedBooking['paymentStatus'] =
-                authoritativePayment['payment_status'];
+                authoritativeFields['payment_status'];
           }
-          if (authoritativePayment['paid_at'] != null) {
-            mergedBooking['paid_at'] = authoritativePayment['paid_at'];
-            mergedBooking['paidAt'] = authoritativePayment['paid_at'];
+          if (authoritativeFields['paid_at'] != null) {
+            mergedBooking['paid_at'] = authoritativeFields['paid_at'];
+            mergedBooking['paidAt'] = authoritativeFields['paid_at'];
           }
-          if (authoritativePayment['payment_provider'] != null) {
+          if (authoritativeFields['payment_provider'] != null) {
             mergedBooking['payment_provider'] =
-                authoritativePayment['payment_provider'];
+                authoritativeFields['payment_provider'];
             mergedBooking['paymentProvider'] =
-                authoritativePayment['payment_provider'];
+                authoritativeFields['payment_provider'];
           }
-          if (authoritativePayment['payment_id'] != null) {
-            mergedBooking['payment_id'] = authoritativePayment['payment_id'];
-            mergedBooking['paymentId'] = authoritativePayment['payment_id'];
+          if (authoritativeFields['payment_id'] != null) {
+            mergedBooking['payment_id'] = authoritativeFields['payment_id'];
+            mergedBooking['paymentId'] = authoritativeFields['payment_id'];
           }
           bookingDetails['booking'] = mergedBooking;
         }
@@ -11617,6 +12919,17 @@ class _DriverHomePageState extends State<DriverHomePage>
           'payment_id': bookingDetails['payment_id'],
         if (bookingDetails['paymentId'] != null)
           'paymentId': bookingDetails['paymentId'],
+        if (bookingDetails['receipt_reference'] != null)
+          'receipt_reference': bookingDetails['receipt_reference'],
+        if (bookingDetails['planning_reference'] != null)
+          'planning_reference': bookingDetails['planning_reference'],
+        if (bookingDetails['public_booking_reference'] != null)
+          'public_booking_reference':
+              bookingDetails['public_booking_reference'],
+        if (bookingDetails['booking_reference'] != null)
+          'booking_reference': bookingDetails['booking_reference'],
+        if (bookingDetails['public_reference'] != null)
+          'public_reference': bookingDetails['public_reference'],
         ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       };
       final res = await http
@@ -11871,11 +13184,42 @@ class _DriverHomePageState extends State<DriverHomePage>
       _compliancePathText(details, 'booking.paid_at'),
       _compliancePathText(details, 'booking.paidAt'),
     ]);
+    final referenceMaps = _referenceLookupMaps(<Map<String, dynamic>>[details]);
+    final planningReference = _pickReferenceAliasFromMaps(referenceMaps, const [
+      ['planning_reference'],
+      ['planningReference'],
+    ]);
+    final publicBookingReference = _pickReferenceAliasFromMaps(
+      referenceMaps,
+      const [
+        ['public_booking_reference'],
+        ['publicBookingReference'],
+        ['booking_reference'],
+        ['bookingReference'],
+        ['public_reference'],
+        ['publicReference'],
+      ],
+    );
+    final bookingReference = _pickReferenceAliasFromMaps(referenceMaps, const [
+      ['booking_reference'],
+      ['bookingReference'],
+    ]);
+    final publicReference = _pickReferenceAliasFromMaps(referenceMaps, const [
+      ['public_reference'],
+      ['publicReference'],
+    ]);
+    final effectiveReceiptReference = _pickBusinessReference(
+      rawSource: details,
+      details: details,
+      bookingId: bookingId,
+      tripId: null,
+      legacyFallback: receiptReference,
+    );
     final validationState = _complianceValidationState(
       rideType: 'planned',
       backendConfirmed: backendConfirmed,
       driverId: driverId,
-      receiptReference: receiptReference,
+      receiptReference: effectiveReceiptReference,
       startedAt: startedAt,
       stoppedAt: stoppedAt,
       bookingId: bookingId,
@@ -11915,7 +13259,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         paidAtUtc: plannedPaidAt,
       ),
       'references': <String, dynamic>{
-        'receipt_reference': receiptReference,
+        'receipt_reference': effectiveReceiptReference,
+        'planning_reference': planningReference,
+        'public_booking_reference': publicBookingReference,
+        'booking_reference': bookingReference,
+        'public_reference': publicReference,
         'invoice_reference': null,
       },
       'provenance': <String, dynamic>{
@@ -11990,6 +13338,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       'payment': _buildCompliancePaymentPayload(),
       'references': <String, dynamic>{
         'receipt_reference': receiptReference,
+        'planning_reference': null,
+        'public_booking_reference': null,
+        'booking_reference': null,
+        'public_reference': null,
         'invoice_reference': null,
       },
       'provenance': <String, dynamic>{
@@ -16050,9 +17402,56 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  ({String label, String value}) _driverCardReferenceDisplay(BookingItem b) {
+    final canonicalBookingId = _cleanBusinessReferenceText(b.bookingId) ?? '';
+    final detailsMap = Map<String, dynamic>.from(b.details);
+    if (canonicalBookingId.isNotEmpty) {
+      detailsMap['booking_id'] = canonicalBookingId;
+      detailsMap['bookingId'] = canonicalBookingId;
+    }
+    final maps = _referenceLookupMaps(<Map<String, dynamic>>[detailsMap]);
+    final refs = _extractBusinessReferenceAliasesFromMaps(maps);
+    final planning = refs.planning ?? '';
+    final publicBooking =
+        refs.publicBooking ?? refs.booking ?? refs.publicRef ?? '';
+
+    String label;
+    String value;
+    if (planning.isNotEmpty) {
+      label = _tr(
+        nl: 'Planningnummer',
+        en: 'Planning no.',
+        fr: 'N° de planning',
+        es: 'N.º de planificación',
+      );
+      value = planning;
+    } else if (publicBooking.isNotEmpty) {
+      label = _tr(
+        nl: 'Boekingsnummer',
+        en: 'Booking no.',
+        fr: 'N° de réservation',
+        es: 'N.º de reserva',
+      );
+      value = publicBooking;
+    } else {
+      label = _tr(
+        nl: 'Interne boeking',
+        en: 'Internal booking',
+        fr: 'Réservation interne',
+        es: 'Reserva interna',
+      );
+      value = canonicalBookingId.isEmpty ? b.shortId : canonicalBookingId;
+    }
+    debugPrint(
+      '[RIDES][CARD_REF_SELECTED] booking=${_safeRefPreview(canonicalBookingId)} planning=$planning public=$publicBooking selected=$value',
+    );
+    return (label: label, value: value);
+  }
+
   Widget _bookingCard(BookingItem b) {
     final dt = _formatPickup(b.pickupIso);
     final actionBusy = _bookingActionInFlight.contains(b.bookingId);
+    final cardReference = _driverCardReferenceDisplay(b);
 
     return LayoutBuilder(
       builder: (context, c) {
@@ -16176,7 +17575,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                   _pill(text: (b.tier ?? 'premium').toUpperCase()),
                   _pill(text: '${b.pax ?? 0} pax'),
                   _pill(text: '${b.bags ?? 0} bags'),
-                  _pill(text: 'ID: ${b.shortId}', textColor: Colors.white70),
+                  _pill(
+                    text: '${cardReference.label}: ${cardReference.value}',
+                    textColor: Colors.white70,
+                  ),
                   if (b.price != null)
                     _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
                 ],
@@ -17079,6 +18481,34 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     Navigator.pop(context);
+    final bookingDetailsById = <String, Map<String, dynamic>>{};
+    for (final booking in _bookings) {
+      final bookingId = booking.bookingId.trim();
+      if (bookingId.isEmpty) continue;
+      final details = Map<String, dynamic>.from(booking.details);
+      details['booking_id'] = bookingId;
+      details['bookingId'] = bookingId;
+      final nestedBooking = details['booking'] is Map
+          ? Map<String, dynamic>.from(details['booking'] as Map)
+          : <String, dynamic>{};
+      nestedBooking['booking_id'] = bookingId;
+      nestedBooking['bookingId'] = bookingId;
+      details['booking'] = nestedBooking;
+      bookingDetailsById[bookingId] = details;
+    }
+    final activeBookingId = _activeBooking?.bookingId.trim() ?? '';
+    if (activeBookingId.isNotEmpty) {
+      final activeDetails = Map<String, dynamic>.from(_activeBooking!.details);
+      activeDetails['booking_id'] = activeBookingId;
+      activeDetails['bookingId'] = activeBookingId;
+      final nestedBooking = activeDetails['booking'] is Map
+          ? Map<String, dynamic>.from(activeDetails['booking'] as Map)
+          : <String, dynamic>{};
+      nestedBooking['booking_id'] = activeBookingId;
+      nestedBooking['bookingId'] = activeBookingId;
+      activeDetails['booking'] = nestedBooking;
+      bookingDetailsById[activeBookingId] = activeDetails;
+    }
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (ctx) => _TripHistoryPage(
@@ -17086,6 +18516,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           tenantId: kOutboundTenantId,
           driverId: kDriverId,
           headers: _headers(admin: true),
+          bookingDetailsById: bookingDetailsById,
         ),
       ),
     );
@@ -17521,12 +18952,14 @@ class _TripHistoryPage extends StatefulWidget {
   final String tenantId;
   final String driverId;
   final Map<String, String> headers;
+  final Map<String, Map<String, dynamic>> bookingDetailsById;
 
   const _TripHistoryPage({
     required this.workerBaseUrl,
     required this.tenantId,
     required this.driverId,
     required this.headers,
+    this.bookingDetailsById = const <String, Map<String, dynamic>>{},
   });
 
   @override
@@ -17535,6 +18968,205 @@ class _TripHistoryPage extends StatefulWidget {
 
 class _TripHistoryPageState extends State<_TripHistoryPage> {
   late Future<List<_TripHistoryItem>> _future;
+
+  _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
+    _TripHistoryItem item, {
+    required String sourceTag,
+  }) {
+    final bookingId = item.bookingId?.trim() ?? '';
+    if (bookingId.isEmpty) return item;
+    final authoritative = widget.bookingDetailsById[bookingId];
+    if (authoritative == null || authoritative.isEmpty) return item;
+
+    final mergedRawSource = _mergeBusinessReferencesIntoSource(
+      source: Map<String, dynamic>.from(item.rawSource),
+      authoritative: authoritative,
+      canonicalBookingId: item.bookingId,
+      tripId: item.tripId,
+      sourceTag: sourceTag,
+    );
+    final mergedBookingDetails = _mergeBusinessReferencesIntoSource(
+      source: Map<String, dynamic>.from(item.bookingDetails),
+      authoritative: authoritative,
+      canonicalBookingId: item.bookingId,
+      tripId: item.tripId,
+      sourceTag: '${sourceTag}_booking_details',
+    );
+    if (mergedBookingDetails.isNotEmpty) {
+      mergedRawSource['booking_details'] = mergedBookingDetails;
+      mergedRawSource['bookingDetails'] = mergedBookingDetails;
+    }
+
+    return item.copyWith(
+      rawSource: mergedRawSource,
+      bookingDetails: mergedBookingDetails,
+    );
+  }
+
+  ({bool hasPlanning, bool hasPublicBooking, bool hasRealReceipt})
+  _referencePresenceForItem(_TripHistoryItem item) {
+    final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+      item.rawSource,
+      item.bookingDetails,
+    ]);
+    final refs = _extractBusinessReferenceAliasesFromMaps(maps);
+    final canonicalBookingId =
+        _cleanBusinessReferenceText(item.bookingId) ??
+        _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['booking_id'],
+          <String>['bookingId'],
+          <String>['id'],
+          <String>['booking', 'booking_id'],
+          <String>['booking', 'bookingId'],
+          <String>['record', 'booking_id'],
+          <String>['record', 'bookingId'],
+        ]);
+    final effectiveTripId =
+        _cleanBusinessReferenceText(item.tripId) ??
+        _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['trip_id'],
+          <String>['tripId'],
+        ]);
+    final hasRealReceipt =
+        refs.receipt != null &&
+        _isRealReceiptReference(
+          candidate: refs.receipt!,
+          canonicalBookingId: canonicalBookingId,
+          tripId: effectiveTripId,
+          planningReference: refs.planning,
+          publicBookingReference: refs.publicBooking,
+          legacyTripReceiptNumber: effectiveTripId == null
+              ? null
+              : _legacyTripReceiptNumber(effectiveTripId),
+        );
+    return (
+      hasPlanning: refs.planning != null,
+      hasPublicBooking:
+          refs.publicBooking != null ||
+          refs.booking != null ||
+          refs.publicRef != null,
+      hasRealReceipt: hasRealReceipt,
+    );
+  }
+
+  String _canonicalBookingIdFromItem(_TripHistoryItem item) {
+    final direct = _cleanBusinessReferenceText(item.bookingId) ?? '';
+    if (direct.isNotEmpty) return direct;
+    final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+      item.rawSource,
+      item.bookingDetails,
+    ]);
+    return _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['booking_id'],
+          <String>['bookingId'],
+          <String>['id'],
+          <String>['booking', 'booking_id'],
+          <String>['booking', 'bookingId'],
+          <String>['record', 'booking_id'],
+          <String>['record', 'bookingId'],
+          <String>['record', 'booking', 'booking_id'],
+          <String>['record', 'booking', 'bookingId'],
+          <String>['payload', 'booking_id'],
+          <String>['payload', 'bookingId'],
+          <String>['payload', 'booking', 'booking_id'],
+          <String>['payload', 'booking', 'bookingId'],
+        ]) ??
+        '';
+  }
+
+  Future<_TripHistoryItem> _enrichTripHistoryItemForReceipt(
+    _TripHistoryItem item,
+  ) async {
+    var enriched = _enrichTripHistoryItemWithBusinessRefs(
+      item,
+      sourceTag: 'trip_history_open_receipt_cache',
+    );
+    final before = _referencePresenceForItem(enriched);
+    if (before.hasPlanning ||
+        before.hasPublicBooking ||
+        before.hasRealReceipt) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(_canonicalBookingIdFromItem(enriched))} foundPlanning=${before.hasPlanning} foundPublic=${before.hasPublicBooking} foundReceipt=${before.hasRealReceipt} source=already_present',
+      );
+      return enriched;
+    }
+
+    final bookingId = _canonicalBookingIdFromItem(enriched);
+    if (bookingId.isEmpty) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking= foundPlanning=false foundPublic=false foundReceipt=false source=skipped_no_booking',
+      );
+      return enriched;
+    }
+
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}',
+      );
+      final res = await http
+          .get(uri, headers: widget.headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        debugPrint(
+          '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
+        );
+        return enriched;
+      }
+      final decodedRaw = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decodedRaw is! Map || decodedRaw['ok'] != true) {
+        debugPrint(
+          '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
+        );
+        return enriched;
+      }
+      final decoded = Map<String, dynamic>.from(decodedRaw);
+      final record = decoded['record'];
+      final booking = record is Map ? record['booking'] : null;
+      final authoritative = <String, dynamic>{
+        ...decoded,
+        if (record is Map) 'record': Map<String, dynamic>.from(record),
+        if (booking is Map) 'booking': Map<String, dynamic>.from(booking),
+        'booking_id': bookingId,
+        'bookingId': bookingId,
+      };
+      final authoritativePresence = _extractBusinessReferenceAliasesFromMaps(
+        _referenceLookupMaps(<Map<String, dynamic>>[authoritative]),
+      );
+      final mergedRawSource = _mergeBusinessReferencesIntoSource(
+        source: Map<String, dynamic>.from(enriched.rawSource),
+        authoritative: authoritative,
+        canonicalBookingId: bookingId,
+        tripId: enriched.tripId,
+        sourceTag: 'trip_history_open_receipt_booking_detail_fetch',
+      );
+      final mergedBookingDetails = _mergeBusinessReferencesIntoSource(
+        source: Map<String, dynamic>.from(enriched.bookingDetails),
+        authoritative: authoritative,
+        canonicalBookingId: bookingId,
+        tripId: enriched.tripId,
+        sourceTag: 'trip_history_open_receipt_booking_detail_fetch_details',
+      );
+      if (mergedBookingDetails.isNotEmpty) {
+        mergedRawSource['booking_details'] = mergedBookingDetails;
+        mergedRawSource['bookingDetails'] = mergedBookingDetails;
+      }
+      enriched = enriched.copyWith(
+        rawSource: mergedRawSource,
+        bookingDetails: mergedBookingDetails,
+      );
+      final after = _referencePresenceForItem(enriched);
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=${authoritativePresence.planning != null || after.hasPlanning} foundPublic=${authoritativePresence.publicBooking != null || authoritativePresence.booking != null || authoritativePresence.publicRef != null || after.hasPublicBooking} foundReceipt=${authoritativePresence.receipt != null || after.hasRealReceipt} source=booking_detail_fetch',
+      );
+      return enriched;
+    } catch (_) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
+      );
+      return enriched;
+    }
+  }
 
   @override
   void initState() {
@@ -17631,7 +19263,14 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     for (final item in localItems) {
       mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
     }
-    final merged = mergedByTripId.values.toList(growable: false);
+    final merged = mergedByTripId.values
+        .map(
+          (item) => _enrichTripHistoryItemWithBusinessRefs(
+            item,
+            sourceTag: 'trip_history_fetch_merge',
+          ),
+        )
+        .toList(growable: false);
     sortNewestFirst(merged);
     return merged;
   }
@@ -17662,16 +19301,18 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     return '$min min ${sec}s';
   }
 
-  void _openReceipt(_TripHistoryItem item) {
-    if (!item.isCompletedForReceipt) {
+  Future<void> _openReceipt(_TripHistoryItem item) async {
+    final enrichedItem = await _enrichTripHistoryItemForReceipt(item);
+    if (!mounted) return;
+    if (!enrichedItem.isCompletedForReceipt) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_receiptText('receiptUnavailable'))),
       );
       return;
     }
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => _RideReceiptPage(item: item)));
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => _RideReceiptPage(item: enrichedItem)),
+    );
   }
 
   Future<void> _archiveTrip(_TripHistoryItem item) async {
@@ -18489,6 +20130,10 @@ class _ReceiptPdfActionRunner {
     required _TripHistoryItem item,
   }) async {
     try {
+      final smartRef = _businessReferenceDisplayForItem(
+        item,
+        source: 'receipt_pdf_bundle_static_layout',
+      );
       final contact = _resolvePdfContact(item);
       final keyList = contact.keys.join(',');
       debugPrint(
@@ -18664,7 +20309,7 @@ class _ReceiptPdfActionRunner {
               ),
             ),
             pw.SizedBox(height: 10),
-            _pdfInfoRow(_receiptText('reference'), _customerReference(item)),
+            _pdfInfoRow(smartRef.label, smartRef.value),
             _pdfInfoRow(_receiptText('date'), rideDateText),
             _pdfInfoRow(_receiptText('type'), item.kindLabel),
             _pdfInfoRow(_receiptText('service'), serviceText),
@@ -19225,25 +20870,10 @@ class _ReceiptPdfActionRunner {
   }
 
   static String _customerReference(_TripHistoryItem item) {
-    final direct = _firstPathText(item, const [
-      ['public_reference'],
-      ['publicReference'],
-      ['receipt_reference'],
-      ['receiptReference'],
-      ['booking', 'public_reference'],
-      ['booking', 'publicReference'],
-      ['booking', 'receipt_reference'],
-      ['booking', 'receiptReference'],
-      ['booking', 'bookingId'],
-      ['booking_id'],
-      ['bookingId'],
-      ['id'],
-    ]);
-    if (direct != null && direct.trim().isNotEmpty) return direct.trim();
-    final bookingId = (item.bookingId ?? '').trim();
-    if (bookingId.isNotEmpty) return bookingId;
-    final receiptNumber = item.receiptNumber.trim();
-    return receiptNumber.isNotEmpty ? receiptNumber : '—';
+    return _businessReferenceDisplayForItem(
+      item,
+      source: 'receipt_pdf_bundle_static',
+    ).value;
   }
 
   static String _localizedPaymentMethodValue(String? raw) {
@@ -20884,25 +22514,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String get _customerReference {
-    final direct = _firstDetailPathText(const [
-      ['public_reference'],
-      ['publicReference'],
-      ['receipt_reference'],
-      ['receiptReference'],
-      ['booking', 'public_reference'],
-      ['booking', 'publicReference'],
-      ['booking', 'receipt_reference'],
-      ['booking', 'receiptReference'],
-      ['booking', 'bookingId'],
-      ['booking_id'],
-      ['bookingId'],
-      ['id'],
-    ]);
-    if (direct != null && direct.trim().isNotEmpty) return direct.trim();
-    final bookingId = (item.bookingId ?? '').trim();
-    if (bookingId.isNotEmpty) return bookingId;
-    final receiptNumber = item.receiptNumber.trim();
-    return receiptNumber.isNotEmpty ? receiptNumber : '—';
+    return _businessReferenceDisplayForItem(
+      item,
+      source: 'receipt_body_customer_reference',
+    ).value;
   }
 
   String _localizedPaymentMethodValue(String? raw) {
@@ -21348,6 +22963,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     BuildContext context,
   ) async {
     try {
+      final smartRef = _businessReferenceDisplayForItem(
+        item,
+        source: 'receipt_pdf_bundle_stateful_layout',
+      );
       _logPdfContactResolution();
       final route = _resolvedRouteForPdf();
       final seller = await _buildSellerProfile();
@@ -21481,7 +23100,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               ),
             ),
             pw.SizedBox(height: 10),
-            _pdfInfoRow(_receiptText('reference'), _customerReference),
+            _pdfInfoRow(smartRef.label, smartRef.value),
             _pdfInfoRow(_receiptText('date'), rideDateText),
             _pdfInfoRow(_receiptText('type'), item.kindLabel),
             _pdfInfoRow(_receiptText('service'), serviceText),
@@ -22208,6 +23827,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   @override
   Widget build(BuildContext context) {
     final route = _resolvedRouteForPdf();
+    final receiptRefDisplay = _businessReferenceDisplayForItem(
+      item,
+      source: 'receipt_screen_row',
+    );
     if (!widget.showReceiptUi) {
       return Scaffold(
         backgroundColor: const Color(0xFF0B1020),
@@ -22283,10 +23906,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  _receiptRow(
-                    _receiptText('receiptNumber'),
-                    item.receiptNumber,
-                  ),
+                  _receiptRow(receiptRefDisplay.label, receiptRefDisplay.value),
                   _receiptRow(_receiptText('type'), item.kindLabel),
                   _optionalReceiptRow(
                     _receiptText('subtype'),

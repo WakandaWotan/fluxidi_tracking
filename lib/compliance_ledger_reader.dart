@@ -34,6 +34,8 @@ class ComplianceLedgerEntry {
     required this.paymentId,
     required this.paidAtUtc,
     required this.receiptReference,
+    required this.planningReference,
+    required this.publicBookingReference,
     required this.invoiceReference,
     required this.validationState,
     required this.backendConfirmed,
@@ -71,6 +73,8 @@ class ComplianceLedgerEntry {
   final String paymentId;
   final DateTime? paidAtUtc;
   final String receiptReference;
+  final String planningReference;
+  final String publicBookingReference;
   final String invoiceReference;
   final String validationState;
   final bool? backendConfirmed;
@@ -122,7 +126,32 @@ class ComplianceLedgerEntry {
       paymentProvider: _toStringOrEmpty(payment['provider']),
       paymentId: _toStringOrEmpty(payment['payment_id']),
       paidAtUtc: _toDateTime(payment['paid_at_utc']),
-      receiptReference: _toStringOrEmpty(references['receipt_reference']),
+      receiptReference: _firstNonEmptyText(<Object?>[
+        references['receipt_reference'],
+        references['receiptReference'],
+        raw['receipt_reference'],
+        raw['receiptReference'],
+      ]),
+      planningReference: _firstNonEmptyText(<Object?>[
+        references['planning_reference'],
+        references['planningReference'],
+        raw['planning_reference'],
+        raw['planningReference'],
+      ]),
+      publicBookingReference: _firstNonEmptyText(<Object?>[
+        references['public_booking_reference'],
+        references['publicBookingReference'],
+        references['booking_reference'],
+        references['bookingReference'],
+        references['public_reference'],
+        references['publicReference'],
+        raw['public_booking_reference'],
+        raw['publicBookingReference'],
+        raw['booking_reference'],
+        raw['bookingReference'],
+        raw['public_reference'],
+        raw['publicReference'],
+      ]),
       invoiceReference: _toStringOrEmpty(references['invoice_reference']),
       validationState: _toStringOrEmpty(provenance['validation_state']),
       backendConfirmed: _toBool(provenance['backend_confirmed']),
@@ -140,6 +169,14 @@ class ComplianceLedgerEntry {
 
   static String _toStringOrEmpty(Object? value) =>
       (value == null ? '' : value.toString().trim());
+
+  static String _firstNonEmptyText(List<Object?> values) {
+    for (final value in values) {
+      final text = _toStringOrEmpty(value);
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
 
   static DateTime? _toDateTime(Object? value) {
     final text = _toStringOrEmpty(value);
@@ -189,10 +226,31 @@ class ComplianceLedgerReadResult {
 
 class ComplianceLedgerReader {
   static const String fileName = 'compliance_ledger_v1.jsonl';
+  static const String localDirectHistoryFileName =
+      'local_direct_trip_history_v1.jsonl';
 
   static Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
     return File('${base.path}${Platform.pathSeparator}$fileName');
+  }
+
+  static Future<File> _localDirectHistoryFile() async {
+    final base = await getApplicationDocumentsDirectory();
+    return File(
+      '${base.path}${Platform.pathSeparator}$localDirectHistoryFileName',
+    );
+  }
+
+  Future<void> clearLocalTestData() async {
+    if (kIsWeb) return;
+    final ledgerFile = await _file();
+    final localDirectFile = await _localDirectHistoryFile();
+    if (await ledgerFile.exists()) {
+      await ledgerFile.delete();
+    }
+    if (await localDirectFile.exists()) {
+      await localDirectFile.delete();
+    }
   }
 
   Future<ComplianceLedgerReadResult> readLatest({int limit = 20}) async {
