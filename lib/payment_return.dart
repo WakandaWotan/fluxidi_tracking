@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/widgets.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:http/http.dart' as http;
 
 const String kFluxidiPaymentReturnScheme = 'fluxidi';
@@ -41,6 +43,18 @@ class FluxidiPendingPayment {
 final ValueNotifier<FluxidiPendingPayment?> fluxidiPendingPaymentNotifier =
     ValueNotifier<FluxidiPendingPayment?>(null);
 
+Map<String, String> _activePaymentScopeQuery() {
+  final resolvedId = resolvedCompanyId.trim();
+  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
+  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
+  return <String, String>{
+    'tenant_id': tenantId,
+    'company_id': companyId,
+    'tenantId': tenantId,
+    'companyId': companyId,
+  };
+}
+
 void setFluxidiPendingPayment({
   required String paymentBookingId,
   String? publicBookingId,
@@ -68,8 +82,7 @@ void clearFluxidiPendingPayment() {
 class PaymentReturnCoordinator with WidgetsBindingObserver {
   PaymentReturnCoordinator._();
 
-  static final PaymentReturnCoordinator instance =
-      PaymentReturnCoordinator._();
+  static final PaymentReturnCoordinator instance = PaymentReturnCoordinator._();
 
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
@@ -117,16 +130,15 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
       return;
     }
     final params = uri.queryParameters;
-    final paymentBookingId = (params['payment_booking_id'] ??
-            params['paymentBookingId'] ??
-            params['payment_id'] ??
-            params['id'] ??
-            '')
-        .trim();
-    final publicBookingId = (params['booking_id'] ??
-            params['public_booking_id'] ??
-            '')
-        .trim();
+    final paymentBookingId =
+        (params['payment_booking_id'] ??
+                params['paymentBookingId'] ??
+                params['payment_id'] ??
+                params['id'] ??
+                '')
+            .trim();
+    final publicBookingId =
+        (params['booking_id'] ?? params['public_booking_id'] ?? '').trim();
     if (paymentBookingId.isEmpty) return;
 
     final existing = fluxidiPendingPaymentNotifier.value;
@@ -138,8 +150,9 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     } else if (publicBookingId.isNotEmpty &&
         (existing.publicBookingId == null ||
             existing.publicBookingId!.isEmpty)) {
-      fluxidiPendingPaymentNotifier.value =
-          existing.copyWith(publicBookingId: publicBookingId);
+      fluxidiPendingPaymentNotifier.value = existing.copyWith(
+        publicBookingId: publicBookingId,
+      );
     }
     unawaited(_reconcilePendingPayment(source: 'DEEP_LINK'));
   }
@@ -152,7 +165,8 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     if (pending.status == FluxidiPaymentStatus.confirmed) return;
     if (_bookingBaseUrl.isEmpty) {
       debugPrint(
-          '[PAY_RETURN][RECONCILE][SKIP] reason=no_base_url source=$source');
+        '[PAY_RETURN][RECONCILE][SKIP] reason=no_base_url source=$source',
+      );
       return;
     }
 
@@ -184,8 +198,11 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     required String source,
   }) async {
     try {
-      final uri = Uri.parse(
-        '$_bookingBaseUrl/pay/status?id=${Uri.encodeComponent(paymentBookingId)}',
+      final uri = Uri.parse('$_bookingBaseUrl/pay/status').replace(
+        queryParameters: <String, String>{
+          'id': paymentBookingId,
+          ..._activePaymentScopeQuery(),
+        },
       );
       final res = await http
           .get(uri, headers: const {'Content-Type': 'application/json'})
@@ -232,7 +249,8 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
       return confirmed;
     } catch (e) {
       debugPrint(
-          '[PAY_RETURN][POLL][ERROR] source=$source attempt=$attempt error=$e');
+        '[PAY_RETURN][POLL][ERROR] source=$source attempt=$attempt error=$e',
+      );
       return false;
     }
   }

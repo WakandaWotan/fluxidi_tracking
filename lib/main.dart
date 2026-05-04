@@ -12839,12 +12839,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
         Navigator.of(context).pop();
       }
-      final uri = Uri.parse('$kWorkerBaseUrl$kStartTripPath');
+      final uri = _withActiveBookingScope(kWorkerBaseUrl, kStartTripPath);
       final actorVehicleId = _directRideVehicleId();
       final payload = {
         'booking_id': b.bookingId,
         'driver_id': kDriverId,
         'vehicle_id': actorVehicleId,
+        ..._activeBookingScopeQuery(),
         // Optional context (helps debugging / future UI)
         'pickup': (b.from ?? '').toString(),
         'dropoff': (b.to ?? '').toString(),
@@ -12913,12 +12914,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     // If the booking isn't known there yet (e.g. TEST-xxx created only in tracking),
     // we just skip without breaking tracking.
     try {
-      final uri = Uri.parse('$kBookingBaseUrl$kTrackingBookingPath');
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        kTrackingBookingPath,
+      );
       final res = await http
           .post(
             uri,
             headers: _headers(admin: true),
-            body: jsonEncode({'booking_id': bookingId}),
+            body: jsonEncode(<String, dynamic>{
+              'booking_id': bookingId,
+              ..._activeBookingScopeQuery(),
+            }),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -14223,7 +14230,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (point != null) 'lon': point.lon,
       };
       final payload = <String, dynamic>{
-        'tenant_id': kOutboundTenantId,
+        ..._activeBookingScopeQuery(),
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': _currentOriginPayload(_lastPos),
@@ -14241,7 +14248,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            Uri.parse('$kWorkerBaseUrl$kStartDirectTripPath'),
+            _withActiveBookingScope(kWorkerBaseUrl, kStartDirectTripPath),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -14275,6 +14282,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final payload = <String, dynamic>{
         'trip_id': tripId,
+        ..._activeBookingScopeQuery(),
         'km_total': kmTotal,
         'wait_seconds_total': waitSecondsTotal,
         'client_stopped_at': DateTime.now().toUtc().toIso8601String(),
@@ -14282,7 +14290,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            Uri.parse('$kWorkerBaseUrl$kStopDirectTripPath'),
+            _withActiveBookingScope(kWorkerBaseUrl, kStopDirectTripPath),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -14364,7 +14372,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           BookingItem._toNumOrNull(bookingDetails['booking_total_eur']);
       final payload = <String, dynamic>{
         'booking_id': booking.bookingId,
-        'tenant_id': kOutboundTenantId,
+        ..._activeBookingScopeQuery(),
         'driver_id': kDriverId,
         'vehicle_id': _directRideVehicleId(),
         'origin': <String, dynamic>{
@@ -14412,7 +14420,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
       final res = await http
           .post(
-            Uri.parse('$kWorkerBaseUrl$kRecordPlannedTripStopPath'),
+            _withActiveBookingScope(kWorkerBaseUrl, kRecordPlannedTripStopPath),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -14928,10 +14936,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (trip != null) {
       try {
-        final uri = Uri.parse('$kWorkerBaseUrl$kStopTripPath');
+        final uri = _withActiveBookingScope(kWorkerBaseUrl, kStopTripPath);
         final payload = <String, dynamic>{
           'session_id': trip,
           'driver_id': kDriverId,
+          ..._activeBookingScopeQuery(),
           ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
         };
         final res = await http
@@ -15403,12 +15412,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (trip == null) return;
 
     try {
-      final uri = Uri.parse('$kWorkerBaseUrl$kPingPath');
+      final uri = _withActiveBookingScope(kWorkerBaseUrl, kPingPath);
       final actorVehicleId = _directRideVehicleId();
       final payload = {
         'session_id': trip,
         'driver_id': kDriverId,
         'vehicle_id': actorVehicleId,
+        ..._activeBookingScopeQuery(),
         'lat': pos.latitude,
         'lon': pos.longitude,
         'speed': (pos.speed.isFinite ? (pos.speed * 3.6) : 0.0),
@@ -20702,6 +20712,9 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       final uri = Uri.parse(
         '${widget.workerBaseUrl}$kTripsHistoryPath'
         '?tenant_id=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&company_id=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&tenantId=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&companyId=${Uri.encodeQueryComponent(widget.tenantId)}'
         '&driver_id=${Uri.encodeQueryComponent(widget.driverId)}'
         '&limit=100',
       );
@@ -25330,6 +25343,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       final paidAtIso = DateTime.now().toUtc().toIso8601String();
       final payload = <String, dynamic>{
         'trip_id': tripId,
+        ..._activeBookingScopeQuery(),
         'payment_status': 'paid',
         'payment_method': normalizedMethod,
         'payment_source': 'in_car',
@@ -25348,7 +25362,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         headers['x-admin-token'] = kAdminToken.trim();
       }
       try {
-        final uri = Uri.parse('$kWorkerBaseUrl/trip/payment');
+        final uri = _withActiveBookingScope(kWorkerBaseUrl, '/trip/payment');
         final res = await http
             .post(uri, headers: headers, body: jsonEncode(payload))
             .timeout(const Duration(seconds: 12));
