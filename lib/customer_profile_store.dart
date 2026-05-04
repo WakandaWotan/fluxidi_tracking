@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:path_provider/path_provider.dart';
 
 class CustomerProfile {
@@ -67,8 +69,24 @@ class CustomerProfileStore {
   static const String _fileName = 'customer_profile_v1.json';
 
   CustomerProfile? _cache;
+  String _cacheScopeKey = '';
 
-  Future<File> _file() async {
+  String _localScopeSegment(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'default';
+    final sanitized = trimmed.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    if (sanitized.isEmpty) return 'default';
+    return sanitized;
+  }
+
+  ({String tenantId, String companyId}) _activeLocalScope() {
+    final resolvedId = resolvedCompanyId.trim();
+    final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
+    final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
+    return (tenantId: tenantId, companyId: companyId);
+  }
+
+  Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory(
       '${base.path}${Platform.pathSeparator}customer_state',
@@ -76,7 +94,48 @@ class CustomerProfileStore {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
+    return dir;
+  }
+
+  Future<File> _legacyFile() async {
+    final dir = await _stateRootDir();
     return File('${dir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}tenant_${_localScopeSegment(tenantId)}${Platform.pathSeparator}company_${_localScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[CUSTOMER_PROFILE][PATH] tenant=$tenantId company=$companyId path=${file.path}',
+    );
+    return file;
+  }
+
+  Future<File> _file() async {
+    final scope = _activeLocalScope();
+    return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
+  }
+
+  Future<CustomerProfile?> _readFromFile(File file) async {
+    if (!await file.exists()) return null;
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    final profile = CustomerProfile.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+    if (profile.customerId.isEmpty) return null;
+    return profile;
   }
 
   String _generateCustomerId() {
@@ -87,20 +146,28 @@ class CustomerProfileStore {
   }
 
   Future<CustomerProfile?> load() async {
-    if (_cache != null) return _cache;
+    final scope = _activeLocalScope();
+    final scopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+    if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
+    _cache = null;
+    _cacheScopeKey = scopeKey;
     try {
       final file = await _file();
-      if (!await file.exists()) return null;
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final profile = CustomerProfile.fromJson(
-        Map<String, dynamic>.from(decoded),
+      final scopedProfile = await _readFromFile(file);
+      if (scopedProfile != null) {
+        _cache = scopedProfile;
+        return scopedProfile;
+      }
+
+      final legacyFile = await _legacyFile();
+      final legacyProfile = await _readFromFile(legacyFile);
+      if (legacyProfile == null) return null;
+      await file.writeAsString(jsonEncode(legacyProfile.toJson()));
+      debugPrint(
+        '[CUSTOMER_PROFILE][MIGRATE_LEGACY] tenant=${scope.tenantId} company=${scope.companyId} from=${legacyFile.path} to=${file.path}',
       );
-      if (profile.customerId.isEmpty) return null;
-      _cache = profile;
-      return profile;
+      _cache = legacyProfile;
+      return legacyProfile;
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][LOAD_ERROR] $err');
       return null;
@@ -134,6 +201,11 @@ class CustomerProfileStore {
       final file = await _file();
       await file.writeAsString(jsonEncode(profile.toJson()));
       _cache = profile;
+      final scope = _activeLocalScope();
+      _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+      debugPrint(
+        '[CUSTOMER_PROFILE][SAVE] tenant=${scope.tenantId} company=${scope.companyId} path=${file.path}',
+      );
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][SAVE_ERROR] $err');
     }
