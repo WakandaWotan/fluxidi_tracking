@@ -30,6 +30,137 @@ import 'package:fluxidi_tracking/payment_return.dart';
 
 const bool showPricingDebug = false;
 
+String _calcBusinessText(dynamic value) {
+  final text = value?.toString().trim() ?? '';
+  if (text.isEmpty || text.toLowerCase() == 'null') return '';
+  return text;
+}
+
+String _calcFirstBusinessText(List<dynamic> values) {
+  for (final value in values) {
+    final text = _calcBusinessText(value);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+bool _calcBusinessBool(dynamic value) {
+  if (value is bool) return value;
+  final text = _calcBusinessText(value).toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes' || text == 'ja';
+}
+
+Map<String, dynamic> _buildBusinessInvoicePayload({
+  required Map<String, dynamic> source,
+  String fallbackCompanyName = '',
+  String fallbackVatNumber = '',
+  String fallbackInvoiceEmail = '',
+  String fallbackInvoiceAddress = '',
+}) {
+  final explicitBusiness = _calcBusinessBool(
+    source['business_detected'] ??
+        source['businessDetected'] ??
+        source['business_customer'] ??
+        source['businessCustomer'] ??
+        source['is_business'] ??
+        source['isBusiness'],
+  );
+  final explicitInvoice = _calcBusinessBool(
+    source['invoice_requested'] ?? source['invoiceRequested'],
+  );
+  final companyName = _calcFirstBusinessText([
+    source['company_name'],
+    source['companyName'],
+    source['customer_company_name'],
+    source['customerCompanyName'],
+    source['customer_company'],
+    source['customerCompany'],
+    fallbackCompanyName,
+  ]);
+  final vatNumber = _calcFirstBusinessText([
+    source['vat_number'],
+    source['vatNumber'],
+    source['customer_vat_number'],
+    source['customerVatNumber'],
+    source['customer_vat'],
+    source['customerVat'],
+    fallbackVatNumber,
+  ]);
+  final isBusiness =
+      explicitBusiness ||
+      explicitInvoice ||
+      companyName.isNotEmpty ||
+      vatNumber.isNotEmpty;
+  final invoiceRequested = explicitInvoice || isBusiness;
+  final invoiceEmail = isBusiness
+      ? _calcFirstBusinessText([
+          source['invoice_email'],
+          source['invoiceEmail'],
+          fallbackInvoiceEmail,
+        ])
+      : _calcFirstBusinessText([
+          source['invoice_email'],
+          source['invoiceEmail'],
+        ]);
+  final invoiceAddress = _calcFirstBusinessText([
+    source['invoice_address'],
+    source['invoiceAddress'],
+    source['billing_address'],
+    source['billingAddress'],
+    source['company_address'],
+    source['companyAddress'],
+    fallbackInvoiceAddress,
+  ]);
+  return <String, dynamic>{
+    'business_detected': isBusiness,
+    'businessDetected': isBusiness,
+    'invoice_requested': invoiceRequested,
+    'invoiceRequested': invoiceRequested,
+    'company_name': companyName,
+    'companyName': companyName,
+    'vat_number': vatNumber,
+    'vatNumber': vatNumber,
+    'invoice_email': invoiceEmail,
+    'invoiceEmail': invoiceEmail,
+    'invoice_address': invoiceAddress,
+    'invoiceAddress': invoiceAddress,
+  };
+}
+
+String _maskBusinessPreview(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '';
+  if (text.length <= 3) return '***';
+  return '${text.substring(0, 1)}***${text.substring(text.length - 1)}';
+}
+
+void _logBusinessPayload({
+  required String stage,
+  required Map<String, dynamic> payload,
+}) {
+  final companyName = _calcBusinessText(
+    payload['company_name'] ?? payload['companyName'],
+  );
+  final vatNumber = _calcBusinessText(
+    payload['vat_number'] ?? payload['vatNumber'],
+  );
+  final invoiceEmail = _calcBusinessText(
+    payload['invoice_email'] ?? payload['invoiceEmail'],
+  );
+  final invoiceAddress = _calcBusinessText(
+    payload['invoice_address'] ?? payload['invoiceAddress'],
+  );
+  final business = _calcBusinessBool(
+    payload['business_detected'] ?? payload['businessDetected'],
+  );
+  final invoiceRequested = _calcBusinessBool(
+    payload['invoice_requested'] ?? payload['invoiceRequested'],
+  );
+  debugPrint(
+    '[CALCULATOR][BUSINESS_PAYLOAD] stage=$stage business=$business invoiceRequested=$invoiceRequested companyFound=${companyName.isNotEmpty} vatFound=${vatNumber.isNotEmpty} invoiceEmailFound=${invoiceEmail.isNotEmpty} invoiceAddressFound=${invoiceAddress.isNotEmpty} company=${_maskBusinessPreview(companyName)} vat=${_maskBusinessPreview(vatNumber)}',
+  );
+}
+
 class CalculatorPage extends StatefulWidget {
   const CalculatorPage({
     super.key,
@@ -76,6 +207,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   bool _loading = false;
   String? _error;
   Map<String, dynamic>? _lastQuote;
+  Map<String, dynamic>? _lastQuoteRequestPayload;
   final _vatCtrl = TextEditingController(
     text: appConfig.defaultVatRate.toStringAsFixed(2),
   );
@@ -342,7 +474,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return kTenantId;
   }
 
-  Map<String, dynamic> _buildQuotePayload(DateTime dt) {
+  Map<String, dynamic> _buildQuotePayload(
+    DateTime dt, {
+    CustomerProfile? profile,
+  }) {
     final vat = _activeVatConfig;
     final tenantCompanyId = _activeTenantCompanyId();
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
@@ -351,6 +486,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
         dt.add(
           Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)),
         );
+    final businessPayload = _buildBusinessInvoicePayload(
+      source: <String, dynamic>{
+        'company_name': profile?.companyName ?? '',
+        'vat_number': profile?.vatNumber ?? '',
+        'invoice_email': profile?.email ?? '',
+      },
+      fallbackCompanyName: profile?.companyName ?? '',
+      fallbackVatNumber: profile?.vatNumber ?? '',
+      fallbackInvoiceEmail: profile?.email ?? '',
+    );
     return <String, dynamic>{
       "from": _fromCtrl.text.trim(),
       "to": _toCtrl.text.trim(),
@@ -395,11 +540,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "company_id": tenantCompanyId,
       "tenantId": tenantCompanyId,
       "companyId": tenantCompanyId,
+      ...businessPayload,
     };
   }
 
-  Map<String, dynamic> _buildQuoteRequestPayload(DateTime dt) {
-    return _buildQuotePayload(dt);
+  Map<String, dynamic> _buildQuoteRequestPayload(
+    DateTime dt, {
+    CustomerProfile? profile,
+  }) {
+    return _buildQuotePayload(dt, profile: profile);
   }
 
   void _openBookingConfirmation() {
@@ -407,7 +556,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (quote == null) return;
     final dt =
         _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
-    final payload = _buildQuotePayload(dt);
+    final payload = _lastQuoteRequestPayload != null
+        ? Map<String, dynamic>.from(_lastQuoteRequestPayload!)
+        : _buildQuotePayload(dt);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _BookingConfirmationPage(
@@ -759,8 +910,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final dt =
         _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
 
+    final profile = await CustomerProfileStore.instance.load();
     // Worker is source of truth; keep payload aligned with your API expectations.
-    final body = _buildQuoteRequestPayload(dt);
+    final body = _buildQuoteRequestPayload(dt, profile: profile);
+    _lastQuoteRequestPayload = Map<String, dynamic>.from(body);
 
     setState(() {
       _loading = true;
@@ -770,6 +923,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
     try {
       final url = Uri.parse('${widget.bookingBaseUrl}/quote');
+      _logBusinessPayload(stage: 'quote', payload: body);
       debugPrint('quote_request_body=${jsonEncode(body)}');
       final res = await http.post(
         url,
@@ -1857,6 +2011,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final email = _emailCtrl.text.trim();
     final companyName = _companyNameCtrl.text.trim();
     final vatNumber = _vatNumberCtrl.text.trim();
+    final invoiceAddressFromQuote = _calcBusinessText(
+      widget.payload['invoice_address'] ??
+          widget.payload['invoiceAddress'] ??
+          widget.quote['invoice_address'] ??
+          widget.quote['invoiceAddress'],
+    );
+    final businessPayload = _buildBusinessInvoicePayload(
+      source: <String, dynamic>{
+        ...widget.payload,
+        ...widget.quote,
+        'company_name': companyName,
+        'vat_number': vatNumber,
+      },
+      fallbackCompanyName: companyName,
+      fallbackVatNumber: vatNumber,
+      fallbackInvoiceEmail: email,
+      fallbackInvoiceAddress: invoiceAddressFromQuote,
+    );
     final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
     final resolvedCompany = resolvedCompanyId.trim();
     final tenantCompanyId = localCompanyId.isNotEmpty
@@ -1900,6 +2072,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'email': email,
         'companyName': companyName,
         'vatNumber': vatNumber,
+        'company_name': companyName,
+        'vat_number': vatNumber,
+        'invoice_email': businessPayload['invoice_email'],
+        'invoiceEmail': businessPayload['invoiceEmail'],
+        'invoice_address': businessPayload['invoice_address'],
+        'invoiceAddress': businessPayload['invoiceAddress'],
+        'business_detected': businessPayload['business_detected'],
+        'businessDetected': businessPayload['businessDetected'],
+        'invoice_requested': businessPayload['invoice_requested'],
+        'invoiceRequested': businessPayload['invoiceRequested'],
         'message': _messageCtrl.text.trim(),
       },
       'name': name,
@@ -1918,6 +2100,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'billing_vat_number': vatNumber,
       'company_name': companyName,
       'vat_number': vatNumber,
+      ...businessPayload,
       'message': _messageCtrl.text.trim(),
       // Website contract includes full quote object under "quote"
       'quote': widget.quote,
@@ -1933,6 +2116,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
     try {
       final url = Uri.parse('${widget.bookingBaseUrl}/book');
+      _logBusinessPayload(stage: 'book', payload: payload);
       final res = await http.post(
         url,
         headers: const {'content-type': 'application/json'},
@@ -2045,10 +2229,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             status: paymentFlow ? 'PENDING' : 'CONFIRMED',
             companyName: companyName,
             vatNumber: vatNumber,
+            invoiceEmail: _calcBusinessText(businessPayload['invoice_email']),
+            invoiceAddress: _calcBusinessText(
+              businessPayload['invoice_address'],
+            ),
             businessDetected:
-                vatNumber.trim().isNotEmpty || companyName.trim().isNotEmpty,
+                businessPayload['business_detected'] == true ||
+                businessPayload['businessDetected'] == true,
             invoiceRequested:
-                vatNumber.trim().isNotEmpty || companyName.trim().isNotEmpty,
+                businessPayload['invoice_requested'] == true ||
+                businessPayload['invoiceRequested'] == true,
           );
       await CustomerBookingsStore.instance.upsert(storedBooking);
       final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)

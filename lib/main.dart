@@ -54,6 +54,114 @@ import 'widgets/route_marquee.dart';
 
 final bool kIsWindows = !kIsWeb && Platform.isWindows;
 
+CustomerProfile? _cachedCustomerProfile;
+
+Future<void> _refreshCachedCustomerProfile() async {
+  _cachedCustomerProfile = await CustomerProfileStore.instance.load();
+}
+
+void _setCachedCustomerProfile(CustomerProfile profile) {
+  _cachedCustomerProfile = profile;
+}
+
+String _businessFieldText(dynamic value) {
+  final text = value?.toString().trim() ?? '';
+  if (text.isEmpty || text.toLowerCase() == 'null') return '';
+  return text;
+}
+
+String _firstBusinessFieldText(List<dynamic> values) {
+  for (final value in values) {
+    final text = _businessFieldText(value);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+bool _businessFieldBool(dynamic value) {
+  if (value is bool) return value;
+  final text = _businessFieldText(value).toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes' || text == 'ja';
+}
+
+Map<String, dynamic> _deriveCustomerBusinessInvoicePayload({
+  required Map<String, dynamic> source,
+}) {
+  final profile = _cachedCustomerProfile;
+  final explicitBusiness = _businessFieldBool(
+    source['business_detected'] ??
+        source['businessDetected'] ??
+        source['business_customer'] ??
+        source['businessCustomer'] ??
+        source['is_business'] ??
+        source['isBusiness'],
+  );
+  final explicitInvoice = _businessFieldBool(
+    source['invoice_requested'] ?? source['invoiceRequested'],
+  );
+  final companyName = _firstBusinessFieldText([
+    source['company_name'],
+    source['companyName'],
+    source['customer_company'],
+    source['customerCompany'],
+    profile?.companyName,
+  ]);
+  final vatNumber = _firstBusinessFieldText([
+    source['vat_number'],
+    source['vatNumber'],
+    source['customer_vat'],
+    source['customerVat'],
+    profile?.vatNumber,
+  ]);
+  final isBusiness =
+      explicitBusiness ||
+      explicitInvoice ||
+      companyName.isNotEmpty ||
+      vatNumber.isNotEmpty;
+  final invoiceRequested = explicitInvoice || isBusiness;
+  final invoiceEmail = isBusiness
+      ? _firstBusinessFieldText([
+          source['invoice_email'],
+          source['invoiceEmail'],
+          profile?.email,
+        ])
+      : _firstBusinessFieldText([
+          source['invoice_email'],
+          source['invoiceEmail'],
+        ]);
+  final invoiceAddress = _firstBusinessFieldText([
+    source['invoice_address'],
+    source['invoiceAddress'],
+    source['billing_address'],
+    source['billingAddress'],
+    source['company_address'],
+    source['companyAddress'],
+  ]);
+
+  return <String, dynamic>{
+    'business_detected': isBusiness,
+    'businessDetected': isBusiness,
+    'invoice_requested': invoiceRequested,
+    'invoiceRequested': invoiceRequested,
+    if (companyName.isNotEmpty) ...{
+      'company_name': companyName,
+      'companyName': companyName,
+    },
+    if (vatNumber.isNotEmpty) ...{
+      'vat_number': vatNumber,
+      'vatNumber': vatNumber,
+    },
+    if (invoiceEmail.isNotEmpty) ...{
+      'invoice_email': invoiceEmail,
+      'invoiceEmail': invoiceEmail,
+    },
+    if (invoiceAddress.isNotEmpty) ...{
+      'invoice_address': invoiceAddress,
+      'invoiceAddress': invoiceAddress,
+    },
+  };
+}
+
 /// White-label config aliases (keeps existing code paths stable).
 final String kAppTitle = appConfig.appTitle;
 final String kCompanyName = appConfig.companyName;
@@ -143,6 +251,7 @@ Map<String, String> _adminHeaders() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadLocalTenantState();
+  await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
   await DriverDocumentsStore.instance.load();
@@ -2462,13 +2571,14 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
-    await CustomerProfileStore.instance.save(
+    final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
     );
+    _setCachedCustomerProfile(saved);
     if (!mounted) return;
     setState(() => _saving = false);
     await _goToCustomerHome();
@@ -2787,13 +2897,14 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
-    await CustomerProfileStore.instance.save(
+    final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
     );
+    _setCachedCustomerProfile(saved);
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -4903,7 +5014,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   }
 
   String _bookingStatusLabel(CustomerSavedBooking booking) {
-    final status = booking.bookingStatus.toUpperCase().trim();
+    final status = _normalizeCustomerLifecycleStatus(booking.bookingStatus);
     if (status == 'PENDING') {
       return _t(
         nl: 'In behandeling',
@@ -5088,6 +5199,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           ),
         ],
       ),
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=clear_all confirmed=${confirmed == true} count=${_bookings.length}',
     );
     if (confirmed != true) return;
     try {
@@ -5451,15 +5565,143 @@ String? _customerDetailResultAction(dynamic result) {
   return null;
 }
 
+String _normalizeCustomerLifecycleStatus(String raw) {
+  final value = raw.trim().toUpperCase();
+  if (value.isEmpty) return '';
+  switch (value) {
+    case 'PENDING':
+    case 'IN_REVIEW':
+      return 'PENDING';
+    case 'CONFIRMED':
+    case 'ACCEPTED':
+    case 'ASSIGNED':
+    case 'ACTIVE':
+    case 'IN_PROGRESS':
+    case 'ON_ROUTE':
+    case 'ARRIVED':
+    case 'STARTED':
+      return 'CONFIRMED';
+    case 'COMPLETED':
+    case 'FINISHED':
+    case 'DONE':
+    case 'CLOSED':
+      return 'COMPLETED';
+    case 'CANCELLED':
+    case 'CANCELED':
+      return 'CANCELLED';
+    case 'DELETED':
+    case 'REMOVED':
+      return 'DELETED';
+    case 'FAILED':
+    case 'ERROR':
+      return 'FAILED';
+    case 'EXPIRED':
+      return 'EXPIRED';
+    case 'DECLINED':
+    case 'REJECTED':
+      return 'DECLINED';
+    default:
+      return value;
+  }
+}
+
 bool _isActiveCustomerLifecycleStatus(String status) {
-  final s = status.trim().toUpperCase();
+  final s = _normalizeCustomerLifecycleStatus(status);
   if (s.isEmpty) return true;
   return s != 'CANCELLED' &&
-      s != 'COMPLETED' &&
       s != 'DELETED' &&
       s != 'FAILED' &&
       s != 'EXPIRED' &&
       s != 'DECLINED';
+}
+
+StoredCustomerBooking _hydrateStoredCustomerBookingFromView({
+  required StoredCustomerBooking stored,
+  required CustomerBookingView view,
+  required String source,
+}) {
+  final normalizedStatus = _normalizeCustomerLifecycleStatus(
+    view.lifecycleStatus,
+  );
+  final normalizedPayment = view.rawPaymentStatus.trim().toLowerCase();
+  final mergedCompanyName = view.companyName.trim().isNotEmpty
+      ? view.companyName.trim()
+      : stored.companyName;
+  final mergedVatNumber = view.vatNumber.trim().isNotEmpty
+      ? view.vatNumber.trim()
+      : stored.vatNumber;
+  final mergedInvoiceEmail = view.invoiceEmail.trim().isNotEmpty
+      ? view.invoiceEmail.trim()
+      : stored.invoiceEmail;
+  final mergedInvoiceAddress = view.invoiceAddress.trim().isNotEmpty
+      ? view.invoiceAddress.trim()
+      : stored.invoiceAddress;
+  final mergedBusinessDetected =
+      view.businessCustomer || stored.businessDetected;
+  final mergedInvoiceRequested =
+      view.invoiceRequested || stored.invoiceRequested;
+  debugPrint(
+    '[CUSTOMER_BOOKING][HYDRATE_STATUS] source=$source booking=${_safeRefPreview(view.bookingId)} raw=${view.lifecycleStatus} normalized=$normalizedStatus',
+  );
+  // #region agent log H2 status normalization result
+  unawaited(
+    _agentDebugLog(
+      runId: 'initial',
+      hypothesisId: 'H2',
+      location: 'main.dart:_hydrateStoredCustomerBookingFromView',
+      message: '[CUSTOMER_BOOKING][HYDRATE_STATUS]',
+      data: <String, dynamic>{
+        'source': source,
+        'booking': _safeRefPreview(view.bookingId),
+        'rawStatus': view.lifecycleStatus,
+        'normalizedStatus': normalizedStatus,
+        'storedStatusBefore': stored.status,
+        'storedStatusAfter': normalizedStatus.isNotEmpty
+            ? normalizedStatus
+            : stored.status,
+      },
+    ),
+  );
+  // #endregion
+  debugPrint(
+    '[CUSTOMER_BOOKING][BUSINESS_FIELDS] source=$source booking=${_safeRefPreview(view.bookingId)} business=$mergedBusinessDetected invoiceRequested=$mergedInvoiceRequested companyFound=${mergedCompanyName.trim().isNotEmpty} vatFound=${mergedVatNumber.trim().isNotEmpty} invoiceEmailFound=${mergedInvoiceEmail.trim().isNotEmpty} invoiceAddressFound=${mergedInvoiceAddress.trim().isNotEmpty}',
+  );
+  // #region agent log H3 business merge result
+  unawaited(
+    _agentDebugLog(
+      runId: 'initial',
+      hypothesisId: 'H3',
+      location: 'main.dart:_hydrateStoredCustomerBookingFromView',
+      message: '[CUSTOMER_BOOKING][BUSINESS_FIELDS]',
+      data: <String, dynamic>{
+        'source': source,
+        'booking': _safeRefPreview(view.bookingId),
+        'viewBusiness': view.businessCustomer,
+        'viewInvoiceRequested': view.invoiceRequested,
+        'storedBusinessBefore': stored.businessDetected,
+        'storedInvoiceRequestedBefore': stored.invoiceRequested,
+        'mergedBusiness': mergedBusinessDetected,
+        'mergedInvoiceRequested': mergedInvoiceRequested,
+        'companyFound': mergedCompanyName.trim().isNotEmpty,
+        'vatFound': mergedVatNumber.trim().isNotEmpty,
+        'invoiceEmailFound': mergedInvoiceEmail.trim().isNotEmpty,
+        'invoiceAddressFound': mergedInvoiceAddress.trim().isNotEmpty,
+      },
+    ),
+  );
+  // #endregion
+  return stored.copyWith(
+    status: normalizedStatus.isNotEmpty ? normalizedStatus : stored.status,
+    paymentStatus: normalizedPayment.isNotEmpty
+        ? normalizedPayment
+        : stored.paymentStatus,
+    businessDetected: mergedBusinessDetected,
+    invoiceRequested: mergedInvoiceRequested,
+    companyName: mergedCompanyName,
+    vatNumber: mergedVatNumber,
+    invoiceEmail: mergedInvoiceEmail,
+    invoiceAddress: mergedInvoiceAddress,
+  );
 }
 
 bool _customerAliasesIntersect(Set<String> a, Set<String> b) {
@@ -5561,12 +5803,22 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           final decoded = jsonDecode(utf8.decode(res.bodyBytes));
           if (decoded is! Map<String, dynamic> || decoded['ok'] != true)
             continue;
+          final authoritativeView = CustomerBookingView.fromResponse(
+            id,
+            decoded,
+          );
           final stored = StoredCustomerBooking.fromAuthoritativeResponse(
             bookingId: id,
             response: decoded,
             fallback: item,
           );
-          await CustomerBookingsStore.instance.upsert(stored);
+          await CustomerBookingsStore.instance.upsert(
+            _hydrateStoredCustomerBookingFromView(
+              stored: stored,
+              view: authoritativeView,
+              source: 'customer_list_refresh',
+            ),
+          );
         } catch (_) {
           // Keep refresh resilient: skip individual booking failures.
         }
@@ -5614,7 +5866,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   }
 
   String _statusLabel(StoredCustomerBooking booking) {
-    final status = booking.status.toUpperCase();
+    final status = _normalizeCustomerLifecycleStatus(booking.status);
     if (status == 'PENDING') {
       return _t(
         nl: 'In behandeling',
@@ -5770,6 +6022,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         ],
       ),
     );
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=remove_one confirmed=${confirmed == true} booking=${_safeRefPreview(bookingId)}',
+    );
     if (confirmed != true || !mounted) return;
     final result = await _removeLocalCustomerBookingEverywhere(
       bookingForLog: bookingId,
@@ -5844,6 +6099,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           ),
         ],
       ),
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=remove_all confirmed=${confirmed == true} count=${_bookings.length}',
     );
     if (confirmed != true) return;
     try {
@@ -6251,7 +6509,13 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
         bookingId: bookingId,
         response: decoded,
       );
-      await CustomerBookingsStore.instance.upsert(stored);
+      await CustomerBookingsStore.instance.upsert(
+        _hydrateStoredCustomerBookingFromView(
+          stored: stored,
+          view: view,
+          source: 'customer_lookup',
+        ),
+      );
       if (!mounted) return;
       setState(() => _busy = false);
       await Navigator.of(context).push(
@@ -6470,7 +6734,8 @@ class CustomerBookingView {
     String bookingId,
     Map<String, dynamic> response,
   ) {
-    final rawRecord = response['record'];
+    final mergedSource = Map<String, dynamic>.from(response);
+    final rawRecord = mergedSource['record'];
     final record = (rawRecord is Map)
         ? Map<String, dynamic>.from(rawRecord)
         : <String, dynamic>{};
@@ -6478,17 +6743,108 @@ class CustomerBookingView {
     final booking = (rawBooking is Map)
         ? Map<String, dynamic>.from(rawBooking)
         : <String, dynamic>{};
-    final lifecycle =
-        (response['status']?.toString().trim() ??
-                record['status']?.toString().trim() ??
-                '')
-            .toUpperCase();
+    final rawPayload = record['payload'];
+    final payload = (rawPayload is Map)
+        ? Map<String, dynamic>.from(rawPayload)
+        : <String, dynamic>{};
+    final lifecycleRaw =
+        response['status']?.toString().trim() ??
+        response['stage']?.toString().trim() ??
+        record['status']?.toString().trim() ??
+        record['stage']?.toString().trim() ??
+        booking['status']?.toString().trim() ??
+        '';
+    final lifecycle = _normalizeCustomerLifecycleStatus(lifecycleRaw);
+    final businessPayload = _deriveCustomerBusinessInvoicePayload(
+      source: <String, dynamic>{
+        ...mergedSource,
+        ...record,
+        ...booking,
+        ...payload,
+      },
+    );
+    if (businessPayload.isNotEmpty) {
+      booking.addAll(businessPayload);
+      payload.addAll(businessPayload);
+      record.addAll(businessPayload);
+      record['booking'] = booking;
+      record['payload'] = payload;
+      mergedSource.addAll(businessPayload);
+      mergedSource['record'] = record;
+      mergedSource['booking'] = booking;
+      mergedSource['payload'] = payload;
+    }
+    // #region agent log H1 hydrate source flags
+    unawaited(
+      _agentDebugLog(
+        runId: 'initial',
+        hypothesisId: 'H1',
+        location: 'main.dart:CustomerBookingView.fromResponse',
+        message: '[CUSTOMER_BOOKING][BUSINESS_PAYLOAD]',
+        data: <String, dynamic>{
+          'booking': _safeRefPreview(bookingId),
+          'rawStatus': lifecycleRaw,
+          'normalizedStatus': lifecycle,
+          'service': (booking['service'] ?? booking['extra_service'] ?? '')
+              .toString(),
+          'businessDetected':
+              (booking['business_detected'] ??
+                      booking['businessDetected'] ??
+                      record['business_detected'] ??
+                      record['businessDetected'] ??
+                      response['business_detected'] ??
+                      response['businessDetected'] ??
+                      '')
+                  .toString(),
+          'invoiceRequested':
+              (booking['invoice_requested'] ??
+                      booking['invoiceRequested'] ??
+                      record['invoice_requested'] ??
+                      record['invoiceRequested'] ??
+                      response['invoice_requested'] ??
+                      response['invoiceRequested'] ??
+                      '')
+                  .toString(),
+          'companyName':
+              (booking['company_name'] ??
+                      booking['companyName'] ??
+                      response['company_name'] ??
+                      response['companyName'] ??
+                      '')
+                  .toString(),
+          'vatNumber':
+              (booking['vat_number'] ??
+                      booking['vatNumber'] ??
+                      response['vat_number'] ??
+                      response['vatNumber'] ??
+                      '')
+                  .toString(),
+          'invoiceEmail':
+              (booking['invoice_email'] ??
+                      booking['invoiceEmail'] ??
+                      response['invoice_email'] ??
+                      response['invoiceEmail'] ??
+                      '')
+                  .toString(),
+          'derivedBusiness': (businessPayload['business_detected'] ?? '')
+              .toString(),
+          'derivedInvoiceRequested':
+              (businessPayload['invoice_requested'] ?? '').toString(),
+          'derivedCompanyName': (businessPayload['company_name'] ?? '')
+              .toString(),
+          'derivedVatNumber': (businessPayload['vat_number'] ?? '').toString(),
+          'derivedInvoiceEmail': (businessPayload['invoice_email'] ?? '')
+              .toString(),
+        },
+      ),
+    );
+    // #endregion
     return CustomerBookingView(
       bookingId: bookingId,
       lifecycleStatus: lifecycle,
       booking: booking,
       record: record,
-      source: response,
+      source: mergedSource,
     );
   }
 
@@ -6515,6 +6871,16 @@ class CustomerBookingView {
       'invoice_requested': stored.invoiceRequested,
       'quote': stored.quote,
     };
+    final businessPayload = _deriveCustomerBusinessInvoicePayload(
+      source: <String, dynamic>{
+        ...booking,
+        'business_detected': stored.businessDetected,
+        'businessDetected': stored.businessDetected,
+        'invoice_requested': stored.invoiceRequested,
+        'invoiceRequested': stored.invoiceRequested,
+      },
+    );
+    booking.addAll(businessPayload);
     final record = <String, dynamic>{
       'status': stored.status,
       'payment_status': stored.paymentStatus,
@@ -6527,13 +6893,16 @@ class CustomerBookingView {
         'tier': stored.tier,
         'pax': stored.pax,
         'bags': stored.bags,
+        ...businessPayload,
       },
+      ...businessPayload,
     };
     final source = <String, dynamic>{
       'record': record,
       'booking': booking,
       'quote': stored.quote,
       'payload': record['payload'],
+      ...businessPayload,
     };
     return CustomerBookingView(
       bookingId: stored.canonicalBookingId,
@@ -6982,10 +7351,68 @@ class CustomerBookingView {
         );
   }
 
-  String get companyName =>
-      _firstNonEmpty([booking['company_name'], booking['company']]);
-  String get vatNumber =>
-      _firstNonEmpty([booking['vat_number'], booking['vat']]);
+  String get companyName => _firstNonEmpty([
+    _firstPathValue(const <String>[
+      'company_name',
+      'companyName',
+      'customer_company',
+      'customerCompany',
+      'booking.company_name',
+      'booking.companyName',
+      'record.company_name',
+      'record.companyName',
+      'record.booking.company_name',
+      'record.booking.companyName',
+      'record.booking_details.company_name',
+      'record.booking_details.companyName',
+      'payload.company_name',
+      'payload.companyName',
+      'payload.booking.company_name',
+      'payload.booking.companyName',
+    ]),
+    booking['company_name'],
+    booking['companyName'],
+    booking['company'],
+  ]);
+  String get vatNumber => _firstNonEmpty([
+    _firstPathValue(const <String>[
+      'vat_number',
+      'vatNumber',
+      'customer_vat',
+      'customerVat',
+      'booking.vat_number',
+      'booking.vatNumber',
+      'record.vat_number',
+      'record.vatNumber',
+      'record.booking.vat_number',
+      'record.booking.vatNumber',
+      'record.booking_details.vat_number',
+      'record.booking_details.vatNumber',
+      'payload.vat_number',
+      'payload.vatNumber',
+      'payload.booking.vat_number',
+      'payload.booking.vatNumber',
+    ]),
+    booking['vat_number'],
+    booking['vatNumber'],
+    booking['vat'],
+  ]);
+  bool get invoiceRequested => _firstPathBool(const <String>[
+    'invoice_requested',
+    'invoiceRequested',
+    'booking.invoice_requested',
+    'booking.invoiceRequested',
+    'record.invoice_requested',
+    'record.invoiceRequested',
+    'record.booking.invoice_requested',
+    'record.booking.invoiceRequested',
+    'record.booking_details.invoice_requested',
+    'record.booking_details.invoiceRequested',
+    'payload.invoice_requested',
+    'payload.invoiceRequested',
+    'payload.booking.invoice_requested',
+    'payload.booking.invoiceRequested',
+  ]);
   String get invoiceEmail => _firstNonEmpty([
     _firstPathValue(const <String>[
       'invoice_email',
@@ -6998,22 +7425,6 @@ class CustomerBookingView {
       'record.booking.invoiceEmail',
       'record.booking_details.invoice_email',
       'record.booking_details.invoiceEmail',
-      'customer_email',
-      'customerEmail',
-      'email',
-      'custEmail',
-      'booking.customer_email',
-      'booking.customerEmail',
-      'booking.email',
-      'booking.custEmail',
-      'record.booking.customer_email',
-      'record.booking.customerEmail',
-      'record.booking.email',
-      'record.booking.custEmail',
-      'payload.customer_email',
-      'payload.customerEmail',
-      'payload.email',
-      'payload.custEmail',
     ]),
   ]);
   String get invoiceAddress => _firstNonEmpty([
@@ -7084,13 +7495,43 @@ class CustomerBookingView {
   ]);
   bool get businessCustomer {
     if (vatNumber.isNotEmpty || companyName.isNotEmpty) return true;
-    final flag = booking['business_customer'] ?? booking['is_business'];
-    if (flag is bool) return flag;
-    if (flag is String) {
-      final v = flag.toLowerCase().trim();
-      return v == 'true' || v == 'yes' || v == 'ja' || v == '1';
-    }
-    return false;
+    if (invoiceRequested) return true;
+    return _firstPathBool(const <String>[
+      'business_customer',
+      'businessCustomer',
+      'is_business',
+      'isBusiness',
+      'business_detected',
+      'businessDetected',
+      'booking.business_customer',
+      'booking.businessCustomer',
+      'booking.is_business',
+      'booking.isBusiness',
+      'booking.business_detected',
+      'booking.businessDetected',
+      'record.business_customer',
+      'record.businessCustomer',
+      'record.is_business',
+      'record.isBusiness',
+      'record.business_detected',
+      'record.businessDetected',
+      'record.booking.business_customer',
+      'record.booking.businessCustomer',
+      'record.booking.is_business',
+      'record.booking.isBusiness',
+      'record.booking.business_detected',
+      'record.booking.businessDetected',
+      'record.booking_details.business_customer',
+      'record.booking_details.businessCustomer',
+      'record.booking_details.is_business',
+      'record.booking_details.isBusiness',
+      'payload.business_customer',
+      'payload.businessCustomer',
+      'payload.is_business',
+      'payload.isBusiness',
+      'payload.business_detected',
+      'payload.businessDetected',
+    ]);
   }
 
   String get rawPaymentStatus {
@@ -7396,7 +7837,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             response: decoded,
             fallback: localFallback,
           );
-          await CustomerBookingsStore.instance.upsert(stored);
+          await CustomerBookingsStore.instance.upsert(
+            _hydrateStoredCustomerBookingFromView(
+              stored: stored,
+              view: view,
+              source: 'customer_detail_refresh',
+            ),
+          );
           if (!mounted) return;
           setState(() {
             _view = view;
@@ -7687,6 +8134,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         ],
       ),
     );
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][DELETE_CONFIRM] action=detail_remove_one confirmed=${confirmed == true} booking=${_safeRefPreview(bookingId)}',
+    );
     if (confirmed != true || !mounted) return;
     final result = await _removeLocalCustomerBookingEverywhere(
       bookingForLog: bookingId,
@@ -7905,7 +8355,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   String _lifecycleLabel(String s) {
-    switch (s) {
+    final normalized = _normalizeCustomerLifecycleStatus(s);
+    switch (normalized) {
       case 'COMPLETED':
         return _t(
           nl: 'Voltooid',
@@ -7935,7 +8386,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           es: 'Confirmada',
         );
       default:
-        return s.isEmpty ? '-' : s;
+        return normalized.isEmpty ? '-' : normalized;
     }
   }
 
@@ -10605,6 +11056,33 @@ String _safeRefPreview(String value) {
   if (text.isEmpty) return '';
   if (text.length <= 10) return text;
   return '${text.substring(0, 4)}…${text.substring(text.length - 4)}';
+}
+
+Future<void> _agentDebugLog({
+  required String runId,
+  required String hypothesisId,
+  required String location,
+  required String message,
+  required Map<String, dynamic> data,
+}) async {
+  try {
+    final payload = <String, dynamic>{
+      'sessionId': '59ce83',
+      'runId': runId,
+      'hypothesisId': hypothesisId,
+      'location': location,
+      'message': message,
+      'data': data,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    };
+    await File('debug-59ce83.log').writeAsString(
+      '${jsonEncode(payload)}\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } catch (_) {
+    // Keep debug logging non-blocking.
+  }
 }
 
 void _debugReceiptReferenceSelection({
@@ -21221,7 +21699,31 @@ class _ReceiptPdfActionRunner {
                 _firstPathDouble(item, 'route_minutes'),
           ) ??
           _receiptText('notAvailable');
-      final documentTitle = _isBusinessDocument(item)
+      final businessFields = _resolveBusinessFields(item);
+      debugPrint(
+        '[RECEIPT][BUSINESS_FIELDS] source=static_pdf booking=${_safeRefPreview(item.bookingId ?? item.tripId)} business=${businessFields.isBusinessDocument} invoiceRequested=${businessFields.invoiceRequested} companyFound=${businessFields.companyName.isNotEmpty} vatFound=${businessFields.vatNumber.isNotEmpty} invoiceEmailFound=${businessFields.invoiceEmail.isNotEmpty} invoiceAddressFound=${businessFields.invoiceAddress.isNotEmpty}',
+      );
+      // #region agent log H4 static receipt business projection
+      unawaited(
+        _agentDebugLog(
+          runId: 'initial',
+          hypothesisId: 'H4',
+          location: 'main.dart:_ReceiptPdfActionRunner._buildReceiptPdfBundle',
+          message: '[RECEIPT][BUSINESS_FIELDS]',
+          data: <String, dynamic>{
+            'source': 'static_pdf',
+            'booking': _safeRefPreview(item.bookingId ?? item.tripId),
+            'business': businessFields.isBusinessDocument,
+            'invoiceRequested': businessFields.invoiceRequested,
+            'companyFound': businessFields.companyName.isNotEmpty,
+            'vatFound': businessFields.vatNumber.isNotEmpty,
+            'invoiceEmailFound': businessFields.invoiceEmail.isNotEmpty,
+            'invoiceAddressFound': businessFields.invoiceAddress.isNotEmpty,
+          },
+        ),
+      );
+      // #endregion
+      final documentTitle = businessFields.isBusinessDocument
           ? _receiptText('invoiceLabel')
           : _receiptText('paymentReceiptLabel');
       final footerText = seller['footer']?.trim().isNotEmpty == true
@@ -21340,6 +21842,67 @@ class _ReceiptPdfActionRunner {
               _receiptText('customerPhone'),
               contact.phoneRaw ?? _receiptText('notAvailable'),
             ),
+            if (businessFields.isBusinessDocument) ...[
+              pw.SizedBox(height: 12),
+              pw.Text(
+                _tr(
+                  nl: 'Zakelijk / Factuur',
+                  en: 'Business / Invoice',
+                  fr: 'Professionnel / Facture',
+                  es: 'Empresa / Factura',
+                ),
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                  font: boldFont,
+                ),
+              ),
+              pw.SizedBox(height: 6),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Bedrijfsnaam',
+                  en: 'Company name',
+                  fr: "Nom de l'entreprise",
+                  es: 'Empresa',
+                ),
+                businessFields.companyName.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.companyName,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'BTW-nummer',
+                  en: 'VAT number',
+                  fr: 'Numero de TVA',
+                  es: 'NIF/IVA',
+                ),
+                businessFields.vatNumber.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.vatNumber,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Factuur e-mail',
+                  en: 'Invoice email',
+                  fr: 'E-mail facture',
+                  es: 'Email de factura',
+                ),
+                businessFields.invoiceEmail.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.invoiceEmail,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Factuuradres',
+                  en: 'Invoice address',
+                  fr: 'Adresse de facturation',
+                  es: 'Direccion de factura',
+                ),
+                businessFields.invoiceAddress.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.invoiceAddress,
+              ),
+            ],
             pw.SizedBox(height: 12),
             pw.Text(
               _receiptText('paymentActions'),
@@ -21777,15 +22340,65 @@ class _ReceiptPdfActionRunner {
     return '${value.round()} min';
   }
 
-  static bool _isBusinessDocument(_TripHistoryItem item) {
+  static ({
+    bool isBusinessDocument,
+    bool invoiceRequested,
+    String companyName,
+    String vatNumber,
+    String invoiceEmail,
+    String invoiceAddress,
+  })
+  _resolveBusinessFields(_TripHistoryItem item) {
     final invoiceRequested = _toBoolFlag(
       _firstPathText(item, const [
         ['invoice_requested'],
         ['invoiceRequested'],
         ['booking', 'invoice_requested'],
         ['booking', 'invoiceRequested'],
+        ['booking_details', 'invoice_requested'],
+        ['booking_details', 'invoiceRequested'],
+        ['record', 'invoice_requested'],
+        ['record', 'invoiceRequested'],
         ['record', 'booking', 'invoice_requested'],
         ['record', 'booking', 'invoiceRequested'],
+        ['record', 'booking_details', 'invoice_requested'],
+        ['record', 'booking_details', 'invoiceRequested'],
+        ['payload', 'invoice_requested'],
+        ['payload', 'invoiceRequested'],
+        ['payload', 'booking', 'invoice_requested'],
+        ['payload', 'booking', 'invoiceRequested'],
+      ]),
+    );
+    final businessFlag = _toBoolFlag(
+      _firstPathText(item, const [
+        ['business_customer'],
+        ['businessCustomer'],
+        ['is_business'],
+        ['isBusiness'],
+        ['business_detected'],
+        ['businessDetected'],
+        ['booking', 'business_customer'],
+        ['booking', 'businessCustomer'],
+        ['booking', 'is_business'],
+        ['booking', 'isBusiness'],
+        ['booking', 'business_detected'],
+        ['booking', 'businessDetected'],
+        ['booking_details', 'business_customer'],
+        ['booking_details', 'businessCustomer'],
+        ['booking_details', 'is_business'],
+        ['booking_details', 'isBusiness'],
+        ['record', 'business_customer'],
+        ['record', 'businessCustomer'],
+        ['record', 'is_business'],
+        ['record', 'isBusiness'],
+        ['record', 'business_detected'],
+        ['record', 'businessDetected'],
+        ['record', 'booking', 'business_customer'],
+        ['record', 'booking', 'businessCustomer'],
+        ['record', 'booking', 'is_business'],
+        ['record', 'booking', 'isBusiness'],
+        ['record', 'booking', 'business_detected'],
+        ['record', 'booking', 'businessDetected'],
       ]),
     );
     final customerCompany = _firstPathText(item, const [
@@ -21795,8 +22408,18 @@ class _ReceiptPdfActionRunner {
       ['customerCompany'],
       ['booking', 'company_name'],
       ['booking', 'companyName'],
+      ['booking_details', 'company_name'],
+      ['booking_details', 'companyName'],
+      ['record', 'company_name'],
+      ['record', 'companyName'],
       ['record', 'booking', 'company_name'],
       ['record', 'booking', 'companyName'],
+      ['record', 'booking_details', 'company_name'],
+      ['record', 'booking_details', 'companyName'],
+      ['payload', 'company_name'],
+      ['payload', 'companyName'],
+      ['payload', 'booking', 'company_name'],
+      ['payload', 'booking', 'companyName'],
     ]);
     final customerVat = _firstPathText(item, const [
       ['vat_number'],
@@ -21805,12 +22428,84 @@ class _ReceiptPdfActionRunner {
       ['customerVat'],
       ['booking', 'vat_number'],
       ['booking', 'vatNumber'],
+      ['booking_details', 'vat_number'],
+      ['booking_details', 'vatNumber'],
+      ['record', 'vat_number'],
+      ['record', 'vatNumber'],
       ['record', 'booking', 'vat_number'],
       ['record', 'booking', 'vatNumber'],
+      ['record', 'booking_details', 'vat_number'],
+      ['record', 'booking_details', 'vatNumber'],
+      ['payload', 'vat_number'],
+      ['payload', 'vatNumber'],
+      ['payload', 'booking', 'vat_number'],
+      ['payload', 'booking', 'vatNumber'],
     ]);
-    return invoiceRequested ||
+    final invoiceEmail =
+        _firstPathText(item, const [
+          ['invoice_email'],
+          ['invoiceEmail'],
+          ['booking', 'invoice_email'],
+          ['booking', 'invoiceEmail'],
+          ['booking_details', 'invoice_email'],
+          ['booking_details', 'invoiceEmail'],
+          ['record', 'invoice_email'],
+          ['record', 'invoiceEmail'],
+          ['record', 'booking', 'invoice_email'],
+          ['record', 'booking', 'invoiceEmail'],
+          ['record', 'booking_details', 'invoice_email'],
+          ['record', 'booking_details', 'invoiceEmail'],
+          ['payload', 'invoice_email'],
+          ['payload', 'invoiceEmail'],
+          ['payload', 'booking', 'invoice_email'],
+          ['payload', 'booking', 'invoiceEmail'],
+        ]) ??
+        '';
+    final invoiceAddress =
+        _firstPathText(item, const [
+          ['invoice_address'],
+          ['invoiceAddress'],
+          ['billing_address'],
+          ['billingAddress'],
+          ['company_address'],
+          ['companyAddress'],
+          ['booking', 'invoice_address'],
+          ['booking', 'invoiceAddress'],
+          ['booking', 'billing_address'],
+          ['booking', 'billingAddress'],
+          ['booking_details', 'invoice_address'],
+          ['booking_details', 'invoiceAddress'],
+          ['record', 'invoice_address'],
+          ['record', 'invoiceAddress'],
+          ['record', 'billing_address'],
+          ['record', 'billingAddress'],
+          ['record', 'booking', 'invoice_address'],
+          ['record', 'booking', 'invoiceAddress'],
+          ['record', 'booking_details', 'invoice_address'],
+          ['record', 'booking_details', 'invoiceAddress'],
+          ['payload', 'invoice_address'],
+          ['payload', 'invoiceAddress'],
+          ['payload', 'booking', 'invoice_address'],
+          ['payload', 'booking', 'invoiceAddress'],
+        ]) ??
+        '';
+    final hasBusiness =
+        invoiceRequested ||
+        businessFlag ||
         (customerCompany != null && customerCompany.trim().isNotEmpty) ||
         (customerVat != null && customerVat.trim().isNotEmpty);
+    return (
+      isBusinessDocument: hasBusiness,
+      invoiceRequested: invoiceRequested,
+      companyName: (customerCompany ?? '').trim(),
+      vatNumber: (customerVat ?? '').trim(),
+      invoiceEmail: invoiceEmail.trim(),
+      invoiceAddress: invoiceAddress.trim(),
+    );
+  }
+
+  static bool _isBusinessDocument(_TripHistoryItem item) {
+    return _resolveBusinessFields(item).isBusinessDocument;
   }
 
   static bool _toBoolFlag(String? value) {
@@ -23733,15 +24428,65 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         normalized == 'ja';
   }
 
-  bool get _isBusinessDocument {
+  ({
+    bool isBusinessDocument,
+    bool invoiceRequested,
+    String companyName,
+    String vatNumber,
+    String invoiceEmail,
+    String invoiceAddress,
+  })
+  _resolvedReceiptBusinessFields() {
     final invoiceRequested = _toBoolFlag(
       _firstDetailPathText(const [
         ['invoice_requested'],
         ['invoiceRequested'],
         ['booking', 'invoice_requested'],
         ['booking', 'invoiceRequested'],
+        ['booking_details', 'invoice_requested'],
+        ['booking_details', 'invoiceRequested'],
+        ['record', 'invoice_requested'],
+        ['record', 'invoiceRequested'],
         ['record', 'booking', 'invoice_requested'],
         ['record', 'booking', 'invoiceRequested'],
+        ['record', 'booking_details', 'invoice_requested'],
+        ['record', 'booking_details', 'invoiceRequested'],
+        ['payload', 'invoice_requested'],
+        ['payload', 'invoiceRequested'],
+        ['payload', 'booking', 'invoice_requested'],
+        ['payload', 'booking', 'invoiceRequested'],
+      ]),
+    );
+    final businessFlag = _toBoolFlag(
+      _firstDetailPathText(const [
+        ['business_customer'],
+        ['businessCustomer'],
+        ['is_business'],
+        ['isBusiness'],
+        ['business_detected'],
+        ['businessDetected'],
+        ['booking', 'business_customer'],
+        ['booking', 'businessCustomer'],
+        ['booking', 'is_business'],
+        ['booking', 'isBusiness'],
+        ['booking', 'business_detected'],
+        ['booking', 'businessDetected'],
+        ['booking_details', 'business_customer'],
+        ['booking_details', 'businessCustomer'],
+        ['booking_details', 'is_business'],
+        ['booking_details', 'isBusiness'],
+        ['record', 'business_customer'],
+        ['record', 'businessCustomer'],
+        ['record', 'is_business'],
+        ['record', 'isBusiness'],
+        ['record', 'business_detected'],
+        ['record', 'businessDetected'],
+        ['record', 'booking', 'business_customer'],
+        ['record', 'booking', 'businessCustomer'],
+        ['record', 'booking', 'is_business'],
+        ['record', 'booking', 'isBusiness'],
+        ['record', 'booking', 'business_detected'],
+        ['record', 'booking', 'businessDetected'],
       ]),
     );
     final customerCompany = _firstDetailPathText(const [
@@ -23751,8 +24496,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ['customerCompany'],
       ['booking', 'company_name'],
       ['booking', 'companyName'],
+      ['booking_details', 'company_name'],
+      ['booking_details', 'companyName'],
+      ['record', 'company_name'],
+      ['record', 'companyName'],
       ['record', 'booking', 'company_name'],
       ['record', 'booking', 'companyName'],
+      ['record', 'booking_details', 'company_name'],
+      ['record', 'booking_details', 'companyName'],
+      ['payload', 'company_name'],
+      ['payload', 'companyName'],
+      ['payload', 'booking', 'company_name'],
+      ['payload', 'booking', 'companyName'],
     ]);
     final customerVat = _firstDetailPathText(const [
       ['vat_number'],
@@ -23761,12 +24516,84 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ['customerVat'],
       ['booking', 'vat_number'],
       ['booking', 'vatNumber'],
+      ['booking_details', 'vat_number'],
+      ['booking_details', 'vatNumber'],
+      ['record', 'vat_number'],
+      ['record', 'vatNumber'],
       ['record', 'booking', 'vat_number'],
       ['record', 'booking', 'vatNumber'],
+      ['record', 'booking_details', 'vat_number'],
+      ['record', 'booking_details', 'vatNumber'],
+      ['payload', 'vat_number'],
+      ['payload', 'vatNumber'],
+      ['payload', 'booking', 'vat_number'],
+      ['payload', 'booking', 'vatNumber'],
     ]);
-    return invoiceRequested ||
+    final invoiceEmail =
+        _firstDetailPathText(const [
+          ['invoice_email'],
+          ['invoiceEmail'],
+          ['booking', 'invoice_email'],
+          ['booking', 'invoiceEmail'],
+          ['booking_details', 'invoice_email'],
+          ['booking_details', 'invoiceEmail'],
+          ['record', 'invoice_email'],
+          ['record', 'invoiceEmail'],
+          ['record', 'booking', 'invoice_email'],
+          ['record', 'booking', 'invoiceEmail'],
+          ['record', 'booking_details', 'invoice_email'],
+          ['record', 'booking_details', 'invoiceEmail'],
+          ['payload', 'invoice_email'],
+          ['payload', 'invoiceEmail'],
+          ['payload', 'booking', 'invoice_email'],
+          ['payload', 'booking', 'invoiceEmail'],
+        ]) ??
+        '';
+    final invoiceAddress =
+        _firstDetailPathText(const [
+          ['invoice_address'],
+          ['invoiceAddress'],
+          ['billing_address'],
+          ['billingAddress'],
+          ['company_address'],
+          ['companyAddress'],
+          ['booking', 'invoice_address'],
+          ['booking', 'invoiceAddress'],
+          ['booking', 'billing_address'],
+          ['booking', 'billingAddress'],
+          ['booking_details', 'invoice_address'],
+          ['booking_details', 'invoiceAddress'],
+          ['record', 'invoice_address'],
+          ['record', 'invoiceAddress'],
+          ['record', 'billing_address'],
+          ['record', 'billingAddress'],
+          ['record', 'booking', 'invoice_address'],
+          ['record', 'booking', 'invoiceAddress'],
+          ['record', 'booking_details', 'invoice_address'],
+          ['record', 'booking_details', 'invoiceAddress'],
+          ['payload', 'invoice_address'],
+          ['payload', 'invoiceAddress'],
+          ['payload', 'booking', 'invoice_address'],
+          ['payload', 'booking', 'invoiceAddress'],
+        ]) ??
+        '';
+    final hasBusiness =
+        invoiceRequested ||
+        businessFlag ||
         (customerCompany != null && customerCompany.trim().isNotEmpty) ||
         (customerVat != null && customerVat.trim().isNotEmpty);
+    return (
+      isBusinessDocument: hasBusiness,
+      invoiceRequested: invoiceRequested,
+      companyName: (customerCompany ?? '').trim(),
+      vatNumber: (customerVat ?? '').trim(),
+      invoiceEmail: invoiceEmail.trim(),
+      invoiceAddress: invoiceAddress.trim(),
+    );
+  }
+
+  bool get _isBusinessDocument {
+    return _resolvedReceiptBusinessFields().isBusinessDocument;
   }
 
   double _resolvedVatRate() {
@@ -24012,7 +24839,31 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           _minutesText('duration_route_min') ??
           _minutesText('route_minutes') ??
           _receiptText('notAvailable');
-      final documentTitle = _isBusinessDocument
+      final businessFields = _resolvedReceiptBusinessFields();
+      debugPrint(
+        '[RECEIPT][BUSINESS_FIELDS] source=stateful_pdf booking=${_safeRefPreview(item.bookingId ?? item.tripId)} business=${businessFields.isBusinessDocument} invoiceRequested=${businessFields.invoiceRequested} companyFound=${businessFields.companyName.isNotEmpty} vatFound=${businessFields.vatNumber.isNotEmpty} invoiceEmailFound=${businessFields.invoiceEmail.isNotEmpty} invoiceAddressFound=${businessFields.invoiceAddress.isNotEmpty}',
+      );
+      // #region agent log H5 stateful receipt business projection
+      unawaited(
+        _agentDebugLog(
+          runId: 'initial',
+          hypothesisId: 'H5',
+          location: 'main.dart:_RideReceiptBodyState._buildReceiptPdfBundle',
+          message: '[RECEIPT][BUSINESS_FIELDS]',
+          data: <String, dynamic>{
+            'source': 'stateful_pdf',
+            'booking': _safeRefPreview(item.bookingId ?? item.tripId),
+            'business': businessFields.isBusinessDocument,
+            'invoiceRequested': businessFields.invoiceRequested,
+            'companyFound': businessFields.companyName.isNotEmpty,
+            'vatFound': businessFields.vatNumber.isNotEmpty,
+            'invoiceEmailFound': businessFields.invoiceEmail.isNotEmpty,
+            'invoiceAddressFound': businessFields.invoiceAddress.isNotEmpty,
+          },
+        ),
+      );
+      // #endregion
+      final documentTitle = businessFields.isBusinessDocument
           ? _receiptText('invoiceLabel')
           : _receiptText('paymentReceiptLabel');
       final footerText = seller['footer']?.trim().isNotEmpty == true
@@ -24131,6 +24982,67 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               _receiptText('customerPhone'),
               _customerPhoneRaw ?? _receiptText('notAvailable'),
             ),
+            if (businessFields.isBusinessDocument) ...[
+              pw.SizedBox(height: 12),
+              pw.Text(
+                _tr(
+                  nl: 'Zakelijk / Factuur',
+                  en: 'Business / Invoice',
+                  fr: 'Professionnel / Facture',
+                  es: 'Empresa / Factura',
+                ),
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                  font: boldFont,
+                ),
+              ),
+              pw.SizedBox(height: 6),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Bedrijfsnaam',
+                  en: 'Company name',
+                  fr: "Nom de l'entreprise",
+                  es: 'Empresa',
+                ),
+                businessFields.companyName.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.companyName,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'BTW-nummer',
+                  en: 'VAT number',
+                  fr: 'Numero de TVA',
+                  es: 'NIF/IVA',
+                ),
+                businessFields.vatNumber.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.vatNumber,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Factuur e-mail',
+                  en: 'Invoice email',
+                  fr: 'E-mail facture',
+                  es: 'Email de factura',
+                ),
+                businessFields.invoiceEmail.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.invoiceEmail,
+              ),
+              _pdfInfoRow(
+                _tr(
+                  nl: 'Factuuradres',
+                  en: 'Invoice address',
+                  fr: 'Adresse de facturation',
+                  es: 'Direccion de factura',
+                ),
+                businessFields.invoiceAddress.isEmpty
+                    ? _receiptText('notAvailable')
+                    : businessFields.invoiceAddress,
+              ),
+            ],
             pw.SizedBox(height: 12),
             pw.Text(
               _receiptText('paymentActions'),
@@ -24827,6 +25739,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   @override
   Widget build(BuildContext context) {
     final route = _resolvedRouteForPdf();
+    final businessFields = _resolvedReceiptBusinessFields();
     final receiptRefDisplay = _businessReferenceDisplayForItem(
       item,
       source: 'receipt_screen_row',
@@ -24945,6 +25858,60 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                     _optionalReceiptRow(
                       _receiptText('customerEmail'),
                       _customerEmail,
+                    ),
+                  ],
+                  if (businessFields.isBusinessDocument) ...[
+                    _sectionTitle(
+                      _tr(
+                        nl: 'Zakelijk / Factuur',
+                        en: 'Business / Invoice',
+                        fr: 'Professionnel / Facture',
+                        es: 'Empresa / Factura',
+                      ),
+                    ),
+                    _optionalReceiptRow(
+                      _tr(
+                        nl: 'Bedrijfsnaam',
+                        en: 'Company name',
+                        fr: "Nom de l'entreprise",
+                        es: 'Empresa',
+                      ),
+                      businessFields.companyName.isEmpty
+                          ? null
+                          : businessFields.companyName,
+                    ),
+                    _optionalReceiptRow(
+                      _tr(
+                        nl: 'BTW-nummer',
+                        en: 'VAT number',
+                        fr: 'Numero de TVA',
+                        es: 'NIF/IVA',
+                      ),
+                      businessFields.vatNumber.isEmpty
+                          ? null
+                          : businessFields.vatNumber,
+                    ),
+                    _optionalReceiptRow(
+                      _tr(
+                        nl: 'Factuur e-mail',
+                        en: 'Invoice email',
+                        fr: 'E-mail facture',
+                        es: 'Email de factura',
+                      ),
+                      businessFields.invoiceEmail.isEmpty
+                          ? null
+                          : businessFields.invoiceEmail,
+                    ),
+                    _optionalReceiptRow(
+                      _tr(
+                        nl: 'Factuuradres',
+                        en: 'Invoice address',
+                        fr: 'Adresse de facturation',
+                        es: 'Direccion de factura',
+                      ),
+                      businessFields.invoiceAddress.isEmpty
+                          ? null
+                          : businessFields.invoiceAddress,
                     ),
                   ],
                   if (_isPlannedReceipt) ...[
