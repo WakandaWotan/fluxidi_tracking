@@ -330,36 +330,181 @@ class CompanySessionStore {
   CompanyProfile? _profileMemory;
   ActiveCompanySession? _sessionMemory;
 
-  Future<Directory> _dir() async {
+  String _safeScopeSegment(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'default';
+    final sanitized = trimmed.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    if (sanitized.isEmpty) return 'default';
+    return sanitized;
+  }
+
+  ({String tenantId, String companyId})? _resolveScopeFromKnownState({
+    CompanyProfile? profileHint,
+    ActiveCompanySession? sessionHint,
+  }) {
+    final fromHintProfile = profileHint?.companyId.trim() ?? '';
+    if (fromHintProfile.isNotEmpty) {
+      return (tenantId: fromHintProfile, companyId: fromHintProfile);
+    }
+    final fromHintSession = sessionHint?.companyId.trim() ?? '';
+    if (fromHintSession.isNotEmpty) {
+      return (tenantId: fromHintSession, companyId: fromHintSession);
+    }
+    final fromMemoryProfile = _profileMemory?.companyId.trim() ?? '';
+    if (fromMemoryProfile.isNotEmpty) {
+      return (tenantId: fromMemoryProfile, companyId: fromMemoryProfile);
+    }
+    final fromMemorySession = _sessionMemory?.companyId.trim() ?? '';
+    if (fromMemorySession.isNotEmpty) {
+      return (tenantId: fromMemorySession, companyId: fromMemorySession);
+    }
+    final fromNotifierProfile =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromNotifierProfile.isNotEmpty) {
+      return (tenantId: fromNotifierProfile, companyId: fromNotifierProfile);
+    }
+    final fromNotifierSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromNotifierSession.isNotEmpty) {
+      return (tenantId: fromNotifierSession, companyId: fromNotifierSession);
+    }
+    return null;
+  }
+
+  Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
     final d = Directory('${base.path}${Platform.pathSeparator}company_session');
     if (!await d.exists()) await d.create(recursive: true);
     return d;
   }
 
-  Future<File> _profileFile() async {
-    final d = await _dir();
+  Future<File> _legacyProfileFile() async {
+    final d = await _stateRootDir();
     return File('${d.path}${Platform.pathSeparator}$_profileFileName');
   }
 
-  Future<File> _sessionFile() async {
-    final d = await _dir();
+  Future<File> _legacySessionFile() async {
+    final d = await _stateRootDir();
     return File('${d.path}${Platform.pathSeparator}$_sessionFileName');
+  }
+
+  Future<Directory> _scopedDir({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _stateRootDir();
+    final dir = Directory(
+      '${root.path}${Platform.pathSeparator}tenant_${_safeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_safeScopeSegment(companyId)}',
+    );
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<File> _profileFileForScope({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final dir = await _scopedDir(tenantId: tenantId, companyId: companyId);
+    final file = File('${dir.path}${Platform.pathSeparator}$_profileFileName');
+    debugPrint(
+      '[COMPANY_SESSION][PATH] target=profile tenant=$tenantId company=$companyId path=${file.path}',
+    );
+    return file;
+  }
+
+  Future<File> _sessionFileForScope({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final dir = await _scopedDir(tenantId: tenantId, companyId: companyId);
+    final file = File('${dir.path}${Platform.pathSeparator}$_sessionFileName');
+    debugPrint(
+      '[COMPANY_SESSION][PATH] target=session tenant=$tenantId company=$companyId path=${file.path}',
+    );
+    return file;
+  }
+
+  Future<File?> _profileFileForKnownScope({
+    CompanyProfile? profileHint,
+    ActiveCompanySession? sessionHint,
+  }) async {
+    final scope = _resolveScopeFromKnownState(
+      profileHint: profileHint,
+      sessionHint: sessionHint,
+    );
+    if (scope == null) return null;
+    return _profileFileForScope(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<File?> _sessionFileForKnownScope({
+    CompanyProfile? profileHint,
+    ActiveCompanySession? sessionHint,
+  }) async {
+    final scope = _resolveScopeFromKnownState(
+      profileHint: profileHint,
+      sessionHint: sessionHint,
+    );
+    if (scope == null) return null;
+    return _sessionFileForScope(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<CompanyProfile?> _readProfileFromFile(File file) async {
+    if (!await file.exists()) return null;
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    final p = CompanyProfile.fromJson(Map<String, dynamic>.from(decoded));
+    if (p.companyId.isEmpty) return null;
+    return p;
+  }
+
+  Future<ActiveCompanySession?> _readSessionFromFile(File file) async {
+    if (!await file.exists()) return null;
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    final s = ActiveCompanySession.fromJson(Map<String, dynamic>.from(decoded));
+    if (s.companyId.isEmpty) return null;
+    return s;
   }
 
   Future<CompanyProfile?> loadProfile() async {
     try {
       if (_profileMemory != null) return _profileMemory;
-      final file = await _profileFile();
-      if (!await file.exists()) return null;
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final p = CompanyProfile.fromJson(Map<String, dynamic>.from(decoded));
-      if (p.companyId.isEmpty) return null;
-      _profileMemory = p;
-      return p;
+      final scopedFile = await _profileFileForKnownScope();
+      if (scopedFile != null) {
+        final scoped = await _readProfileFromFile(scopedFile);
+        if (scoped != null) {
+          _profileMemory = scoped;
+          return scoped;
+        }
+      }
+
+      final legacyFile = await _legacyProfileFile();
+      final legacy = await _readProfileFromFile(legacyFile);
+      if (legacy == null) return null;
+
+      final scopedTarget = await _profileFileForScope(
+        tenantId: legacy.tenantId,
+        companyId: legacy.companyId,
+      );
+      if (scopedTarget.path != legacyFile.path &&
+          !await scopedTarget.exists()) {
+        await scopedTarget.writeAsString(jsonEncode(legacy.toJson()));
+        debugPrint(
+          '[COMPANY_SESSION][MIGRATE_LEGACY] target=profile tenant=${legacy.tenantId} company=${legacy.companyId} from=${legacyFile.path} to=${scopedTarget.path}',
+        );
+      }
+      _profileMemory = legacy;
+      return legacy;
     } catch (_) {
       return null;
     }
@@ -368,18 +513,32 @@ class CompanySessionStore {
   Future<ActiveCompanySession?> loadSession() async {
     try {
       if (_sessionMemory != null) return _sessionMemory;
-      final file = await _sessionFile();
-      if (!await file.exists()) return null;
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final s = ActiveCompanySession.fromJson(
-        Map<String, dynamic>.from(decoded),
+      final scopedFile = await _sessionFileForKnownScope();
+      if (scopedFile != null) {
+        final scoped = await _readSessionFromFile(scopedFile);
+        if (scoped != null) {
+          _sessionMemory = scoped;
+          return scoped;
+        }
+      }
+
+      final legacyFile = await _legacySessionFile();
+      final legacy = await _readSessionFromFile(legacyFile);
+      if (legacy == null) return null;
+
+      final scopedTarget = await _sessionFileForScope(
+        tenantId: legacy.companyId,
+        companyId: legacy.companyId,
       );
-      if (s.companyId.isEmpty) return null;
-      _sessionMemory = s;
-      return s;
+      if (scopedTarget.path != legacyFile.path &&
+          !await scopedTarget.exists()) {
+        await scopedTarget.writeAsString(jsonEncode(legacy.toJson()));
+        debugPrint(
+          '[COMPANY_SESSION][MIGRATE_LEGACY] target=session tenant=${legacy.companyId} company=${legacy.companyId} from=${legacyFile.path} to=${scopedTarget.path}',
+        );
+      }
+      _sessionMemory = legacy;
+      return legacy;
     } catch (_) {
       return null;
     }
@@ -429,10 +588,16 @@ class CompanySessionStore {
       lastUsedAt: now,
     );
     try {
-      final file = await _sessionFile();
+      final file = await _sessionFileForScope(
+        tenantId: p.tenantId,
+        companyId: p.companyId,
+      );
       await file.writeAsString(jsonEncode(session.toJson()));
       _sessionMemory = session;
       activeCompanySessionNotifier.value = session;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${p.tenantId} company=${p.companyId} path=${file.path}',
+      );
     } catch (_) {}
   }
 
@@ -442,10 +607,16 @@ class CompanySessionStore {
     final now = DateTime.now().toUtc().toIso8601String();
     final next = cur.copyWith(lastUsedAt: now);
     try {
-      final file = await _sessionFile();
+      final file = await _sessionFileForScope(
+        tenantId: cur.companyId,
+        companyId: cur.companyId,
+      );
       await file.writeAsString(jsonEncode(next.toJson()));
       _sessionMemory = next;
       activeCompanySessionNotifier.value = next;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${cur.companyId} company=${cur.companyId} path=${file.path}',
+      );
     } catch (_) {}
   }
 
@@ -520,10 +691,16 @@ class CompanySessionStore {
 
   Future<void> persistProfile(CompanyProfile profile) async {
     try {
-      final file = await _profileFile();
+      final file = await _profileFileForScope(
+        tenantId: profile.tenantId,
+        companyId: profile.companyId,
+      );
       await file.writeAsString(jsonEncode(profile.toJson()));
       _profileMemory = profile;
       companyProfileNotifier.value = profile;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=profile tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
+      );
     } catch (_) {}
   }
 
@@ -575,10 +752,26 @@ class CompanySessionStore {
 
   Future<void> clearLocalCompanyState() async {
     try {
-      final pf = await _profileFile();
-      if (await pf.exists()) await pf.delete();
-      final sf = await _sessionFile();
-      if (await sf.exists()) await sf.delete();
+      final scope = _resolveScopeFromKnownState();
+      if (scope != null) {
+        final pf = await _profileFileForScope(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        if (await pf.exists()) await pf.delete();
+        final sf = await _sessionFileForScope(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        if (await sf.exists()) await sf.delete();
+        debugPrint(
+          '[COMPANY_SESSION][CLEAR] tenant=${scope.tenantId} company=${scope.companyId} profilePath=${pf.path} sessionPath=${sf.path}',
+        );
+      } else {
+        debugPrint(
+          '[COMPANY_SESSION][CLEAR] tenant=unknown company=unknown scoped_files_skipped=true',
+        );
+      }
     } catch (_) {}
     _profileMemory = null;
     _sessionMemory = null;
