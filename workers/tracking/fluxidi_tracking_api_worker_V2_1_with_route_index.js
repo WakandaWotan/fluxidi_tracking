@@ -345,6 +345,154 @@ async function _assertSessionOwnedByActorOrBlock({
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
 const TRACKING_FALLBACK_TENANT_ID = "fluxidi";
 
+function safeKeyPart(value, maxLen = 128) {
+  const raw = safeStr(value, maxLen);
+  if (!raw) return null;
+  const normalized = raw.replace(/[:\r\n\t]/g, "_").trim();
+  return normalized || null;
+}
+
+function normalizeTenantCompanyScope(input = {}) {
+  const tenant_id = safeStr(input.tenant_id ?? input.tenantId, 96) ?? null;
+  const company_id = safeStr(input.company_id ?? input.companyId, 96) ?? null;
+  if (!tenant_id && !company_id) return null;
+  return { tenant_id, company_id };
+}
+
+function extractScopeFromQueryAndBody(url, body = null) {
+  const search = url?.searchParams;
+  return normalizeTenantCompanyScope({
+    tenant_id: body?.tenant_id ?? body?.tenantId ?? search?.get("tenant_id") ?? search?.get("tenantId"),
+    company_id: body?.company_id ?? body?.companyId ?? search?.get("company_id") ?? search?.get("companyId"),
+  });
+}
+
+function extractScopeFromRecord(record) {
+  return normalizeTenantCompanyScope({
+    tenant_id: record?.tenant_id ?? record?.tenantId,
+    company_id: record?.company_id ?? record?.companyId,
+  });
+}
+
+function missingScopeResponse(origin, message = "tenant_id and company_id are required") {
+  return withCors(json({ ok: false, error: message }, { status: 400 }), origin ?? "*");
+}
+
+function parseRequiredTenantCompanyScope(request, url, body = null, options = {}) {
+  const sourceScope = extractScopeFromQueryAndBody(url, body);
+  const tenant_id = sourceScope?.tenant_id ?? null;
+  const company_id = sourceScope?.company_id ?? null;
+  const hasAnyScope = Boolean(tenant_id || company_id);
+  if (!tenant_id || !company_id) {
+    const message = hasAnyScope
+      ? "tenant_id and company_id must both be provided"
+      : "tenant_id and company_id are required";
+    if (options.returnResponse === true) {
+      return missingScopeResponse(options.origin, message);
+    }
+    throw new Error(message);
+  }
+  return { tenant_id, company_id };
+}
+
+function parseOptionalTenantCompanyScope(request, url, body = null, record = null) {
+  const explicitScope = extractScopeFromQueryAndBody(url, body);
+  if (explicitScope) {
+    if (explicitScope.tenant_id && explicitScope.company_id) {
+      return { tenant_id: explicitScope.tenant_id, company_id: explicitScope.company_id };
+    }
+    return null;
+  }
+  const recordScope = extractScopeFromRecord(record);
+  if (recordScope?.tenant_id && recordScope?.company_id) {
+    return { tenant_id: recordScope.tenant_id, company_id: recordScope.company_id };
+  }
+  return null;
+}
+
+function recordMatchesTenantCompanyScope(record, scope, options = {}) {
+  const recordScope = extractScopeFromRecord(record);
+  const targetScope = normalizeTenantCompanyScope(scope);
+  if (!recordScope || !targetScope || !targetScope.tenant_id || !targetScope.company_id) {
+    return false;
+  }
+  if (!recordScope.tenant_id) return false;
+  if (recordScope.tenant_id !== targetScope.tenant_id) return false;
+  if (!recordScope.company_id) {
+    return options.allowLegacyCompanyless === true;
+  }
+  return recordScope.company_id === targetScope.company_id;
+}
+
+function normalizeScopedKeyScope(scope) {
+  const normalized = normalizeTenantCompanyScope(scope);
+  const tenantPart = safeKeyPart(normalized?.tenant_id, 96);
+  const companyPart = safeKeyPart(normalized?.company_id, 96);
+  if (!tenantPart || !companyPart) {
+    throw new Error("tenant_id and company_id are required");
+  }
+  return { tenant_id: tenantPart, company_id: companyPart };
+}
+
+function scopedBookingIndexKey(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:booking_index`;
+}
+
+function scopedBookingSessionKey(scope, bookingId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const bookingPart = safeKeyPart(bookingId, 128);
+  if (!bookingPart) throw new Error("booking_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:booking:${bookingPart}:session`;
+}
+
+function scopedSessionKey(scope, sessionId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const sessionPart = safeKeyPart(sessionId, 128);
+  if (!sessionPart) throw new Error("session_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:session:${sessionPart}`;
+}
+
+function scopedPingLastKey(scope, sessionId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const sessionPart = safeKeyPart(sessionId, 128);
+  if (!sessionPart) throw new Error("session_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:ping:${sessionPart}:last`;
+}
+
+function scopedPublicBookingKey(scope, token) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const tokenPart = safeKeyPart(token, 128);
+  if (!tokenPart) throw new Error("public token is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:public:${tokenPart}:booking`;
+}
+
+function scopedTripKey(scope, tripId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const tripPart = safeKeyPart(tripId, 160);
+  if (!tripPart) throw new Error("trip_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:trip:${tripPart}`;
+}
+
+function scopedTripsIndexKey(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:trips_index`;
+}
+
+function scopedTripsDriverIndexKey(scope, driverId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const driverPart = safeKeyPart(driverId, 96);
+  if (!driverPart) throw new Error("driver_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:trips_index:driver:${driverPart}`;
+}
+
+function scopedOwnerVehicleKey(scope, vehicleId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const vehiclePart = safeKeyPart(vehicleId, 96);
+  if (!vehiclePart) throw new Error("vehicle_id is required");
+  return `owner_vehicle:${normalizedScope.tenant_id}:${normalizedScope.company_id}:${vehiclePart}`;
+}
+
 function normalizeComplianceText(v, fallback = "unknown", maxLen = 64) {
   const text = safeStr(v, maxLen);
   if (!text) return fallback;
