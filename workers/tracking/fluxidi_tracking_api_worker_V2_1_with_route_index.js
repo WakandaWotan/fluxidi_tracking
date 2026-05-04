@@ -2657,59 +2657,146 @@ async function handleDeleteBooking(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const booking_id = safeStr(body["booking_id"], 64);
   if (!booking_id) throw new Error("booking_id is required");
 
-  const mapKey = `booking:${booking_id}:session`;
-  const map = await kvGetJson(env.FLUXIDI_TRACKING, mapKey);
+  const scopedIndexStorageKey = scopedBookingIndexKey(scope);
+  const scopedIndex = (await kvGetJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey)) ?? [];
+  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
+  const map = mapResolved.map;
 
-  if (!map || !map.session_id) {
-    const idx = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
-    const next = idx.filter((x) => x !== booking_id);
-    if (next.length !== idx.length) await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", next, TTL_INDEX);
+  if (!map) {
+    const legacyMap = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
+    const legacyScope = extractScopeFromRecord(legacyMap);
+    const legacyCompanylessScopeMatch =
+      Boolean(legacyMap) &&
+      legacyScope?.tenant_id === scope.tenant_id &&
+      !legacyScope?.company_id;
+    const next = Array.isArray(scopedIndex)
+      ? scopedIndex.filter((x) => x !== booking_id)
+      : [];
+    if (next.length !== scopedIndex.length) {
+      await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, next, TTL_INDEX);
+    }
 
     return withCors(
-      json({ ok: true, deleted: false, booking_id, note: "No map found; removed from index if present." }, { status: 200 }),
+      json(
+        {
+          ok: true,
+          deleted: false,
+          booking_id,
+          scope_mode: "scoped",
+          legacy_unmodified: Boolean(legacyMap),
+          note: legacyCompanylessScopeMatch
+            ? "Legacy companyless mapping detected; left unmodified for compatibility."
+            : "No scoped mapping found; removed from scoped index if present.",
+        },
+        { status: 200 },
+      ),
       origin
     );
   }
 
-  const session_id = safeStr(map.session_id, 128);
+  const mapKey = mapResolved.key;
+  const session_id = safeStr(map.session_id ?? map.sessionId, 128);
   const public_token = safeStr(map.public_token ?? "", 128) || null;
+  const sessionResolved = session_id
+    ? await getScopedOrLegacySessionForScope(env, scope, session_id)
+    : null;
 
   await kvDel(env.FLUXIDI_TRACKING, mapKey);
-  await kvDel(env.FLUXIDI_TRACKING, `session:${session_id}`);
-  await kvDel(env.FLUXIDI_TRACKING, `ping:${session_id}:last`);
-  if (public_token) await kvDel(env.FLUXIDI_TRACKING, `public:${public_token}:booking`);
+  if (session_id) {
+    await kvDel(
+      env.FLUXIDI_TRACKING,
+      sessionResolved?.key ?? scopedSessionKey(scope, session_id),
+    );
+    await kvDel(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, session_id));
+  }
+  if (public_token) {
+    await kvDel(env.FLUXIDI_TRACKING, scopedPublicBookingKey(scope, public_token));
+  }
 
-  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
-  const next = idx.filter((x) => x !== booking_id);
-  if (next.length !== idx.length) await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", next, TTL_INDEX);
+  const next = Array.isArray(scopedIndex)
+    ? scopedIndex.filter((x) => x !== booking_id)
+    : [];
+  if (next.length !== scopedIndex.length) {
+    await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, next, TTL_INDEX);
+  }
 
-  return withCors(json({ ok: true, deleted: true, booking_id, session_id, public_token }, { status: 200 }), origin);
+  return withCors(
+    json(
+      {
+        ok: true,
+        deleted: true,
+        booking_id,
+        session_id,
+        public_token,
+        scope_mode: "scoped",
+        legacy_unmodified: true,
+      },
+      { status: 200 },
+    ),
+    origin
+  );
 }
 
 async function handleClearBookings(req, url, env, origin) {
   requireAdmin(req, url, env);
-  await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", [], TTL_INDEX);
-  return withCors(json({ ok: true, cleared: true, what: "booking_index" }, { status: 200 }), origin);
+  const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const scopedIndexStorageKey = scopedBookingIndexKey(scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, [], TTL_INDEX);
+  return withCors(
+    json({ ok: true, cleared: true, what: "booking_index", scope_mode: "scoped" }, { status: 200 }),
+    origin,
+  );
 }
 
 async function handlePurgeOrphans(req, url, env, origin) {
   requireAdmin(req, url, env);
+  const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
 
-  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
+  const scopedIndexStorageKey = scopedBookingIndexKey(scope);
+  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey)) ?? [];
   const cleaned = [];
 
-  for (const booking_id of idx) {
-    const map = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
+  for (const rawBookingId of idx) {
+    const booking_id = safeStr(rawBookingId, 128);
+    if (!booking_id) continue;
+    const map = await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingSessionKey(scope, booking_id));
     if (!map) continue;
+    if (!recordMatchesTenantCompanyScope(map, scope)) continue;
+    const session_id = safeStr(map.session_id ?? map.sessionId, 128);
+    if (!session_id) continue;
+    const session = await kvGetJson(env.FLUXIDI_TRACKING, scopedSessionKey(scope, session_id));
+    if (!session) continue;
+    if (!recordMatchesTenantCompanyScope(session, scope)) continue;
     cleaned.push(booking_id);
   }
 
-  await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", cleaned, TTL_INDEX);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, cleaned, TTL_INDEX);
 
-  return withCors(json({ ok: true, before: idx.length, after: cleaned.length, removed: idx.length - cleaned.length }, { status: 200 }), origin);
+  return withCors(
+    json(
+      {
+        ok: true,
+        before: Array.isArray(idx) ? idx.length : 0,
+        after: cleaned.length,
+        removed: (Array.isArray(idx) ? idx.length : 0) - cleaned.length,
+        scope_mode: "scoped",
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
 }
 
 // -------------------------------
