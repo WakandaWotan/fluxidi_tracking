@@ -1853,7 +1853,26 @@ GET /oauth/callback
       // Create payment (PENDING booking saved in KV)
       if (url.pathname === "/pay/create" && request.method === "POST") {
         const body = await safeJson(request);
-        const out = await mollieCreatePayment(body, env, request);
+        const paymentScope = resolveExplicitBookingRequestScope({
+          request,
+          url,
+          body,
+          allowLegacyFallback: false,
+        });
+        if (!paymentScope?.hasScope) {
+          return json(
+            paymentScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            400,
+          );
+        }
+        const normalizedBody = {
+          ...body,
+          tenant_id: paymentScope.tenant_id,
+          tenantId: paymentScope.tenant_id,
+          company_id: paymentScope.company_id,
+          companyId: paymentScope.company_id,
+        };
+        const out = await mollieCreatePayment(normalizedBody, env, request);
         return json(out, out.ok ? 200 : 400);
       }
 
@@ -1866,7 +1885,18 @@ GET /oauth/callback
 
       // Debug status: check booking in KV
       if (url.pathname === "/pay/status" && request.method === "GET") {
-        return payStatus(request, env);
+        const statusScope = resolveExplicitBookingRequestScope({
+          request,
+          url,
+          allowLegacyFallback: false,
+        });
+        if (!statusScope?.hasScope) {
+          return json(
+            statusScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            400,
+          );
+        }
+        return payStatus(request, env, statusScope);
       }
 
       // Simple return page (fallback redirectUrl)
@@ -3986,8 +4016,34 @@ async function mollieCreatePayment(payload, env, request) {
     // (which uses this same worker as source-of-truth), we can reuse it to avoid a second
     // Mapbox call and reduce the chance of geocode hiccups.
     const payloadClean = { ...(payload || {}) };
-    const paymentTenantId = safeStr(payload?.tenant_id ?? payload?.tenantId, 80);
-    const paymentCompanyId = safeStr(payload?.company_id ?? payload?.companyId, 80);
+    const requestedScope = resolveExplicitBookingRequestScope({
+      request,
+      url: new URL(request.url),
+      body: payload,
+      allowLegacyFallback: false,
+    });
+    if (!requestedScope?.hasScope) {
+      return requestedScope?.error === "tenant_scope_conflict"
+        ? scopeConflictError()
+        : missingTenantScopeError();
+    }
+    const paymentTenantId = safeStr(requestedScope.tenant_id, 80);
+    const paymentCompanyId = safeStr(requestedScope.company_id, 80);
+    payloadClean.tenant_id = paymentTenantId;
+    payloadClean.tenantId = paymentTenantId;
+    payloadClean.company_id = paymentCompanyId;
+    payloadClean.companyId = paymentCompanyId;
+    const sourceBookingId = safeStr(
+      payload?.booking_id ??
+        payload?.bookingId,
+      160,
+    );
+    if (sourceBookingId) {
+      const loaded = await loadBookingRecord(env, sourceBookingId);
+      if (!bookingMatchesRequestedTenantScope(loaded?.rec, requestedScope)) {
+        return { ok: false, error: "forbidden" };
+      }
+    }
     const clientQuote = payloadClean.quote;
     const quotePayload = {
       ...payloadClean,
@@ -4057,6 +4113,10 @@ async function mollieCreatePayment(payload, env, request) {
         bookingId,
         status: "PENDING",
         createdAt,
+        tenant_id: paymentTenantId,
+        tenantId: paymentTenantId,
+        company_id: paymentCompanyId,
+        companyId: paymentCompanyId,
         public_booking_id: publicBookingId || null,
         public_booking_reference: publicBookingReference || null,
         publicBookingReference: publicBookingReference || null,
@@ -4113,7 +4173,11 @@ async function mollieCreatePayment(payload, env, request) {
           bookingId,
           status: "PENDING",
           createdAt,
-          payload,
+          tenant_id: paymentTenantId,
+          tenantId: paymentTenantId,
+          company_id: paymentCompanyId,
+          companyId: paymentCompanyId,
+          payload: payloadClean,
           quote,
           mollie_error: mollie
         }),
@@ -10720,7 +10784,7 @@ function _payStatusBookingIdCandidates(data, id, includeRawId = false) {
   return out;
 }
 
-async function payStatus(request, env) {
+async function payStatus(request, env, requestedScopeOverride = null) {
   const url = new URL(request.url);
   const id = (url.searchParams.get("id") || "").trim();
   if (!id) return json({ ok: false, error: "missing id" }, 400);
@@ -10740,19 +10804,25 @@ async function payStatus(request, env) {
   }
   if (!data) return json({ ok: false, error: "not found" }, 404);
 
-  const requestedScopeRaw = extractBookingTenantScope({ request, url });
-  const requestedTenant = _scopeText(requestedScopeRaw?.tenant_id);
-  const requestedCompany = _scopeText(requestedScopeRaw?.company_id);
-  if ((requestedTenant || requestedCompany) && !(requestedTenant && requestedCompany)) {
-    return json(missingTenantScopeError(), 400);
+  const resolvedScope =
+    requestedScopeOverride && requestedScopeOverride.hasScope
+      ? requestedScopeOverride
+      : resolveExplicitBookingRequestScope({
+          request,
+          url,
+          allowLegacyFallback: false,
+        });
+  if (!resolvedScope?.hasScope) {
+    return json(
+      resolvedScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+      400,
+    );
   }
-  const requestedScope = requestedTenant && requestedCompany
-    ? {
-        tenant_id: requestedTenant,
-        company_id: requestedCompany,
-        hasScope: true,
-      }
-    : null;
+  const requestedScope = {
+    tenant_id: _scopeText(resolvedScope.tenant_id),
+    company_id: _scopeText(resolvedScope.company_id),
+    hasScope: true,
+  };
 
   let linkedBooking = null;
   const bookingCandidates = _payStatusBookingIdCandidates(data, id, !hasPaymentKey);
@@ -10771,28 +10841,20 @@ async function payStatus(request, env) {
   const bookingScope = _payStatusScopeFromBookingRecord(linkedBooking?.rec);
   const paymentScope = _payStatusScopeFromPaymentRecord(data);
 
-  if (requestedScope) {
-    if (bookingScope && !_payStatusScopeMatches(bookingScope, requestedScope)) {
-      return json({ ok: false, error: "forbidden" }, 403);
-    }
-    if (paymentScope && !_payStatusScopeMatches(paymentScope, requestedScope)) {
-      return json({ ok: false, error: "forbidden" }, 403);
-    }
-    if (!bookingScope && !paymentScope) {
-      return json({ ok: false, error: "forbidden" }, 403);
-    }
-    if (linkedBooking?.rec && !bookingMatchesRequestedTenantScope(linkedBooking.rec, requestedScope)) {
-      return json({ ok: false, error: "forbidden" }, 403);
-    }
-  } else if (
-    bookingScope &&
-    paymentScope &&
-    !_payStatusScopeMatches(bookingScope, paymentScope)
-  ) {
+  if (bookingScope && !_payStatusScopeMatches(bookingScope, requestedScope)) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  if (paymentScope && !_payStatusScopeMatches(paymentScope, requestedScope)) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  if (!bookingScope && !paymentScope) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  if (linkedBooking?.rec && !bookingMatchesRequestedTenantScope(linkedBooking.rec, requestedScope)) {
     return json({ ok: false, error: "forbidden" }, 403);
   }
 
-  const effectiveScope = requestedScope || bookingScope || paymentScope || null;
+  const effectiveScope = requestedScope;
 
   // Helper: clear stale confirming lock
   const clearStaleLockIfNeeded = () => {
