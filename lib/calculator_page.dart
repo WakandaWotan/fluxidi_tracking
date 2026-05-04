@@ -50,14 +50,8 @@ bool _calcBusinessBool(dynamic value) {
   return text == '1' || text == 'true' || text == 'yes' || text == 'ja';
 }
 
-Map<String, dynamic> _buildBusinessInvoicePayload({
-  required Map<String, dynamic> source,
-  String fallbackCompanyName = '',
-  String fallbackVatNumber = '',
-  String fallbackInvoiceEmail = '',
-  String fallbackInvoiceAddress = '',
-}) {
-  final explicitBusiness = _calcBusinessBool(
+bool _hasExplicitPrivateBookingIntent(Map<String, dynamic> source) {
+  final business = _calcBusinessBool(
     source['business_detected'] ??
         source['businessDetected'] ??
         source['business_customer'] ??
@@ -65,7 +59,7 @@ Map<String, dynamic> _buildBusinessInvoicePayload({
         source['is_business'] ??
         source['isBusiness'],
   );
-  final explicitInvoice = _calcBusinessBool(
+  final invoiceRequested = _calcBusinessBool(
     source['invoice_requested'] ?? source['invoiceRequested'],
   );
   final companyName = _calcFirstBusinessText([
@@ -75,7 +69,6 @@ Map<String, dynamic> _buildBusinessInvoicePayload({
     source['customerCompanyName'],
     source['customer_company'],
     source['customerCompany'],
-    fallbackCompanyName,
   ]);
   final vatNumber = _calcFirstBusinessText([
     source['vat_number'],
@@ -84,33 +77,81 @@ Map<String, dynamic> _buildBusinessInvoicePayload({
     source['customerVatNumber'],
     source['customer_vat'],
     source['customerVat'],
-    fallbackVatNumber,
   ]);
-  final isBusiness =
-      explicitBusiness ||
-      explicitInvoice ||
-      companyName.isNotEmpty ||
-      vatNumber.isNotEmpty;
-  final invoiceRequested = explicitInvoice || isBusiness;
-  final invoiceEmail = isBusiness
-      ? _calcFirstBusinessText([
-          source['invoice_email'],
-          source['invoiceEmail'],
-          fallbackInvoiceEmail,
-        ])
+  return !business &&
+      !invoiceRequested &&
+      companyName.isEmpty &&
+      vatNumber.isEmpty;
+}
+
+Map<String, dynamic> _buildBusinessInvoicePayload({
+  required Map<String, dynamic> source,
+  String? overrideCompanyName,
+  String? overrideVatNumber,
+  String? overrideInvoiceEmail,
+  String? overrideInvoiceAddress,
+}) {
+  final companyName = overrideCompanyName != null
+      ? overrideCompanyName.trim()
       : _calcFirstBusinessText([
-          source['invoice_email'],
-          source['invoiceEmail'],
+          source['company_name'],
+          source['companyName'],
+          source['customer_company_name'],
+          source['customerCompanyName'],
+          source['customer_company'],
+          source['customerCompany'],
         ]);
-  final invoiceAddress = _calcFirstBusinessText([
-    source['invoice_address'],
-    source['invoiceAddress'],
-    source['billing_address'],
-    source['billingAddress'],
-    source['company_address'],
-    source['companyAddress'],
-    fallbackInvoiceAddress,
-  ]);
+  final vatNumber = overrideVatNumber != null
+      ? overrideVatNumber.trim()
+      : _calcFirstBusinessText([
+          source['vat_number'],
+          source['vatNumber'],
+          source['customer_vat_number'],
+          source['customerVatNumber'],
+          source['customer_vat'],
+          source['customerVat'],
+        ]);
+  final hasVat = vatNumber.isNotEmpty;
+  // VAT is the business/invoice intent gate until a dedicated UI toggle exists.
+  // Company name alone must never force a business booking.
+  final isBusiness = hasVat;
+  final invoiceRequested = isBusiness;
+  if (!isBusiness) {
+    return <String, dynamic>{
+      'business_detected': false,
+      'businessDetected': false,
+      'invoice_requested': false,
+      'invoiceRequested': false,
+      'company_name': '',
+      'companyName': '',
+      'vat_number': '',
+      'vatNumber': '',
+      'invoice_email': '',
+      'invoiceEmail': '',
+      'invoice_address': '',
+      'invoiceAddress': '',
+    };
+  }
+  final invoiceEmail = isBusiness
+      ? (overrideInvoiceEmail != null
+            ? overrideInvoiceEmail.trim()
+            : _calcFirstBusinessText([
+                source['invoice_email'],
+                source['invoiceEmail'],
+              ]))
+      : '';
+  final invoiceAddress = isBusiness
+      ? (overrideInvoiceAddress != null
+            ? overrideInvoiceAddress.trim()
+            : _calcFirstBusinessText([
+                source['invoice_address'],
+                source['invoiceAddress'],
+                source['billing_address'],
+                source['billingAddress'],
+                source['company_address'],
+                source['companyAddress'],
+              ]))
+      : '';
   return <String, dynamic>{
     'business_detected': isBusiness,
     'businessDetected': isBusiness,
@@ -474,10 +515,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return kTenantId;
   }
 
-  Map<String, dynamic> _buildQuotePayload(
-    DateTime dt, {
-    CustomerProfile? profile,
-  }) {
+  Map<String, dynamic> _buildQuotePayload(DateTime dt) {
     final vat = _activeVatConfig;
     final tenantCompanyId = _activeTenantCompanyId();
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
@@ -487,14 +525,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
           Duration(minutes: (_waitMin > 0 ? _waitMin : 30).clamp(0, 24 * 60)),
         );
     final businessPayload = _buildBusinessInvoicePayload(
-      source: <String, dynamic>{
-        'company_name': profile?.companyName ?? '',
-        'vat_number': profile?.vatNumber ?? '',
-        'invoice_email': profile?.email ?? '',
-      },
-      fallbackCompanyName: profile?.companyName ?? '',
-      fallbackVatNumber: profile?.vatNumber ?? '',
-      fallbackInvoiceEmail: profile?.email ?? '',
+      source: const <String, dynamic>{},
+      overrideCompanyName: '',
+      overrideVatNumber: '',
+      overrideInvoiceEmail: '',
+      overrideInvoiceAddress: '',
     );
     return <String, dynamic>{
       "from": _fromCtrl.text.trim(),
@@ -544,11 +579,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
     };
   }
 
-  Map<String, dynamic> _buildQuoteRequestPayload(
-    DateTime dt, {
-    CustomerProfile? profile,
-  }) {
-    return _buildQuotePayload(dt, profile: profile);
+  Map<String, dynamic> _buildQuoteRequestPayload(DateTime dt) {
+    return _buildQuotePayload(dt);
   }
 
   void _openBookingConfirmation() {
@@ -910,9 +942,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final dt =
         _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
 
-    final profile = await CustomerProfileStore.instance.load();
     // Worker is source of truth; keep payload aligned with your API expectations.
-    final body = _buildQuoteRequestPayload(dt, profile: profile);
+    // Current booking form state is authoritative for business intent.
+    final body = _buildQuoteRequestPayload(dt);
     _lastQuoteRequestPayload = Map<String, dynamic>.from(body);
 
     setState(() {
@@ -1723,6 +1755,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     try {
       final profile = await CustomerProfileStore.instance.load();
       if (!mounted || profile == null) return;
+      final explicitPrivateIntent = _hasExplicitPrivateBookingIntent(
+        <String, dynamic>{...widget.payload, ...widget.quote},
+      );
       void setIfBlank(TextEditingController controller, String value) {
         if (controller.text.trim().isNotEmpty) return;
         final incoming = value.trim();
@@ -1735,6 +1770,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       setIfBlank(_emailCtrl, profile.email);
       setIfBlank(_companyNameCtrl, profile.companyName);
       setIfBlank(_vatNumberCtrl, profile.vatNumber);
+      debugPrint(
+        '[CALCULATOR][BUSINESS_PREFILL] skipProfileBusiness=false explicitPrivateIntent=$explicitPrivateIntent companyPrefilled=${_companyNameCtrl.text.trim().isNotEmpty} vatPrefilled=${_vatNumberCtrl.text.trim().isNotEmpty}',
+      );
     } catch (_) {
       // Keep booking flow resilient if local profile load fails.
     }
@@ -2022,12 +2060,30 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         ...widget.payload,
         ...widget.quote,
         'company_name': companyName,
+        'companyName': companyName,
         'vat_number': vatNumber,
+        'vatNumber': vatNumber,
+        'customer_company_name': companyName,
+        'customerCompanyName': companyName,
+        'customer_vat_number': vatNumber,
+        'customerVatNumber': vatNumber,
       },
-      fallbackCompanyName: companyName,
-      fallbackVatNumber: vatNumber,
-      fallbackInvoiceEmail: email,
-      fallbackInvoiceAddress: invoiceAddressFromQuote,
+      overrideCompanyName: companyName,
+      overrideVatNumber: vatNumber,
+      overrideInvoiceEmail: email,
+      overrideInvoiceAddress: invoiceAddressFromQuote,
+    );
+    final effectiveCompanyName = _calcBusinessText(
+      businessPayload['company_name'] ?? businessPayload['companyName'],
+    );
+    final effectiveVatNumber = _calcBusinessText(
+      businessPayload['vat_number'] ?? businessPayload['vatNumber'],
+    );
+    final effectiveInvoiceEmail = _calcBusinessText(
+      businessPayload['invoice_email'] ?? businessPayload['invoiceEmail'],
+    );
+    final effectiveInvoiceAddress = _calcBusinessText(
+      businessPayload['invoice_address'] ?? businessPayload['invoiceAddress'],
     );
     final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
     final resolvedCompany = resolvedCompanyId.trim();
@@ -2070,14 +2126,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'full_name': name,
         'phone': phone,
         'email': email,
-        'companyName': companyName,
-        'vatNumber': vatNumber,
-        'company_name': companyName,
-        'vat_number': vatNumber,
-        'invoice_email': businessPayload['invoice_email'],
-        'invoiceEmail': businessPayload['invoiceEmail'],
-        'invoice_address': businessPayload['invoice_address'],
-        'invoiceAddress': businessPayload['invoiceAddress'],
+        'companyName': effectiveCompanyName,
+        'vatNumber': effectiveVatNumber,
+        'company_name': effectiveCompanyName,
+        'vat_number': effectiveVatNumber,
+        'invoice_email': effectiveInvoiceEmail,
+        'invoiceEmail': effectiveInvoiceEmail,
+        'invoice_address': effectiveInvoiceAddress,
+        'invoiceAddress': effectiveInvoiceAddress,
         'business_detected': businessPayload['business_detected'],
         'businessDetected': businessPayload['businessDetected'],
         'invoice_requested': businessPayload['invoice_requested'],
@@ -2090,16 +2146,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'customer_name': name,
       'customer_phone': phone,
       'customer_email': email,
-      'customer_company_name': companyName,
-      'customer_vat_number': vatNumber,
-      'customerCompanyName': companyName,
-      'customerVatNumber': vatNumber,
-      'companyName': companyName,
-      'vatNumber': vatNumber,
-      'billing_company_name': companyName,
-      'billing_vat_number': vatNumber,
-      'company_name': companyName,
-      'vat_number': vatNumber,
+      'customer_company_name': effectiveCompanyName,
+      'customer_vat_number': effectiveVatNumber,
+      'customerCompanyName': effectiveCompanyName,
+      'customerVatNumber': effectiveVatNumber,
+      'companyName': effectiveCompanyName,
+      'vatNumber': effectiveVatNumber,
+      'billing_company_name': effectiveCompanyName,
+      'billing_vat_number': effectiveVatNumber,
+      'company_name': effectiveCompanyName,
+      'vat_number': effectiveVatNumber,
       ...businessPayload,
       'message': _messageCtrl.text.trim(),
       // Website contract includes full quote object under "quote"
@@ -2227,12 +2283,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
                 : 'unpaid',
             status: paymentFlow ? 'PENDING' : 'CONFIRMED',
-            companyName: companyName,
-            vatNumber: vatNumber,
-            invoiceEmail: _calcBusinessText(businessPayload['invoice_email']),
-            invoiceAddress: _calcBusinessText(
-              businessPayload['invoice_address'],
-            ),
+            companyName: effectiveCompanyName,
+            vatNumber: effectiveVatNumber,
+            invoiceEmail: effectiveInvoiceEmail,
+            invoiceAddress: effectiveInvoiceAddress,
             businessDetected:
                 businessPayload['business_detected'] == true ||
                 businessPayload['businessDetected'] == true,

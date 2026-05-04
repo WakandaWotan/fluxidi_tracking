@@ -87,43 +87,41 @@ bool _businessFieldBool(dynamic value) {
 Map<String, dynamic> _deriveCustomerBusinessInvoicePayload({
   required Map<String, dynamic> source,
 }) {
-  final profile = _cachedCustomerProfile;
-  final explicitBusiness = _businessFieldBool(
-    source['business_detected'] ??
-        source['businessDetected'] ??
-        source['business_customer'] ??
-        source['businessCustomer'] ??
-        source['is_business'] ??
-        source['isBusiness'],
-  );
-  final explicitInvoice = _businessFieldBool(
-    source['invoice_requested'] ?? source['invoiceRequested'],
-  );
   final companyName = _firstBusinessFieldText([
     source['company_name'],
     source['companyName'],
     source['customer_company'],
     source['customerCompany'],
-    profile?.companyName,
   ]);
   final vatNumber = _firstBusinessFieldText([
     source['vat_number'],
     source['vatNumber'],
     source['customer_vat'],
     source['customerVat'],
-    profile?.vatNumber,
   ]);
-  final isBusiness =
-      explicitBusiness ||
-      explicitInvoice ||
-      companyName.isNotEmpty ||
-      vatNumber.isNotEmpty;
-  final invoiceRequested = explicitInvoice || isBusiness;
+  final hasVat = vatNumber.isNotEmpty;
+  final isBusiness = hasVat;
+  final invoiceRequested = hasVat;
+  if (!isBusiness) {
+    return <String, dynamic>{
+      'business_detected': false,
+      'businessDetected': false,
+      'invoice_requested': false,
+      'invoiceRequested': false,
+      'company_name': '',
+      'companyName': '',
+      'vat_number': '',
+      'vatNumber': '',
+      'invoice_email': '',
+      'invoiceEmail': '',
+      'invoice_address': '',
+      'invoiceAddress': '',
+    };
+  }
   final invoiceEmail = isBusiness
       ? _firstBusinessFieldText([
           source['invoice_email'],
           source['invoiceEmail'],
-          profile?.email,
         ])
       : _firstBusinessFieldText([
           source['invoice_email'],
@@ -143,22 +141,14 @@ Map<String, dynamic> _deriveCustomerBusinessInvoicePayload({
     'businessDetected': isBusiness,
     'invoice_requested': invoiceRequested,
     'invoiceRequested': invoiceRequested,
-    if (companyName.isNotEmpty) ...{
-      'company_name': companyName,
-      'companyName': companyName,
-    },
-    if (vatNumber.isNotEmpty) ...{
-      'vat_number': vatNumber,
-      'vatNumber': vatNumber,
-    },
-    if (invoiceEmail.isNotEmpty) ...{
-      'invoice_email': invoiceEmail,
-      'invoiceEmail': invoiceEmail,
-    },
-    if (invoiceAddress.isNotEmpty) ...{
-      'invoice_address': invoiceAddress,
-      'invoiceAddress': invoiceAddress,
-    },
+    'company_name': companyName,
+    'companyName': companyName,
+    'vat_number': vatNumber,
+    'vatNumber': vatNumber,
+    'invoice_email': invoiceEmail,
+    'invoiceEmail': invoiceEmail,
+    'invoice_address': invoiceAddress,
+    'invoiceAddress': invoiceAddress,
   };
 }
 
@@ -5624,22 +5614,22 @@ StoredCustomerBooking _hydrateStoredCustomerBookingFromView({
     view.lifecycleStatus,
   );
   final normalizedPayment = view.rawPaymentStatus.trim().toLowerCase();
-  final mergedCompanyName = view.companyName.trim().isNotEmpty
-      ? view.companyName.trim()
-      : stored.companyName;
-  final mergedVatNumber = view.vatNumber.trim().isNotEmpty
-      ? view.vatNumber.trim()
-      : stored.vatNumber;
-  final mergedInvoiceEmail = view.invoiceEmail.trim().isNotEmpty
-      ? view.invoiceEmail.trim()
-      : stored.invoiceEmail;
-  final mergedInvoiceAddress = view.invoiceAddress.trim().isNotEmpty
-      ? view.invoiceAddress.trim()
-      : stored.invoiceAddress;
-  final mergedBusinessDetected =
-      view.businessCustomer || stored.businessDetected;
-  final mergedInvoiceRequested =
-      view.invoiceRequested || stored.invoiceRequested;
+  // Business/invoice fields must reflect this booking record only. Do not let
+  // prior locally stored profile/business values turn a private booking into a
+  // business booking during hydration.
+  final rawCompanyName = view.companyName.trim();
+  final rawVatNumber = view.vatNumber.trim();
+  final rawInvoiceEmail = view.invoiceEmail.trim();
+  final rawInvoiceAddress = view.invoiceAddress.trim();
+  final hasVat = rawVatNumber.isNotEmpty;
+  final hasBusinessIntent = view.businessCustomer || view.invoiceRequested;
+  final isBusinessBooking = hasVat && hasBusinessIntent;
+  final mergedCompanyName = isBusinessBooking ? rawCompanyName : '';
+  final mergedVatNumber = isBusinessBooking ? rawVatNumber : '';
+  final mergedInvoiceEmail = isBusinessBooking ? rawInvoiceEmail : '';
+  final mergedInvoiceAddress = isBusinessBooking ? rawInvoiceAddress : '';
+  final mergedBusinessDetected = isBusinessBooking;
+  final mergedInvoiceRequested = isBusinessBooking;
   debugPrint(
     '[CUSTOMER_BOOKING][HYDRATE_STATUS] source=$source booking=${_safeRefPreview(view.bookingId)} raw=${view.lifecycleStatus} normalized=$normalizedStatus',
   );
@@ -7494,7 +7484,8 @@ class CustomerBookingView {
     'record.booking.invoiceEmailAvailable',
   ]);
   bool get businessCustomer {
-    if (vatNumber.isNotEmpty || companyName.isNotEmpty) return true;
+    final hasVat = vatNumber.isNotEmpty;
+    if (!hasVat) return false;
     if (invoiceRequested) return true;
     return _firstPathBool(const <String>[
       'business_customer',
