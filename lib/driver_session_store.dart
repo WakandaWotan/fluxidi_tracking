@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
@@ -74,31 +75,113 @@ class DriverSessionStore {
   static const String _fileName = 'active_driver_session_v1.json';
 
   ActiveDriverSession? _cache;
+  String _cacheScopeKey = '';
 
-  Future<File> _file() async {
+  String _safeScopeSegment(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'default';
+    final sanitized = trimmed.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    if (sanitized.isEmpty) return 'default';
+    return sanitized;
+  }
+
+  ({String tenantId, String companyId})? _activeScope() {
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) {
+      return (tenantId: fromProfile, companyId: fromProfile);
+    }
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) {
+      return (tenantId: fromSession, companyId: fromSession);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return null;
+  }
+
+  Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory(
       '${base.path}${Platform.pathSeparator}driver_session',
     );
     if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<File> _legacyFile() async {
+    final dir = await _stateRootDir();
     return File('${dir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}tenant_${_safeScopeSegment(tenantId)}${Platform.pathSeparator}company_${_safeScopeSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) await scopedDir.create(recursive: true);
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[DRIVER_SESSION][PATH] tenant=$tenantId company=$companyId path=${file.path}',
+    );
+    return file;
+  }
+
+  Future<File?> _file() async {
+    final scope = _activeScope();
+    if (scope == null) return null;
+    return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
+  }
+
+  Future<ActiveDriverSession?> _readSession(File file) async {
+    if (!await file.exists()) return null;
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    final m = Map<String, dynamic>.from(decoded);
+    final s = ActiveDriverSession.fromJson(m);
+    if (s.driverId.isEmpty) return null;
+    return s;
   }
 
   /// Load parsed session without validation (may be stale).
   Future<ActiveDriverSession?> load() async {
     try {
-      if (_cache != null) return _cache;
-      final file = await _file();
-      if (!await file.exists()) return null;
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final m = Map<String, dynamic>.from(decoded);
-      final s = ActiveDriverSession.fromJson(m);
-      if (s.driverId.isEmpty) return null;
-      _cache = s;
-      return s;
+      final scope = _activeScope();
+      final scopeKey = scope == null
+          ? '_unknown_scope_'
+          : '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+      if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
+      _cache = null;
+      _cacheScopeKey = scopeKey;
+
+      final scopedFile = await _file();
+      if (scopedFile != null) {
+        final scoped = await _readSession(scopedFile);
+        if (scoped != null) {
+          _cache = scoped;
+          return scoped;
+        }
+      }
+
+      final legacyFile = await _legacyFile();
+      final legacy = await _readSession(legacyFile);
+      if (legacy == null) return null;
+
+      if (scope != null && scopedFile != null) {
+        await scopedFile.writeAsString(jsonEncode(legacy.toJson()));
+        debugPrint(
+          '[DRIVER_SESSION][MIGRATE_LEGACY] tenant=${scope.tenantId} company=${scope.companyId} driver=${_maskIdForLog(legacy.driverId)} from=${legacyFile.path} to=${scopedFile.path}',
+        );
+      }
+      _cache = legacy;
+      return legacy;
     } catch (e) {
       debugPrint('[DRIVER_LOGIN][WARN] corrupt_session reason=parse_failed');
       return null;
@@ -152,8 +235,19 @@ class DriverSessionStore {
     );
     try {
       final file = await _file();
+      if (file == null) {
+        debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=missing_scope');
+        return;
+      }
       await file.writeAsString(jsonEncode(session.toJson()));
       _cache = session;
+      final scope = _activeScope();
+      if (scope != null) {
+        _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+        debugPrint(
+          '[DRIVER_SESSION][SAVE] tenant=${scope.tenantId} company=${scope.companyId} driver=${_maskIdForLog(session.driverId)} path=${file.path}',
+        );
+      }
       activeDriverSessionNotifier.value = session;
     } catch (e) {
       debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
@@ -162,10 +256,24 @@ class DriverSessionStore {
 
   Future<void> clear() async {
     try {
-      final file = await _file();
-      if (await file.exists()) await file.delete();
+      final scope = _activeScope();
+      if (scope != null) {
+        final file = await _scopedFile(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        if (await file.exists()) await file.delete();
+        debugPrint(
+          '[DRIVER_SESSION][CLEAR] tenant=${scope.tenantId} company=${scope.companyId} path=${file.path}',
+        );
+      } else {
+        debugPrint(
+          '[DRIVER_SESSION][CLEAR] tenant=unknown company=unknown scoped_file_skipped=true',
+        );
+      }
     } catch (_) {}
     _cache = null;
+    _cacheScopeKey = '';
     activeDriverSessionNotifier.value = null;
   }
 
