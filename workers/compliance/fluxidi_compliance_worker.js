@@ -58,8 +58,10 @@ function ensureAuthorized(request, env) {
     512,
   );
   if (!requiredToken) {
-    // TODO: Enforce token-based auth in production. This open mode is only for local/dev bootstrapping.
-    return null;
+    return jsonResponse(
+      { ok: false, error: "compliance_auth_not_configured" },
+      503,
+    );
   }
   const provided = parseAuthToken(request);
   if (!provided || provided !== requiredToken) {
