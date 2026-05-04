@@ -235,15 +235,19 @@ function _logTrackingOwnershipBlock({
   );
 }
 
-async function _driverVehicleOwnershipBestEffort(env, { tenant_id, driver_id, vehicle_id }) {
+async function _driverVehicleOwnershipBestEffort(env, { tenant_id, company_id, driver_id, vehicle_id }) {
   const tenantId = _trackingOwnershipValue(tenant_id);
+  const companyId = _trackingOwnershipValue(company_id);
   const driverId = _trackingOwnershipValue(driver_id);
   const vehicleId = _trackingOwnershipValue(vehicle_id);
   if (!tenantId || !driverId || !vehicleId) {
     return { allowed: false, certainMismatch: true, reason: "missing_driver_or_vehicle" };
   }
-  const mapKey = `owner_vehicle:${tenantId}:${vehicleId}`;
-  const knownDriverId = _trackingOwnershipValue(await env.FLUXIDI_TRACKING.get(mapKey));
+  const scopedKey = companyId ? scopedOwnerVehicleKey({ tenant_id: tenantId, company_id: companyId }, vehicleId) : null;
+  const legacyKey = `owner_vehicle:${tenantId}:${vehicleId}`;
+  const knownDriverId = _trackingOwnershipValue(
+    (scopedKey ? await env.FLUXIDI_TRACKING.get(scopedKey) : null) ?? await env.FLUXIDI_TRACKING.get(legacyKey),
+  );
   if (!knownDriverId) {
     return { allowed: true, certainMismatch: false, reason: "no_vehicle_owner_known" };
   }
@@ -253,12 +257,15 @@ async function _driverVehicleOwnershipBestEffort(env, { tenant_id, driver_id, ve
   return { allowed: false, certainMismatch: true, reason: "vehicle_owner_mismatch" };
 }
 
-async function _rememberVehicleOwnerBestEffort(env, { tenant_id, driver_id, vehicle_id }) {
+async function _rememberVehicleOwnerBestEffort(env, { tenant_id, company_id, driver_id, vehicle_id }) {
   const tenantId = _trackingOwnershipValue(tenant_id);
+  const companyId = _trackingOwnershipValue(company_id);
   const driverId = _trackingOwnershipValue(driver_id);
   const vehicleId = _trackingOwnershipValue(vehicle_id);
   if (!tenantId || !driverId || !vehicleId) return;
-  const mapKey = `owner_vehicle:${tenantId}:${vehicleId}`;
+  const mapKey = companyId
+    ? scopedOwnerVehicleKey({ tenant_id: tenantId, company_id: companyId }, vehicleId)
+    : `owner_vehicle:${tenantId}:${vehicleId}`;
   await env.FLUXIDI_TRACKING.put(mapKey, driverId, { expirationTtl: TTL_TRIP });
 }
 
@@ -369,8 +376,16 @@ function extractScopeFromQueryAndBody(url, body = null) {
 
 function extractScopeFromRecord(record) {
   return normalizeTenantCompanyScope({
-    tenant_id: record?.tenant_id ?? record?.tenantId,
-    company_id: record?.company_id ?? record?.companyId,
+    tenant_id:
+      record?.tenant_id ??
+      record?.tenantId ??
+      record?.owner_tenant_id ??
+      record?.ownerTenantId,
+    company_id:
+      record?.company_id ??
+      record?.companyId ??
+      record?.owner_company_id ??
+      record?.ownerCompanyId,
   });
 }
 
@@ -493,6 +508,81 @@ function scopedOwnerVehicleKey(scope, vehicleId) {
   return `owner_vehicle:${normalizedScope.tenant_id}:${normalizedScope.company_id}:${vehiclePart}`;
 }
 
+function applyCanonicalScopeToRecord(record, scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  record.tenant_id = normalizedScope.tenant_id;
+  record.company_id = normalizedScope.company_id;
+  record.tenantId = normalizedScope.tenant_id;
+  record.companyId = normalizedScope.company_id;
+  return record;
+}
+
+async function getScopedOrLegacySessionForScope(env, scope, sessionId) {
+  const scopedKey = scopedSessionKey(scope, sessionId);
+  const scopedSession = await kvGetJson(env.FLUXIDI_TRACKING, scopedKey);
+  if (scopedSession) {
+    if (!recordMatchesTenantCompanyScope(scopedSession, scope)) {
+      return { session: null, key: scopedKey, source: "scoped_mismatch" };
+    }
+    return { session: scopedSession, key: scopedKey, source: "scoped" };
+  }
+
+  const legacyKey = `session:${sessionId}`;
+  const legacySession = await kvGetJson(env.FLUXIDI_TRACKING, legacyKey);
+  if (!legacySession) return { session: null, key: scopedKey, source: "missing" };
+  if (!recordMatchesTenantCompanyScope(legacySession, scope)) {
+    return { session: null, key: scopedKey, source: "legacy_mismatch" };
+  }
+
+  const migrated = applyCanonicalScopeToRecord(legacySession, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedKey, migrated, TTL_SESSION);
+  return { session: migrated, key: scopedKey, source: "legacy_copied" };
+}
+
+async function getScopedOrLegacyTripForScope(env, scope, tripId) {
+  const scopedKey = scopedTripKey(scope, tripId);
+  const scopedTrip = await kvGetJson(env.FLUXIDI_TRACKING, scopedKey);
+  if (scopedTrip) {
+    if (!recordMatchesTenantCompanyScope(scopedTrip, scope)) {
+      return { trip: null, key: scopedKey, source: "scoped_mismatch" };
+    }
+    return { trip: scopedTrip, key: scopedKey, source: "scoped" };
+  }
+
+  const legacyKey = tripKey(tripId);
+  const legacyTrip = await kvGetJson(env.FLUXIDI_TRACKING, legacyKey);
+  if (!legacyTrip) return { trip: null, key: scopedKey, source: "missing" };
+  if (!recordMatchesTenantCompanyScope(legacyTrip, scope)) {
+    return { trip: null, key: scopedKey, source: "legacy_mismatch" };
+  }
+
+  const migrated = applyCanonicalScopeToRecord(legacyTrip, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedKey, migrated, TTL_TRIP);
+  return { trip: migrated, key: scopedKey, source: "legacy_copied" };
+}
+
+async function getScopedOrLegacyBookingMapForScope(env, scope, bookingId) {
+  const scopedKey = scopedBookingSessionKey(scope, bookingId);
+  const scopedMap = await kvGetJson(env.FLUXIDI_TRACKING, scopedKey);
+  if (scopedMap) {
+    if (!recordMatchesTenantCompanyScope(scopedMap, scope)) {
+      return { map: null, key: scopedKey, source: "scoped_mismatch" };
+    }
+    return { map: scopedMap, key: scopedKey, source: "scoped" };
+  }
+
+  const legacyKey = `booking:${bookingId}:session`;
+  const legacyMap = await kvGetJson(env.FLUXIDI_TRACKING, legacyKey);
+  if (!legacyMap) return { map: null, key: scopedKey, source: "missing" };
+  if (!recordMatchesTenantCompanyScope(legacyMap, scope)) {
+    return { map: null, key: scopedKey, source: "legacy_mismatch" };
+  }
+
+  const migrated = applyCanonicalScopeToRecord(legacyMap, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedKey, migrated, TTL_SESSION);
+  return { map: migrated, key: scopedKey, source: "legacy_copied" };
+}
+
 function normalizeComplianceText(v, fallback = "unknown", maxLen = 64) {
   const text = safeStr(v, maxLen);
   if (!text) return fallback;
@@ -605,7 +695,11 @@ function buildComplianceAppendUrl(baseUrlRaw) {
   }
 }
 
-function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals) {
+function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals, canonicalScope = null) {
+  const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
+  if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
+    return null;
+  }
   const tenantFromTrip = safeStr(
     trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
     96,
@@ -614,12 +708,12 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
     stopPayload?.tenant_id ?? stopPayload?.tenantId ?? stopPayload?.company_id ?? stopPayload?.companyId,
     96,
   );
-  const tenantId = tenantFromTrip ?? tenantFromPayload ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromTrip ?? tenantFromPayload ?? TRACKING_FALLBACK_TENANT_ID;
 
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = companyFromTrip ?? companyFromPayload ?? tenantId;
+  const companyId = normalizedScope?.company_id ?? companyFromTrip ?? companyFromPayload ?? tenantId;
 
   if (!tenantId || !companyId) return null;
 
@@ -699,7 +793,11 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
   };
 }
 
-function buildPlannedTripStopComplianceEvent(trip, stopPayload) {
+function buildPlannedTripStopComplianceEvent(trip, stopPayload, canonicalScope = null) {
+  const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
+  if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
+    return null;
+  }
   const tenantFromPayload = safeStr(
     stopPayload?.tenant_id ?? stopPayload?.tenantId ?? stopPayload?.company_id ?? stopPayload?.companyId,
     96,
@@ -708,12 +806,12 @@ function buildPlannedTripStopComplianceEvent(trip, stopPayload) {
     trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
     96,
   );
-  const tenantId = tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
 
   const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = companyFromPayload ?? companyFromTrip ?? tenantId;
+  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip ?? tenantId;
   if (!tenantId || !companyId) return null;
 
   const stoppedAt = safeStr(
@@ -818,7 +916,11 @@ function normalizeCompliancePaymentStatus(value) {
   return "unknown";
 }
 
-function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult) {
+function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult, canonicalScope = null) {
+  const normalizedScope = normalizeTenantCompanyScope(canonicalScope);
+  if (canonicalScope && (!normalizedScope?.tenant_id || !normalizedScope?.company_id)) {
+    return null;
+  }
   const tenantFromPayload = safeStr(
     paymentPayloadOrResult?.tenant_id ??
       paymentPayloadOrResult?.tenantId ??
@@ -830,14 +932,14 @@ function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult) {
     trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
     96,
   );
-  const tenantId = tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
   const companyFromPayload = safeStr(
     paymentPayloadOrResult?.company_id ?? paymentPayloadOrResult?.companyId,
     96,
   );
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = companyFromPayload ?? companyFromTrip ?? tenantId;
+  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip ?? tenantId;
   if (!tenantId || !companyId) return null;
 
   const paidAt =
@@ -1304,22 +1406,53 @@ async function handleHealth(req, env, origin) {
 async function handleTripsHistory(req, url, env, origin) {
   requireAdmin(req, url, env);
 
-  const tenant_id = safeStr(url.searchParams.get("tenant_id") ?? url.searchParams.get("company_id") ?? "fluxidi", 96) ?? "fluxidi";
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const tenant_id = scope.tenant_id;
+  const company_id = scope.company_id;
   const driver_id = safeStr(url.searchParams.get("driver_id"), 96);
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
   const includeActive = (url.searchParams.get("include_active") || "").toLowerCase() === "1";
   const includeArchived = (url.searchParams.get("include_archived") || "").toLowerCase() === "1";
-  const indexKey = driver_id ? `trips_index:${tenant_id}:${driver_id}` : `trips_index:${tenant_id}`;
-  const ids = (await kvGetJson(env.FLUXIDI_TRACKING, indexKey)) ?? [];
-  const tripIds = Array.isArray(ids) ? ids : [];
+  const scopedIndexKey = driver_id
+    ? scopedTripsDriverIndexKey(scope, driver_id)
+    : scopedTripsIndexKey(scope);
+  const legacyIndexKey = driver_id
+    ? `trips_index:${tenant_id}:${driver_id}`
+    : `trips_index:${tenant_id}`;
+  const scopedIds = (await kvGetJson(env.FLUXIDI_TRACKING, scopedIndexKey)) ?? [];
+  const legacyIds = (await kvGetJson(env.FLUXIDI_TRACKING, legacyIndexKey)) ?? [];
+  const useLegacyIndex = (!Array.isArray(scopedIds) || scopedIds.length === 0) && Array.isArray(legacyIds);
+  const tripIds = Array.isArray(useLegacyIndex ? legacyIds : scopedIds)
+    ? (useLegacyIndex ? legacyIds : scopedIds)
+    : [];
   const trips = [];
   const cleaned = [];
 
   for (const trip_id of tripIds) {
     const safeTripId = safeStr(trip_id, 128);
     if (!safeTripId) continue;
-    const trip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(safeTripId));
+    const scopedTripStorageKey = scopedTripKey(scope, safeTripId);
+    let trip = await kvGetJson(env.FLUXIDI_TRACKING, scopedTripStorageKey);
+    if (!trip) {
+      const legacyTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(safeTripId));
+      if (
+        legacyTrip &&
+        recordMatchesTenantCompanyScope(legacyTrip, scope, { allowLegacyCompanyless: true })
+      ) {
+        const migratedTrip = applyCanonicalScopeToRecord(
+          { ...legacyTrip },
+          scope,
+        );
+        await kvPutJson(env.FLUXIDI_TRACKING, scopedTripStorageKey, migratedTrip, TTL_TRIP);
+        trip = migratedTrip;
+      }
+    }
     if (!trip) continue;
+    if (!recordMatchesTenantCompanyScope(trip, scope, { allowLegacyCompanyless: true })) {
+      continue;
+    }
     cleaned.push(safeTripId);
     if (!includeActive && trip.status === "active") continue;
     if (!includeArchived && trip.archived === true) continue;
@@ -1328,11 +1461,24 @@ async function handleTripsHistory(req, url, env, origin) {
   }
 
   if (cleaned.length !== tripIds.length) {
-    await kvPutJson(env.FLUXIDI_TRACKING, indexKey, cleaned.slice(0, driver_id ? 200 : 500), TTL_TRIP);
+    await kvPutJson(
+      env.FLUXIDI_TRACKING,
+      useLegacyIndex ? legacyIndexKey : scopedIndexKey,
+      cleaned.slice(0, driver_id ? 200 : 500),
+      TTL_TRIP
+    );
+  }
+  if (useLegacyIndex && cleaned.length > 0) {
+    await kvPutJson(
+      env.FLUXIDI_TRACKING,
+      scopedIndexKey,
+      cleaned.slice(0, driver_id ? 200 : 500),
+      TTL_TRIP
+    );
   }
 
   return withCors(
-    json({ ok: true, tenant_id, driver_id: driver_id ?? null, count: trips.length, trips }, { status: 200 }),
+    json({ ok: true, tenant_id, company_id, driver_id: driver_id ?? null, count: trips.length, trips }, { status: 200 }),
     origin
   );
 }
@@ -1341,17 +1487,20 @@ async function handleArchiveTrip(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
-  const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"] ?? "fluxidi", 96) ?? "fluxidi";
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const tenant_id = scope.tenant_id;
+  const company_id = scope.company_id;
   const driver_id = safeStr(body["driver_id"], 96);
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
-  const key = tripKey(trip_id);
-  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
   if (!trip) throw new Error("Unknown trip_id");
-
-  const tripTenant = safeStr(trip.tenant_id ?? trip.company_id ?? "fluxidi", 96) ?? "fluxidi";
-  if (tripTenant !== tenant_id) throw new Error("Trip tenant mismatch");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
 
   const tripDriver = safeStr(trip.driver_id, 96);
   if (driver_id && tripDriver && tripDriver !== driver_id) {
@@ -1367,6 +1516,7 @@ async function handleArchiveTrip(req, url, env, origin) {
     trip.archived_at = null;
     trip.archived_by = driver_id || "admin";
   }
+  applyCanonicalScopeToRecord(trip, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
 
@@ -1380,13 +1530,17 @@ async function handleStartDirectTrip(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
-  const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"] ?? "fluxidi", 96) ?? "fluxidi";
+  const tenant_id = scope.tenant_id;
+  const company_id = scope.company_id;
   const driver_id = safeStr(body["driver_id"], 96);
   if (!driver_id) throw new Error("driver_id is required");
 
   const vehicle_id = safeStr(body["vehicle_id"], 96) ?? null;
-  const owner_company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+  const owner_company_id = company_id;
   if (actor.actor_role === "driver") {
     if (!actor.actor_driver_id) {
       _logTrackingOwnershipBlock({
@@ -1434,6 +1588,7 @@ async function handleStartDirectTrip(req, url, env, origin) {
     }
     const vehicleOwnership = await _driverVehicleOwnershipBestEffort(env, {
       tenant_id,
+      company_id,
       driver_id: actor.actor_driver_id,
       vehicle_id,
     });
@@ -1494,17 +1649,19 @@ async function handleStartDirectTrip(req, url, env, origin) {
     owner_tenant_id: tenant_id,
     owner_company_id,
   };
+  applyCanonicalScopeToRecord(trip, scope);
 
-  await kvPutJson(env.FLUXIDI_TRACKING, tripKey(trip_id), trip, TTL_TRIP);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedTripKey(scope, trip_id), trip, TTL_TRIP);
   if (actor.actor_role === "driver") {
     await _rememberVehicleOwnerBestEffort(env, {
       tenant_id,
+      company_id,
       driver_id: actor.actor_driver_id,
       vehicle_id,
     });
   }
-  await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}`, trip_id, 500);
-  await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}:${driver_id}`, trip_id, 200);
+  await prependIndex(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope), trip_id, 500);
+  await prependIndex(env.FLUXIDI_TRACKING, scopedTripsDriverIndexKey(scope, driver_id), trip_id, 200);
 
   return withCors(
     json(
@@ -1513,6 +1670,7 @@ async function handleStartDirectTrip(req, url, env, origin) {
         trip_id,
         kind: "direct",
         tenant_id,
+        company_id,
         driver_id,
         vehicle_id,
         status: "active",
@@ -1529,11 +1687,15 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const booking_id = safeStr(body["booking_id"], 96);
   if (!booking_id) throw new Error("booking_id is required");
 
-  const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"] ?? "fluxidi", 96) ?? "fluxidi";
+  const tenant_id = scope.tenant_id;
+  const company_id = scope.company_id;
   const driver_id = safeStr(body["driver_id"], 96);
   if (!driver_id) throw new Error("driver_id is required");
 
@@ -1548,9 +1710,10 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const total_eur = safeNum(body["total_eur"], 0, 1000000);
   const currency = safeStr(body["currency"] ?? "EUR", 8) ?? "EUR";
   const trip_id = `planned_${booking_id}`;
-  const owner_company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+  const owner_company_id = company_id;
 
-  const existingTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(trip_id));
+  const existingTripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const existingTrip = existingTripResolved.trip;
   if (existingTrip) {
     const ownershipBlock = await _assertTripOwnedByActorOrBlock({
       trip: existingTrip,
@@ -1598,19 +1761,21 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     owner_company_id,
     owner_booking_id: booking_id,
   };
+  applyCanonicalScopeToRecord(trip, scope);
 
-  await kvPutJson(env.FLUXIDI_TRACKING, tripKey(trip_id), trip, TTL_TRIP);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedTripKey(scope, trip_id), trip, TTL_TRIP);
   if (actor.actor_role === "driver") {
     await _rememberVehicleOwnerBestEffort(env, {
       tenant_id,
+      company_id,
       driver_id: actor.actor_driver_id ?? driver_id,
       vehicle_id: actor.actor_vehicle_id ?? vehicle_id,
     });
   }
-  await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}`, trip_id, 500);
-  await prependIndex(env.FLUXIDI_TRACKING, `trips_index:${tenant_id}:${driver_id}`, trip_id, 200);
+  await prependIndex(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope), trip_id, 500);
+  await prependIndex(env.FLUXIDI_TRACKING, scopedTripsDriverIndexKey(scope, driver_id), trip_id, 200);
 
-  const complianceEvent = buildPlannedTripStopComplianceEvent(trip, body);
+  const complianceEvent = buildPlannedTripStopComplianceEvent(trip, body, scope);
   if (complianceEvent) {
     const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
       timeoutMs: 1500,
@@ -1643,12 +1808,17 @@ async function handleWaitStartTrip(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
-  const key = tripKey(trip_id);
-  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
   if (!trip) throw new Error("Unknown trip_id");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
   if (trip.status !== "active") throw new Error("Trip is not active");
   if (trip.wait_started_at) {
     return withCors(
@@ -1670,6 +1840,7 @@ async function handleWaitStartTrip(req, url, env, origin) {
   trip.wait_seconds_total = Number.isFinite(Number(trip.wait_seconds_total))
     ? Number(trip.wait_seconds_total)
     : 0;
+  applyCanonicalScopeToRecord(trip, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
 
@@ -1683,12 +1854,17 @@ async function handleWaitEndTrip(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
-  const key = tripKey(trip_id);
-  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
   if (!trip) throw new Error("Unknown trip_id");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
   if (trip.status !== "active") throw new Error("Trip is not active");
   if (!trip.wait_started_at) {
     return withCors(
@@ -1721,6 +1897,7 @@ async function handleWaitEndTrip(req, url, env, origin) {
   trip.wait_started_at = null;
   trip.wait_seconds_total = nextWaitSeconds;
   trip.timeline = timeline;
+  applyCanonicalScopeToRecord(trip, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
 
@@ -1744,13 +1921,18 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
-  const key = tripKey(trip_id);
-  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
   if (!trip) throw new Error("Unknown trip_id");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
   const ownershipBlock = await _assertTripOwnedByActorOrBlock({
     trip,
     trip_id,
@@ -1785,10 +1967,14 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   trip.wait_seconds_total = totals.wait_seconds_total;
   trip.total_eur = totals.total_eur;
   trip.timeline = timeline;
+  applyCanonicalScopeToRecord(trip, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
 
-  const complianceEvent = buildDirectTripStopComplianceEvent(trip, body, stoppedAt, totals);
+  const complianceEvent = buildDirectTripStopComplianceEvent(trip, body, stoppedAt, totals, scope);
+  if (!complianceEvent) {
+    console.log(`[COMPLIANCE_EMIT][direct_stop] skipped reason=missing_canonical_scope trip_id=${trip_id}`);
+  }
   if (complianceEvent) {
     const emitTask = emitComplianceEventBestEffort(env, complianceEvent, { timeoutMs: 1500 });
     if (ctx && typeof ctx.waitUntil === "function") {
@@ -1817,13 +2003,18 @@ async function handleTripPayment(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const trip_id = safeStr(body["trip_id"], 128);
   if (!trip_id) throw new Error("trip_id is required");
 
-  const key = tripKey(trip_id);
-  const trip = await kvGetJson(env.FLUXIDI_TRACKING, key);
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
   if (!trip) throw new Error("Unknown trip_id");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
   const ownershipBlock = await _assertTripOwnedByActorOrBlock({
     trip,
     trip_id,
@@ -1905,10 +2096,14 @@ async function handleTripPayment(req, url, env, origin, ctx) {
     paid_by_driver_id: paid_by_driver_id ?? null,
   });
   trip.timeline = timeline;
+  applyCanonicalScopeToRecord(trip, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
 
-  const complianceEvent = buildTripPaymentUpdateComplianceEvent(trip, body);
+  const complianceEvent = buildTripPaymentUpdateComplianceEvent(trip, body, scope);
+  if (!complianceEvent) {
+    console.log(`[COMPLIANCE_EMIT][direct_payment_update] skipped reason=missing_canonical_scope trip_id=${trip_id}`);
+  }
   if (complianceEvent) {
     const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
       timeoutMs: 1500,
@@ -1947,14 +2142,17 @@ async function handleStart(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const booking_id = safeStr(body["booking_id"], 64);
   if (!booking_id) throw new Error("booking_id is required");
 
   const pickup = safeStr(body["pickup"], 200) ?? null;
   const dropoff = safeStr(body["dropoff"], 200) ?? null;
-  const tenant_id = safeStr(body["tenant_id"] ?? body["company_id"], 96) ?? null;
-  const company_id = safeStr(body["company_id"] ?? body["tenant_id"], 96) ?? null;
+  const tenant_id = scope.tenant_id;
+  const company_id = scope.company_id;
   const owner_driver_id = safeStr(body["driver_id"], 96) ?? actor.actor_driver_id ?? null;
   const owner_vehicle_id = safeStr(body["vehicle_id"], 96) ?? actor.actor_vehicle_id ?? null;
 
@@ -1970,10 +2168,11 @@ async function handleStart(req, url, env, origin) {
     return withCors(json(_trackingOwnershipError("booking_not_assigned_to_driver"), { status: 403 }), origin);
   }
   if (actor.actor_role === "driver") {
-    const existingBookingMap = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
+    const existingBookingMapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
+    const existingBookingMap = existingBookingMapResolved.map;
     if (existingBookingMap) {
       const existingSession = existingBookingMap.session_id
-        ? await kvGetJson(env.FLUXIDI_TRACKING, `session:${existingBookingMap.session_id}`)
+        ? (await getScopedOrLegacySessionForScope(env, scope, existingBookingMap.session_id)).session
         : null;
       const ownerCheck = _trackingOwnershipAllowed({
         actorDriverId: actor.actor_driver_id,
@@ -2010,7 +2209,8 @@ async function handleStart(req, url, env, origin) {
     }
     if (actor.actor_vehicle_id) {
       const vehicleOwnership = await _driverVehicleOwnershipBestEffort(env, {
-        tenant_id: tenant_id ?? company_id ?? TRACKING_FALLBACK_TENANT_ID,
+        tenant_id,
+        company_id,
         driver_id: actor.actor_driver_id,
         vehicle_id: actor.actor_vehicle_id,
       });
@@ -2061,8 +2261,10 @@ async function handleStart(req, url, env, origin) {
     owner_tenant_id: tenant_id,
     owner_company_id: company_id,
   };
+  applyCanonicalScopeToRecord(session, scope);
 
-  await kvPutJson(env.FLUXIDI_TRACKING, `session:${sessionId}`, session, TTL_SESSION);
+  const scopedSession = scopedSessionKey(scope, sessionId);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedSession, session, TTL_SESSION);
 
   const bookingMap = {
     session_id: sessionId,
@@ -2076,10 +2278,12 @@ async function handleStart(req, url, env, origin) {
     owner_tenant_id: session.owner_tenant_id ?? null,
     owner_company_id: session.owner_company_id ?? null,
   };
-  await kvPutJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`, bookingMap, TTL_SESSION);
+  applyCanonicalScopeToRecord(bookingMap, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedBookingSessionKey(scope, booking_id), bookingMap, TTL_SESSION);
   if (actor.actor_role === "driver") {
     await _rememberVehicleOwnerBestEffort(env, {
-      tenant_id: tenant_id ?? company_id ?? TRACKING_FALLBACK_TENANT_ID,
+      tenant_id,
+      company_id,
       driver_id: actor.actor_driver_id,
       vehicle_id: actor.actor_vehicle_id ?? owner_vehicle_id,
     });
@@ -2087,14 +2291,36 @@ async function handleStart(req, url, env, origin) {
 
   await kvPutJson(
     env.FLUXIDI_TRACKING,
+    scopedPublicBookingKey(scope, public_token),
+    {
+      booking_id,
+      session_id: sessionId,
+      tenant_id,
+      company_id,
+      tenantId: tenant_id,
+      companyId: company_id,
+      created_at: session.created_at,
+    },
+    TTL_PUBLIC_TOKEN
+  );
+  await kvPutJson(
+    env.FLUXIDI_TRACKING,
     `public:${public_token}:booking`,
-    { booking_id, session_id: sessionId, created_at: session.created_at },
+    {
+      booking_id,
+      session_id: sessionId,
+      tenant_id,
+      company_id,
+      tenantId: tenant_id,
+      companyId: company_id,
+      created_at: session.created_at,
+    },
     TTL_PUBLIC_TOKEN
   );
 
-  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
+  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
   const next = [booking_id, ...idx.filter((x) => x !== booking_id)].slice(0, 200);
-  await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", next, TTL_INDEX);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope), next, TTL_INDEX);
 
   return withCors(
     json({ ok: true, session_id: sessionId, booking_id, created_at: session.created_at, public_token }, { status: 200 }),
@@ -2106,6 +2332,9 @@ async function handlePing(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const session_id = safeStr(body["session_id"], 128);
   if (!session_id) throw new Error("session_id is required");
@@ -2117,9 +2346,11 @@ async function handlePing(req, url, env, origin) {
   const speed = safeNum(body["speed"], 0, 200) ?? null;
   const heading = safeNum(body["heading"], 0, 360) ?? null;
 
-  const sessionKey = `session:${session_id}`;
-  const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
+  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, session_id);
+  const session = sessionResolved.session;
   if (!session) throw new Error("Unknown session_id");
+  if (!recordMatchesTenantCompanyScope(session, scope)) throw new Error("invalid session scope");
+  const sessionKey = sessionResolved.key;
   const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
     session,
     session_id,
@@ -2141,9 +2372,10 @@ async function handlePing(req, url, env, origin) {
 
   session.points = points;
   session.last_ping_at = point.ts;
+  applyCanonicalScopeToRecord(session, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, sessionKey, session, TTL_SESSION);
-  await kvPutJson(env.FLUXIDI_TRACKING, `ping:${session_id}:last`, point, TTL_LASTPING);
+  await kvPutJson(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, session_id), point, TTL_LASTPING);
 
   return withCors(json({ ok: true, session_id, ts: point.ts }, { status: 200 }), origin);
 }
@@ -2152,13 +2384,18 @@ async function handleStop(req, url, env, origin) {
   requireAdmin(req, url, env);
 
   const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
   const actor = resolveTrackingActorFromRequest(req, url, body);
   const session_id = safeStr(body["session_id"], 128);
   if (!session_id) throw new Error("session_id is required");
 
-  const sessionKey = `session:${session_id}`;
-  const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
+  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, session_id);
+  const session = sessionResolved.session;
   if (!session) throw new Error("Unknown session_id");
+  if (!recordMatchesTenantCompanyScope(session, scope)) throw new Error("invalid session scope");
+  const sessionKey = sessionResolved.key;
   const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
     session,
     session_id,
@@ -2170,6 +2407,7 @@ async function handleStop(req, url, env, origin) {
 
   session.status = "stopped";
   session.stopped_at = nowIso();
+  applyCanonicalScopeToRecord(session, scope);
 
   await kvPutJson(env.FLUXIDI_TRACKING, sessionKey, session, TTL_INDEX);
 
@@ -2293,17 +2531,33 @@ async function handlePublicLive(req, url, env, origin) {
   const token = safeStr(url.searchParams.get("token"), 128);
   if (!token) throw new Error("token is required");
 
-  const link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
+  const explicitScope = parseOptionalTenantCompanyScope(req, url, null, null);
+  let link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
+  if (!link && explicitScope?.tenant_id && explicitScope?.company_id) {
+    link = await kvGetJson(env.FLUXIDI_TRACKING, scopedPublicBookingKey(explicitScope, token));
+  }
   if (!link || !link.booking_id) throw new Error("Invalid token");
 
-  const booking_id = link.booking_id;
+  const linkScope =
+    parseOptionalTenantCompanyScope(req, url, null, link) ??
+    (explicitScope?.tenant_id && explicitScope?.company_id ? explicitScope : null);
+  if (!linkScope) throw new Error("invalid token scope");
+  const booking_id = safeStr(link.booking_id, 96);
+  if (!booking_id) throw new Error("Invalid token");
+  const session_id_from_link = safeStr(link.session_id ?? link.sessionId, 128);
 
   const limit = Math.min(1200, Math.max(1, Number(url.searchParams.get("limit") || 300)));
-
-  const resolved = await resolveSessionByBooking(env, booking_id);
-  if (!resolved) throw new Error("Unknown booking_id");
-
-  const { map, session, last } = resolved;
+  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, linkScope, booking_id);
+  const map = mapResolved.map;
+  const resolvedSessionId = safeStr(map?.session_id ?? map?.sessionId ?? session_id_from_link, 128);
+  if (!resolvedSessionId) throw new Error("Unknown booking_id");
+  const sessionResolved = await getScopedOrLegacySessionForScope(env, linkScope, resolvedSessionId);
+  const session = sessionResolved.session;
+  if (!session) throw new Error("Unknown booking_id");
+  if (!recordMatchesTenantCompanyScope(session, linkScope)) throw new Error("invalid session scope");
+  const last =
+    (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(linkScope, resolvedSessionId))) ??
+    (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${resolvedSessionId}:last`));
   const points = Array.isArray(session?.points) ? session.points : [];
   const sliced = points.slice(Math.max(0, points.length - limit));
 
@@ -2312,7 +2566,7 @@ async function handlePublicLive(req, url, env, origin) {
       {
         ok: true,
         booking_id,
-        session_id: map.session_id,
+        session_id: resolvedSessionId,
         status: session?.status ?? null,
         last_ping: last ?? null,
         points: sliced,

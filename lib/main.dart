@@ -13668,11 +13668,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final payload = <String, dynamic>{
         'trip_id': tripId,
+        ..._activeBookingScopeQuery(),
         timestampKey: DateTime.now().toUtc().toIso8601String(),
       };
       final res = await http
           .post(
-            Uri.parse('$kWorkerBaseUrl$path'),
+            _withActiveBookingScope(kWorkerBaseUrl, path),
             headers: _headers(admin: true),
             body: jsonEncode(payload),
           )
@@ -20002,6 +20003,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         builder: (ctx) => _TripHistoryPage(
           workerBaseUrl: kWorkerBaseUrl,
           tenantId: kOutboundTenantId,
+          companyId: resolvedCompanyId.trim().isNotEmpty
+              ? resolvedCompanyId.trim()
+              : kOutboundTenantId,
           driverId: kDriverId,
           headers: _headers(admin: true),
           bookingDetailsById: bookingDetailsById,
@@ -20438,6 +20442,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 class _TripHistoryPage extends StatefulWidget {
   final String workerBaseUrl;
   final String tenantId;
+  final String companyId;
   final String driverId;
   final Map<String, String> headers;
   final Map<String, Map<String, dynamic>> bookingDetailsById;
@@ -20445,6 +20450,7 @@ class _TripHistoryPage extends StatefulWidget {
   const _TripHistoryPage({
     required this.workerBaseUrl,
     required this.tenantId,
+    required this.companyId,
     required this.driverId,
     required this.headers,
     this.bookingDetailsById = const <String, Map<String, dynamic>>{},
@@ -20712,9 +20718,9 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       final uri = Uri.parse(
         '${widget.workerBaseUrl}$kTripsHistoryPath'
         '?tenant_id=${Uri.encodeQueryComponent(widget.tenantId)}'
-        '&company_id=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&company_id=${Uri.encodeQueryComponent(widget.companyId)}'
         '&tenantId=${Uri.encodeQueryComponent(widget.tenantId)}'
-        '&companyId=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&companyId=${Uri.encodeQueryComponent(widget.companyId)}'
         '&driver_id=${Uri.encodeQueryComponent(widget.driverId)}'
         '&limit=100',
       );
@@ -20827,12 +20833,23 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     if (confirmed != true) return;
 
     try {
+      final scopeQuery = <String, String>{
+        'tenant_id': widget.tenantId,
+        'company_id': widget.companyId,
+        'tenantId': widget.tenantId,
+        'companyId': widget.companyId,
+      };
       final res = await http
           .post(
-            Uri.parse('${widget.workerBaseUrl}$kTripsArchivePath'),
+            Uri.parse(
+              '${widget.workerBaseUrl}$kTripsArchivePath',
+            ).replace(queryParameters: scopeQuery),
             headers: widget.headers,
             body: jsonEncode({
               'tenant_id': widget.tenantId,
+              'company_id': widget.companyId,
+              'tenantId': widget.tenantId,
+              'companyId': widget.companyId,
               'driver_id': widget.driverId,
               'trip_id': item.tripId,
               'archived': true,
