@@ -12339,8 +12339,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   // and returns pickup/dropoff + session status + last ping.
   Future<void> _hydrateActiveBookingDetails(String bookingId) async {
     try {
-      final uri = Uri.parse(
-        '$kWorkerBaseUrl$kGetBookingPath?booking_id=${Uri.encodeComponent(bookingId)}',
+      final uri = _withActiveBookingScope(
+        kWorkerBaseUrl,
+        kGetBookingPath,
+        extraQuery: <String, String>{'booking_id': bookingId},
       );
       final res = await http
           .get(uri, headers: _headers(admin: true))

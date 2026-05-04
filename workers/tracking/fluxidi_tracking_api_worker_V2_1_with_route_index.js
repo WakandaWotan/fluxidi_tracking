@@ -2414,36 +2414,65 @@ async function handleStop(req, url, env, origin) {
   return withCors(json({ ok: true, session_id, status: "stopped" }, { status: 200 }), origin);
 }
 
-// Resolve booking -> map + session + last ping
-async function resolveSessionByBooking(env, booking_id) {
-  const map = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
-  if (!map || !map.session_id) return null;
+// Resolve booking -> map + session + last ping (scoped-first)
+async function resolveSessionByBookingForScope(env, scope, booking_id) {
+  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
+  const map = mapResolved.map;
+  const sessionId = safeStr(map?.session_id ?? map?.sessionId, 128);
+  if (!map || !sessionId) return null;
+  if (!recordMatchesTenantCompanyScope(map, scope)) return null;
 
-  const session = await kvGetJson(env.FLUXIDI_TRACKING, `session:${map.session_id}`);
-  const last = await kvGetJson(env.FLUXIDI_TRACKING, `ping:${map.session_id}:last`);
-  return { map, session, last };
+  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, sessionId);
+  const session = sessionResolved.session;
+  if (!session) return null;
+  if (!recordMatchesTenantCompanyScope(session, scope)) return null;
+
+  const last =
+    (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, sessionId))) ??
+    (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${sessionId}:last`));
+  return { map, session, last, session_id: sessionId };
 }
 
 // GET /track/bookings (auto-cleans orphans)
 async function handleBookings(req, url, env, origin) {
   requireAdmin(req, url, env);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
 
-  const idx = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
+  const scopedIndex = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
+  const legacyIndex = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
+  const idx =
+    Array.isArray(scopedIndex) && scopedIndex.length > 0
+      ? scopedIndex
+      : Array.isArray(legacyIndex)
+      ? legacyIndex
+      : [];
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
 
   const bookings = [];
   const cleanedIndex = [];
 
   for (const booking_id of idx) {
-    const map = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
+    const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
+    const map = mapResolved.map;
     if (!map) continue; // orphan index entry: drop it
+    if (!recordMatchesTenantCompanyScope(map, scope)) continue;
+
+    const sessionId = safeStr(map.session_id ?? map.sessionId, 128);
+    if (!sessionId) continue;
+    const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, sessionId);
+    const session = sessionResolved.session;
+    if (!session || !recordMatchesTenantCompanyScope(session, scope)) continue;
 
     cleanedIndex.push(booking_id);
 
-    const last = await kvGetJson(env.FLUXIDI_TRACKING, `ping:${map.session_id}:last`);
+    const last =
+      (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, sessionId))) ??
+      (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${sessionId}:last`));
     bookings.push({
       booking_id,
-      session_id: map.session_id,
+      session_id: sessionId,
       created_at: map.created_at,
       pickup: map.pickup ?? null,
       dropoff: map.dropoff ?? null,
@@ -2454,8 +2483,9 @@ async function handleBookings(req, url, env, origin) {
     if (bookings.length >= limit) break;
   }
 
-  if (cleanedIndex.length !== idx.length) {
-    await kvPutJson(env.FLUXIDI_TRACKING, "booking_index", cleanedIndex, TTL_INDEX);
+  const indexTrimmed = cleanedIndex.slice(0, 200);
+  if (cleanedIndex.length !== idx.length || !Array.isArray(scopedIndex) || scopedIndex.length === 0) {
+    await kvPutJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope), indexTrimmed, TTL_INDEX);
   }
 
   return withCors(json({ ok: true, count: bookings.length, bookings }, { status: 200 }), origin);
@@ -2464,21 +2494,24 @@ async function handleBookings(req, url, env, origin) {
 // GET /track/booking?booking_id=...
 async function handleBookingDetails(req, url, env, origin) {
   requireAdmin(req, url, env);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
 
   const booking_id = safeStr(url.searchParams.get("booking_id"), 64);
   if (!booking_id) throw new Error("booking_id is required");
 
-  const resolved = await resolveSessionByBooking(env, booking_id);
+  const resolved = await resolveSessionByBookingForScope(env, scope, booking_id);
   if (!resolved) throw new Error("Unknown booking_id");
 
-  const { map, session, last } = resolved;
+  const { map, session, last, session_id } = resolved;
 
   return withCors(
     json(
       {
         ok: true,
         booking_id,
-        session_id: map.session_id,
+        session_id,
         created_at: map.created_at,
         pickup: map.pickup ?? null,
         dropoff: map.dropoff ?? null,
@@ -2496,16 +2529,19 @@ async function handleBookingDetails(req, url, env, origin) {
 // GET /track/live?booking_id=...&limit=...
 async function handleLive(req, url, env, origin) {
   requireAdmin(req, url, env);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
 
   const booking_id = safeStr(url.searchParams.get("booking_id"), 64);
   if (!booking_id) throw new Error("booking_id is required");
 
   const limit = Math.min(1200, Math.max(1, Number(url.searchParams.get("limit") || 300)));
 
-  const resolved = await resolveSessionByBooking(env, booking_id);
+  const resolved = await resolveSessionByBookingForScope(env, scope, booking_id);
   if (!resolved) throw new Error("Unknown booking_id");
 
-  const { map, session, last } = resolved;
+  const { session, last, session_id } = resolved;
 
   const points = Array.isArray(session?.points) ? session.points : [];
   const sliced = points.slice(Math.max(0, points.length - limit));
@@ -2515,7 +2551,7 @@ async function handleLive(req, url, env, origin) {
       {
         ok: true,
         booking_id,
-        session_id: map.session_id,
+        session_id,
         status: session?.status ?? null,
         last_ping: last ?? null,
         points: sliced,
