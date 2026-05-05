@@ -2162,7 +2162,11 @@ class RoleEntryPage extends StatelessWidget {
         body: SafeArea(
           child: Stack(
             children: [
-              Positioned.fill(
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 96.0,
+                bottom: -96.0,
                 child: Image.asset(
                   _startBackgroundAsset,
                   fit: BoxFit.cover,
@@ -2180,7 +2184,7 @@ class RoleEntryPage extends StatelessWidget {
                 ),
               ),
               Positioned.fill(
-                child: Container(color: Colors.black.withOpacity(0.28)),
+                child: Container(color: Colors.black.withOpacity(0.15)),
               ),
               Positioned.fill(
                 child: IgnorePointer(
@@ -2191,10 +2195,10 @@ class RoleEntryPage extends StatelessWidget {
                         end: Alignment.bottomCenter,
                         stops: const [0.0, 0.46, 0.8, 1.0],
                         colors: [
-                          Colors.black.withOpacity(0.04),
-                          Colors.black.withOpacity(0.18),
-                          Colors.black.withOpacity(0.28),
-                          Colors.black.withOpacity(0.36),
+                          Colors.black.withOpacity(0.02),
+                          Colors.black.withOpacity(0.10),
+                          Colors.black.withOpacity(0.16),
+                          Colors.black.withOpacity(0.22),
                         ],
                       ),
                     ),
@@ -2206,7 +2210,8 @@ class RoleEntryPage extends StatelessWidget {
                   final veryCompact = constraints.maxHeight < 680;
                   final narrow = constraints.maxWidth < 390;
                   final contentHorizontalPadding = narrow ? 14.0 : 18.0;
-                  final headerTop = veryCompact ? 0.0 : 2.0;
+                  final logoTop = veryCompact ? -26.0 : -32.0;
+                  final languageTop = veryCompact ? 4.0 : 6.0;
                   final logoMaxBySpace =
                       constraints.maxWidth -
                       (contentHorizontalPadding * 2) -
@@ -2218,11 +2223,7 @@ class RoleEntryPage extends StatelessWidget {
                       constraints.maxWidth * (narrow ? 0.62 : 0.55),
                     ),
                   );
-                  final headerVisualHeight = veryCompact ? 72.0 : 82.0;
-                  final contentTop =
-                      headerTop +
-                      headerVisualHeight +
-                      (veryCompact ? 8.0 : 12.0);
+                  final contentTop = veryCompact ? 112.0 : 136.0;
 
                   final roleCardHeight = veryCompact ? 92.0 : 98.0;
                   final cardGap = veryCompact ? 5.0 : 6.0;
@@ -2247,47 +2248,34 @@ class RoleEntryPage extends StatelessWidget {
                           children: [
                             Positioned(
                               left: 0,
-                              right: 0,
-                              top: headerTop,
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(
-                                    width: logoWidth,
-                                    child: Align(
-                                      alignment: Alignment.topLeft,
-                                      child: Padding(
-                                        padding: EdgeInsets.only(
-                                          left: veryCompact ? 0 : 0,
-                                          top: veryCompact ? 0 : 0,
-                                        ),
-                                        child: Image.asset(
-                                          kFluxidiLogoAsset,
-                                          fit: BoxFit.contain,
-                                          alignment: Alignment.topLeft,
-                                          errorBuilder: (_, __, ___) =>
-                                              const Text(
-                                                'FLUXIDI',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 28,
-                                                  fontWeight: FontWeight.w900,
-                                                  letterSpacing: 0.8,
-                                                ),
-                                              ),
-                                        ),
+                              top: logoTop,
+                              child: SizedBox(
+                                width: logoWidth,
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Image.asset(
+                                    kFluxidiLogoAsset,
+                                    fit: BoxFit.contain,
+                                    alignment: Alignment.topLeft,
+                                    errorBuilder: (_, __, ___) => const Text(
+                                      'FLUXIDI',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.8,
                                       ),
                                     ),
                                   ),
-                                  const Spacer(),
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: _languageSelectorPill(),
-                                  ),
-                                ],
+                                ),
                               ),
+                            ),
+                            Positioned(
+                              right: 0,
+                              top: languageTop,
+                              child: _languageSelectorPill(),
                             ),
                             Positioned.fill(
                               top: contentTop,
