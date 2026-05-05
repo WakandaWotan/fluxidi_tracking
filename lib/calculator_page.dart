@@ -465,6 +465,98 @@ class _CalculatorPageState extends State<CalculatorPage> {
     }
   }
 
+  String _extraCompactLabel(String id, String fallback) {
+    switch (id) {
+      case 'none':
+        return _labelFor(
+          nl: 'Geen extra service',
+          en: 'No extra service',
+          fr: 'Aucun extra',
+          es: 'Sin extra',
+        );
+      case 'drinks':
+        return _labelFor(
+          nl: 'Drankservice',
+          en: 'Drinks service',
+          fr: 'Service boissons',
+          es: 'Servicio bebidas',
+        );
+      case 'work_table':
+      case 'worktable':
+        return _labelFor(
+          nl: 'Werktafel',
+          en: 'Work table',
+          fr: 'Table de travail',
+          es: 'Mesa de trabajo',
+        );
+      default:
+        return fallback;
+    }
+  }
+
+  IconData _serviceIcon(String id) {
+    switch (id) {
+      case 'airport':
+        return Icons.flight_takeoff;
+      case 'passenger_transport':
+      case 'passenger':
+        return Icons.directions_car;
+      case 'business':
+        return Icons.business_center;
+      case 'courier':
+        return Icons.local_shipping;
+      case 'care_transport':
+      case 'care':
+        return Icons.health_and_safety;
+      case 'event':
+        return Icons.event_available;
+      default:
+        return Icons.local_taxi;
+    }
+  }
+
+  IconData _tierIcon(String id) {
+    switch (id) {
+      case 'comfort':
+        return Icons.airline_seat_recline_normal;
+      case 'private':
+        return Icons.privacy_tip;
+      case 'premium':
+        return Icons.workspace_premium;
+      default:
+        return Icons.category_outlined;
+    }
+  }
+
+  IconData _extraIcon(String id) {
+    switch (id) {
+      case 'none':
+        return Icons.remove_circle_outline;
+      case 'drinks':
+        return Icons.local_cafe;
+      case 'work_table':
+      case 'worktable':
+        return Icons.laptop_mac;
+      default:
+        return Icons.extension_outlined;
+    }
+  }
+
+  Widget _dropdownMenuItemContent({
+    required IconData icon,
+    required String label,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFFE5B641), size: 19),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    );
+  }
+
   String _backToStartLabel() {
     return _labelFor(
       nl: 'Terug naar startpagina',
@@ -778,6 +870,34 @@ class _CalculatorPageState extends State<CalculatorPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Widget _zoneCard({
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(14),
+    Color? color,
+  }) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color ?? _calcPanelColor.withOpacity(0.94),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFE5B641).withOpacity(0.08),
+            blurRadius: 18,
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
   Widget _suggestionList(
     List<_PlaceSuggestion> list,
     void Function(_PlaceSuggestion) onTap,
@@ -820,11 +940,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
     String? hint,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: _calcPanelColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        color: _calcPanelColor.withOpacity(0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       child: Row(
         children: [
@@ -836,15 +956,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   label,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 if (hint != null) ...[
                   const SizedBox(height: 4),
                   Text(
                     hint,
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 11.5,
+                    ),
                   ),
                 ],
               ],
@@ -854,20 +977,23 @@ class _CalculatorPageState extends State<CalculatorPage> {
             onPressed: onMinus,
             icon: const Icon(
               Icons.remove_circle_outline,
-              color: Colors.white70,
+              color: Color(0xFFE5B641),
             ),
           ),
           Text(
             value,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
             ),
           ),
           IconButton(
             onPressed: onPlus,
-            icon: const Icon(Icons.add_circle_outline, color: Colors.white70),
+            icon: const Icon(
+              Icons.add_circle_outline,
+              color: Color(0xFFE5B641),
+            ),
           ),
         ],
       ),
@@ -1062,141 +1188,432 @@ class _CalculatorPageState extends State<CalculatorPage> {
         parseNum(breakdown['per_min_total_ex']) ??
         (durationForTimeCost * perMinRateEx);
     String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
+    MapEntry<String, String>? breakdownEntry({
+      required String key,
+      required String label,
+    }) {
+      final value = parseNum(breakdown[key]);
+      if (value == null || value <= 0) return null;
+      return MapEntry<String, String>(
+        label,
+        '$_currencySymbol ${fmtNum(value)}',
+      );
+    }
+
     final detailsRows = <MapEntry<String, String>>[
       MapEntry<String, String>(
-        _breakdownLabelFor('start_fee_ex'),
-        fmtMoneyVal(breakdown['start_fee_ex']),
+        _labelFor(nl: 'Tarief', en: 'Service', fr: 'Service', es: 'Servicio'),
+        _serviceLabel(_service, _service),
       ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('base_drive_ex'),
-        fmtMoneyVal(distanceCostEx),
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('per_min_ex'),
-        fmtMoneyVal(timeCostEx),
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('waiting_ex'),
-        fmtMoneyVal(breakdown['waiting_ex']),
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('extra_stops_ex'),
-        fmtMoneyVal(breakdown['extra_stops_ex']),
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('bags_ex'),
-        fmtMoneyVal(breakdown['bags_ex']),
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('tier_fee_ex'),
-        fmtMoneyVal(breakdown['tier_fee_ex']),
-      ),
-      if ((parseNum(breakdown['surcharge_amount_ex']) ?? 0) > 0)
+      if (_returnFeatureEnabled && _returnTrip)
         MapEntry<String, String>(
-          _breakdownLabelFor('surcharge_amount_ex'),
-          fmtMoneyVal(breakdown['surcharge_amount_ex']),
+          _labelFor(
+            nl: 'Retourrit',
+            en: 'Return ride',
+            fr: 'Trajet retour',
+            es: 'Viaje de regreso',
+          ),
+          _labelFor(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si'),
         ),
-      if ((parseNum(breakdown['return_fee_ex']) ?? 0) > 0)
+      if (_waitMin > 0)
         MapEntry<String, String>(
-          _breakdownLabelFor('return_fee_ex'),
-          fmtMoneyVal(breakdown['return_fee_ex']),
+          _labelFor(
+            nl: 'Wachttijd',
+            en: 'Waiting time',
+            fr: 'Temps d\'attente',
+            es: 'Tiempo de espera',
+          ),
+          '$_waitMin ${_labelFor(nl: 'min', en: 'min', fr: 'min', es: 'min')}',
         ),
-      if ((parseNum(breakdown['fuel_surcharge_ex']) ?? 0) > 0)
+      if (_bags > 0)
         MapEntry<String, String>(
-          _breakdownLabelFor('fuel_surcharge_ex'),
-          fmtMoneyVal(breakdown['fuel_surcharge_ex']),
+          _labelFor(nl: 'Bagage', en: 'Baggage', fr: 'Bagages', es: 'Equipaje'),
+          '$_bags',
         ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('total_ex'),
-        '$_currencySymbol ${fmtNum(priceEx)}',
-      ),
-      MapEntry<String, String>(
-        '${_breakdownLabelFor('vat_amount')} (${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%)',
-        '$_currencySymbol ${fmtNum(priceVat)}',
-      ),
-      MapEntry<String, String>(
-        _breakdownLabelFor('total_incl'),
-        '$_currencySymbol ${fmtNum(priceIncl)}',
-      ),
-      if (showPricingDebug)
+      if (_isPremiumTier && _extraService != 'none')
         MapEntry<String, String>(
-          _breakdownLabelFor('vat_rate'),
-          '${fmtNum(vatPct, decimals: vatPct == vatPct.roundToDouble() ? 0 : 2)}%',
+          _labelFor(
+            nl: 'Extra service',
+            en: 'Extra service',
+            fr: 'Service supplementaire',
+            es: 'Servicio extra',
+          ),
+          _extraCompactLabel(
+            _extraService,
+            _extraLabel(_extraService, _extraService),
+          ),
+        ),
+      ...[
+        breakdownEntry(
+          key: 'return_fee_ex',
+          label: _labelFor(
+            nl: 'Retourrit',
+            en: 'Return fee',
+            fr: 'Frais retour',
+            es: 'Tarifa regreso',
+          ),
+        ),
+        breakdownEntry(
+          key: 'waiting_ex',
+          label: _labelFor(
+            nl: 'Wachttijd',
+            en: 'Waiting',
+            fr: 'Attente',
+            es: 'Espera',
+          ),
+        ),
+        breakdownEntry(
+          key: 'bags_ex',
+          label: _labelFor(
+            nl: 'Bagage',
+            en: 'Baggage',
+            fr: 'Bagages',
+            es: 'Equipaje',
+          ),
+        ),
+        breakdownEntry(
+          key: 'extra_stops_ex',
+          label: _labelFor(
+            nl: 'Stops',
+            en: 'Stops',
+            fr: 'Arrets',
+            es: 'Paradas',
+          ),
+        ),
+        breakdownEntry(
+          key: 'tier_fee_ex',
+          label: _labelFor(
+            nl: 'Extra service',
+            en: 'Extra service',
+            fr: 'Service supplementaire',
+            es: 'Servicio extra',
+          ),
+        ),
+      ].whereType<MapEntry<String, String>>(),
+      if (parseNum(q['total_price_ex_vat']) != null ||
+          parseNum(q['price_ex_vat']) != null)
+        MapEntry<String, String>(
+          _labelFor(
+            nl: 'Prijs excl. btw',
+            en: 'Price excl. VAT',
+            fr: 'Prix hors TVA',
+            es: 'Precio sin IVA',
+          ),
+          '$_currencySymbol ${fmtNum(priceEx)}',
+        ),
+      if (parseNum(q['total_price_vat']) != null ||
+          parseNum(q['price_vat']) != null)
+        MapEntry<String, String>(
+          _labelFor(nl: 'Btw', en: 'VAT', fr: 'TVA', es: 'IVA'),
+          '$_currencySymbol ${fmtNum(priceVat)}',
+        ),
+      if (parseNum(q['total_price_incl_vat']) != null ||
+          parseNum(q['price_incl_vat']) != null)
+        MapEntry<String, String>(
+          _labelFor(
+            nl: 'Prijs incl. btw',
+            en: 'Price incl. VAT',
+            fr: 'Prix TTC',
+            es: 'Precio con IVA',
+          ),
+          '$_currencySymbol ${fmtNum(priceIncl)}',
         ),
     ];
 
+    Widget summaryChip({
+      required IconData icon,
+      required String label,
+      required String value,
+    }) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 230),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.28),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: const Color(0xFFE5B641)),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  '$label $value',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: _calcPanelColor,
+        color: _calcPanelColor.withOpacity(0.95),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: const Color(0xFFE5B641).withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFE5B641).withOpacity(0.08),
+            blurRadius: 18,
+            spreadRadius: 1,
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _s.calculatorQuoteTitle.of(_lang),
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
+          Row(
+            children: [
+              const Icon(
+                Icons.place_outlined,
+                size: 16,
+                color: Color(0xFFE5B641),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _fromCtrl.text.trim().isEmpty
+                      ? _s.calculatorFromLabel.of(_lang)
+                      : _fromCtrl.text.trim(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 2, top: 2, bottom: 2),
+            child: Row(
+              children: [
+                const SizedBox(width: 14),
+                Icon(
+                  Icons.south_rounded,
+                  size: 14,
+                  color: Colors.white.withOpacity(0.5),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 10),
-          Text(
-            '$_currencySymbol ${fmtNum(priceIncl)}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.w900,
+          Row(
+            children: [
+              const Icon(
+                Icons.flag_outlined,
+                size: 16,
+                color: Color(0xFFE5B641),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _toCtrl.text.trim().isEmpty
+                      ? _s.calculatorToLabel.of(_lang)
+                      : _toCtrl.text.trim(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              summaryChip(
+                icon: Icons.groups_2_outlined,
+                label: _labelFor(nl: 'Pax', en: 'Pax', fr: 'Pax', es: 'Pax'),
+                value: '$_pax',
+              ),
+              summaryChip(
+                icon: Icons.luggage_outlined,
+                label: _labelFor(
+                  nl: 'Bagage',
+                  en: 'Bags',
+                  fr: 'Bagages',
+                  es: 'Maletas',
+                ),
+                value: '$_bags',
+              ),
+              summaryChip(
+                icon: Icons.compare_arrows_outlined,
+                label: _labelFor(
+                  nl: 'Retour',
+                  en: 'Return',
+                  fr: 'Retour',
+                  es: 'Vuelta',
+                ),
+                value: _returnFeatureEnabled && _returnTrip
+                    ? _labelFor(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                    : _labelFor(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+              ),
+              if (_waitMin > 0)
+                summaryChip(
+                  icon: Icons.schedule_outlined,
+                  label: _labelFor(
+                    nl: 'Wacht',
+                    en: 'Wait',
+                    fr: 'Attente',
+                    es: 'Espera',
+                  ),
+                  value:
+                      '$_waitMin ${_labelFor(nl: 'min', en: 'min', fr: 'min', es: 'min')}',
+                ),
+              if (_isPremiumTier && _extraService != 'none')
+                summaryChip(
+                  icon: Icons.stars_outlined,
+                  label: _labelFor(
+                    nl: 'Extra',
+                    en: 'Extra',
+                    fr: 'Extra',
+                    es: 'Extra',
+                  ),
+                  value: _extraCompactLabel(
+                    _extraService,
+                    _extraLabel(_extraService, _extraService),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.25),
+              borderRadius: BorderRadius.circular(12),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            _s.calculatorPriceInclVatLabel.of(_lang),
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '${_s.calculatorDistanceLabel.of(_lang)}: ${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          Text(
-            '${_s.calculatorDurationLabel.of(_lang)}: ${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          if (breakdown.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Theme(
-              data: Theme.of(
-                context,
-              ).copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                iconColor: Colors.white70,
-                collapsedIconColor: Colors.white54,
-                title: Text(
-                  _s.calculatorBreakdownTitle.of(_lang),
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _s.calculatorDistanceLabel.of(_lang),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                children: [
-                  const SizedBox(height: 4),
-                  ...detailsRows.map((e) => _kv(e.key, e.value)),
-                ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _s.calculatorDurationLabel.of(_lang),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...detailsRows.map((e) => _kv(e.key, e.value)),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.35),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _labelFor(
+                      nl: 'Totaalprijs',
+                      en: 'Total price',
+                      fr: 'Prix total',
+                      es: 'Precio total',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  '$_currencySymbol ${fmtNum(priceIncl)}',
+                  style: const TextStyle(
+                    color: Color(0xFFE5B641),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(
+                Icons.verified_outlined,
+                size: 14,
+                color: Colors.white.withOpacity(0.70),
               ),
-            ),
-          ],
-          if (showPricingDebug)
-            Text(
-              _s.calculatorQuoteTipText.of(_lang),
-              style: const TextStyle(color: Colors.white38, fontSize: 11),
-            ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _labelFor(
+                    nl: 'Inclusief btw  •  Geen verborgen kosten',
+                    en: 'VAT included  •  No hidden costs',
+                    fr: 'TVA incluse  •  Aucun frais cache',
+                    es: 'IVA incluido  •  Sin costes ocultos',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.68),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1204,22 +1621,34 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   Widget _kv(String k, String v) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 7),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Text(
               k,
-              style: const TextStyle(color: Colors.white70),
-              maxLines: 1,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+              ),
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          Text(
-            v,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              v,
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -1229,13 +1658,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   @override
   Widget build(BuildContext context) {
+    const accent = Color(0xFFE5B641);
+
     return Scaffold(
       backgroundColor: _calcScaffoldColor,
       appBar: AppBar(
         backgroundColor: _calcScaffoldColor,
         title: Text(
           _s.calculatorTitle.of(_lang),
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
@@ -1250,393 +1684,575 @@ class _CalculatorPageState extends State<CalculatorPage> {
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
           children: [
-            Text(
-              _s.calculatorFromLabel.of(_lang),
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _fromCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: _calcPanelColor,
-                hintText: _s.calculatorAddressHint.of(_lang),
-                hintStyle: const TextStyle(color: Colors.white38),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-                suffixIcon: IconButton(
-                  onPressed: _setFromCurrentLocation,
-                  icon: const Icon(Icons.my_location, color: Colors.white70),
-                  tooltip: _s.calculatorUseCurrentLocationTooltip.of(_lang),
-                ),
-              ),
-              onChanged: (v) {
-                _fromDebounce?.cancel();
-                final requestId = ++_fromAutocompleteRequestId;
-                if (v.trim().isEmpty) {
-                  setState(() {
-                    _fromSuggestions = const <_PlaceSuggestion>[];
-                    _addressSearchUnavailable = false;
-                  });
-                  return;
-                }
-                final query = v.trim();
-                _fromDebounce = Timer(
-                  const Duration(milliseconds: 220),
-                  () async {
-                    final result = await _searchPlaces(query);
-                    if (!mounted) return;
-                    if (requestId != _fromAutocompleteRequestId ||
-                        _fromCtrl.text.trim() != query) {
-                      debugPrint('[MAPBOX][GEOCODE][STALE_SKIP] field=from');
-                      return;
-                    }
-                    setState(() {
-                      _fromSuggestions = result.results;
-                      _addressSearchUnavailable = result.hadError;
-                    });
-                  },
-                );
-              },
-            ),
-            _suggestionList(_fromSuggestions, (s) {
-              setState(() {
-                _fromCtrl.text = s.label;
-                _fromSuggestions = const <_PlaceSuggestion>[];
-              });
-            }),
-
-            const SizedBox(height: 14),
-
-            Text(
-              _s.calculatorToLabel.of(_lang),
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _toCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: _calcPanelColor,
-                hintText: _s.calculatorAddressHint.of(_lang),
-                hintStyle: const TextStyle(color: Colors.white38),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: (v) {
-                _toDebounce?.cancel();
-                final requestId = ++_toAutocompleteRequestId;
-                if (v.trim().isEmpty) {
-                  setState(() {
-                    _toSuggestions = const <_PlaceSuggestion>[];
-                    _addressSearchUnavailable = false;
-                  });
-                  return;
-                }
-                final query = v.trim();
-                _toDebounce = Timer(
-                  const Duration(milliseconds: 220),
-                  () async {
-                    final result = await _searchPlaces(query);
-                    if (!mounted) return;
-                    if (requestId != _toAutocompleteRequestId ||
-                        _toCtrl.text.trim() != query) {
-                      debugPrint('[MAPBOX][GEOCODE][STALE_SKIP] field=to');
-                      return;
-                    }
-                    setState(() {
-                      _toSuggestions = result.results;
-                      _addressSearchUnavailable = result.hadError;
-                    });
-                  },
-                );
-              },
-            ),
-            _suggestionList(_toSuggestions, (s) {
-              setState(() {
-                _toCtrl.text = s.label;
-                _toSuggestions = const <_PlaceSuggestion>[];
-                _addressSearchUnavailable = false;
-              });
-            }),
-            if (_addressSearchUnavailable) ...[
-              const SizedBox(height: 8),
-              Text(
-                _addressSearchUnavailableMessage(),
-                style: const TextStyle(color: Colors.white60, fontSize: 12),
-              ),
-            ],
-
-            const SizedBox(height: 14),
-
-            // Bags + Pax
-            _counterRow(
-              label: _s.calculatorBagsLabel.of(_lang),
-              value: '$_bags',
-              hint: _s.calculatorMaxBagsHint.of(_lang),
-              onMinus: _bags > 0 ? () => setState(() => _bags--) : null,
-              onPlus: _bags < 3 ? () => setState(() => _bags++) : null,
-            ),
-            const SizedBox(height: 10),
-            _counterRow(
-              label: _s.calculatorPassengersLabel.of(_lang),
-              value: '$_pax',
-              hint: _s.calculatorMaxPassengersHint.of(_lang),
-              onMinus: _pax > 1 ? () => setState(() => _pax--) : null,
-              onPlus: _pax < 3 ? () => setState(() => _pax++) : null,
-            ),
-
-            const SizedBox(height: 14),
-
-            // Pickup time
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: _calcPanelColor,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Row(
+            _zoneCard(
+              color: _calcPanelColor.withOpacity(0.88),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      _s.calculatorPickupTimeLabel.of(_lang),
+                  Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(0.18),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: accent.withOpacity(0.45)),
+                        ),
+                        child: const Icon(
+                          Icons.local_taxi_outlined,
+                          color: accent,
+                          size: 19,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _s.calculatorTitle.of(_lang),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _s.calculatorMenuSubtitle.of(_lang),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.72),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _zoneCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.route_outlined, size: 18, color: accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_s.calculatorFromLabel.of(_lang)}  ->  ${_s.calculatorToLabel.of(_lang)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _s.calculatorFromLabel.of(_lang),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _fromCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: _calcPanelColor.withOpacity(0.76),
+                      hintText: _s.calculatorAddressHint.of(_lang),
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 13,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: accent.withOpacity(0.70),
+                          width: 1.1,
+                        ),
+                      ),
+                      suffixIcon: IconButton(
+                        onPressed: _setFromCurrentLocation,
+                        icon: const Icon(
+                          Icons.my_location,
+                          color: Colors.white70,
+                        ),
+                        tooltip: _s.calculatorUseCurrentLocationTooltip.of(
+                          _lang,
+                        ),
+                      ),
+                    ),
+                    onChanged: (v) {
+                      _fromDebounce?.cancel();
+                      final requestId = ++_fromAutocompleteRequestId;
+                      if (v.trim().isEmpty) {
+                        setState(() {
+                          _fromSuggestions = const <_PlaceSuggestion>[];
+                          _addressSearchUnavailable = false;
+                        });
+                        return;
+                      }
+                      final query = v.trim();
+                      _fromDebounce = Timer(
+                        const Duration(milliseconds: 220),
+                        () async {
+                          final result = await _searchPlaces(query);
+                          if (!mounted) return;
+                          if (requestId != _fromAutocompleteRequestId ||
+                              _fromCtrl.text.trim() != query) {
+                            debugPrint(
+                              '[MAPBOX][GEOCODE][STALE_SKIP] field=from',
+                            );
+                            return;
+                          }
+                          setState(() {
+                            _fromSuggestions = result.results;
+                            _addressSearchUnavailable = result.hadError;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                  _suggestionList(_fromSuggestions, (s) {
+                    setState(() {
+                      _fromCtrl.text = s.label;
+                      _fromSuggestions = const <_PlaceSuggestion>[];
+                    });
+                  }),
+                  const SizedBox(height: 12),
+                  Text(
+                    _s.calculatorToLabel.of(_lang),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _toCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: _calcPanelColor.withOpacity(0.76),
+                      hintText: _s.calculatorAddressHint.of(_lang),
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 13,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: accent.withOpacity(0.70),
+                          width: 1.1,
+                        ),
+                      ),
+                    ),
+                    onChanged: (v) {
+                      _toDebounce?.cancel();
+                      final requestId = ++_toAutocompleteRequestId;
+                      if (v.trim().isEmpty) {
+                        setState(() {
+                          _toSuggestions = const <_PlaceSuggestion>[];
+                          _addressSearchUnavailable = false;
+                        });
+                        return;
+                      }
+                      final query = v.trim();
+                      _toDebounce = Timer(
+                        const Duration(milliseconds: 220),
+                        () async {
+                          final result = await _searchPlaces(query);
+                          if (!mounted) return;
+                          if (requestId != _toAutocompleteRequestId ||
+                              _toCtrl.text.trim() != query) {
+                            debugPrint(
+                              '[MAPBOX][GEOCODE][STALE_SKIP] field=to',
+                            );
+                            return;
+                          }
+                          setState(() {
+                            _toSuggestions = result.results;
+                            _addressSearchUnavailable = result.hadError;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                  _suggestionList(_toSuggestions, (s) {
+                    setState(() {
+                      _toCtrl.text = s.label;
+                      _toSuggestions = const <_PlaceSuggestion>[];
+                      _addressSearchUnavailable = false;
+                    });
+                  }),
+                  if (_addressSearchUnavailable) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _addressSearchUnavailableMessage(),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _zoneCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.tune_rounded, size: 18, color: accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        _s.calculatorServiceLabel.of(_lang),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _counterRow(
+                    label: _s.calculatorBagsLabel.of(_lang),
+                    value: '$_bags',
+                    hint: _s.calculatorMaxBagsHint.of(_lang),
+                    onMinus: _bags > 0 ? () => setState(() => _bags--) : null,
+                    onPlus: _bags < 3 ? () => setState(() => _bags++) : null,
+                  ),
+                  const SizedBox(height: 9),
+                  _counterRow(
+                    label: _s.calculatorPassengersLabel.of(_lang),
+                    value: '$_pax',
+                    hint: _s.calculatorMaxPassengersHint.of(_lang),
+                    onMinus: _pax > 1 ? () => setState(() => _pax--) : null,
+                    onPlus: _pax < 3 ? () => setState(() => _pax++) : null,
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _calcPanelColor.withOpacity(0.72),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _s.calculatorPickupTimeLabel.of(_lang),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Flexible(
+                          child: Text(
+                            _pickupDateTime == null
+                                ? _s.calculatorChoosePickupTimeLabel.of(_lang)
+                                : '${_pickupDateTime!.day.toString().padLeft(2, '0')}-'
+                                      '${_pickupDateTime!.month.toString().padLeft(2, '0')}-'
+                                      '${_pickupDateTime!.year} '
+                                      '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                                      '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12.5,
+                            ),
+                            textAlign: TextAlign.end,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        IconButton(
+                          onPressed: _pickDateTime,
+                          icon: const Icon(Icons.schedule, color: accent),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _dropdown(
+                    label: _s.calculatorServiceLabel.of(_lang),
+                    value: _service,
+                    items: _services
+                        .map(
+                          (o) => DropdownMenuItem(
+                            value: o.id,
+                            child: _dropdownMenuItemContent(
+                              icon: _serviceIcon(o.id),
+                              label: _serviceLabel(o.id, o.labelFor(_lang)),
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (v) => setState(() => _service = v ?? 'airport'),
+                  ),
+                  const SizedBox(height: 9),
+                  _dropdown(
+                    label: _s.calculatorTierLabel.of(_lang),
+                    value: _tier,
+                    items: _tiers
+                        .map(
+                          (o) => DropdownMenuItem(
+                            value: o.id,
+                            child: _dropdownMenuItemContent(
+                              icon: _tierIcon(o.id),
+                              label: _tierLabel(o.id, o.labelFor(_lang)),
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (v) {
+                      setState(() {
+                        _tier = v ?? 'comfort';
+                        if (!_isPremiumTier) _extraService = 'none';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 9),
+                  if (_isPremiumTier)
+                    _dropdown(
+                      label: _s.calculatorExtraServiceOptionalLabel.of(_lang),
+                      value: _extraService,
+                      items: _extras
+                          .map(
+                            (o) => DropdownMenuItem(
+                              value: o.id,
+                              child: _dropdownMenuItemContent(
+                                icon: _extraIcon(o.id),
+                                label: _extraLabel(o.id, o.labelFor(_lang)),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) =>
+                          setState(() => _extraService = v ?? 'none'),
+                    ),
+                  if (_isPremiumTier) const SizedBox(height: 9),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _returnFeatureEnabled && _returnTrip,
+                    onChanged: !_returnFeatureEnabled
+                        ? null
+                        : (v) => setState(() {
+                            _returnTrip = v;
+                            if (!v) _returnPickupDateTime = null;
+                          }),
+                    title: Text(
+                      _returnTripLabel(),
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                    subtitle: Text(
+                      _returnFeatureEnabled
+                          ? _s.calculatorReturnSubtitle.of(_lang)
+                          : _disabledReturnLabel(),
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    activeColor: accent,
                   ),
-                  Text(
-                    _pickupDateTime == null
-                        ? _s.calculatorChoosePickupTimeLabel.of(_lang)
-                        : '${_pickupDateTime!.day.toString().padLeft(2, '0')}-'
-                              '${_pickupDateTime!.month.toString().padLeft(2, '0')}-'
-                              '${_pickupDateTime!.year} '
-                              '${_pickupDateTime!.hour.toString().padLeft(2, '0')}:'
-                              '${_pickupDateTime!.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _pickDateTime,
-                    icon: const Icon(Icons.schedule, color: Colors.white70),
+                  if (_returnFeatureEnabled && _returnTrip) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _calcPanelColor.withOpacity(0.72),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.08),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${_returnTripLabel()} ${_s.calculatorPickupTimeLabel.of(_lang)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              _returnPickupDateTime == null
+                                  ? _s.calculatorChoosePickupTimeLabel.of(_lang)
+                                  : '${_returnPickupDateTime!.day.toString().padLeft(2, '0')}-'
+                                        '${_returnPickupDateTime!.month.toString().padLeft(2, '0')}-'
+                                        '${_returnPickupDateTime!.year} '
+                                        '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
+                                        '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12.5,
+                              ),
+                              textAlign: TextAlign.end,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          IconButton(
+                            onPressed: _pickReturnDateTime,
+                            icon: const Icon(Icons.schedule, color: accent),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 9),
+                  _counterRow(
+                    label: _s.calculatorWaitTimeLabel.of(_lang),
+                    value: '$_waitMin',
+                    hint: _s.calculatorWaitStepHint.of(_lang),
+                    onMinus: _waitMin > 0
+                        ? () => setState(
+                            () => _waitMin = (_waitMin - 5).clamp(0, 9999),
+                          )
+                        : null,
+                    onPlus: () => setState(
+                      () => _waitMin = (_waitMin + 5).clamp(0, 9999),
+                    ),
                   ),
                 ],
               ),
             ),
-
             const SizedBox(height: 14),
-
-            // Service & Tier
-            _dropdown(
-              label: _s.calculatorServiceLabel.of(_lang),
-              value: _service,
-              items: _services
-                  .map(
-                    (o) => DropdownMenuItem(
-                      value: o.id,
-                      child: Text(_serviceLabel(o.id, o.labelFor(_lang))),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: (v) => setState(() => _service = v ?? 'airport'),
-            ),
-            const SizedBox(height: 10),
-            _dropdown(
-              label: _s.calculatorTierLabel.of(_lang),
-              value: _tier,
-              items: _tiers
-                  .map(
-                    (o) => DropdownMenuItem(
-                      value: o.id,
-                      child: Text(_tierLabel(o.id, o.labelFor(_lang))),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: (v) {
-                setState(() {
-                  _tier = v ?? 'comfort';
-                  if (!_isPremiumTier) _extraService = 'none';
-                });
-              },
-            ),
-
-            const SizedBox(height: 10),
-            if (_isPremiumTier)
-              _dropdown(
-                label: _s.calculatorExtraServiceOptionalLabel.of(_lang),
-                value: _extraService,
-                items: _extras
-                    .map(
-                      (o) => DropdownMenuItem(
-                        value: o.id,
-                        child: Text(_extraLabel(o.id, o.labelFor(_lang))),
+            _zoneCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  GestureDetector(
+                    onTap: _loading ? null : _calculate,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: accent.withOpacity(0.5)),
+                        gradient: LinearGradient(
+                          colors: [
+                            accent.withOpacity(0.95),
+                            const Color(0xFFB98722),
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: accent.withOpacity(0.18),
+                            blurRadius: 16,
+                            spreadRadius: 1,
+                          ),
+                        ],
                       ),
-                    )
-                    .toList(growable: false),
-                onChanged: (v) => setState(() => _extraService = v ?? 'none'),
-              ),
-
-            const SizedBox(height: 10),
-
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              value: _returnFeatureEnabled && _returnTrip,
-              onChanged: !_returnFeatureEnabled
-                  ? null
-                  : (v) => setState(() {
-                      _returnTrip = v;
-                      if (!v) _returnPickupDateTime = null;
-                    }),
-              title: Text(
-                _returnTripLabel(),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                _returnFeatureEnabled
-                    ? _s.calculatorReturnSubtitle.of(_lang)
-                    : _disabledReturnLabel(),
-                style: const TextStyle(color: Colors.white54),
-              ),
-              activeColor: Colors.amberAccent,
-            ),
-
-            if (_returnFeatureEnabled && _returnTrip) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: _calcPanelColor,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
+                      alignment: Alignment.center,
                       child: Text(
-                        '${_returnTripLabel()} ${_s.calculatorPickupTimeLabel.of(_lang)}',
+                        _loading
+                            ? _s.calculatorButtonBusyLabel.of(_lang)
+                            : _s.calculatorButtonLabel.of(_lang),
                         style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                          color: Colors.black,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
                     ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 10),
                     Text(
-                      _returnPickupDateTime == null
-                          ? _s.calculatorChoosePickupTimeLabel.of(_lang)
-                          : '${_returnPickupDateTime!.day.toString().padLeft(2, '0')}-'
-                                '${_returnPickupDateTime!.month.toString().padLeft(2, '0')}-'
-                                '${_returnPickupDateTime!.year} '
-                                '${_returnPickupDateTime!.hour.toString().padLeft(2, '0')}:'
-                                '${_returnPickupDateTime!.minute.toString().padLeft(2, '0')}',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: _pickReturnDateTime,
-                      icon: const Icon(Icons.schedule, color: Colors.white70),
+                      '${_s.calculatorErrorPrefix.of(_lang)}: $_error',
+                      style: const TextStyle(color: Colors.redAccent),
                     ),
                   ],
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 10),
-
-            _counterRow(
-              label: _s.calculatorWaitTimeLabel.of(_lang),
-              value: '$_waitMin',
-              hint: _s.calculatorWaitStepHint.of(_lang),
-              onMinus: _waitMin > 0
-                  ? () =>
-                        setState(() => _waitMin = (_waitMin - 5).clamp(0, 9999))
-                  : null,
-              onPlus: () =>
-                  setState(() => _waitMin = (_waitMin + 5).clamp(0, 9999)),
-            ),
-
-            const SizedBox(height: 14),
-
-            // CTA
-            GestureDetector(
-              onTap: _loading ? null : _calculate,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.amberAccent.withOpacity(0.35),
-                  ),
-                  color: Colors.black,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.amberAccent.withOpacity(0.12),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  _loading
-                      ? _s.calculatorButtonBusyLabel.of(_lang)
-                      : _s.calculatorButtonLabel.of(_lang),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                ],
               ),
             ),
-
-            const SizedBox(height: 12),
-
-            if (_error != null)
-              Text(
-                '${_s.calculatorErrorPrefix.of(_lang)}: $_error',
-                style: const TextStyle(color: Colors.redAccent),
-              ),
-
             if (_lastQuote != null) ...[
               const SizedBox(height: 10),
-              _quoteBox(_lastQuote!),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: _openBookingConfirmation,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.amberAccent.withOpacity(0.55),
+              _zoneCard(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _quoteBox(_lastQuote!),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: _openBookingConfirmation,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: accent.withOpacity(0.55)),
+                          color: Colors.black,
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withOpacity(0.12),
+                              blurRadius: 14,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _s.calculatorBookNowLabel.of(_lang),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Color(0xFFE5B641),
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    color: Colors.black,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    _s.calculatorBookNowLabel.of(_lang),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+                  ],
                 ),
               ),
             ],
@@ -1659,7 +2275,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
           label,
           style: const TextStyle(
             color: Colors.white70,
-            fontWeight: FontWeight.w600,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 6),
@@ -1671,18 +2288,25 @@ class _CalculatorPageState extends State<CalculatorPage> {
           dropdownColor: _calcDropdownColor,
           decoration: InputDecoration(
             filled: true,
-            fillColor: _calcPanelColor,
+            fillColor: _calcPanelColor.withOpacity(0.72),
             contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 14,
+              horizontal: 14,
+              vertical: 12,
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: const Color(0xFFE5B641).withOpacity(0.70),
+                width: 1.1,
+              ),
             ),
           ),
           style: const TextStyle(color: Colors.white),
@@ -2423,6 +3047,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       appConfig.enabledExtraOptions,
       extraService,
     );
+    final compactExtraServiceLabel = _compactExtraServiceLabel(
+      value: extraService,
+      fallbackLabel: extraServiceLabel,
+    );
 
     return Scaffold(
       backgroundColor: appConfig.branding.calculatorScaffoldColor,
@@ -2435,41 +3063,106 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
         children: [
           _sectionCard(
             title: widget.strings.bookingSummaryRouteLabel.of(widget.language),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '$from\n→\n$to',
-                  style: const TextStyle(color: Colors.white),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.place_outlined,
+                      size: 16,
+                      color: Color(0xFFE5B641),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        from,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 2, top: 2, bottom: 2),
+                  child: Icon(
+                    Icons.south_rounded,
+                    size: 14,
+                    color: Colors.white.withOpacity(0.5),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.flag_outlined,
+                      size: 16,
+                      color: Color(0xFFE5B641),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        to,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 9),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _confirmationChip(
+                      icon: Icons.miscellaneous_services_outlined,
+                      text: serviceLabel,
+                    ),
+                    _confirmationChip(
+                      icon: Icons.workspace_premium_outlined,
+                      text: tierLabel,
+                    ),
+                    _confirmationChip(
+                      icon: Icons.groups_2_outlined,
+                      text: 'PAX $pax',
+                    ),
+                    _confirmationChip(
+                      icon: Icons.luggage_outlined,
+                      text: 'BAG $bags',
+                    ),
+                    if (returnTrip)
+                      _confirmationChip(
+                        icon: Icons.compare_arrows_outlined,
+                        text: _yesLabel(),
+                      ),
+                    if (waitMin.trim().isNotEmpty && waitMin.trim() != '0')
+                      _confirmationChip(
+                        icon: Icons.schedule_outlined,
+                        text: '$waitMin min',
+                      ),
+                    if (compactExtraServiceLabel.trim().isNotEmpty &&
+                        extraService.trim().toUpperCase() != 'NONE')
+                      _confirmationChip(
+                        icon: Icons.stars_outlined,
+                        text: compactExtraServiceLabel,
+                      ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 10),
-          _sectionCard(
-            title: widget.strings.bookingSummaryServiceTierLabel.of(
-              widget.language,
-            ),
-            child: Text(
-              '$serviceLabel • $tierLabel',
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-          const SizedBox(height: 10),
-          _sectionCard(
-            title: widget.strings.bookingSummaryPassengersBagsLabel.of(
-              widget.language,
-            ),
-            child: Text(
-              'PAX: $pax • BAG: $bags',
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
           _sectionCard(
             title: widget.strings.bookingSummaryPickupLabel.of(widget.language),
             child: Text(
@@ -2477,7 +3170,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               style: const TextStyle(color: Colors.white),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
           if (returnTrip) ...[
             _sectionCard(
               title: widget.strings.bookingSummaryReturnLabel.of(
@@ -2488,7 +3181,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 style: const TextStyle(color: Colors.white),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
           ],
           if (waitMin.trim().isNotEmpty && waitMin.trim() != '0') ...[
             _sectionCard(
@@ -2500,58 +3193,174 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 style: const TextStyle(color: Colors.white),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
           ],
-          if (extraServiceLabel.trim().isNotEmpty &&
-              extraServiceLabel.trim().toUpperCase() != 'NONE') ...[
+          if (compactExtraServiceLabel.trim().isNotEmpty &&
+              extraService.trim().toUpperCase() != 'NONE') ...[
             _sectionCard(
               title: 'Extra service',
               child: Text(
-                extraServiceLabel,
+                compactExtraServiceLabel,
                 style: const TextStyle(color: Colors.white),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
           ],
           _sectionCard(
             title: widget.strings.bookingSummaryQuoteLabel.of(widget.language),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Prijs incl. BTW: ${widget.currencySymbol} ${_fmt(totalIncl)}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
+                _confirmationRow(
+                  widget.strings.calculatorPriceExVatLabel.of(widget.language),
+                  '${widget.currencySymbol} ${_fmt(totalEx)}',
+                ),
+                _confirmationRow(
+                  widget.taxLabel,
+                  '${widget.currencySymbol} ${_fmt(taxAmount)}',
+                ),
+                if (_fmtVatPercent(vatRate) != '—')
+                  _confirmationRow(
+                    _localizedText(
+                      nl: 'Btw-tarief',
+                      en: 'VAT rate',
+                      fr: 'Taux TVA',
+                      es: 'Tasa IVA',
+                    ),
+                    _fmtVatPercent(vatRate),
+                  ),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.strings.calculatorDistanceLabel.of(
+                            widget.language,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        '${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          widget.strings.calculatorDurationLabel.of(
+                            widget.language,
+                          ),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.35),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _localizedText(
+                            nl: 'Totaalprijs',
+                            en: 'Total price',
+                            fr: 'Prix total',
+                            es: 'Precio total',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${widget.currencySymbol} ${_fmt(totalIncl)}',
+                        style: const TextStyle(
+                          color: Color(0xFFE5B641),
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  'Excl. BTW: ${widget.currencySymbol} ${_fmt(totalEx)}',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                Text(
-                  'BTW: ${widget.currencySymbol} ${_fmt(taxAmount)}',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                if (_fmtVatPercent(vatRate) != '—')
-                  Text(
-                    'BTW-tarief: ${_fmtVatPercent(vatRate)}',
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                Text(
-                  '${widget.strings.calculatorDistanceLabel.of(widget.language)}: ${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                Text(
-                  '${widget.strings.calculatorDurationLabel.of(widget.language)}: ${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}',
-                  style: const TextStyle(color: Colors.white70),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.verified_outlined,
+                      size: 14,
+                      color: Colors.white.withOpacity(0.70),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _localizedText(
+                          nl: 'Inclusief btw  •  Geen verborgen kosten',
+                          en: 'VAT included  •  No hidden costs',
+                          fr: 'TVA incluse  •  Aucun frais cache',
+                          es: 'IVA incluido  •  Sin costes ocultos',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.66),
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
           _sectionCard(
             title: widget.strings.bookingCustomerSectionTitle.of(
               widget.language,
@@ -2561,18 +3370,21 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                 _input(
                   _nameCtrl,
                   widget.strings.bookingFullNameLabel.of(widget.language),
+                  icon: Icons.person_outline,
                 ),
                 const SizedBox(height: 8),
                 _input(
                   _phoneCtrl,
                   widget.strings.bookingPhoneLabel.of(widget.language),
                   keyboardType: TextInputType.phone,
+                  icon: Icons.phone_outlined,
                 ),
                 const SizedBox(height: 8),
                 _input(
                   _emailCtrl,
                   widget.strings.bookingEmailLabel.of(widget.language),
                   keyboardType: TextInputType.emailAddress,
+                  icon: Icons.alternate_email,
                 ),
                 const SizedBox(height: 8),
                 _input(
@@ -2580,6 +3392,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   widget.strings.bookingCompanyNameOptionalLabel.of(
                     widget.language,
                   ),
+                  icon: Icons.business_outlined,
                 ),
                 const SizedBox(height: 8),
                 _input(
@@ -2587,6 +3400,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   widget.strings.bookingVatNumberOptionalLabel.of(
                     widget.language,
                   ),
+                  icon: Icons.receipt_long_outlined,
                 ),
                 const SizedBox(height: 6),
                 Align(
@@ -2603,6 +3417,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     widget.language,
                   ),
                   maxLines: 3,
+                  icon: Icons.message_outlined,
                 ),
               ],
             ),
@@ -2614,20 +3429,47 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.amberAccent.withOpacity(0.45)),
-                color: Colors.black,
+                border: Border.all(
+                  color: const Color(0xFFE5B641).withOpacity(0.5),
+                ),
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFFE5B641).withOpacity(0.95),
+                    const Color(0xFFB98722),
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFE5B641).withOpacity(0.18),
+                    blurRadius: 16,
+                    spreadRadius: 1,
+                  ),
+                ],
               ),
               alignment: Alignment.center,
-              child: Text(
-                _submitting
-                    ? widget.strings.bookingSubmittingLabel.of(widget.language)
-                    : widget.strings.bookingConfirmButtonLabel.of(
-                        widget.language,
-                      ),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _submitting
+                        ? widget.strings.bookingSubmittingLabel.of(
+                            widget.language,
+                          )
+                        : widget.strings.bookingConfirmButtonLabel.of(
+                            widget.language,
+                          ),
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 18,
+                    color: Colors.black,
+                  ),
+                ],
               ),
             ),
           ),
@@ -2644,7 +3486,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             ),
           ],
           if (_finalPricing != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
             _sectionCard(
               title:
                   '${widget.strings.bookingSummaryQuoteLabel.of(widget.language)} (final)',
@@ -2657,20 +3499,22 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       style: const TextStyle(color: Colors.white),
                     ),
                   const SizedBox(height: 6),
-                  Text(
-                    '${widget.strings.calculatorPriceInclVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_incl_vat'])}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
+                  _confirmationRow(
+                    widget.strings.calculatorPriceInclVatLabel.of(
+                      widget.language,
                     ),
+                    _fmtMoney(_finalPricing!['price_incl_vat']),
+                    emphasizeValue: true,
                   ),
-                  Text(
-                    '${widget.strings.calculatorPriceExVatLabel.of(widget.language)}: ${_fmtMoney(_finalPricing!['price_ex_vat'])}',
-                    style: const TextStyle(color: Colors.white70),
+                  _confirmationRow(
+                    widget.strings.calculatorPriceExVatLabel.of(
+                      widget.language,
+                    ),
+                    _fmtMoney(_finalPricing!['price_ex_vat']),
                   ),
-                  Text(
-                    '${widget.taxLabel}: ${_fmtMoney(_finalPricing!['price_vat'])}',
-                    style: const TextStyle(color: Colors.white70),
+                  _confirmationRow(
+                    widget.taxLabel,
+                    _fmtMoney(_finalPricing!['price_vat']),
                   ),
                 ],
               ),
@@ -2683,27 +3527,164 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   Widget _sectionCard({required String title, required Widget child}) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(13, 11, 13, 11),
       decoration: BoxDecoration(
-        color: appConfig.branding.calculatorPanelColor,
+        color: appConfig.branding.calculatorPanelColor.withOpacity(0.95),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: const Color(0xFFE5B641).withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFE5B641).withOpacity(0.08),
+            blurRadius: 18,
+            spreadRadius: 1,
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.92),
               fontWeight: FontWeight.w800,
+              fontSize: 13.5,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
           child,
         ],
       ),
     );
+  }
+
+  Widget _confirmationChip({required IconData icon, required String text}) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 220),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.28),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: const Color(0xFFE5B641)),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _confirmationRow(
+    String label,
+    String value, {
+    bool emphasizeValue = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: emphasizeValue ? const Color(0xFFE5B641) : Colors.white,
+                fontSize: emphasizeValue ? 13 : 12.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _compactExtraServiceLabel({
+    required String value,
+    required String fallbackLabel,
+  }) {
+    switch (value.trim().toLowerCase()) {
+      case 'none':
+      case 'no_extra':
+        return _localizedText(
+          nl: 'Geen extra service',
+          en: 'No extra service',
+          fr: 'Aucun service supplémentaire',
+          es: 'Sin servicio extra',
+        );
+      case 'drinks':
+        return _localizedText(
+          nl: 'Drankservice',
+          en: 'Drinks service',
+          fr: 'Service boissons',
+          es: 'Servicio de bebidas',
+        );
+      case 'work_table':
+      case 'worktable':
+        return _localizedText(
+          nl: 'Werktafel',
+          en: 'Work table',
+          fr: 'Table de travail',
+          es: 'Mesa de trabajo',
+        );
+      default:
+        return fallbackLabel;
+    }
+  }
+
+  String _yesLabel() {
+    return widget.strings.commonYesLabel.of(widget.language);
+  }
+
+  String _localizedText({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.language) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
   }
 
   Widget _input(
@@ -2711,6 +3692,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     String label, {
     TextInputType keyboardType = TextInputType.text,
     int maxLines = 1,
+    IconData? icon,
   }) {
     return TextField(
       controller: ctrl,
@@ -2718,17 +3700,31 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       maxLines: maxLines,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70),
+        hintText: label,
+        hintStyle: const TextStyle(color: Colors.white54),
+        prefixIcon: icon == null
+            ? null
+            : Icon(icon, size: 18, color: const Color(0xFFE5B641)),
         filled: true,
-        fillColor: appConfig.branding.calculatorScaffoldColor,
+        fillColor: appConfig.branding.calculatorScaffoldColor.withOpacity(0.82),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 13,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0x22FFFFFF)),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: const Color(0xFFE5B641).withOpacity(0.70),
+            width: 1.1,
+          ),
         ),
       ),
     );
