@@ -5092,41 +5092,66 @@ class CustomerHomePage extends StatelessWidget {
     return GestureDetector(
       onTap: () => _openCalculator(context, scheduledIntent: false),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.48)),
-          color: const Color(0xFF121A2B),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.52)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF182235), Color(0xFF0E1524)],
+          ),
           boxShadow: [
             BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.12),
-              blurRadius: 16,
-              spreadRadius: 1,
+              color: kFluxidiYellow.withOpacity(0.14),
+              blurRadius: 18,
+              spreadRadius: 1.1,
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.28),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              width: 48,
-              height: 48,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                color: kFluxidiYellow.withOpacity(0.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    kFluxidiYellow.withOpacity(0.34),
+                    kFluxidiYellow.withOpacity(0.16),
+                  ],
+                ),
                 shape: BoxShape.circle,
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.56)),
+                boxShadow: [
+                  BoxShadow(
+                    color: kFluxidiYellow.withOpacity(0.12),
+                    blurRadius: 10,
+                    spreadRadius: 0.5,
+                  ),
+                ],
               ),
               child: const Icon(
                 Icons.local_taxi_outlined,
                 color: Color(0xFFE5B641),
-                size: 24,
+                size: 30,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
                     _t(
                       nl: 'Bereken & boek je rit',
                       en: 'Calculate & book your ride',
@@ -5136,32 +5161,28 @@ class CustomerHomePage extends StatelessWidget {
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w800,
-                      fontSize: 16.2,
+                      fontSize: 15.6,
                     ),
+                    maxLines: 1,
+                    softWrap: false,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    _t(
-                      nl: 'Jouw prijs vooraf. Geen verrassingen.',
-                      en: 'Your price upfront. No surprises.',
-                      fr: 'Votre prix à l’avance. Pas de surprise.',
-                      es: 'Tu precio por adelantado. Sin sorpresas.',
-                    ),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.72),
-                      fontSize: 12.5,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            Icon(
-              Icons.arrow_forward_rounded,
-              color: kFluxidiYellow.withOpacity(0.98),
-              size: 24,
+            Container(
+              width: 31,
+              height: 31,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kFluxidiYellow.withOpacity(0.14),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
+              ),
+              child: Icon(
+                Icons.arrow_forward_rounded,
+                color: kFluxidiYellow.withOpacity(0.98),
+                size: 19,
+              ),
             ),
           ],
         ),
@@ -5178,30 +5199,52 @@ class CustomerHomePage extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFF131C2F),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF172235), Color(0xFF0F1728)],
+          ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.18)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.25),
               blurRadius: 10,
               offset: const Offset(0, 5),
             ),
+            BoxShadow(
+              color: kFluxidiYellow.withOpacity(0.05),
+              blurRadius: 8,
+              spreadRadius: 0.3,
+            ),
           ],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: kFluxidiYellow.withOpacity(0.96), size: 21),
-            const SizedBox(height: 8),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kFluxidiYellow.withOpacity(0.12),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.28)),
+              ),
+              child: Icon(
+                icon,
+                color: kFluxidiYellow.withOpacity(0.98),
+                size: 29,
+              ),
+            ),
+            const SizedBox(height: 6),
             Text(
               label,
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12.2,
+                fontSize: 11.6,
                 fontWeight: FontWeight.w700,
                 height: 1.2,
               ),
@@ -5297,9 +5340,9 @@ class CustomerHomePage extends StatelessWidget {
           itemCount: actions.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            mainAxisExtent: 102,
+            crossAxisSpacing: 9,
+            mainAxisSpacing: 9,
+            mainAxisExtent: 98,
           ),
           itemBuilder: (_, i) => _customerQuickActionCard(
             context: context,
@@ -5336,14 +5379,14 @@ class CustomerHomePage extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: kFluxidiYellow.withOpacity(0.18),
                 border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
               ),
-              child: Icon(icon, color: kFluxidiYellow, size: 21),
+              child: Icon(icon, color: kFluxidiYellow, size: 28),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -5360,16 +5403,18 @@ class CustomerHomePage extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.72),
-                      fontSize: 12.4,
+                  if (subtitle.trim().isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.72),
+                        fontSize: 12.4,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  ],
                   if (ctaLabel != null) ...[
                     const SizedBox(height: 9),
                     Container(
@@ -5513,17 +5558,12 @@ class CustomerHomePage extends StatelessWidget {
                   context: context,
                   icon: Icons.celebration_outlined,
                   title: _t(
-                    nl: 'Evenementen locator',
-                    en: 'Event locator',
-                    fr: 'Localisateur d’événements',
-                    es: 'Localizador de eventos',
+                    nl: 'Evenementen',
+                    en: 'Events',
+                    fr: 'Événements',
+                    es: 'Eventos',
                   ),
-                  subtitle: _t(
-                    nl: 'Vind evenementen in jouw buurt.',
-                    en: 'Find events near you.',
-                    fr: 'Trouvez des événements près de chez vous.',
-                    es: 'Encuentra eventos cerca de ti.',
-                  ),
+                  subtitle: '',
                   onTap: () => _comingSoon(context),
                 ),
                 const SizedBox(height: 10),
@@ -5531,23 +5571,12 @@ class CustomerHomePage extends StatelessWidget {
                   context: context,
                   icon: Icons.business_center_outlined,
                   title: _t(
-                    nl: 'Zakelijk rijden?',
-                    en: 'Business rides?',
-                    fr: 'Trajets professionnels ?',
-                    es: '¿Viajes de empresa?',
+                    nl: 'Zakelijk',
+                    en: 'Business',
+                    fr: 'Pro',
+                    es: 'Empresas',
                   ),
-                  subtitle: _t(
-                    nl: 'Ontdek onze oplossingen voor bedrijven.',
-                    en: 'Discover our solutions for companies.',
-                    fr: 'Découvrez nos solutions pour entreprises.',
-                    es: 'Descubre nuestras soluciones para empresas.',
-                  ),
-                  ctaLabel: _t(
-                    nl: 'Meer info',
-                    en: 'More info',
-                    fr: 'Plus d’info',
-                    es: 'Más info',
-                  ),
+                  subtitle: '',
                   onTap: () => _comingSoon(context),
                 ),
                 const SizedBox(height: 12),
