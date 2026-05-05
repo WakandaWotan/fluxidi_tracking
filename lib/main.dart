@@ -4991,14 +4991,18 @@ class CustomerHomePage extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Image.asset(
-            'assets/fluxidi/fluxidi_start_background.png',
-            fit: BoxFit.cover,
-            alignment: Alignment.centerRight,
-            errorBuilder: (_, __, ___) => Image.asset(
-              'assets/fluxidi/fluxidi_hero_taxi.png',
+          Transform.scale(
+            scale: 1.16,
+            alignment: const Alignment(0.45, 0.45),
+            child: Image.asset(
+              'assets/fluxidi/fluxidi_start_background.png',
               fit: BoxFit.cover,
-              alignment: Alignment.centerRight,
+              alignment: const Alignment(0.45, 0.45),
+              errorBuilder: (_, __, ___) => Image.asset(
+                'assets/fluxidi/fluxidi_hero_taxi.png',
+                fit: BoxFit.cover,
+                alignment: const Alignment(0.45, 0.45),
+              ),
             ),
           ),
           DecoratedBox(
@@ -5007,9 +5011,9 @@ class CustomerHomePage extends StatelessWidget {
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
                 colors: [
-                  Colors.black.withOpacity(0.86),
-                  Colors.black.withOpacity(0.56),
-                  Colors.black.withOpacity(0.26),
+                  Colors.black.withOpacity(0.58),
+                  Colors.black.withOpacity(0.34),
+                  Colors.black.withOpacity(0.12),
                 ],
               ),
             ),
@@ -5020,9 +5024,9 @@ class CustomerHomePage extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withOpacity(0.12),
-                  Colors.black.withOpacity(0.18),
-                  Colors.black.withOpacity(0.76),
+                  Colors.black.withOpacity(0.06),
+                  Colors.black.withOpacity(0.11),
+                  Colors.black.withOpacity(0.52),
                 ],
               ),
             ),
