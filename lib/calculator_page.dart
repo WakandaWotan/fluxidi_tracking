@@ -1155,6 +1155,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
         (((q['duration_s'] ?? q['durationSec']) is num)
             ? ((q['duration_s'] ?? q['durationSec']) as num) / 60
             : null);
+    final returnDistanceKm =
+        ret['distance_km'] ??
+        (((ret['distance_m'] ?? ret['distanceMeters']) is num)
+            ? ((ret['distance_m'] ?? ret['distanceMeters']) as num) / 1000
+            : null);
+    final returnDurationMin =
+        ret['duration_min'] ??
+        (((ret['duration_s'] ?? ret['durationSec']) is num)
+            ? ((ret['duration_s'] ?? ret['durationSec']) as num) / 60
+            : null);
     final breakdown = q['breakdown'] is Map<String, dynamic>
         ? q['breakdown'] as Map<String, dynamic>
         : (q['breakdown'] is Map
@@ -1187,6 +1197,40 @@ class _CalculatorPageState extends State<CalculatorPage> {
         parseNum(breakdown['time_cost_ex']) ??
         parseNum(breakdown['per_min_total_ex']) ??
         (durationForTimeCost * perMinRateEx);
+    final returnSelected = _returnFeatureEnabled && _returnTrip;
+    final waitDisplayMin = _waitMin > 0 ? _waitMin.toDouble() : 0.0;
+    final baseDistance = parseNum(distanceKm);
+    final baseDuration = parseNum(durationMin);
+    final totalDisplayDistance = baseDistance == null
+        ? null
+        : baseDistance +
+              (returnSelected
+                  ? (parseNum(returnDistanceKm) ?? baseDistance)
+                  : 0.0);
+    final totalDisplayDuration = baseDuration == null
+        ? null
+        : baseDuration +
+              (returnSelected
+                  ? (parseNum(returnDurationMin) ?? baseDuration)
+                  : 0.0) +
+              waitDisplayMin;
+    final showTotalMetrics = returnSelected || waitDisplayMin > 0;
+    final distanceLabel = showTotalMetrics
+        ? _labelFor(
+            nl: 'Afstand totaal',
+            en: 'Total distance',
+            fr: 'Distance totale',
+            es: 'Distancia total',
+          )
+        : _s.calculatorDistanceLabel.of(_lang);
+    final durationLabel = showTotalMetrics
+        ? _labelFor(
+            nl: 'Tijd totaal',
+            en: 'Total time',
+            fr: 'Temps total',
+            es: 'Tiempo total',
+          )
+        : _s.calculatorDurationLabel.of(_lang);
     String fmtMoneyVal(dynamic v) => '$_currencySymbol ${fmtNum(v)}';
     MapEntry<String, String>? breakdownEntry({
       required String key,
@@ -1507,7 +1551,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
               children: [
                 Expanded(
                   child: Text(
-                    _s.calculatorDistanceLabel.of(_lang),
+                    distanceLabel,
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 11.5,
@@ -1517,7 +1561,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   ),
                 ),
                 Text(
-                  '${fmtNum(distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
+                  '${fmtNum(showTotalMetrics ? totalDisplayDistance : distanceKm, decimals: 2)} ${appConfig.distanceUnitLabel}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -1527,7 +1571,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    _s.calculatorDurationLabel.of(_lang),
+                    durationLabel,
                     textAlign: TextAlign.right,
                     style: const TextStyle(
                       color: Colors.white70,
@@ -1539,7 +1583,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '${fmtNum(durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
+                  '${fmtNum(showTotalMetrics ? totalDisplayDuration : durationMin, decimals: 0)} ${appConfig.durationUnitLabel}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -2994,16 +3038,21 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ...widget.quote,
       if (_finalPricing != null) ..._finalPricing!,
     };
-    final totalIncl =
-        effectiveQuote['price_incl_vat'] ??
-        effectiveQuote['total_price_incl_vat'] ??
-        effectiveQuote['price'] ??
-        effectiveQuote['total'] ??
-        effectiveQuote['amount'];
+    final ret = effectiveQuote['return'] is Map
+        ? Map<String, dynamic>.from(effectiveQuote['return'] as Map)
+        : <String, dynamic>{};
+    final mainEx = _toNum(effectiveQuote['price_ex_vat']) ?? 0.0;
+    final mainVat = _toNum(effectiveQuote['price_vat']) ?? 0.0;
+    final mainIncl = _toNum(effectiveQuote['price_incl_vat']) ?? 0.0;
+    final retEx = _toNum(ret['price_ex_vat']) ?? 0.0;
+    final retVat = _toNum(ret['price_vat']) ?? 0.0;
+    final retIncl = _toNum(ret['price_incl_vat']) ?? 0.0;
     final totalEx =
-        effectiveQuote['price_ex_vat'] ?? effectiveQuote['total_price_ex_vat'];
+        _toNum(effectiveQuote['total_price_ex_vat']) ?? (mainEx + retEx);
     final taxAmount =
-        effectiveQuote['price_vat'] ?? effectiveQuote['total_price_vat'];
+        _toNum(effectiveQuote['total_price_vat']) ?? (mainVat + retVat);
+    final totalIncl =
+        _toNum(effectiveQuote['total_price_incl_vat']) ?? (mainIncl + retIncl);
     final vatRate =
         effectiveQuote['vat_rate'] ??
         (effectiveQuote['breakdown'] is Map
@@ -3037,6 +3086,51 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final bags = (widget.payload['bags'] ?? '').toString();
     final waitMin = (widget.payload['wait_min'] ?? '').toString();
     final returnTrip = (widget.payload['return'] ?? false) == true;
+    final waitDisplayMin = _toNum(waitMin) ?? 0.0;
+    final retMetrics = effectiveQuote['return'] is Map
+        ? Map<String, dynamic>.from(effectiveQuote['return'] as Map)
+        : <String, dynamic>{};
+    final returnDistanceKm =
+        retMetrics['distance_km'] ??
+        (((retMetrics['distance_m'] ?? retMetrics['distanceMeters']) is num)
+            ? ((retMetrics['distance_m'] ?? retMetrics['distanceMeters'])
+                      as num) /
+                  1000
+            : null);
+    final returnDurationMin =
+        retMetrics['duration_min'] ??
+        (((retMetrics['duration_s'] ?? retMetrics['durationSec']) is num)
+            ? ((retMetrics['duration_s'] ?? retMetrics['durationSec']) as num) /
+                  60
+            : null);
+    final baseDistance = _toNum(distanceKm);
+    final baseDuration = _toNum(durationMin);
+    final totalDisplayDistance = baseDistance == null
+        ? null
+        : baseDistance +
+              (returnTrip ? (_toNum(returnDistanceKm) ?? baseDistance) : 0.0);
+    final totalDisplayDuration = baseDuration == null
+        ? null
+        : baseDuration +
+              (returnTrip ? (_toNum(returnDurationMin) ?? baseDuration) : 0.0) +
+              waitDisplayMin;
+    final showTotalMetrics = returnTrip || waitDisplayMin > 0;
+    final distanceLabel = showTotalMetrics
+        ? _localizedText(
+            nl: 'Afstand totaal',
+            en: 'Total distance',
+            fr: 'Distance totale',
+            es: 'Distancia total',
+          )
+        : widget.strings.calculatorDistanceLabel.of(widget.language);
+    final durationLabel = showTotalMetrics
+        ? _localizedText(
+            nl: 'Tijd totaal',
+            en: 'Total time',
+            fr: 'Temps total',
+            es: 'Tiempo total',
+          )
+        : widget.strings.calculatorDurationLabel.of(widget.language);
     final extraService = (widget.payload['extra_service'] ?? 'NONE').toString();
     final serviceLabel = _optionLabelForPayloadValue(
       appConfig.enabledServices,
@@ -3246,9 +3340,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     children: [
                       Expanded(
                         child: Text(
-                          widget.strings.calculatorDistanceLabel.of(
-                            widget.language,
-                          ),
+                          distanceLabel,
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 11.5,
@@ -3258,7 +3350,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                         ),
                       ),
                       Text(
-                        '${_fmt(distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
+                        '${_fmt(showTotalMetrics ? totalDisplayDistance : distanceKm, decimals: 2)} ${widget.distanceUnitLabel}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -3268,9 +3360,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          widget.strings.calculatorDurationLabel.of(
-                            widget.language,
-                          ),
+                          durationLabel,
                           textAlign: TextAlign.right,
                           style: const TextStyle(
                             color: Colors.white70,
@@ -3282,7 +3372,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${_fmt(durationMin, decimals: 0)} ${widget.durationUnitLabel}',
+                        '${_fmt(showTotalMetrics ? totalDisplayDuration : durationMin, decimals: 0)} ${widget.durationUnitLabel}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,

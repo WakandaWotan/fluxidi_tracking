@@ -2258,8 +2258,8 @@ class RoleEntryPage extends StatelessWidget {
                                       alignment: Alignment.topLeft,
                                       child: Padding(
                                         padding: EdgeInsets.only(
-                                          left: veryCompact ? -8 : -10,
-                                          top: veryCompact ? -30 : -34,
+                                          left: veryCompact ? 0 : 0,
+                                          top: veryCompact ? 0 : 0,
                                         ),
                                         child: Image.asset(
                                           kFluxidiLogoAsset,
@@ -4895,6 +4895,72 @@ class CustomerHomePage extends StatelessWidget {
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  String _comingSoonMessage() => _t(
+    nl: 'Deze functie komt binnenkort.',
+    en: 'This feature is coming soon.',
+    fr: 'Cette fonction arrive bientôt.',
+    es: 'Esta función estará disponible pronto.',
+  );
+
+  void _comingSoon(BuildContext context) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_comingSoonMessage())));
+  }
+
+  Widget _customerLanguagePill() {
+    final code = currentLanguageCode.toUpperCase();
+    return PopupMenuButton<String>(
+      onSelected: setAppLanguageByCode,
+      color: const Color(0xFF111827),
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: kFluxidiYellow.withOpacity(0.35)),
+      ),
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'nl', child: Text('🇳🇱 NL')),
+        PopupMenuItem(value: 'en', child: Text('🇬🇧 EN')),
+        PopupMenuItem(value: 'fr', child: Text('🇫🇷 FR')),
+        PopupMenuItem(value: 'es', child: Text('🇪🇸 ES')),
+      ],
+      child: Container(
+        height: 31,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0E1524).withOpacity(0.9),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.language_rounded,
+              size: 14,
+              color: kFluxidiYellow.withOpacity(0.95),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              code,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.96),
+                fontWeight: FontWeight.w800,
+                fontSize: 10.8,
+              ),
+            ),
+            const SizedBox(width: 1),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 14,
+              color: kFluxidiYellow.withOpacity(0.9),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openCalculator(BuildContext context, {required bool scheduledIntent}) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -4926,56 +4992,506 @@ class CustomerHomePage extends StatelessWidget {
     }
   }
 
-  void _openPlaceholder(
-    BuildContext context,
-    String title,
-    String description,
-  ) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: const Color(0xFF0B1020),
-          appBar: AppBar(
-            backgroundColor: const Color(0xFF0B1020),
-            title: Text(title),
+  Widget _customerHomeHero(BuildContext context) {
+    return Container(
+      height: 312,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/fluxidi/fluxidi_start_background.png',
+            fit: BoxFit.cover,
+            alignment: Alignment.centerRight,
+            errorBuilder: (_, __, ___) => Image.asset(
+              'assets/fluxidi/fluxidi_hero_taxi.png',
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+            ),
           ),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                description,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.82),
-                  fontSize: 15,
-                ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Colors.black.withOpacity(0.86),
+                  Colors.black.withOpacity(0.56),
+                  Colors.black.withOpacity(0.26),
+                ],
               ),
             ),
           ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.12),
+                  Colors.black.withOpacity(0.18),
+                  Colors.black.withOpacity(0.76),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Image.asset(
+                      kFluxidiLogoAsset,
+                      width: 152,
+                      fit: BoxFit.contain,
+                    ),
+                    const Spacer(),
+                    _customerLanguagePill(),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  _t(
+                    nl: 'Welkom!',
+                    en: 'Welcome!',
+                    fr: 'Bienvenue !',
+                    es: '¡Bienvenido!',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 27,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _t(
+                    nl: 'Waar gaan we je vandaag naartoe?',
+                    en: 'Where are we taking you today?',
+                    fr: 'Où allons-nous aujourd’hui ?',
+                    es: '¿A dónde te llevamos hoy?',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.84),
+                    fontSize: 14.2,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _customerPrimaryCta(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _openCalculator(context, scheduledIntent: false),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.48)),
+          color: const Color(0xFF121A2B),
+          boxShadow: [
+            BoxShadow(
+              color: kFluxidiYellow.withOpacity(0.12),
+              blurRadius: 16,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: kFluxidiYellow.withOpacity(0.2),
+                shape: BoxShape.circle,
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              child: const Icon(
+                Icons.local_taxi_outlined,
+                color: Color(0xFFE5B641),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Bereken & boek je rit',
+                      en: 'Calculate & book your ride',
+                      fr: 'Calculez & réservez votre trajet',
+                      es: 'Calcula y reserva tu viaje',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16.2,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _t(
+                      nl: 'Jouw prijs vooraf. Geen verrassingen.',
+                      en: 'Your price upfront. No surprises.',
+                      fr: 'Votre prix à l’avance. Pas de surprise.',
+                      es: 'Tu precio por adelantado. Sin sorpresas.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.72),
+                      fontSize: 12.5,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_rounded,
+              color: kFluxidiYellow.withOpacity(0.98),
+              size: 24,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _entryCard({
+  Widget _customerQuickActionCard({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF131C2F),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: kFluxidiYellow.withOpacity(0.96), size: 21),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12.2,
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _customerQuickActionGrid(BuildContext context) {
+    final actions = <({IconData icon, String label, VoidCallback onTap})>[
+      (
+        icon: Icons.receipt_long_outlined,
+        label: _t(
+          nl: 'Mijn boekingen',
+          en: 'My bookings',
+          fr: 'Mes réservations',
+          es: 'Mis reservas',
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const CustomerSavedBookingsPage()),
+        ),
+      ),
+      (
+        icon: Icons.person_outline_rounded,
+        label: _t(
+          nl: 'Mijn gegevens',
+          en: 'My details',
+          fr: 'Mes données',
+          es: 'Mis datos',
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()),
+        ),
+      ),
+      (
+        icon: Icons.local_taxi_outlined,
+        label: _t(
+          nl: 'Taxi in de buurt',
+          en: 'Taxi nearby',
+          fr: 'Taxi à proximité',
+          es: 'Taxi cerca',
+        ),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const NearbyPartnersPage())),
+      ),
+      (
+        icon: Icons.app_registration_outlined,
+        label: _t(
+          nl: 'Registreer je regio',
+          en: 'Register your region',
+          fr: 'Enregistrer votre région',
+          es: 'Registrar tu región',
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const CustomerRegionRegistrationPage(),
+          ),
+        ),
+      ),
+      (
+        icon: Icons.flight_takeoff_rounded,
+        label: _t(
+          nl: 'Luchthavenritten',
+          en: 'Airport rides',
+          fr: 'Trajets aéroport',
+          es: 'Traslados aeropuerto',
+        ),
+        onTap: () => _comingSoon(context),
+      ),
+      (
+        icon: Icons.hotel_rounded,
+        label: _t(
+          nl: 'Hotels & B&B',
+          en: 'Hotels & B&B',
+          fr: 'Hôtels & B&B',
+          es: 'Hoteles & B&B',
+        ),
+        onTap: () => _comingSoon(context),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossAxisCount = constraints.maxWidth >= 430 ? 3 : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: actions.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            mainAxisExtent: 102,
+          ),
+          itemBuilder: (_, i) => _customerQuickActionCard(
+            context: context,
+            icon: actions[i].icon,
+            label: actions[i].label,
+            onTap: actions[i].onTap,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _customerWideCard({
     required BuildContext context,
     required IconData icon,
     required String title,
     required String subtitle,
+    String? ctaLabel,
     required VoidCallback onTap,
   }) {
-    return Card(
-      color: const Color(0xFF141B2F),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        leading: Icon(icon, color: const Color(0xFFE5B641)),
-        title: Text(title),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(color: Colors.white.withOpacity(0.74)),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF121A2B), Color(0xFF0E1523)],
+          ),
         ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kFluxidiYellow.withOpacity(0.18),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              child: Icon(icon, color: kFluxidiYellow, size: 21),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15.2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.72),
+                      fontSize: 12.4,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (ctaLabel != null) ...[
+                    const SizedBox(height: 9),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 11,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: kFluxidiYellow.withOpacity(0.18),
+                        border: Border.all(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        ctaLabel,
+                        style: const TextStyle(
+                          color: Color(0xFFE5B641),
+                          fontSize: 11.7,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 16,
+              color: kFluxidiYellow.withOpacity(0.94),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _customerBottomNav(BuildContext context) {
+    final items = <String>[
+      _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
+      _t(nl: 'Boek rit', en: 'Book ride', fr: 'Réserver', es: 'Reservar'),
+      _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
+      _t(
+        nl: 'Meldingen',
+        en: 'Notifications',
+        fr: 'Notifications',
+        es: 'Notificaciones',
+      ),
+      _t(nl: 'Profiel', en: 'Profile', fr: 'Profil', es: 'Perfil'),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1524),
+        border: Border(
+          top: BorderSide(color: kFluxidiYellow.withOpacity(0.2), width: 0.8),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: BottomNavigationBar(
+          currentIndex: 0,
+          onTap: (i) {
+            if (i == 0) return;
+            if (i == 1) {
+              _openCalculator(context, scheduledIntent: false);
+              return;
+            }
+            if (i == 2) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CustomerSavedBookingsPage(),
+                ),
+              );
+              return;
+            }
+            if (i == 4) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CustomerProfileEditPage(),
+                ),
+              );
+              return;
+            }
+            _comingSoon(context);
+          },
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: Colors.transparent,
+          selectedItemColor: kFluxidiYellow,
+          unselectedItemColor: Colors.white60,
+          showUnselectedLabels: true,
+          selectedFontSize: 11,
+          unselectedFontSize: 11,
+          items: [
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.home_outlined),
+              label: items[0],
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.directions_car_outlined),
+              label: items[1],
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: items[2],
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.notifications_none_rounded),
+              label: items[3],
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.person_outline_rounded),
+              label: items[4],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4986,134 +5502,63 @@ class CustomerHomePage extends StatelessWidget {
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
         backgroundColor: const Color(0xFF0B1020),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
-          title: const Text('FLUXIDI'),
-        ),
+        bottomNavigationBar: _customerBottomNav(context),
         body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                _t(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente'),
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _t(
-                  nl: 'Kies hoe je jouw rit wil starten.',
-                  en: 'Choose how you want to start your ride.',
-                  fr: 'Choisissez comment demarrer votre course.',
-                  es: 'Elige como quieres iniciar tu viaje.',
-                ),
-                style: TextStyle(color: Colors.white.withOpacity(0.76)),
-              ),
-              const SizedBox(height: 14),
-              _entryCard(
-                context: context,
-                icon: Icons.flash_on_outlined,
-                title: _t(
-                  nl: 'Bereken hier en boek direct',
-                  en: 'Calculate and book directly',
-                  fr: 'Calculer et reserver directement',
-                  es: 'Calcula y reserva directamente',
-                ),
-                subtitle: _t(
-                  nl: 'Bereken je rit en plaats direct je boeking',
-                  en: 'Calculate your ride and place your booking right away',
-                  fr: 'Calculez votre trajet et effectuez votre reservation immediatement',
-                  es: 'Calcula tu viaje y realiza tu reserva de inmediato',
-                ),
-                onTap: () => _openCalculator(context, scheduledIntent: false),
-              ),
-              _entryCard(
-                context: context,
-                icon: Icons.account_circle_outlined,
-                title: _t(
-                  nl: 'Mijn gegevens',
-                  en: 'My details',
-                  fr: 'Mes informations',
-                  es: 'Mis datos',
-                ),
-                subtitle: _t(
-                  nl: 'Bekijk of wijzig je klant- en facturatiegegevens.',
-                  en: 'View or edit your customer and billing details.',
-                  fr: 'Consultez ou modifiez vos informations client et de facturation.',
-                  es: 'Consulta o modifica tus datos de cliente y facturación.',
-                ),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const CustomerProfileEditPage(),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Column(
+              children: [
+                _customerHomeHero(context),
+                const SizedBox(height: 14),
+                _customerPrimaryCta(context),
+                const SizedBox(height: 14),
+                _customerQuickActionGrid(context),
+                const SizedBox(height: 12),
+                _customerWideCard(
+                  context: context,
+                  icon: Icons.celebration_outlined,
+                  title: _t(
+                    nl: 'Evenementen locator',
+                    en: 'Event locator',
+                    fr: 'Localisateur d’événements',
+                    es: 'Localizador de eventos',
                   ),
-                ),
-              ),
-              _entryCard(
-                context: context,
-                icon: Icons.search_outlined,
-                title: _t(
-                  nl: 'Mijn boekingen',
-                  en: 'My bookings',
-                  fr: 'Mes reservations',
-                  es: 'Mis reservas',
-                ),
-                subtitle: _t(
-                  nl: 'Bekijk automatisch je gemaakte boekingen op dit toestel.',
-                  en: 'Automatically view bookings created on this device.',
-                  fr: 'Consultez automatiquement les reservations de cet appareil.',
-                  es: 'Consulta automaticamente las reservas de este dispositivo.',
-                ),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const CustomerSavedBookingsPage(),
+                  subtitle: _t(
+                    nl: 'Vind evenementen in jouw buurt.',
+                    en: 'Find events near you.',
+                    fr: 'Trouvez des événements près de chez vous.',
+                    es: 'Encuentra eventos cerca de ti.',
                   ),
+                  onTap: () => _comingSoon(context),
                 ),
-              ),
-              _entryCard(
-                context: context,
-                icon: Icons.local_taxi_outlined,
-                title: _t(
-                  nl: "Taxi's in de buurt",
-                  en: 'Taxis nearby',
-                  fr: 'Taxis a proximite',
-                  es: 'Taxis cercanos',
-                ),
-                subtitle: _t(
-                  nl: 'Binnenkort zie je hier actieve partners in jouw regio.',
-                  en: 'You will soon see active partners in your region here.',
-                  fr: 'Vous verrez bientot ici les partenaires actifs de votre region.',
-                  es: 'Pronto veras aqui socios activos en tu region.',
-                ),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
-                ),
-              ),
-              _entryCard(
-                context: context,
-                icon: Icons.app_registration_outlined,
-                title: _t(
-                  nl: 'Registreer je regio',
-                  en: 'Register your region',
-                  fr: 'Enregistrez votre region',
-                  es: 'Registra tu region',
-                ),
-                subtitle: _t(
-                  nl: 'Geef je regio door en help taxi bedrijven naar jouw omgeving te brengen',
-                  en: 'Register your region for future coverage',
-                  fr: 'Enregistrez votre region pour une couverture future',
-                  es: 'Registra tu region para cobertura futura',
-                ),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const CustomerRegionRegistrationPage(),
+                const SizedBox(height: 10),
+                _customerWideCard(
+                  context: context,
+                  icon: Icons.business_center_outlined,
+                  title: _t(
+                    nl: 'Zakelijk rijden?',
+                    en: 'Business rides?',
+                    fr: 'Trajets professionnels ?',
+                    es: '¿Viajes de empresa?',
                   ),
+                  subtitle: _t(
+                    nl: 'Ontdek onze oplossingen voor bedrijven.',
+                    en: 'Discover our solutions for companies.',
+                    fr: 'Découvrez nos solutions pour entreprises.',
+                    es: 'Descubre nuestras soluciones para empresas.',
+                  ),
+                  ctaLabel: _t(
+                    nl: 'Meer info',
+                    en: 'More info',
+                    fr: 'Plus d’info',
+                    es: 'Más info',
+                  ),
+                  onTap: () => _comingSoon(context),
                 ),
-              ),
-              const SizedBox(height: 14),
-              const FluxidiBackToStartButton(),
-            ],
+                const SizedBox(height: 12),
+                const FluxidiBackToStartButton(),
+              ],
+            ),
           ),
         ),
       ),
