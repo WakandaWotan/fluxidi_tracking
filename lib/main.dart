@@ -5095,21 +5095,21 @@ class CustomerHomePage extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.52)),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.46)),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF182235), Color(0xFF0E1524)],
+            colors: [Color(0xFF101010), Color(0xFF07080C)],
           ),
           boxShadow: [
             BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.14),
-              blurRadius: 18,
-              spreadRadius: 1.1,
+              color: kFluxidiYellow.withOpacity(0.11),
+              blurRadius: 16,
+              spreadRadius: 0.9,
             ),
             BoxShadow(
-              color: Colors.black.withOpacity(0.28),
-              blurRadius: 10,
+              color: Colors.black.withOpacity(0.4),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
@@ -5124,17 +5124,17 @@ class CustomerHomePage extends StatelessWidget {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    kFluxidiYellow.withOpacity(0.34),
-                    kFluxidiYellow.withOpacity(0.16),
+                    kFluxidiYellow.withOpacity(0.3),
+                    const Color(0xFF15120A),
                   ],
                 ),
                 shape: BoxShape.circle,
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.56)),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.5)),
                 boxShadow: [
                   BoxShadow(
-                    color: kFluxidiYellow.withOpacity(0.12),
-                    blurRadius: 10,
-                    spreadRadius: 0.5,
+                    color: kFluxidiYellow.withOpacity(0.09),
+                    blurRadius: 9,
+                    spreadRadius: 0.3,
                   ),
                 ],
               ),
@@ -5175,8 +5175,8 @@ class CustomerHomePage extends StatelessWidget {
               height: 31,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: kFluxidiYellow.withOpacity(0.14),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
+                color: const Color(0xFF15120A).withOpacity(0.7),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.34)),
               ),
               child: Icon(
                 Icons.arrow_forward_rounded,
@@ -5204,20 +5204,20 @@ class CustomerHomePage extends StatelessWidget {
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF172235), Color(0xFF0F1728)],
+            colors: [Color(0xFF101010), Color(0xFF07080C)],
           ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.18)),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.15)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.25),
+              color: Colors.black.withOpacity(0.34),
               blurRadius: 10,
               offset: const Offset(0, 5),
             ),
             BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.05),
-              blurRadius: 8,
-              spreadRadius: 0.3,
+              color: kFluxidiYellow.withOpacity(0.035),
+              blurRadius: 7,
+              spreadRadius: 0.2,
             ),
           ],
         ),
@@ -5229,8 +5229,8 @@ class CustomerHomePage extends StatelessWidget {
               height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: kFluxidiYellow.withOpacity(0.12),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.28)),
+                color: const Color(0xFF15120A).withOpacity(0.72),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
               ),
               child: Icon(
                 icon,
@@ -5361,11 +5361,20 @@ class CustomerHomePage extends StatelessWidget {
     required String title,
     required String subtitle,
     String? ctaLabel,
+    String? visualAsset,
+    double? visualHeight,
+    Alignment? visualAlignment,
     required VoidCallback onTap,
   }) {
+    final hasVisual = visualAsset != null && visualAsset.trim().isNotEmpty;
+    final iconChipSize = hasVisual ? 58.0 : 52.0;
+    final iconSize = hasVisual ? 31.0 : 28.0;
+    final titleFontSize = hasVisual ? 16.8 : 15.2;
     return GestureDetector(
       onTap: onTap,
       child: Container(
+        height: hasVisual ? (visualHeight ?? 130.0) : null,
+        clipBehavior: Clip.antiAlias,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
@@ -5373,80 +5382,112 @@ class CustomerHomePage extends StatelessWidget {
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF121A2B), Color(0xFF0E1523)],
+            colors: [Color(0xFF101010), Color(0xFF07080C)],
           ),
         ),
-        child: Row(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: kFluxidiYellow.withOpacity(0.18),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+            if (hasVisual) ...[
+              Positioned.fill(
+                child: Image.asset(
+                  visualAsset,
+                  fit: BoxFit.cover,
+                  alignment: visualAlignment ?? Alignment.centerRight,
+                ),
               ),
-              child: Icon(icon, color: kFluxidiYellow, size: 28),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15.2,
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      stops: const [0.0, 0.46, 0.78, 1.0],
+                      colors: [
+                        const Color(0xFF07080C).withOpacity(0.96),
+                        const Color(0xFF07080C).withOpacity(0.82),
+                        const Color(0xFF07080C).withOpacity(0.38),
+                        const Color(0xFF07080C).withOpacity(0.08),
+                      ],
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  if (subtitle.trim().isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
-                        fontSize: 12.4,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  if (ctaLabel != null) ...[
-                    const SizedBox(height: 9),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 11,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        color: kFluxidiYellow.withOpacity(0.18),
-                        border: Border.all(
-                          color: kFluxidiYellow.withOpacity(0.5),
-                        ),
-                      ),
-                      child: Text(
-                        ctaLabel,
-                        style: const TextStyle(
-                          color: Color(0xFFE5B641),
-                          fontSize: 11.7,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 16,
-              color: kFluxidiYellow.withOpacity(0.94),
+            ],
+            Row(
+              children: [
+                Container(
+                  width: iconChipSize,
+                  height: iconChipSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: kFluxidiYellow.withOpacity(0.18),
+                    border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+                  ),
+                  child: Icon(icon, color: kFluxidiYellow, size: iconSize),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: titleFontSize,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (subtitle.trim().isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.72),
+                            fontSize: 12.4,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      if (ctaLabel != null) ...[
+                        const SizedBox(height: 9),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(999),
+                            color: kFluxidiYellow.withOpacity(0.18),
+                            border: Border.all(
+                              color: kFluxidiYellow.withOpacity(0.5),
+                            ),
+                          ),
+                          child: Text(
+                            ctaLabel,
+                            style: const TextStyle(
+                              color: Color(0xFFE5B641),
+                              fontSize: 11.7,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: kFluxidiYellow.withOpacity(0.94),
+                ),
+              ],
             ),
           ],
         ),
@@ -5564,6 +5605,9 @@ class CustomerHomePage extends StatelessWidget {
                     es: 'Eventos',
                   ),
                   subtitle: '',
+                  visualAsset: 'assets/fluxidi/fluxidi_event_crowd_night.jpg',
+                  visualHeight: 130,
+                  visualAlignment: Alignment.centerRight,
                   onTap: () => _comingSoon(context),
                 ),
                 const SizedBox(height: 10),
@@ -5577,6 +5621,10 @@ class CustomerHomePage extends StatelessWidget {
                     es: 'Empresas',
                   ),
                   subtitle: '',
+                  visualAsset:
+                      'assets/fluxidi/fluxidi_business_briefcase_night.jpg',
+                  visualHeight: 130,
+                  visualAlignment: const Alignment(0.65, 0.0),
                   onTap: () => _comingSoon(context),
                 ),
                 const SizedBox(height: 12),
