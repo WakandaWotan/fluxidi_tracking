@@ -1959,20 +1959,20 @@ class RoleEntryPage extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  const Color(0xFF141B2C).withOpacity(0.96),
-                  const Color(0xFF0B0F18).withOpacity(0.97),
+                  const Color(0xFF15120A).withOpacity(0.94),
+                  const Color(0xFF07080C).withOpacity(0.98),
                 ],
               ),
               border: Border.all(
                 color: highlighted
-                    ? kFluxidiYellow.withOpacity(0.78)
-                    : kFluxidiYellow.withOpacity(0.45),
+                    ? kFluxidiYellow.withOpacity(0.72)
+                    : kFluxidiYellow.withOpacity(0.46),
                 width: highlighted ? 1.25 : 1.0,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: kFluxidiYellow.withOpacity(highlighted ? 0.26 : 0.15),
-                  blurRadius: highlighted ? 16 : 11,
+                  color: kFluxidiYellow.withOpacity(highlighted ? 0.18 : 0.1),
+                  blurRadius: highlighted ? 14 : 10,
                 ),
                 const BoxShadow(
                   color: Color(0x99000000),
@@ -1989,10 +1989,10 @@ class RoleEntryPage extends StatelessWidget {
                     width: 74,
                     height: 74,
                     decoration: BoxDecoration(
-                      color: kFluxidiYellow.withOpacity(0.22),
+                      color: const Color(0xFF15120A).withOpacity(0.78),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: kFluxidiYellow.withOpacity(0.68),
+                        color: kFluxidiYellow.withOpacity(0.58),
                       ),
                     ),
                     child: Icon(icon, color: kFluxidiYellow, size: 40),
@@ -4861,8 +4861,11 @@ class FluxidiBackToStartButton extends StatelessWidget {
         ),
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFFE5B641),
-          backgroundColor: const Color(0xFF10182C),
-          side: const BorderSide(color: Color(0xFFE5B641), width: 1.2),
+          backgroundColor: const Color(0xFF07080C),
+          side: BorderSide(
+            color: const Color(0xFFE5B641).withOpacity(0.7),
+            width: 1.1,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -4998,16 +5001,16 @@ class CustomerHomePage extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           Transform.scale(
-            scale: 1.16,
-            alignment: const Alignment(0.45, 0.45),
+            scale: 1.12,
+            alignment: const Alignment(0.55, 0.10),
             child: Image.asset(
-              'assets/fluxidi/fluxidi_start_background.png',
+              'assets/fluxidi/fluxidi_customer_home_hero.png',
               fit: BoxFit.cover,
-              alignment: const Alignment(0.45, 0.45),
+              alignment: const Alignment(0.55, 0.10),
               errorBuilder: (_, __, ___) => Image.asset(
                 'assets/fluxidi/fluxidi_hero_taxi.png',
                 fit: BoxFit.cover,
-                alignment: const Alignment(0.45, 0.45),
+                alignment: const Alignment(0.55, 0.10),
               ),
             ),
           ),
@@ -5038,19 +5041,23 @@ class CustomerHomePage extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            padding: const EdgeInsets.fromLTRB(16, 9, 16, 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Image.asset(
                       kFluxidiLogoAsset,
-                      width: 152,
+                      width: 178,
                       fit: BoxFit.contain,
                     ),
                     const Spacer(),
-                    _customerLanguagePill(),
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: _customerLanguagePill(),
+                    ),
                   ],
                 ),
                 const Spacer(),
