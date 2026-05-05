@@ -4896,6 +4896,11 @@ class CustomerHomePage extends StatelessWidget {
     ).showSnackBar(SnackBar(content: Text(_comingSoonMessage())));
   }
 
+  String _customerDisplayName() {
+    final name = _cachedCustomerProfile?.name.trim() ?? '';
+    return name;
+  }
+
   Widget _customerLanguagePill() {
     final code = currentLanguageCode.toUpperCase();
     return PopupMenuButton<String>(
@@ -4981,6 +4986,7 @@ class CustomerHomePage extends StatelessWidget {
   }
 
   Widget _customerHomeHero(BuildContext context) {
+    final customerName = _customerDisplayName();
     return Container(
       height: 312,
       decoration: BoxDecoration(
@@ -5061,22 +5067,19 @@ class CustomerHomePage extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _t(
-                    nl: 'Waar gaan we je vandaag naartoe?',
-                    en: 'Where are we taking you today?',
-                    fr: 'Où allons-nous aujourd’hui ?',
-                    es: '¿A dónde te llevamos hoy?',
+                if (customerName.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    customerName,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.84),
+                      fontSize: 14.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.84),
-                    fontSize: 14.2,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                ],
               ],
             ),
           ),
