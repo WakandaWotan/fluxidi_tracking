@@ -474,6 +474,13 @@ function _requireAdmin(request, url, env) {
   if (!got || got !== expected) throw new Error("Unauthorized");
 }
 
+function hasValidAdminToken(request, url, env) {
+  const expected = (env?.ADMIN_TOKEN || "").trim();
+  if (!expected) return false;
+  const got = _adminTokenFromRequest(request, url);
+  return !!got && got === expected;
+}
+
 function allowDevResetEndpoints(env) {
   return String(env?.ALLOW_DEV_RESET_ENDPOINTS || "").trim().toLowerCase() === "true";
 }
@@ -2948,7 +2955,17 @@ GET /oauth/callback
           const scopedRoute = requireExplicitBookingRouteScope({ request, url });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
-          const out = await getBookingAuthoritative(bookingId, env, tenantScope);
+          let preloadedRec = null;
+          const adminAuthorized = hasValidAdminToken(request, url, env);
+          if (!adminAuthorized) {
+            const loaded = await loadBookingRecord(env, bookingId);
+            preloadedRec = loaded?.rec || null;
+            const proof = _requestCustomerContactProof({ url });
+            if (!customerProofMatchesBooking(preloadedRec, proof)) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+          }
+          const out = await getBookingAuthoritative(bookingId, env, tenantScope, preloadedRec);
           return json(
             out,
             out?.error === "missing_tenant_scope"
@@ -2968,6 +2985,13 @@ GET /oauth/callback
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
           const { rec } = await loadBookingRecord(env, bookingId);
+          const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          if (actorRole === "customer") {
+            const proof = _requestCustomerContactProof({ url, body });
+            if (!customerProofMatchesBooking(rec, proof)) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+          }
           const ownershipBlock = await enforceDriverOwnershipForMutation({
             request,
             url,
@@ -3494,6 +3518,102 @@ function bookingMatchesRequestedTenantScope(rec, requestedScope) {
     return false;
   }
   return true;
+}
+
+function _normalizeCustomerEmail(value) {
+  return _scopeText(value, 320).toLowerCase();
+}
+
+function _normalizeCustomerPhone(value) {
+  const raw = _scopeText(value, 80);
+  if (!raw) return "";
+  const keepPlus = raw.startsWith("+");
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  return keepPlus ? `+${digits}` : digits;
+}
+
+function _bookingCustomerContacts(rec) {
+  const emails = new Set();
+  const phones = new Set();
+  const addEmail = (value) => {
+    const normalized = _normalizeCustomerEmail(value);
+    if (normalized) emails.add(normalized);
+  };
+  const addPhone = (value) => {
+    const normalized = _normalizeCustomerPhone(value);
+    if (normalized) phones.add(normalized);
+  };
+
+  addEmail(rec?.customer_email);
+  addEmail(rec?.customerEmail);
+  addEmail(rec?.email);
+  addEmail(rec?.customer?.email);
+  addEmail(rec?.booking?.customer_email);
+  addEmail(rec?.booking?.customerEmail);
+  addEmail(rec?.booking?.email);
+  addEmail(rec?.booking?.customer?.email);
+  addEmail(rec?.contact?.email);
+
+  addPhone(rec?.customer_phone);
+  addPhone(rec?.customerPhone);
+  addPhone(rec?.phone);
+  addPhone(rec?.customer?.phone);
+  addPhone(rec?.booking?.customer_phone);
+  addPhone(rec?.booking?.customerPhone);
+  addPhone(rec?.booking?.phone);
+  addPhone(rec?.booking?.customer?.phone);
+  addPhone(rec?.contact?.phone);
+
+  return {
+    emails: Array.from(emails),
+    phones: Array.from(phones),
+  };
+}
+
+function _requestCustomerContactProof({ url, body = null } = {}) {
+  const search = url?.searchParams;
+  const email = _normalizeCustomerEmail(
+    body?.customer_email ??
+      body?.customerEmail ??
+      body?.email ??
+      body?.contact_email ??
+      body?.contactEmail ??
+      search?.get("customer_email") ??
+      search?.get("customerEmail") ??
+      search?.get("email") ??
+      search?.get("contact_email") ??
+      search?.get("contactEmail"),
+  );
+  const phone = _normalizeCustomerPhone(
+    body?.customer_phone ??
+      body?.customerPhone ??
+      body?.phone ??
+      body?.contact_phone ??
+      body?.contactPhone ??
+      search?.get("customer_phone") ??
+      search?.get("customerPhone") ??
+      search?.get("phone") ??
+      search?.get("contact_phone") ??
+      search?.get("contactPhone"),
+  );
+  return {
+    email,
+    phone,
+    hasProof: !!(email || phone),
+  };
+}
+
+function customerProofMatchesBooking(rec, proof) {
+  if (!proof?.hasProof) return false;
+  const bookingContacts = _bookingCustomerContacts(rec);
+  if (proof.email && bookingContacts.emails.includes(proof.email)) {
+    return true;
+  }
+  if (proof.phone && bookingContacts.phones.includes(proof.phone)) {
+    return true;
+  }
+  return false;
 }
 
 function resolveMutationActorFromRequest(request, url, body = null) {
@@ -8353,11 +8473,11 @@ async function listBookingsAuthoritative(
   return out.slice(0, lim);
 }
 
-async function getBookingAuthoritative(bookingId, env, tenantScope = null) {
+async function getBookingAuthoritative(bookingId, env, tenantScope = null, preloadedRec = null) {
   if (!tenantScope?.hasScope) {
     return missingTenantScopeError();
   }
-  const { rec } = await loadBookingRecord(env, bookingId);
+  const rec = preloadedRec || (await loadBookingRecord(env, bookingId)).rec;
   if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
