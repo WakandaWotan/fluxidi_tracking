@@ -525,6 +525,87 @@ Uri _withActiveBookingScope(
   return Uri.parse('$baseUrl$path').replace(queryParameters: scoped);
 }
 
+String? _normalizedCustomerProofPhone(String? value) {
+  final text = value?.trim() ?? '';
+  if (text.isEmpty) return null;
+  if (text.toLowerCase() == 'null') return null;
+  return text;
+}
+
+String? _normalizedCustomerProofEmail(String? value) {
+  final text = value?.trim() ?? '';
+  if (text.isEmpty) return null;
+  if (text.toLowerCase() == 'null') return null;
+  return text.toLowerCase();
+}
+
+Future<CustomerProfile?> _loadCachedCustomerProfileIfNeeded() async {
+  if (_cachedCustomerProfile != null) return _cachedCustomerProfile;
+  final loaded = await CustomerProfileStore.instance.load();
+  if (loaded != null) {
+    _setCachedCustomerProfile(loaded);
+  }
+  return loaded;
+}
+
+Future<Map<String, String>> _customerOwnershipProof({
+  required String bookingId,
+  Set<String>? aliases,
+  String? fallbackEmail,
+  String? fallbackPhone,
+  Map<String, dynamic>? source,
+}) async {
+  final normalizedAliases = <String>{};
+  void addAlias(String? value) {
+    final cleaned = _cleanBusinessReferenceText(value);
+    if (cleaned == null) return;
+    normalizedAliases.add(cleaned.toLowerCase());
+  }
+
+  addAlias(bookingId);
+  for (final alias in aliases ?? const <String>{}) {
+    addAlias(alias);
+  }
+  if (source != null && source.isNotEmpty) {
+    normalizedAliases.addAll(_customerBookingAliasesFromSource(source));
+  }
+
+  String? storedEmail;
+  String? storedPhone;
+  if (normalizedAliases.isNotEmpty) {
+    try {
+      final all = await CustomerBookingsStore.instance.loadAll();
+      for (final item in all) {
+        final itemAliases = _customerBookingAliasesFromStored(item);
+        final matches =
+            item.canonicalBookingId.trim() == bookingId.trim() ||
+            _customerAliasesIntersect(itemAliases, normalizedAliases);
+        if (!matches) continue;
+        storedEmail = _normalizedCustomerProofEmail(item.customerEmail);
+        storedPhone = _normalizedCustomerProofPhone(item.customerPhone);
+        if (storedEmail != null || storedPhone != null) break;
+      }
+    } catch (_) {
+      // Proof lookup is best-effort; continue with profile/view fallbacks.
+    }
+  }
+
+  final profile = await _loadCachedCustomerProfileIfNeeded();
+  final email =
+      storedEmail ??
+      _normalizedCustomerProofEmail(profile?.email) ??
+      _normalizedCustomerProofEmail(fallbackEmail);
+  final phone =
+      storedPhone ??
+      _normalizedCustomerProofPhone(profile?.phone) ??
+      _normalizedCustomerProofPhone(fallbackPhone);
+
+  return <String, String>{
+    if (email != null) 'customer_email': email,
+    if (phone != null) 'customer_phone': phone,
+  };
+}
+
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
@@ -6666,9 +6747,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final beforeCount = _bookings.length;
     final aliases = _aliasesForSavedBooking(booking);
     try {
+      final proof = await _customerOwnershipProof(
+        bookingId: id,
+        aliases: aliases,
+        source: booking.rawSnapshot,
+      );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(id)}',
+        extraQuery: proof.isEmpty ? null : proof,
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
@@ -7402,9 +7489,15 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         final id = item.canonicalBookingId.trim();
         if (id.isEmpty) continue;
         try {
+          final proof = await _customerOwnershipProof(
+            bookingId: id,
+            fallbackEmail: item.customerEmail,
+            fallbackPhone: item.customerPhone,
+          );
           final uri = _withActiveBookingScope(
             kBookingBaseUrl,
             '/bookings/${Uri.encodeComponent(id)}',
+            extraQuery: proof.isEmpty ? null : proof,
           );
           final res = await http.get(uri).timeout(const Duration(seconds: 12));
           if (res.statusCode != 200) continue;
@@ -8067,9 +8160,17 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
     });
 
     try {
+      final contactEmail = contact.contains('@') ? contact : null;
+      final contactPhone = contact.contains('@') ? null : contact;
+      final proof = await _customerOwnershipProof(
+        bookingId: bookingId,
+        fallbackEmail: contactEmail,
+        fallbackPhone: contactPhone,
+      );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(bookingId)}',
+        extraQuery: proof.isEmpty ? null : proof,
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
@@ -9400,9 +9501,26 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _refreshError = null;
     });
     try {
+      final aliases = _customerBookingDeleteAliases(
+        bookingId: widget.bookingId,
+        publicBookingReference: _view.publicBookingReference,
+        bookingReference: _view.publicBookingReference,
+        publicReference: _view.publicBookingReference,
+        planningReference: _view.planningReference,
+        receiptReference: _view.receiptReference,
+        source: _view.source,
+      );
+      final proof = await _customerOwnershipProof(
+        bookingId: widget.bookingId,
+        aliases: aliases,
+        fallbackEmail: _view.customerEmail,
+        fallbackPhone: _view.customerPhone,
+        source: _view.source,
+      );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(widget.bookingId)}',
+        extraQuery: proof.isEmpty ? null : proof,
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
@@ -9872,6 +9990,22 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _refreshError = null;
     });
     final scope = _activeBookingScopeQuery();
+    final aliases = _customerBookingDeleteAliases(
+      bookingId: bookingId,
+      publicBookingReference: _view.publicBookingReference,
+      bookingReference: _view.publicBookingReference,
+      publicReference: _view.publicBookingReference,
+      planningReference: _view.planningReference,
+      receiptReference: _view.receiptReference,
+      source: _view.source,
+    );
+    final proof = await _customerOwnershipProof(
+      bookingId: bookingId,
+      aliases: aliases,
+      fallbackEmail: _view.customerEmail,
+      fallbackPhone: _view.customerPhone,
+      source: _view.source,
+    );
     final payload = <String, dynamic>{
       'booking_id': bookingId,
       'status': 'CANCELLED',
@@ -9881,10 +10015,15 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'companyId': scope['companyId'],
       'actor_role': 'customer',
       'actorRole': 'customer',
+      if (proof['customer_email'] != null)
+        'customer_email': proof['customer_email'],
+      if (proof['customer_phone'] != null)
+        'customer_phone': proof['customer_phone'],
     };
     final uri = _withActiveBookingScope(
       kBookingBaseUrl,
       '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+      extraQuery: proof.isEmpty ? null : proof,
     );
     debugPrint(
       '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)}',
