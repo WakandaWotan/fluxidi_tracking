@@ -474,6 +474,10 @@ function _requireAdmin(request, url, env) {
   if (!got || got !== expected) throw new Error("Unauthorized");
 }
 
+function allowDevResetEndpoints(env) {
+  return String(env?.ALLOW_DEV_RESET_ENDPOINTS || "").trim().toLowerCase() === "true";
+}
+
 const TENANT_BUSINESS_PROFILE_KEY = "tenant:business_profile:v1";
 const TENANT_TAX_PROFILE_KEY = "tenant:tax_profile:v1";
 const TENANT_SUBSCRIPTION_PROFILE_KEY = "tenant:subscription:v1";
@@ -2894,11 +2898,17 @@ GET /oauth/callback
 
       // DEV/TEST ONLY. Must be disabled or protected before production.
       if (url.pathname === "/admin/dev/reset-operational-data/dry-run" && request.method === "GET") {
+        if (!allowDevResetEndpoints(env)) {
+          return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
+        }
         return await handleSafeResetDryRun(request, url, env);
       }
 
       // DEV/TEST ONLY. Must be disabled or protected before production.
       if (url.pathname === "/admin/dev/reset-operational-data" && request.method === "POST") {
+        if (!allowDevResetEndpoints(env)) {
+          return json({ ok: false, error: "dev reset endpoints are disabled" }, 403);
+        }
         return await handleSafeResetOperationalData(request, url, env);
       }
 
