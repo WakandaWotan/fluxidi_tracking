@@ -854,24 +854,56 @@ function resolveAdminExplicitTenantCompanyScope({ request, url, body = null } = 
   };
 }
 
-async function loadBusinessProfile(env, scope = null) {
+function _validateSettingsPayloadScope(payload, scope) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: true };
+  }
+  const scopeTenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const scopeCompany = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const payloadTenantSnake = sanitizeTenantString(payload.tenant_id, 80);
+  const payloadTenantCamel = sanitizeTenantString(payload.tenantId, 80);
+  const payloadCompanySnake = sanitizeTenantString(payload.company_id, 80);
+  const payloadCompanyCamel = sanitizeTenantString(payload.companyId, 80);
+  const tenantValues = [payloadTenantSnake, payloadTenantCamel].filter((v) => !!v);
+  const companyValues = [payloadCompanySnake, payloadCompanyCamel].filter((v) => !!v);
+  if (tenantValues.some((v) => v !== scopeTenant)) {
+    return { ok: false, error: "settings payload scope does not match request scope" };
+  }
+  if (companyValues.some((v) => v !== scopeCompany)) {
+    return { ok: false, error: "settings payload scope does not match request scope" };
+  }
+  return { ok: true };
+}
+
+async function loadBusinessProfile(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
   if (!env?.BOOKING_KV) return normalizeBusinessProfile(DEFAULT_BUSINESS_PROFILE);
   const scopedKeys = buildScopedSettingsKeys(scope);
   let raw = null;
   if (scopedKeys) {
     raw = await env.BOOKING_KV.get(scopedKeys.businessProfileKey, { type: "json" });
   }
-  if (!raw) {
+  if (!raw && allowTenantLegacyFallback) {
     raw = await env.BOOKING_KV.get(TENANT_BUSINESS_PROFILE_KEY, { type: "json" });
   }
   return normalizeBusinessProfile(raw?.business_profile ?? raw ?? DEFAULT_BUSINESS_PROFILE);
 }
 
-async function saveBusinessProfile(env, profile, scope = null) {
+async function saveBusinessProfile(
+  env,
+  profile,
+  scope = null,
+  { allowTenantLegacyWrite = true } = {},
+) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = normalizeBusinessProfile(profile);
   const scopedKeys = buildScopedSettingsKeys(scope);
-  const targetKey = scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY;
+  const targetKey = scopedKeys?.businessProfileKey ||
+    (allowTenantLegacyWrite ? TENANT_BUSINESS_PROFILE_KEY : "");
+  if (!targetKey) throw new Error("missing_tenant_scope");
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
@@ -880,24 +912,35 @@ async function saveBusinessProfile(env, profile, scope = null) {
   return normalized;
 }
 
-async function loadTaxProfile(env, scope = null) {
+async function loadTaxProfile(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
   if (!env?.BOOKING_KV) return normalizeTaxProfile(DEFAULT_TAX_PROFILE);
   const scopedKeys = buildScopedSettingsKeys(scope);
   let raw = null;
   if (scopedKeys) {
     raw = await env.BOOKING_KV.get(scopedKeys.taxProfileKey, { type: "json" });
   }
-  if (!raw) {
+  if (!raw && allowTenantLegacyFallback) {
     raw = await env.BOOKING_KV.get(TENANT_TAX_PROFILE_KEY, { type: "json" });
   }
   return normalizeTaxProfile(raw?.tax_profile ?? raw ?? DEFAULT_TAX_PROFILE);
 }
 
-async function saveTaxProfile(env, profile, scope = null) {
+async function saveTaxProfile(
+  env,
+  profile,
+  scope = null,
+  { allowTenantLegacyWrite = true } = {},
+) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = normalizeTaxProfile(profile);
   const scopedKeys = buildScopedSettingsKeys(scope);
-  const targetKey = scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY;
+  const targetKey = scopedKeys?.taxProfileKey ||
+    (allowTenantLegacyWrite ? TENANT_TAX_PROFILE_KEY : "");
+  if (!targetKey) throw new Error("missing_tenant_scope");
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
@@ -906,20 +949,29 @@ async function saveTaxProfile(env, profile, scope = null) {
   return normalized;
 }
 
-async function loadSubscriptionProfile(env, scope = null) {
+async function loadSubscriptionProfile(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
   if (!env?.BOOKING_KV) return normalizeSubscriptionProfile(DEFAULT_SUBSCRIPTION_PROFILE, scope);
   const scopedKeys = buildScopedSettingsKeys(scope);
   let raw = null;
   if (scopedKeys) {
     raw = await env.BOOKING_KV.get(scopedKeys.subscriptionProfileKey, { type: "json" });
   }
-  if (!raw) {
+  if (!raw && allowTenantLegacyFallback) {
     raw = await env.BOOKING_KV.get(TENANT_SUBSCRIPTION_PROFILE_KEY, { type: "json" });
   }
   return normalizeSubscriptionProfile(raw?.subscription_profile ?? raw ?? DEFAULT_SUBSCRIPTION_PROFILE, scope);
 }
 
-async function saveSubscriptionProfile(env, profile, scope = null) {
+async function saveSubscriptionProfile(
+  env,
+  profile,
+  scope = null,
+  { allowTenantLegacyWrite = true } = {},
+) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const nowIso = new Date().toISOString();
   const normalized = normalizeSubscriptionProfile({
@@ -927,7 +979,9 @@ async function saveSubscriptionProfile(env, profile, scope = null) {
     updated_at: nowIso,
   }, scope);
   const scopedKeys = buildScopedSettingsKeys(scope);
-  const targetKey = scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY;
+  const targetKey = scopedKeys?.subscriptionProfileKey ||
+    (allowTenantLegacyWrite ? TENANT_SUBSCRIPTION_PROFILE_KEY : "");
+  if (!targetKey) throw new Error("missing_tenant_scope");
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: nowIso,
@@ -944,7 +998,12 @@ async function saveSubscriptionProfile(env, profile, scope = null) {
   };
 }
 
-async function loadCommunicationTemplates(env, scopeOrTenant = null, companyIdArg = null) {
+async function loadCommunicationTemplates(
+  env,
+  scopeOrTenant = null,
+  companyIdArg = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
   if (!env?.BOOKING_KV) return normalizeCommunicationTemplates(DEFAULT_COMMUNICATION_TEMPLATES);
   const scope =
     scopeOrTenant && typeof scopeOrTenant === "object" && !Array.isArray(scopeOrTenant)
@@ -958,13 +1017,19 @@ async function loadCommunicationTemplates(env, scopeOrTenant = null, companyIdAr
   if (scopedKey) {
     raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
   }
-  if (!raw) {
+  if (!raw && allowTenantLegacyFallback) {
     raw = await env.BOOKING_KV.get(TENANT_COMMUNICATION_TEMPLATES_KEY, { type: "json" });
   }
   return normalizeCommunicationTemplates(raw?.communication_templates ?? raw ?? DEFAULT_COMMUNICATION_TEMPLATES);
 }
 
-async function saveCommunicationTemplates(env, templates, scopeOrTenant = null, companyIdArg = null) {
+async function saveCommunicationTemplates(
+  env,
+  templates,
+  scopeOrTenant = null,
+  companyIdArg = null,
+  { allowTenantLegacyWrite = true } = {},
+) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const scope =
     scopeOrTenant && typeof scopeOrTenant === "object" && !Array.isArray(scopeOrTenant)
@@ -973,7 +1038,8 @@ async function saveCommunicationTemplates(env, templates, scopeOrTenant = null, 
           tenant_id: scopeOrTenant,
           company_id: companyIdArg,
         };
-  const scopedKey = communicationTemplatesScopedKeyForScope(scope);
+  const scopedKey = communicationTemplatesScopedKeyForScope(scope) ||
+    (allowTenantLegacyWrite ? TENANT_COMMUNICATION_TEMPLATES_KEY : "");
   if (!scopedKey) throw new Error("missing_tenant_scope");
   const normalized = normalizeCommunicationTemplates(templates);
   await env.BOOKING_KV.put(scopedKey, JSON.stringify({
@@ -2593,7 +2659,9 @@ GET /oauth/callback
           return json(missingTenantScopeError(), 400);
         }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await _loadTenantPricingProfile(env, explicitScope);
+        const profile = await _loadTenantPricingProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
@@ -2612,8 +2680,14 @@ GET /oauth/callback
         const incoming = body?.pricing_profile && typeof body.pricing_profile === "object"
           ? body.pricing_profile
           : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const normalized = await _saveTenantPricingProfile(env, incoming, explicitScope);
+        const normalized = await _saveTenantPricingProfile(env, incoming, explicitScope, {
+          allowTenantLegacyWrite: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
@@ -2628,7 +2702,9 @@ GET /oauth/callback
           return json(missingTenantScopeError(), 400);
         }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await loadBusinessProfile(env, explicitScope);
+        const profile = await loadBusinessProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
@@ -2646,8 +2722,14 @@ GET /oauth/callback
         const incoming = body?.business_profile && typeof body.business_profile === "object"
           ? body.business_profile
           : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await saveBusinessProfile(env, incoming, explicitScope);
+        const profile = await saveBusinessProfile(env, incoming, explicitScope, {
+          allowTenantLegacyWrite: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
@@ -2662,7 +2744,9 @@ GET /oauth/callback
           return json(missingTenantScopeError(), 400);
         }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await loadTaxProfile(env, explicitScope);
+        const profile = await loadTaxProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY,
@@ -2680,8 +2764,14 @@ GET /oauth/callback
         const incoming = body?.tax_profile && typeof body.tax_profile === "object"
           ? body.tax_profile
           : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await saveTaxProfile(env, incoming, explicitScope);
+        const profile = await saveTaxProfile(env, incoming, explicitScope, {
+          allowTenantLegacyWrite: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.taxProfileKey || TENANT_TAX_PROFILE_KEY,
@@ -2696,7 +2786,9 @@ GET /oauth/callback
           return json(missingTenantScopeError(), 400);
         }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await loadSubscriptionProfile(env, explicitScope);
+        const profile = await loadSubscriptionProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
@@ -2714,8 +2806,14 @@ GET /oauth/callback
         const incoming = body?.subscription_profile && typeof body.subscription_profile === "object"
           ? body.subscription_profile
           : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const profile = await saveSubscriptionProfile(env, incoming, explicitScope);
+        const profile = await saveSubscriptionProfile(env, incoming, explicitScope, {
+          allowTenantLegacyWrite: false,
+        });
         return json({
           ok: true,
           key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
@@ -2730,7 +2828,9 @@ GET /oauth/callback
           return json(missingTenantScopeError(), 400);
         }
         const scopedKey = communicationTemplatesScopedKeyForScope(explicitScope);
-        const templates = await loadCommunicationTemplates(env, explicitScope);
+        const templates = await loadCommunicationTemplates(env, explicitScope, null, {
+          allowTenantLegacyFallback: false,
+        });
         return json({
           ok: true,
           key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
@@ -2748,8 +2848,18 @@ GET /oauth/callback
         const incoming = body?.communication_templates && typeof body.communication_templates === "object"
           ? body.communication_templates
           : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKey = communicationTemplatesScopedKeyForScope(explicitScope);
-        const templates = await saveCommunicationTemplates(env, incoming, explicitScope);
+        const templates = await saveCommunicationTemplates(
+          env,
+          incoming,
+          explicitScope,
+          null,
+          { allowTenantLegacyWrite: false },
+        );
         return json({
           ok: true,
           key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
@@ -6554,14 +6664,18 @@ function _normalizeTenantPricingProfile(raw) {
   };
 }
 
-async function _loadTenantPricingProfile(env, scope = null) {
+async function _loadTenantPricingProfile(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
   if (!env?.BOOKING_KV) return { ...DEFAULT_TENANT_PRICING_PROFILE };
   const scopedKeys = buildScopedSettingsKeys(scope);
   let raw = null;
   if (scopedKeys) {
     raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
   }
-  if (!raw) {
+  if (!raw && allowTenantLegacyFallback) {
     raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
   }
   const incoming = raw && typeof raw === "object"
@@ -6571,11 +6685,18 @@ async function _loadTenantPricingProfile(env, scope = null) {
   return _normalizeTenantPricingProfile(incoming);
 }
 
-async function _saveTenantPricingProfile(env, incoming, scope = null) {
+async function _saveTenantPricingProfile(
+  env,
+  incoming,
+  scope = null,
+  { allowTenantLegacyWrite = true } = {},
+) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = _normalizeTenantPricingProfile(incoming);
   const scopedKeys = buildScopedSettingsKeys(scope);
-  const targetKey = scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY;
+  const targetKey = scopedKeys?.pricingProfileKey ||
+    (allowTenantLegacyWrite ? TENANT_PRICING_PROFILE_KEY : "");
+  if (!targetKey) throw new Error("missing_tenant_scope");
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
