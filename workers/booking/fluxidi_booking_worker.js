@@ -2087,6 +2087,7 @@ GET /oauth/callback
       if (url.pathname === "/pay/return" && request.method === "GET") {
         const id = (url.searchParams.get("id") || "").trim();
         const requestedReturnTo = (url.searchParams.get("return_to") || "").trim();
+        const recoveredScope = await _resolvePaymentReturnScope(env, id);
         // Default to the Fluxidi app deep link so the customer is bounced back automatically.
         const returnTo = requestedReturnTo || "fluxidi://pay/return";
         return html(`
@@ -2113,6 +2114,14 @@ GET /oauth/callback
             (function(){
               const BOOKING_ID = ${JSON.stringify(id || "")};
               const RETURN_TO = ${JSON.stringify(returnTo || "")};
+              const RECOVERED_SCOPE = ${JSON.stringify(
+                recoveredScope?.hasScope
+                  ? {
+                      tenant_id: recoveredScope.tenant_id,
+                      company_id: recoveredScope.company_id,
+                    }
+                  : null,
+              )};
               const statusEl = document.getElementById('fx-status');
               const appCtaEl = document.getElementById('fx-app-cta');
               const appLinkEl = document.getElementById('fx-app-link');
@@ -2125,12 +2134,29 @@ GET /oauth/callback
               function buildAppReturnUrl(humanId, paymentId){
                 if (!RETURN_TO) return '';
                 const sep = RETURN_TO.includes('?') ? '&' : '?';
-                const params = [
-                  'booking_id=' + encodeURIComponent(humanId || ''),
-                  'payment_booking_id=' + encodeURIComponent(paymentId || ''),
-                  'status=confirmed',
-                ].join('&');
-                return RETURN_TO + sep + params;
+                const params = new URLSearchParams();
+                params.set('booking_id', humanId || '');
+                params.set('payment_booking_id', paymentId || '');
+                params.set('status', 'confirmed');
+                if (RECOVERED_SCOPE && RECOVERED_SCOPE.tenant_id && RECOVERED_SCOPE.company_id) {
+                  params.set('tenant_id', RECOVERED_SCOPE.tenant_id);
+                  params.set('company_id', RECOVERED_SCOPE.company_id);
+                  params.set('tenantId', RECOVERED_SCOPE.tenant_id);
+                  params.set('companyId', RECOVERED_SCOPE.company_id);
+                }
+                return RETURN_TO + sep + params.toString();
+              }
+
+              function buildStatusUrl(){
+                const params = new URLSearchParams();
+                params.set('id', BOOKING_ID);
+                if (RECOVERED_SCOPE && RECOVERED_SCOPE.tenant_id && RECOVERED_SCOPE.company_id) {
+                  params.set('tenant_id', RECOVERED_SCOPE.tenant_id);
+                  params.set('company_id', RECOVERED_SCOPE.company_id);
+                  params.set('tenantId', RECOVERED_SCOPE.tenant_id);
+                  params.set('companyId', RECOVERED_SCOPE.company_id);
+                }
+                return window.location.origin + '/pay/status?' + params.toString();
               }
 
               function showAppCta(target){
@@ -2150,7 +2176,7 @@ GET /oauth/callback
 
               async function poll(attempt){
                 try {
-                  const res = await fetch(window.location.origin + '/pay/status?id=' + encodeURIComponent(BOOKING_ID), { method: 'GET' });
+                  const res = await fetch(buildStatusUrl(), { method: 'GET' });
                   const j = await res.json().catch(() => ({}));
 
                   if (!res.ok || !j || !j.ok) {
@@ -11090,6 +11116,93 @@ function _payStatusBookingIdCandidates(data, id, includeRawId = false) {
   add(data?.payload?.bookingId);
   if (includeRawId) add(id);
   return out;
+}
+
+function _payStatusFirstScope(scopes = []) {
+  for (const scope of scopes) {
+    if (scope?.hasScope) return scope;
+  }
+  return null;
+}
+
+function _payStatusScopesConflict(a, b) {
+  if (!a?.hasScope || !b?.hasScope) return false;
+  return !_payStatusScopeMatches(a, b);
+}
+
+async function _resolvePaymentReturnScope(env, id) {
+  const bookingId = safeStr(id, 160);
+  if (!bookingId || !env?.BOOKING_KV) return { hasScope: false };
+  const candidateScopes = [];
+  const candidateBookings = [];
+
+  try {
+    const bookingRec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (bookingRec && typeof bookingRec === "object") {
+      const bookingScope = _payStatusScopeFromBookingRecord(bookingRec);
+      if (bookingScope?.hasScope) candidateScopes.push(bookingScope);
+    }
+  } catch (_) {}
+
+  let paymentRec = null;
+  try {
+    const loaded = await env.BOOKING_KV.get(`payment:${bookingId}`, { type: "json" });
+    if (loaded && typeof loaded === "object") {
+      paymentRec = loaded;
+      const paymentScope = _payStatusScopeFromPaymentRecord(loaded);
+      if (paymentScope?.hasScope) candidateScopes.push(paymentScope);
+      const hintedBookingIds = _payStatusBookingIdCandidates(loaded, bookingId, true);
+      for (const hintedBookingId of hintedBookingIds) {
+        if (!hintedBookingId) continue;
+        if (!candidateBookings.includes(hintedBookingId)) {
+          candidateBookings.push(hintedBookingId);
+        }
+      }
+    }
+  } catch (_) {}
+
+  if (!candidateBookings.includes(bookingId)) {
+    candidateBookings.push(bookingId);
+  }
+  if (paymentRec) {
+    const hintedFromPayment = _payStatusBookingIdCandidates(paymentRec, bookingId, true);
+    for (const hintedBookingId of hintedFromPayment) {
+      if (!hintedBookingId) continue;
+      if (!candidateBookings.includes(hintedBookingId)) {
+        candidateBookings.push(hintedBookingId);
+      }
+    }
+  }
+
+  for (const candidateBookingId of candidateBookings) {
+    try {
+      const loaded = await loadBookingRecord(env, candidateBookingId);
+      const bookingScope = _payStatusScopeFromBookingRecord(loaded?.rec);
+      if (bookingScope?.hasScope) candidateScopes.push(bookingScope);
+    } catch (_) {
+      // Best-effort only for /pay/return rendering.
+    }
+  }
+
+  let resolved = null;
+  for (const scope of candidateScopes) {
+    if (!scope?.hasScope) continue;
+    if (!resolved) {
+      resolved = scope;
+      continue;
+    }
+    if (_payStatusScopesConflict(resolved, scope)) {
+      return { hasScope: false };
+    }
+  }
+
+  const firstScope = _payStatusFirstScope([resolved]);
+  if (!firstScope?.hasScope) return { hasScope: false };
+  return {
+    tenant_id: firstScope.tenant_id,
+    company_id: firstScope.company_id,
+    hasScope: true,
+  };
 }
 
 async function payStatus(request, env, requestedScopeOverride = null) {
