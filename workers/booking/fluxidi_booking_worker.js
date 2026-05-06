@@ -2522,10 +2522,9 @@ GET /oauth/callback
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
-        const tenantScope = extractBookingTenantScope({ request, url });
-        if (!tenantScope.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const items = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
@@ -2904,10 +2903,9 @@ GET /oauth/callback
         if (!bookingId) return json({ ok: false, error: "booking_id is required" }, 400);
 
         if (pathParts.length === 2 && request.method === "GET") {
-          const tenantScope = extractBookingTenantScope({ request, url });
-          if (!tenantScope.hasScope) {
-            return json(missingTenantScopeError(), 400);
-          }
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
           const out = await getBookingAuthoritative(bookingId, env, tenantScope);
           return json(
             out,
@@ -2924,10 +2922,9 @@ GET /oauth/callback
         ) {
           _requireAdmin(request, url, env);
           const body = await safeJson(request);
-          const tenantScope = extractBookingTenantScope({ request, url, body });
-          if (!tenantScope.hasScope) {
-            return json(missingTenantScopeError(), 400);
-          }
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
           const { rec } = await loadBookingRecord(env, bookingId);
           const ownershipBlock = await enforceDriverOwnershipForMutation({
             request,
@@ -2961,10 +2958,9 @@ GET /oauth/callback
         ) {
           _requireAdmin(request, url, env);
           const body = await safeJson(request);
-          const tenantScope = extractBookingTenantScope({ request, url, body });
-          if (!tenantScope.hasScope) {
-            return json(missingTenantScopeError(), 400);
-          }
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
           const { rec } = await loadBookingRecord(env, bookingId);
           const ownershipBlock = await enforceDriverOwnershipForMutation({
             request,
@@ -3087,10 +3083,9 @@ GET /oauth/callback
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
-        const tenantScope = extractBookingTenantScope({ request, url });
-        if (!tenantScope.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const items = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
@@ -3103,10 +3098,9 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
         const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
-        const tenantScope = extractBookingTenantScope({ request, url, body });
-        if (!tenantScope.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const { rec } = await loadBookingRecord(env, bookingId);
         const ownershipBlock = await enforceDriverOwnershipForMutation({
           request,
@@ -3137,10 +3131,9 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
         const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
-        const tenantScope = extractBookingTenantScope({ request, url, body });
-        if (!tenantScope.hasScope) {
-          return json(missingTenantScopeError(), 400);
-        }
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const { rec } = await loadBookingRecord(env, bookingId);
         const ownershipBlock = await enforceDriverOwnershipForMutation({
           request,
@@ -3172,7 +3165,9 @@ GET /oauth/callback
       // Get booking + quote/pricing for a given booking_id (used by the apps)
       if (url.pathname === "/tracking/booking" && request.method === "POST") {
         const body = await safeJson(request);
-        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const out = await trackingGetBooking(body, env, tenantScope);
         return json(
           out,
@@ -3376,6 +3371,27 @@ function resolveExplicitBookingRequestScope({ request, url, body = null, allowLe
     company_id: companyId,
     hasScope: true,
   };
+}
+
+function requireExplicitBookingRouteScope({ request, url, body = null } = {}) {
+  const scope = resolveExplicitBookingRequestScope({
+    request,
+    url,
+    body,
+    allowLegacyFallback: false,
+  });
+  if (!scope?.hasScope) {
+    return {
+      ok: false,
+      response: json(
+        scope?.error === "tenant_scope_conflict"
+          ? scopeConflictError()
+          : missingTenantScopeError(),
+        400,
+      ),
+    };
+  }
+  return { ok: true, scope };
 }
 
 function isLegacyTenantScopeRequest(requestedScope) {
