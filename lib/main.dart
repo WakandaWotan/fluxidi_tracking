@@ -3357,357 +3357,953 @@ class BusinessHomePage extends StatelessWidget {
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
+  void _openCalculator(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
+        ),
+      ),
+    );
+  }
+
+  ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {
+    return (
+      bg: profile.isSuspended
+          ? const Color(0xFF3A1010)
+          : profile.isVerified
+          ? const Color(0xFF12331F)
+          : const Color(0xFF2A2410),
+      border: profile.isSuspended
+          ? Colors.red.withOpacity(0.45)
+          : profile.isVerified
+          ? const Color(0xFF4ADE80).withOpacity(0.45)
+          : kFluxidiYellow.withOpacity(0.55),
+      text: profile.isSuspended
+          ? const Color(0xFFFFB4B4)
+          : profile.isVerified
+          ? const Color(0xFFB8F5C8)
+          : const Color(0xFFE5D4A1),
+    );
+  }
+
+  Widget _statusPill(CompanyProfile profile, {bool compact = false}) {
+    final colors = _statusColors(profile);
+    final fontSize = compact ? 10.5 : 12.0;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 3.5 : 5,
+      ),
+      decoration: BoxDecoration(
+        color: colors.bg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: colors.border),
+      ),
+      child: Text(
+        profile.verificationBadgeLabel(appConfig.currentLanguage),
+        style: TextStyle(
+          color: colors.text,
+          fontWeight: FontWeight.w700,
+          fontSize: fontSize,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  String _companyInitials(CompanyProfile? profile) {
+    final name = profile?.companyName.trim() ?? '';
+    if (name.isEmpty) return 'FB';
+    final parts = name
+        .split(RegExp(r'\s+'))
+        .where((part) => part.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.isEmpty) return 'FB';
+    final first = parts.first.substring(0, 1).toUpperCase();
+    final second = parts.length > 1
+        ? parts[1].substring(0, 1).toUpperCase()
+        : (parts.first.length > 1
+              ? parts.first.substring(1, 2).toUpperCase()
+              : 'B');
+    return '$first$second';
+  }
+
+  Future<void> _openCompanyDetails(BuildContext context) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const CompanyProfileEditPage()),
+    );
+  }
+
+  Future<void> _switchCompany(BuildContext context) async {
+    await CompanySessionStore.instance.clearLocalCompanyState();
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
+      (route) => false,
+    );
+  }
+
+  Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Container(
+      padding: padding ?? const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.17)),
+        boxShadow: [
+          BoxShadow(
+            color: kFluxidiYellow.withOpacity(0.07),
+            blurRadius: 12,
+            spreadRadius: 0.2,
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.36),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _topBar(BuildContext context, CompanyProfile? profile) {
+    final companyName = profile?.companyName.trim().isNotEmpty == true
+        ? profile!.companyName.trim()
+        : 'Fluxidi';
+    return Row(
+      children: [
+        Image.asset(
+          kFluxidiLogoAsset,
+          width: 126,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        ),
+        const Spacer(),
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: kFluxidiYellow.withOpacity(0.28)),
+            color: const Color(0xFF111111),
+          ),
+          child: Icon(
+            Icons.notifications_none_rounded,
+            size: 19,
+            color: kFluxidiYellow.withOpacity(0.93),
+          ),
+        ),
+        const SizedBox(width: 8),
+        PopupMenuButton<String>(
+          color: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.36)),
+          ),
+          onSelected: (value) {
+            if (value == 'details') {
+              _openCompanyDetails(context);
+              return;
+            }
+            if (value == 'switch') {
+              _switchCompany(context);
+            }
+          },
+          itemBuilder: (_) => [
+            if (profile != null)
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _statusPill(profile, compact: true),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_t(nl: 'Bedrijfs-ID', en: 'Company ID', fr: 'ID entreprise', es: 'ID empresa')}: ${profile.companyId}',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      profile.email.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                    if (profile.showsPendingVerificationNotice) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        profile.verificationPendingNotice(
+                          appConfig.currentLanguage,
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            PopupMenuItem<String>(
+              value: 'details',
+              child: Text(
+                _t(
+                  nl: 'Bedrijfsgegevens',
+                  en: 'Company details',
+                  fr: 'Données de l’entreprise',
+                  es: 'Datos de empresa',
+                ),
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'switch',
+              child: Text(
+                _t(
+                  nl: 'Ander bedrijf',
+                  en: 'Other company',
+                  fr: 'Autre entreprise',
+                  es: 'Otra empresa',
+                ),
+                style: TextStyle(color: Colors.redAccent.shade100),
+              ),
+            ),
+          ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xFF101010),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kFluxidiYellow.withOpacity(0.32)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF15120A),
+                    border: Border.all(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _companyInitials(profile),
+                    style: const TextStyle(
+                      color: Color(0xFFE5B641),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 110),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        companyName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                      Text(
+                        _t(
+                          nl: 'Bedrijf',
+                          en: 'Business',
+                          fr: 'Entreprise',
+                          es: 'Empresa',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.68),
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: kFluxidiYellow.withOpacity(0.95),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _metricCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required String subtitle,
+    required Color accentColor,
+  }) {
+    return _panel(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accentColor.withOpacity(0.16),
+              border: Border.all(color: accentColor.withOpacity(0.45)),
+            ),
+            child: Icon(icon, color: accentColor, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.58),
+                    fontSize: 11.2,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 24,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _primaryCta(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => _openCalculator(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: kFluxidiYellow.withOpacity(0.48)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF15120A), Color(0xFF07080C)],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: kFluxidiYellow.withOpacity(0.13),
+              blurRadius: 18,
+              spreadRadius: 0.8,
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    kFluxidiYellow.withOpacity(0.35),
+                    const Color(0xFF15120A),
+                  ],
+                ),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.55)),
+              ),
+              child: const Icon(
+                Icons.calculate_outlined,
+                color: Color(0xFFE5B641),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Nieuwe boeking',
+                      en: 'New booking',
+                      fr: 'Nouvelle réservation',
+                      es: 'Nueva reserva',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15.3,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_rounded,
+              color: kFluxidiYellow.withOpacity(0.98),
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _quickActionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+    bool isFuture = false,
+    String? futureBadge,
+  }) {
+    final active = onTap != null && !isFuture;
+    return InkWell(
+      borderRadius: BorderRadius.circular(15),
+      onTap: active ? onTap : null,
+      child: _panel(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        (active ? kFluxidiYellow : const Color(0xFF8A8A8A))
+                            .withOpacity(0.28),
+                        const Color(0xFF15120A),
+                      ],
+                    ),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: (active ? kFluxidiYellow : Colors.white)
+                          .withOpacity(active ? 0.50 : 0.26),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (active ? kFluxidiYellow : Colors.black)
+                            .withOpacity(active ? 0.10 : 0.16),
+                        blurRadius: 10,
+                        spreadRadius: 0.2,
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    icon,
+                    color: active
+                        ? kFluxidiYellow.withOpacity(0.98)
+                        : Colors.white.withOpacity(0.60),
+                    size: 29,
+                  ),
+                ),
+                const Spacer(),
+                if ((futureBadge ?? '').trim().isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF15120A),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: kFluxidiYellow.withOpacity(0.42),
+                      ),
+                    ),
+                    child: Text(
+                      futureBadge!,
+                      style: TextStyle(
+                        color: kFluxidiYellow.withOpacity(0.95),
+                        fontSize: 10.3,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withOpacity(active ? 1.0 : 0.78),
+                fontWeight: FontWeight.w800,
+                fontSize: 14.3,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withOpacity(active ? 0.64 : 0.5),
+                fontSize: 11.4,
+              ),
+            ),
+            const Spacer(),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: active
+                  ? Icon(
+                      Icons.chevron_right_rounded,
+                      size: 17,
+                      color: kFluxidiYellow.withOpacity(0.9),
+                    )
+                  : Icon(
+                      Icons.lock_clock_outlined,
+                      size: 15.5,
+                      color: Colors.white.withOpacity(0.44),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
-          title: const Text('FLUXIDI'),
-        ),
+        backgroundColor: const Color(0xFF07080C),
         body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                _t(
-                  nl: 'Bedrijf',
-                  en: 'Business',
-                  fr: 'Entreprise',
-                  es: 'Empresa',
-                ),
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF101010),
+                  Color(0xFF07080C),
+                  Color(0xFF07080C),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                _t(
-                  nl: 'Beheer je bedrijf, voertuigen en boekingen.',
-                  en: 'Manage your company, vehicles, and bookings.',
-                  fr: 'Gerez votre entreprise, vos vehicules et vos reservations.',
-                  es: 'Gestiona tu empresa, vehiculos y reservas.',
-                ),
-                style: TextStyle(color: Colors.white.withOpacity(0.72)),
-              ),
-              const SizedBox(height: 16),
-              ValueListenableBuilder<CompanyProfile?>(
-                valueListenable: companyProfileNotifier,
-                builder: (context, profile, _) {
-                  if (profile == null) return const SizedBox.shrink();
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Card(
-                        color: const Color(0xFF141B2F),
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                profile.companyName,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: profile.isSuspended
-                                        ? const Color(0xFF3A1010)
-                                        : profile.isVerified
-                                        ? const Color(0xFF12331F)
-                                        : const Color(0xFF2A2410),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: profile.isSuspended
-                                          ? Colors.red.withOpacity(0.45)
-                                          : profile.isVerified
-                                          ? const Color(
-                                              0xFF4ADE80,
-                                            ).withOpacity(0.45)
-                                          : const Color(
-                                              0xFFE5B641,
-                                            ).withOpacity(0.55),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    profile.verificationBadgeLabel(
-                                      appConfig.currentLanguage,
-                                    ),
-                                    style: TextStyle(
-                                      color: profile.isSuspended
-                                          ? const Color(0xFFFFB4B4)
-                                          : profile.isVerified
-                                          ? const Color(0xFFB8F5C8)
-                                          : const Color(0xFFE5D4A1),
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (profile.showsPendingVerificationNotice) ...[
-                                const SizedBox(height: 8),
-                                Text(
-                                  profile.verificationPendingNotice(
-                                    appConfig.currentLanguage,
-                                  ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.62),
-                                    fontSize: 12,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_t(nl: 'Bedrijfs-ID:', en: 'Company ID:', fr: 'ID entreprise :', es: 'ID de empresa:')} ${profile.companyId}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.85),
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_t(nl: 'Contact:', en: 'Contact:', fr: 'Contact :', es: 'Contacto:')} ${profile.email}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.8),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton(
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: const Color(
-                                          0xFFE5B641,
-                                        ),
-                                        side: const BorderSide(
-                                          color: Color(0xFFE5B641),
-                                        ),
-                                      ),
-                                      onPressed: () {
-                                        Navigator.of(context).push(
-                                          MaterialPageRoute<void>(
-                                            builder: (_) =>
-                                                const CompanyProfileEditPage(),
-                                          ),
-                                        );
-                                      },
-                                      child: Text(
-                                        _t(
-                                          nl: 'Bedrijfsgegevens',
-                                          en: 'Company details',
-                                          fr: 'Données de l’entreprise',
-                                          es: 'Datos de empresa',
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: TextButton(
-                                      onPressed: () async {
-                                        await CompanySessionStore.instance
-                                            .clearLocalCompanyState();
-                                        if (!context.mounted) return;
-                                        Navigator.of(
-                                          context,
-                                        ).pushAndRemoveUntil(
-                                          MaterialPageRoute<void>(
-                                            builder: (_) =>
-                                                const RoleEntryPage(),
-                                          ),
-                                          (route) => false,
-                                        );
-                                      },
-                                      child: Text(
-                                        _t(
-                                          nl: 'Ander bedrijf',
-                                          en: 'Other company',
-                                          fr: 'Autre entreprise',
-                                          es: 'Otra empresa',
-                                        ),
-                                        style: TextStyle(
-                                          color: Colors.redAccent.shade100,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+            ),
+            child: ValueListenableBuilder<CompanyProfile?>(
+              valueListenable: companyProfileNotifier,
+              builder: (context, profile, _) => ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                children: [
+                  _topBar(context, profile),
+                  const SizedBox(height: 12),
+                  _panel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Goedemorgen! 👋',
+                            en: 'Good morning! 👋',
+                            fr: 'Bonjour ! 👋',
+                            es: '¡Buenos días! 👋',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 19,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                  );
-                },
-              ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.calculate_outlined),
-                  title: Text(
-                    appConfig.strings.calculatorTitle.of(
-                      appConfig.currentLanguage,
-                    ),
-                  ),
-                  subtitle: Text(kCalculatorMenuSubtitle),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => CalculatorPage(
-                          bookingBaseUrl: kBookingBaseUrl,
-                          mapboxToken: kMapboxToken,
+                        const SizedBox(height: 3),
+                        Text(
+                          _t(
+                            nl: 'Bedrijfsoverzicht',
+                            en: 'Business overview',
+                            fr: 'Aperçu de l’entreprise',
+                            es: 'Resumen de empresa',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.74),
+                            fontSize: 12.5,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.business_center_outlined),
-                  title: Text(kDrawerBusinessSettingsLabel),
-                  subtitle: Text(kDrawerBusinessSettingsSubtitle),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const BusinessSettingsPage(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.credit_card_outlined),
-                  title: Text(
-                    _t(
-                      nl: 'Abonnement & facturatie',
-                      en: 'Subscription & billing',
-                      fr: 'Abonnement & facturation',
-                      es: 'Suscripción y facturación',
+                      ],
                     ),
                   ),
-                  subtitle: Text(
+                  const SizedBox(height: 10),
+                  _primaryCta(context),
+                  const SizedBox(height: 10),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final stacked = constraints.maxWidth < 430;
+                      if (stacked) {
+                        return Column(
+                          children: [
+                            _metricCard(
+                              icon: Icons.directions_car_outlined,
+                              title: _t(
+                                nl: 'Ritten',
+                                en: 'Rides',
+                                fr: 'Courses',
+                                es: 'Viajes',
+                              ),
+                              subtitle: _t(
+                                nl: 'Actief',
+                                en: 'Active',
+                                fr: 'Actif',
+                                es: 'Activo',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFF4ADE80),
+                            ),
+                            const SizedBox(height: 8),
+                            _metricCard(
+                              icon: Icons.calendar_month_outlined,
+                              title: _t(
+                                nl: 'Boekingen',
+                                en: 'Bookings',
+                                fr: 'Réservations',
+                                es: 'Reservas',
+                              ),
+                              subtitle: _t(
+                                nl: 'Vandaag',
+                                en: 'Today',
+                                fr: 'Aujourd’hui',
+                                es: 'Hoy',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFF60A5FA),
+                            ),
+                            const SizedBox(height: 8),
+                            _metricCard(
+                              icon: Icons.payments_outlined,
+                              title: _t(
+                                nl: 'Betalingen',
+                                en: 'Payments',
+                                fr: 'Paiements',
+                                es: 'Pagos',
+                              ),
+                              subtitle: _t(
+                                nl: 'Open',
+                                en: 'Open',
+                                fr: 'Ouvert',
+                                es: 'Abierto',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFFF97373),
+                            ),
+                          ],
+                        );
+                      }
+                      final cardWidth = (constraints.maxWidth - 16) / 3;
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          SizedBox(
+                            width: cardWidth,
+                            child: _metricCard(
+                              icon: Icons.directions_car_outlined,
+                              title: _t(
+                                nl: 'Ritten',
+                                en: 'Rides',
+                                fr: 'Courses',
+                                es: 'Viajes',
+                              ),
+                              subtitle: _t(
+                                nl: 'Actief',
+                                en: 'Active',
+                                fr: 'Actif',
+                                es: 'Activo',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFF4ADE80),
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            child: _metricCard(
+                              icon: Icons.calendar_month_outlined,
+                              title: _t(
+                                nl: 'Boekingen',
+                                en: 'Bookings',
+                                fr: 'Réservations',
+                                es: 'Reservas',
+                              ),
+                              subtitle: _t(
+                                nl: 'Vandaag',
+                                en: 'Today',
+                                fr: 'Aujourd’hui',
+                                es: 'Hoy',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFF60A5FA),
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            child: _metricCard(
+                              icon: Icons.payments_outlined,
+                              title: _t(
+                                nl: 'Betalingen',
+                                en: 'Payments',
+                                fr: 'Paiements',
+                                es: 'Pagos',
+                              ),
+                              subtitle: _t(
+                                nl: 'Open',
+                                en: 'Open',
+                                fr: 'Ouvert',
+                                es: 'Abierto',
+                              ),
+                              value: '—',
+                              accentColor: const Color(0xFFF97373),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
                     _t(
-                      nl: 'Beheer plan, limieten en modules',
-                      en: 'Manage plan, limits and modules',
-                      fr: 'Gérez le plan, les limites et les modules',
-                      es: 'Gestiona el plan, los límites y los módulos',
+                      nl: 'Snelle acties',
+                      en: 'Quick actions',
+                      fr: 'Actions rapides',
+                      es: 'Acciones rápidas',
+                    ),
+                    style: TextStyle(
+                      color: kFluxidiYellow.withOpacity(0.95),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const CompanySubscriptionBillingPage(),
-                      ),
-                    );
-                  },
-                ),
+                  const SizedBox(height: 10),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final cardWidth = (constraints.maxWidth - 12) / 2;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.business_center_outlined,
+                              title: _t(
+                                nl: 'Instellingen',
+                                en: 'Settings',
+                                fr: 'Réglages',
+                                es: 'Ajustes',
+                              ),
+                              subtitle: _t(
+                                nl: 'Profiel & branding',
+                                en: 'Profile & branding',
+                                fr: 'Profil & branding',
+                                es: 'Perfil y marca',
+                              ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const BusinessSettingsPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.credit_card_outlined,
+                              title: _t(
+                                nl: 'Abonnement',
+                                en: 'Plan',
+                                fr: 'Abonnement',
+                                es: 'Plan',
+                              ),
+                              subtitle: _t(
+                                nl: 'Facturatie',
+                                en: 'Billing',
+                                fr: 'Facturation',
+                                es: 'Facturación',
+                              ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const CompanySubscriptionBillingPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.directions_car_filled_outlined,
+                              title: _t(
+                                nl: 'Voertuigen',
+                                en: 'Vehicles',
+                                fr: 'Véhicules',
+                                es: 'Vehículos',
+                              ),
+                              subtitle: _t(
+                                nl: 'Wagenpark',
+                                en: 'Fleet',
+                                fr: 'Flotte',
+                                es: 'Flota',
+                              ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const VehicleManagementPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.fact_check_outlined,
+                              title: _t(
+                                nl: 'Chiron',
+                                en: 'Chiron',
+                                fr: 'Chiron',
+                                es: 'Chiron',
+                              ),
+                              subtitle: 'Compliance',
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        const ChironComplianceDashboardPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.local_taxi_outlined,
+                              title: _t(
+                                nl: 'Chauffeurs',
+                                en: 'Drivers',
+                                fr: 'Chauffeurs',
+                                es: 'Conductores',
+                              ),
+                              subtitle: _t(
+                                nl: 'Team',
+                                en: 'Team',
+                                fr: 'Équipe',
+                                es: 'Equipo',
+                              ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        const CompanyDriverManagementPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.auto_awesome_outlined,
+                              title: _t(
+                                nl: 'AI Dispatch',
+                                en: 'AI Dispatch',
+                                fr: 'Dispatch IA',
+                                es: 'Despacho IA',
+                              ),
+                              subtitle: _t(
+                                nl: 'Binnenkort',
+                                en: 'Coming soon',
+                                fr: 'Bientôt',
+                                es: 'Próximamente',
+                              ),
+                              isFuture: true,
+                              futureBadge: _t(
+                                nl: 'Binnenkort',
+                                en: 'Soon',
+                                fr: 'Bientôt',
+                                es: 'Pronto',
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  const FluxidiBackToStartButton(),
+                ],
               ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.directions_car_filled_outlined),
-                  title: Text(kDrawerVehiclesLabel),
-                  subtitle: Text(kDrawerVehiclesSubtitle),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const VehicleManagementPage(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.fact_check_outlined),
-                  title: Text(
-                    _t(
-                      nl: 'Chiron-complianceoverzicht',
-                      en: 'Chiron compliance dashboard',
-                      fr: 'Tableau de conformité Chiron',
-                      es: 'Panel de cumplimiento Chiron',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _t(
-                      nl: 'Alleen-lezen compliancecontrole',
-                      en: 'Read-only compliance overview',
-                      fr: 'Vue conformité en lecture seule',
-                      es: 'Vista de cumplimiento de solo lectura',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const ChironComplianceDashboardPage(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Card(
-                color: const Color(0xFF141B2F),
-                child: ListTile(
-                  leading: const Icon(Icons.local_taxi_outlined),
-                  title: Text(
-                    _t(
-                      nl: 'Chauffeurs beheren',
-                      en: 'Manage drivers',
-                      fr: 'Gérer les chauffeurs',
-                      es: 'Gestionar conductores',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _t(
-                      nl: 'Beheer chauffeurs en beschikbaarheid',
-                      en: 'Manage drivers and availability',
-                      fr: 'Gérez les chauffeurs et disponibilités',
-                      es: 'Gestiona conductores y disponibilidad',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const CompanyDriverManagementPage(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              const FluxidiBackToStartButton(),
-            ],
+            ),
           ),
         ),
       ),
