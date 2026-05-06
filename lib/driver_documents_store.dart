@@ -496,13 +496,57 @@ class DriverDocumentsStore {
     } catch (_) {}
   }
 
+  String _activeCompanyIdForDocuments() {
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (profileCompanyId.isNotEmpty) return profileCompanyId;
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) return sessionCompanyId;
+    final hasExplicitContext =
+        companyProfileNotifier.value != null ||
+        activeCompanySessionNotifier.value != null;
+    if (hasExplicitContext) {
+      final resolved = resolvedCompanyId.trim();
+      if (resolved.isNotEmpty) return resolved;
+    }
+    return '';
+  }
+
+  DriverDocument _copyWithCompanyId(DriverDocument doc, String companyId) {
+    final cid = companyId.trim();
+    if (doc.companyId.trim() == cid) return doc;
+    return DriverDocument(
+      documentId: doc.documentId,
+      companyId: cid,
+      driverId: doc.driverId,
+      documentType: doc.documentType,
+      title: doc.title,
+      filePath: doc.filePath,
+      expiryDate: doc.expiryDate,
+      status: doc.status,
+      notes: doc.notes,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    );
+  }
+
+  /// Exposed for UI-level pre-save guards.
+  String resolvedActiveCompanyIdForDocuments() =>
+      _activeCompanyIdForDocuments();
+
   List<DriverDocument> documentsVisibleForDriver(String driverId) {
     final did = driverId.trim();
+    final activeCompanyId = _activeCompanyIdForDocuments();
     final rid = resolvedCompanyId.trim();
     return driverDocumentsNotifier.value
         .where((d) {
           if (d.driverId.trim() != did) return false;
           final c = d.companyId.trim();
+          if (activeCompanyId.isNotEmpty) {
+            // Companyless legacy docs are hidden in active-company context to avoid cross-company leakage.
+            return c == activeCompanyId;
+          }
           if (c.isEmpty) return true;
           return c == rid;
         })
@@ -519,15 +563,44 @@ class DriverDocumentsStore {
 
   Future<void> addDocument(DriverDocument doc) async {
     if (doc.driverId.trim().isEmpty) return;
-    final next = <DriverDocument>[...driverDocumentsNotifier.value, doc];
+    final activeCompanyId = _activeCompanyIdForDocuments();
+    var candidate = doc;
+    if (activeCompanyId.isNotEmpty) {
+      final docCompanyId = doc.companyId.trim();
+      if (docCompanyId.isEmpty) {
+        candidate = _copyWithCompanyId(doc, activeCompanyId);
+      } else if (docCompanyId != activeCompanyId) {
+        return;
+      }
+    }
+    final next = <DriverDocument>[...driverDocumentsNotifier.value, candidate];
     driverDocumentsNotifier.value = next;
     await _persist();
   }
 
   Future<void> updateDocument(DriverDocument doc) async {
     if (doc.driverId.trim().isEmpty) return;
+    final activeCompanyId = _activeCompanyIdForDocuments();
+    DriverDocument? existing;
+    for (final entry in driverDocumentsNotifier.value) {
+      if (entry.documentId == doc.documentId) {
+        existing = entry;
+        break;
+      }
+    }
+    if (existing == null) return;
+    var candidate = doc;
+    if (activeCompanyId.isNotEmpty) {
+      if (existing.companyId.trim() != activeCompanyId) return;
+      final docCompanyId = doc.companyId.trim();
+      if (docCompanyId.isEmpty) {
+        candidate = _copyWithCompanyId(doc, activeCompanyId);
+      } else if (docCompanyId != activeCompanyId) {
+        return;
+      }
+    }
     final next = driverDocumentsNotifier.value
-        .map((d) => d.documentId == doc.documentId ? doc : d)
+        .map((d) => d.documentId == candidate.documentId ? candidate : d)
         .toList(growable: false);
     driverDocumentsNotifier.value = next;
     await _persist();
@@ -535,6 +608,18 @@ class DriverDocumentsStore {
 
   Future<void> deleteDocument(String documentId) async {
     final id = documentId.trim();
+    final activeCompanyId = _activeCompanyIdForDocuments();
+    if (activeCompanyId.isNotEmpty) {
+      DriverDocument? target;
+      for (final entry in driverDocumentsNotifier.value) {
+        if (entry.documentId == id) {
+          target = entry;
+          break;
+        }
+      }
+      if (target == null) return;
+      if (target.companyId.trim() != activeCompanyId) return;
+    }
     final next = driverDocumentsNotifier.value
         .where((d) => d.documentId != id)
         .toList(growable: false);
@@ -543,8 +628,11 @@ class DriverDocumentsStore {
   }
 
   /// Default [companyId] when saving new docs under an active local tenant.
-  String resolvedCompanyIdForNewDoc() =>
-      companyProfileNotifier.value != null ? resolvedCompanyId : '';
+  String resolvedCompanyIdForNewDoc() {
+    final activeCompanyId = _activeCompanyIdForDocuments();
+    if (activeCompanyId.isNotEmpty) return activeCompanyId;
+    return companyProfileNotifier.value != null ? resolvedCompanyId : '';
+  }
 
   static DriverDocument buildNew({
     required String driverId,

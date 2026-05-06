@@ -594,8 +594,55 @@ Future<void> showDriverDocumentEditorSheet(
                             child: FilledButton(
                               onPressed: () async {
                                 if (driver.id.trim().isEmpty) return;
-                                final company = DriverDocumentsStore.instance
+                                final activeCompanyId = DriverDocumentsStore
+                                    .instance
+                                    .resolvedActiveCompanyIdForDocuments();
+                                final driverCompanyId =
+                                    driver.companyId?.trim() ?? '';
+                                if (activeCompanyId.isNotEmpty &&
+                                    driverCompanyId.isNotEmpty &&
+                                    driverCompanyId != activeCompanyId) {
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          t(
+                                            nl: 'Deze chauffeur hoort niet bij het actieve bedrijf.',
+                                            en: 'This driver does not belong to the active company.',
+                                            fr: 'Ce chauffeur n appartient pas a l entreprise active.',
+                                            es: 'Este conductor no pertenece a la empresa activa.',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+                                if (existing != null &&
+                                    activeCompanyId.isNotEmpty &&
+                                    existing.companyId.trim() !=
+                                        activeCompanyId) {
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          t(
+                                            nl: 'Dit document hoort niet bij het actieve bedrijf.',
+                                            en: 'This document does not belong to the active company.',
+                                            fr: 'Ce document n appartient pas a l entreprise active.',
+                                            es: 'Este documento no pertenece a la empresa activa.',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+                                var company = DriverDocumentsStore.instance
                                     .resolvedCompanyIdForNewDoc();
+                                if (activeCompanyId.isNotEmpty) {
+                                  company = activeCompanyId;
+                                }
                                 final resolvedDocId =
                                     existing?.documentId ??
                                     DriverDocumentsStore.newDocumentId();
