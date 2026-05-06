@@ -3285,6 +3285,9 @@ GET /oauth/callback
 
       return new Response("Not Found", { status: 404, headers: corsHeaders() });
     } catch (err) {
+      if (err?.message === "Unauthorized") {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
       return json({ ok: false, error: err?.message || "Server error" }, 500);
     }
   },
