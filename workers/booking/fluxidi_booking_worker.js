@@ -2556,6 +2556,7 @@ GET /oauth/callback
       // =========================
       // GET /bookings?limit=50&include_history=1
       if (url.pathname === "/bookings" && request.method === "GET") {
+        _requireAdmin(request, url, env);
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
@@ -3146,6 +3147,7 @@ GET /oauth/callback
         (url.pathname === "/track/bookings" || url.pathname === "/tracking/bookings") &&
         request.method === "GET"
       ) {
+        _requireAdmin(request, url, env);
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
