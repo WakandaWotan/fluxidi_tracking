@@ -80,10 +80,49 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return companyProfileNotifier.value != null ? resolvedCompanyId : null;
   }
 
+  String? _activeCompanyIdForFleetUi() {
+    final profileCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (profileCompanyId.isNotEmpty) return profileCompanyId;
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) return sessionCompanyId;
+    return null;
+  }
+
+  bool _driverVisibleInManagementUi(DriverProfile driver) {
+    final activeCompanyId = _activeCompanyIdForFleetUi();
+    if (activeCompanyId == null) {
+      return fleetRecordBelongsToActiveCompanyOrLegacy(driver.companyId);
+    }
+    // Company-scoped management views avoid showing legacy/companyless rows as active-company data.
+    return (driver.companyId?.trim() ?? '') == activeCompanyId;
+  }
+
+  bool _vehicleVisibleInManagementUi(VehicleProfile vehicle) {
+    final activeCompanyId = _activeCompanyIdForFleetUi();
+    if (activeCompanyId == null) {
+      return fleetRecordBelongsToActiveCompanyOrLegacy(vehicle.companyId);
+    }
+    return (vehicle.companyId?.trim() ?? '') == activeCompanyId;
+  }
+
+  bool _canAssignDriverToVehicleInManagementUi(
+    DriverProfile driver,
+    String? vehicleCompanyId,
+  ) {
+    final activeCompanyId = _activeCompanyIdForFleetUi();
+    if (activeCompanyId == null) {
+      return canAssignDriverToVehicleCompany(driver, vehicleCompanyId);
+    }
+    return (driver.companyId?.trim() ?? '') == activeCompanyId &&
+        (vehicleCompanyId?.trim() ?? '') == activeCompanyId;
+  }
+
   DriverProfile? _driverById(String? driverId) {
     if (driverId == null || driverId.trim().isEmpty) return null;
     for (final d in driversNotifier.value) {
-      if (d.id == driverId) return d;
+      if (d.id == driverId && _driverVisibleInManagementUi(d)) return d;
     }
     return null;
   }
@@ -565,7 +604,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     {
       final cid = _scopedVehicleCompanyId(existing);
       final dr0 = _driverById(linkedDriverId);
-      if (dr0 != null && !canAssignDriverToVehicleCompany(dr0, cid)) {
+      if (dr0 == null || !_canAssignDriverToVehicleInManagementUi(dr0, cid)) {
         linkedDriverId = null;
       }
     }
@@ -772,8 +811,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         ...driversNotifier.value
                             .where(
                               (d) =>
-                                  fleetRecordBelongsToActiveCompanyOrLegacy(
-                                    d.companyId,
+                                  _driverVisibleInManagementUi(d) &&
+                                  _canAssignDriverToVehicleInManagementUi(
+                                    d,
+                                    _scopedVehicleCompanyId(existing),
                                   ) &&
                                   !fleetExplicitCompanyMismatch(
                                     d.companyId,
@@ -1256,7 +1297,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                               if (linkedDriverId != null) {
                                 final dr = _driverById(linkedDriverId);
                                 if (dr != null &&
-                                    !canAssignDriverToVehicleCompany(dr, cid)) {
+                                    !_canAssignDriverToVehicleInManagementUi(
+                                      dr,
+                                      cid,
+                                    )) {
                                   if (!mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -1423,9 +1467,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
           valueListenable: vehiclesNotifier,
           builder: (context, vehicles, _) {
             final visible = vehicles
-                .where(
-                  (v) => fleetRecordBelongsToActiveCompanyOrLegacy(v.companyId),
-                )
+                .where((v) => _vehicleVisibleInManagementUi(v))
                 .toList(growable: false);
             return CustomScrollView(
               slivers: [
