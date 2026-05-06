@@ -2905,7 +2905,10 @@ GET /oauth/callback
       // Raw persisted booking debug for overlap reconstruction audits
       if (url.pathname === "/debug/fleet/recent-bookings" && request.method === "GET") {
         _requireAdmin(request, url, env);
-        const out = await debugFleetRecentBookings(url, env);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const out = await debugFleetRecentBookings(url, env, tenantScope);
         return json(out, 200);
       }
 
@@ -2913,7 +2916,10 @@ GET /oauth/callback
       if (url.pathname === "/debug/fleet/availability" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
-        const out = await debugFleetAvailability(body, env);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const out = await debugFleetAvailability(body, env, tenantScope);
         return json(out, out.ok ? 200 : 400);
       }
 
@@ -8143,7 +8149,7 @@ function _pickupIsoForFleetDebug(body) {
   return brusselsIsoFromDateTime(date, time) || "";
 }
 
-async function debugFleetAvailability(body, env) {
+async function debugFleetAvailability(body, env, tenantScope = null) {
   try {
     if (!env?.BOOKING_KV) {
       return { ok: false, error: "Missing BOOKING_KV binding" };
@@ -8173,7 +8179,7 @@ async function debugFleetAvailability(body, env) {
       tier,
       pax,
       bags,
-      tenantScope: normalizeFleetTenantScope(body),
+      tenantScope: normalizeFleetTenantScope(tenantScope),
     });
 
     return {
@@ -8202,9 +8208,12 @@ async function debugFleetAvailability(body, env) {
   }
 }
 
-async function debugFleetRecentBookings(url, env) {
+async function debugFleetRecentBookings(url, env, tenantScope = null) {
   if (!env?.BOOKING_KV) {
     return { ok: false, error: "Missing BOOKING_KV binding" };
+  }
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
   }
   const limit = Math.max(
     1,
@@ -8212,15 +8221,14 @@ async function debugFleetRecentBookings(url, env) {
   );
   const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
   const keys = Array.isArray(listed?.keys) ? listed.keys : [];
-  // KV listing is typically newest-first for this workload; keep deterministic slice.
-  const selected = keys.slice(0, limit);
   const rows = [];
 
-  for (const k of selected) {
+  for (const k of keys) {
     const key = String(k?.name || "");
     if (!key.startsWith("booking:")) continue;
     const rec = await env.BOOKING_KV.get(key, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
     const bookingId = key.slice("booking:".length) || null;
     const rawStage = rec?.stage ?? null;
     const rawStatus = rec?.status ?? null;
@@ -8283,6 +8291,7 @@ async function debugFleetRecentBookings(url, env) {
         pickup_window_end_ms: pickupWindowEndMs,
       },
     });
+    if (rows.length >= limit) break;
   }
 
   return {
