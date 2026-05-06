@@ -15095,7 +15095,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   ) async {
     Map<String, dynamic> asMap(dynamic value) =>
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
-    List<dynamic> asList(dynamic value) => value is List ? value : const [];
     String? text(dynamic value) {
       final s = value?.toString().trim();
       if (s == null || s.isEmpty || s.toLowerCase() == 'null') return null;
@@ -15231,28 +15230,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (decoded is! Map) return <String, dynamic>{};
 
       final root = Map<String, dynamic>.from(decoded);
-      var parsed = parsePayment(root);
+      final parsed = parsePayment(root);
       if (parsed.isNotEmpty) return parsed;
-
-      // Fallback shape: /bookings?limit=... returns a list under items/data/items.
-      final candidateLists = <List<dynamic>>[
-        asList(root['items']),
-        asList(asMap(root['data'])['items']),
-        asList(root['bookings']),
-        asList(asMap(root['data'])['bookings']),
-      ];
-      for (final list in candidateLists) {
-        for (final raw in list) {
-          final item = asMap(raw);
-          final itemBookingId = text(
-            item['booking_id'] ?? item['bookingId'] ?? item['id'],
-          );
-          if (itemBookingId == null || itemBookingId.trim() != bookingId)
-            continue;
-          parsed = parsePayment(item);
-          if (parsed.isNotEmpty) return parsed;
-        }
-      }
       return <String, dynamic>{};
     }
 
@@ -15263,19 +15242,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       final parsedById = await fetchAndParse(byId);
       if (parsedById.isNotEmpty) return parsedById;
-    } catch (_) {}
-
-    try {
-      final listUrl = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings',
-        extraQuery: <String, String>{
-          'limit': '200',
-          't': '${DateTime.now().millisecondsSinceEpoch}',
-        },
-      );
-      final parsedList = await fetchAndParse(listUrl);
-      if (parsedList.isNotEmpty) return parsedList;
     } catch (_) {}
 
     return <String, dynamic>{};
@@ -25120,7 +25086,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   ) async {
     Map<String, dynamic> asMap(dynamic value) =>
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
-    List<dynamic> asList(dynamic value) => value is List ? value : const [];
     try {
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
@@ -25140,73 +25105,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         if (decoded is Map) {
           final root = Map<String, dynamic>.from(decoded);
           parsed = _extractAuthoritativePaymentFields(root);
-          if (parsed == null || parsed.isEmpty) {
-            for (final list in <List<dynamic>>[
-              asList(root['items']),
-              asList(asMap(root['data'])['items']),
-              asList(root['bookings']),
-              asList(asMap(root['data'])['bookings']),
-            ]) {
-              for (final raw in list) {
-                final entry = asMap(raw);
-                final entryBookingId =
-                    (entry['booking_id'] ??
-                            entry['bookingId'] ??
-                            entry['id'] ??
-                            '')
-                        .toString()
-                        .trim();
-                if (entryBookingId != bookingId) continue;
-                parsed = _extractAuthoritativePaymentFields(entry);
-                if (parsed != null && parsed.isNotEmpty) break;
-              }
-              if (parsed != null && parsed.isNotEmpty) break;
-            }
-          }
         }
       }
       if (parsed != null && parsed.isNotEmpty) return parsed;
-
-      final listUri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings',
-        extraQuery: <String, String>{
-          'limit': '200',
-          't': '${DateTime.now().millisecondsSinceEpoch}',
-        },
-      );
-      final listRes = await http
-          .get(listUri, headers: headers)
-          .timeout(const Duration(seconds: 12));
-      Map<String, dynamic>? listParsed;
-      if (listRes.statusCode >= 200 && listRes.statusCode < 300) {
-        final listDecoded = jsonDecode(listRes.body);
-        if (listDecoded is Map) {
-          final root = Map<String, dynamic>.from(listDecoded);
-          for (final list in <List<dynamic>>[
-            asList(root['items']),
-            asList(asMap(root['data'])['items']),
-            asList(root['bookings']),
-            asList(asMap(root['data'])['bookings']),
-          ]) {
-            for (final raw in list) {
-              final entry = asMap(raw);
-              final entryBookingId =
-                  (entry['booking_id'] ??
-                          entry['bookingId'] ??
-                          entry['id'] ??
-                          '')
-                      .toString()
-                      .trim();
-              if (entryBookingId != bookingId) continue;
-              listParsed = _extractAuthoritativePaymentFields(entry);
-              if (listParsed != null && listParsed.isNotEmpty) break;
-            }
-            if (listParsed != null && listParsed.isNotEmpty) break;
-          }
-        }
-      }
-      if (listParsed != null && listParsed.isNotEmpty) return listParsed;
       return null;
     } catch (_) {
       return null;
