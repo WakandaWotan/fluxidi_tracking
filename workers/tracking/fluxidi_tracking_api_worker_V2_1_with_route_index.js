@@ -1460,15 +1460,16 @@ async function handleTripsHistory(req, url, env, origin) {
     if (trips.length >= limit) break;
   }
 
-  if (cleaned.length !== tripIds.length) {
+  if (cleaned.length !== tripIds.length && !useLegacyIndex) {
     await kvPutJson(
       env.FLUXIDI_TRACKING,
-      useLegacyIndex ? legacyIndexKey : scopedIndexKey,
+      scopedIndexKey,
       cleaned.slice(0, driver_id ? 200 : 500),
       TTL_TRIP
     );
   }
   if (useLegacyIndex && cleaned.length > 0) {
+    // Legacy tenant-only trip indexes stay read-only to avoid cross-company contamination.
     await kvPutJson(
       env.FLUXIDI_TRACKING,
       scopedIndexKey,
@@ -2303,20 +2304,7 @@ async function handleStart(req, url, env, origin) {
     },
     TTL_PUBLIC_TOKEN
   );
-  await kvPutJson(
-    env.FLUXIDI_TRACKING,
-    `public:${public_token}:booking`,
-    {
-      booking_id,
-      session_id: sessionId,
-      tenant_id,
-      company_id,
-      tenantId: tenant_id,
-      companyId: company_id,
-      created_at: session.created_at,
-    },
-    TTL_PUBLIC_TOKEN
-  );
+  // New public token mappings are scoped-only; legacy key remains read fallback only.
 
   const idx = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
   const next = [booking_id, ...idx.filter((x) => x !== booking_id)].slice(0, 200);
@@ -2568,9 +2556,14 @@ async function handlePublicLive(req, url, env, origin) {
   if (!token) throw new Error("token is required");
 
   const explicitScope = parseOptionalTenantCompanyScope(req, url, null, null);
-  let link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
-  if (!link && explicitScope?.tenant_id && explicitScope?.company_id) {
+  let link = null;
+  if (explicitScope?.tenant_id && explicitScope?.company_id) {
     link = await kvGetJson(env.FLUXIDI_TRACKING, scopedPublicBookingKey(explicitScope, token));
+    if (!link) {
+      link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
+    }
+  } else {
+    link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
   }
   if (!link || !link.booking_id) throw new Error("Invalid token");
 
