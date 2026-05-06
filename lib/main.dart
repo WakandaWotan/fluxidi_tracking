@@ -3839,12 +3839,19 @@ class BusinessHomePage extends StatelessWidget {
     final companyName = profile?.companyName.trim().isNotEmpty == true
         ? profile!.companyName.trim()
         : 'Fluxidi';
+    final screenW = MediaQuery.of(context).size.width;
+    const customerReferenceLogoWidth = 178.0;
+    final businessLogoWidth = math.max(
+      120.0,
+      math.min(customerReferenceLogoWidth, screenW - 250),
+    );
     return Row(
       children: [
         Image.asset(
           kFluxidiLogoAsset,
-          width: 126,
+          width: businessLogoWidth,
           fit: BoxFit.contain,
+          alignment: Alignment.topLeft,
           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
         ),
         const Spacer(),
@@ -6053,6 +6060,8 @@ class CustomerHomePage extends StatelessWidget {
   }
 
   Widget _customerPrimaryCta(BuildContext context) {
+    const ctaIconContainerSize = 58.0;
+    const ctaIconGlyphSize = 31.0;
     return GestureDetector(
       onTap: () => _openCalculator(context, scheduledIntent: false),
       child: Container(
@@ -6081,8 +6090,8 @@ class CustomerHomePage extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 56,
-              height: 56,
+              width: ctaIconContainerSize,
+              height: ctaIconContainerSize,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -6105,7 +6114,7 @@ class CustomerHomePage extends StatelessWidget {
               child: const Icon(
                 Icons.local_taxi_outlined,
                 color: Color(0xFFE5B641),
-                size: 30,
+                size: ctaIconGlyphSize,
               ),
             ),
             const SizedBox(width: 10),
@@ -6160,10 +6169,12 @@ class CustomerHomePage extends StatelessWidget {
     required String label,
     required VoidCallback onTap,
   }) {
+    const quickActionIconContainerSize = 56.0;
+    const quickActionIconGlyphSize = 31.0;
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
@@ -6189,8 +6200,8 @@ class CustomerHomePage extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: quickActionIconContainerSize,
+              height: quickActionIconContainerSize,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: const Color(0xFF15120A).withOpacity(0.72),
@@ -6199,7 +6210,7 @@ class CustomerHomePage extends StatelessWidget {
               child: Icon(
                 icon,
                 color: kFluxidiYellow.withOpacity(0.98),
-                size: 29,
+                size: quickActionIconGlyphSize,
               ),
             ),
             const SizedBox(height: 6),
@@ -6306,7 +6317,7 @@ class CustomerHomePage extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 9,
             mainAxisSpacing: 9,
-            mainAxisExtent: 98,
+            mainAxisExtent: 112,
           ),
           itemBuilder: (_, i) => _customerQuickActionCard(
             context: context,
@@ -6460,6 +6471,7 @@ class CustomerHomePage extends StatelessWidget {
   }
 
   Widget _customerBottomNav(BuildContext context) {
+    const navIconSize = 25.0;
     final items = <String>[
       _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
       _t(nl: 'Boek rit', en: 'Book ride', fr: 'Réserver', es: 'Reservar'),
@@ -6516,23 +6528,29 @@ class CustomerHomePage extends StatelessWidget {
           unselectedFontSize: 11,
           items: [
             BottomNavigationBarItem(
-              icon: const Icon(Icons.home_outlined),
+              icon: const Icon(Icons.home_outlined, size: navIconSize),
               label: items[0],
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.directions_car_outlined),
+              icon: const Icon(
+                Icons.directions_car_outlined,
+                size: navIconSize,
+              ),
               label: items[1],
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.receipt_long_outlined),
+              icon: const Icon(Icons.receipt_long_outlined, size: navIconSize),
               label: items[2],
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.notifications_none_rounded),
+              icon: const Icon(
+                Icons.notifications_none_rounded,
+                size: navIconSize,
+              ),
               label: items[3],
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.person_outline_rounded),
+              icon: const Icon(Icons.person_outline_rounded, size: navIconSize),
               label: items[4],
             ),
           ],
@@ -11685,6 +11703,8 @@ enum _CameraMode { overview, follow }
 
 enum _RideRoutePhase { toPickup, trip }
 
+enum _DriverDashboardStatus { busy, waiting, onTheWay, pause, ready }
+
 enum MapThemeMode { light, dark }
 
 class _PlaceSuggestion {
@@ -13604,6 +13624,16 @@ class _RouteSnap {
   });
 }
 
+class _RoutePreviewData {
+  final String staticMapUrl;
+  final int routePointCount;
+
+  const _RoutePreviewData({
+    required this.staticMapUrl,
+    required this.routePointCount,
+  });
+}
+
 class _UnauthorizedMapbox implements Exception {
   final String where;
   _UnauthorizedMapbox(this.where);
@@ -13642,6 +13672,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   // Ride mode (driving vs waiting)
   bool _isWaiting = false;
+  bool _driverManualPause = false;
   DateTime? _waitStartedAt;
   Duration _waitElapsed = Duration.zero;
 
@@ -13775,6 +13806,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   double _lastRouteLineTrimProgressM = 0.0;
   DateTime? _lastRouteLineTrimAt;
   double _lastMarkerLagM = 0.0;
+  final Map<String, Future<_RoutePreviewData?>> _nextRidePreviewCache =
+      <String, Future<_RoutePreviewData?>>{};
   final Map<String, DateTime> _lastNavDebugAt = <String, DateTime>{};
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
@@ -14490,6 +14523,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         action: 'open_ride',
       )) {
         return;
+      }
+      // Prevent old bookings-hub optimized panel from flashing during
+      // route pop/transition back to map/cockpit.
+      if (_bookingsHubVisible) {
+        if (mounted) {
+          setState(() => _bookingsHubVisible = false);
+        } else {
+          _bookingsHubVisible = false;
+        }
       }
       // We are typically called from the Bookings Hub page.
       // UX: return to the main map/cockpit immediately.
@@ -18662,6 +18704,433 @@ class _DriverHomePageState extends State<DriverHomePage>
     return raw;
   }
 
+  String _nextRidePreviewCacheKey(BookingItem booking) {
+    final bookingId = booking.bookingId.trim();
+    final from = (booking.from ?? '').trim().toLowerCase();
+    final to = (booking.to ?? '').trim().toLowerCase();
+    final pickupIso = (booking.pickupIso ?? '').trim();
+    return '$bookingId|$from|$to|$pickupIso';
+  }
+
+  Future<_RoutePreviewData?> _nextRidePreviewFuture(BookingItem booking) {
+    final key = _nextRidePreviewCacheKey(booking);
+    final cached = _nextRidePreviewCache[key];
+    if (cached != null) return cached;
+    final future = _loadNextRideRoutePreview(booking);
+    _nextRidePreviewCache[key] = future;
+    if (_nextRidePreviewCache.length > 16) {
+      final oldestKey = _nextRidePreviewCache.keys.first;
+      _nextRidePreviewCache.remove(oldestKey);
+    }
+    return future;
+  }
+
+  num? _previewNum(dynamic raw) {
+    if (raw is num) return raw;
+    if (raw is String) return num.tryParse(raw.trim().replaceAll(',', '.'));
+    return null;
+  }
+
+  _LonLat? _previewPointFromDetailPaths(
+    Map<String, dynamic> details,
+    List<List<String>> latPaths,
+    List<List<String>> lonPaths,
+  ) {
+    num? lat;
+    num? lon;
+    for (final path in latPaths) {
+      final v = _previewNum(_getNested(details, path));
+      if (v != null) {
+        lat = v;
+        break;
+      }
+    }
+    for (final path in lonPaths) {
+      final v = _previewNum(_getNested(details, path));
+      if (v != null) {
+        lon = v;
+        break;
+      }
+    }
+    if (lat == null || lon == null) return null;
+    final latD = lat.toDouble();
+    final lonD = lon.toDouble();
+    if (!latD.isFinite || !lonD.isFinite) return null;
+    if (latD.abs() > 90 || lonD.abs() > 180) return null;
+    return _LonLat(lonD, latD);
+  }
+
+  ({_LonLat? pickup, _LonLat? dropoff}) _extractPreviewEndpoints(
+    BookingItem booking,
+  ) {
+    final d = booking.details;
+    final pickup = _previewPointFromDetailPaths(
+      d,
+      const [
+        ['pickup_lat'],
+        ['pickupLat'],
+        ['from_lat'],
+        ['fromLat'],
+        ['pickup', 'lat'],
+        ['from', 'lat'],
+        ['record', 'pickup_lat'],
+        ['record', 'pickup', 'lat'],
+        ['record', 'booking', 'pickup_lat'],
+        ['record', 'booking', 'pickup', 'lat'],
+        ['record', 'booking_details', 'pickup_lat'],
+        ['record', 'booking_details', 'pickup', 'lat'],
+        ['payload', 'pickup_lat'],
+        ['payload', 'pickup', 'lat'],
+        ['quote', 'pickup', 'lat'],
+        ['quote', 'origin', 'lat'],
+      ],
+      const [
+        ['pickup_lon'],
+        ['pickupLng'],
+        ['pickupLon'],
+        ['from_lon'],
+        ['fromLng'],
+        ['fromLon'],
+        ['pickup', 'lon'],
+        ['pickup', 'lng'],
+        ['from', 'lon'],
+        ['from', 'lng'],
+        ['record', 'pickup_lon'],
+        ['record', 'pickup', 'lon'],
+        ['record', 'pickup', 'lng'],
+        ['record', 'booking', 'pickup_lon'],
+        ['record', 'booking', 'pickup', 'lon'],
+        ['record', 'booking', 'pickup', 'lng'],
+        ['record', 'booking_details', 'pickup_lon'],
+        ['record', 'booking_details', 'pickup', 'lon'],
+        ['record', 'booking_details', 'pickup', 'lng'],
+        ['payload', 'pickup_lon'],
+        ['payload', 'pickup', 'lon'],
+        ['payload', 'pickup', 'lng'],
+        ['quote', 'pickup', 'lon'],
+        ['quote', 'pickup', 'lng'],
+        ['quote', 'origin', 'lon'],
+        ['quote', 'origin', 'lng'],
+      ],
+    );
+    final dropoff = _previewPointFromDetailPaths(
+      d,
+      const [
+        ['dropoff_lat'],
+        ['dropoffLat'],
+        ['to_lat'],
+        ['toLat'],
+        ['destination_lat'],
+        ['destinationLat'],
+        ['dropoff', 'lat'],
+        ['to', 'lat'],
+        ['destination', 'lat'],
+        ['record', 'dropoff_lat'],
+        ['record', 'dropoff', 'lat'],
+        ['record', 'booking', 'dropoff_lat'],
+        ['record', 'booking', 'dropoff', 'lat'],
+        ['record', 'booking_details', 'dropoff_lat'],
+        ['record', 'booking_details', 'dropoff', 'lat'],
+        ['payload', 'dropoff_lat'],
+        ['payload', 'dropoff', 'lat'],
+        ['quote', 'dropoff', 'lat'],
+        ['quote', 'destination', 'lat'],
+      ],
+      const [
+        ['dropoff_lon'],
+        ['dropoffLng'],
+        ['dropoffLon'],
+        ['to_lon'],
+        ['toLng'],
+        ['toLon'],
+        ['destination_lon'],
+        ['destinationLng'],
+        ['destinationLon'],
+        ['dropoff', 'lon'],
+        ['dropoff', 'lng'],
+        ['to', 'lon'],
+        ['to', 'lng'],
+        ['destination', 'lon'],
+        ['destination', 'lng'],
+        ['record', 'dropoff_lon'],
+        ['record', 'dropoff', 'lon'],
+        ['record', 'dropoff', 'lng'],
+        ['record', 'booking', 'dropoff_lon'],
+        ['record', 'booking', 'dropoff', 'lon'],
+        ['record', 'booking', 'dropoff', 'lng'],
+        ['record', 'booking_details', 'dropoff_lon'],
+        ['record', 'booking_details', 'dropoff', 'lon'],
+        ['record', 'booking_details', 'dropoff', 'lng'],
+        ['payload', 'dropoff_lon'],
+        ['payload', 'dropoff', 'lon'],
+        ['payload', 'dropoff', 'lng'],
+        ['quote', 'dropoff', 'lon'],
+        ['quote', 'dropoff', 'lng'],
+        ['quote', 'destination', 'lon'],
+        ['quote', 'destination', 'lng'],
+      ],
+    );
+    return (pickup: pickup, dropoff: dropoff);
+  }
+
+  Future<List<_LonLat>> _workerRouteForPreview({
+    required String fromText,
+    required String toText,
+  }) async {
+    if (fromText.trim().isEmpty || toText.trim().isEmpty)
+      return const <_LonLat>[];
+    final uri = Uri.parse('$kWorkerBaseUrl$kWorkerRoutePath');
+    final payload = <String, dynamic>{
+      'from': fromText.trim(),
+      'to': toText.trim(),
+    };
+    final res = await http
+        .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode != 200) return const <_LonLat>[];
+    final j = jsonDecode(res.body);
+    if (j is! Map<String, dynamic>) return const <_LonLat>[];
+    final coordsAny =
+        (j['coords'] ?? j['coordinates'] ?? j['route_coords'] ?? j['points']);
+    List<dynamic> raw = const <dynamic>[];
+    if (coordsAny is List<dynamic>) {
+      raw = coordsAny;
+    } else if (j['geometry'] is Map<String, dynamic>) {
+      raw =
+          (j['geometry']['coordinates'] as List<dynamic>? ?? const <dynamic>[]);
+    }
+    final out = <_LonLat>[];
+    for (final c in raw) {
+      if (c is List && c.length >= 2) {
+        final lon = _previewNum(c[0])?.toDouble();
+        final lat = _previewNum(c[1])?.toDouble();
+        if (lon != null && lat != null) out.add(_LonLat(lon, lat));
+      }
+    }
+    return out.length >= 2 ? out : const <_LonLat>[];
+  }
+
+  Future<List<_LonLat>> _mapboxRouteForPreview({
+    required _LonLat from,
+    required _LonLat to,
+  }) async {
+    if (kMapboxToken.trim().isEmpty) return const <_LonLat>[];
+    final coords = '${from.lon},${from.lat};${to.lon},${to.lat}';
+    final uri = Uri.parse(
+      'https://api.mapbox.com/directions/v5/mapbox/driving/$coords'
+      '?alternatives=false&geometries=geojson&overview=full'
+      '&access_token=$kMapboxToken',
+    );
+    final res = await http.get(uri).timeout(const Duration(seconds: 12));
+    if (res.statusCode != 200) return const <_LonLat>[];
+    final j = jsonDecode(res.body);
+    if (j is! Map<String, dynamic>) return const <_LonLat>[];
+    final routes = (j['routes'] as List<dynamic>? ?? const <dynamic>[]);
+    if (routes.isEmpty) return const <_LonLat>[];
+    final r0 = routes.first;
+    if (r0 is! Map<String, dynamic>) return const <_LonLat>[];
+    final geometry =
+        (r0['geometry'] as Map<String, dynamic>? ?? const <String, dynamic>{});
+    final line =
+        (geometry['coordinates'] as List<dynamic>? ?? const <dynamic>[]);
+    final out = <_LonLat>[];
+    for (final c in line) {
+      if (c is List && c.length >= 2) {
+        final lon = _previewNum(c[0])?.toDouble();
+        final lat = _previewNum(c[1])?.toDouble();
+        if (lon != null && lat != null) out.add(_LonLat(lon, lat));
+      }
+    }
+    return out.length >= 2 ? out : const <_LonLat>[];
+  }
+
+  List<_LonLat> _downsamplePreviewRoute(
+    List<_LonLat> coords, {
+    int maxPoints = 100,
+  }) {
+    if (coords.length <= maxPoints) return coords;
+    final out = <_LonLat>[coords.first];
+    final stride = (coords.length - 2) / (maxPoints - 2);
+    var cursor = 1.0;
+    while (out.length < maxPoints - 1) {
+      final idx = cursor.round().clamp(1, coords.length - 2);
+      out.add(coords[idx]);
+      cursor += stride;
+    }
+    out.add(coords.last);
+    return out;
+  }
+
+  String _encodePolyline5(List<_LonLat> points) {
+    if (points.isEmpty) return '';
+    final sb = StringBuffer();
+    var lastLat = 0;
+    var lastLon = 0;
+    void encodeDelta(int delta) {
+      var v = delta < 0 ? ~(delta << 1) : (delta << 1);
+      while (v >= 0x20) {
+        sb.writeCharCode((0x20 | (v & 0x1f)) + 63);
+        v >>= 5;
+      }
+      sb.writeCharCode(v + 63);
+    }
+
+    for (final p in points) {
+      final lat = (p.lat * 1e5).round();
+      final lon = (p.lon * 1e5).round();
+      encodeDelta(lat - lastLat);
+      encodeDelta(lon - lastLon);
+      lastLat = lat;
+      lastLon = lon;
+    }
+    return sb.toString();
+  }
+
+  String _buildStaticRoutePreviewUrl({
+    required List<_LonLat> route,
+    required _LonLat pickup,
+    required _LonLat dropoff,
+  }) {
+    final compact = _downsamplePreviewRoute(route, maxPoints: 92);
+    final polyline = Uri.encodeComponent(_encodePolyline5(compact));
+    final overlays =
+        'pin-s-a+f4c542(${pickup.lon},${pickup.lat}),'
+        'pin-s-b+ff5a4f(${dropoff.lon},${dropoff.lat}),'
+        'path-5+2d8cff-0.86($polyline)';
+    return 'https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/static/'
+        '$overlays/auto/720x280?padding=34,22,34,22&access_token=$kMapboxToken';
+  }
+
+  Future<_RoutePreviewData?> _loadNextRideRoutePreview(
+    BookingItem booking,
+  ) async {
+    if (kMapboxToken.trim().isEmpty) return null;
+    final fromText = (booking.from ?? '').trim();
+    final toText = (booking.to ?? '').trim();
+    if (fromText.isEmpty || toText.isEmpty) return null;
+
+    final endpoints = _extractPreviewEndpoints(booking);
+    _LonLat? pickup = endpoints.pickup;
+    _LonLat? dropoff = endpoints.dropoff;
+
+    List<_LonLat> routeCoords = await _workerRouteForPreview(
+      fromText: fromText,
+      toText: toText,
+    );
+    if (routeCoords.isNotEmpty) {
+      pickup ??= routeCoords.first;
+      dropoff ??= routeCoords.last;
+    }
+
+    if ((pickup == null || dropoff == null) && kMapboxToken.trim().isNotEmpty) {
+      try {
+        pickup ??= await _geocodeOne(fromText);
+        dropoff ??= await _geocodeOne(toText);
+      } catch (_) {}
+    }
+    if (pickup == null || dropoff == null) return null;
+
+    if (routeCoords.length < 2) {
+      routeCoords = await _mapboxRouteForPreview(from: pickup, to: dropoff);
+    }
+    if (routeCoords.length < 2) return null;
+
+    final staticUrl = _buildStaticRoutePreviewUrl(
+      route: routeCoords,
+      pickup: pickup,
+      dropoff: dropoff,
+    );
+    return _RoutePreviewData(
+      staticMapUrl: staticUrl,
+      routePointCount: routeCoords.length,
+    );
+  }
+
+  Widget _buildNextRideRoutePreview(BookingItem booking) {
+    final future = _nextRidePreviewFuture(booking);
+    return Container(
+      height: 136,
+      width: double.infinity,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1012),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x66FFD36A)),
+      ),
+      child: FutureBuilder<_RoutePreviewData?>(
+        future: future,
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            );
+          }
+          final data = snap.data;
+          if (data == null || data.staticMapUrl.trim().isEmpty) {
+            return Center(
+              child: Text(
+                _tr(
+                  nl: 'Route-preview niet beschikbaar',
+                  en: 'Route preview unavailable',
+                  fr: "Apercu d'itineraire indisponible",
+                  es: 'Vista previa de ruta no disponible',
+                ),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.72),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.2,
+                ),
+              ),
+            );
+          }
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                data.staticMapUrl,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => Center(
+                  child: Text(
+                    _tr(
+                      nl: 'Route-preview niet beschikbaar',
+                      en: 'Route preview unavailable',
+                      fr: "Apercu d'itineraire indisponible",
+                      es: 'Vista previa de ruta no disponible',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.72),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.2,
+                    ),
+                  ),
+                ),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.center,
+                    colors: [
+                      Colors.black.withOpacity(0.36),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   String _navDistanceText(double meters) {
     if (meters < 1000) return '${meters.round()} m';
     return '${(meters / 1000.0).toStringAsFixed(1).replaceAll('.', ',')} km';
@@ -19845,79 +20314,1366 @@ class _DriverHomePageState extends State<DriverHomePage>
     return '$value';
   }
 
-  // -------------------------------
-  // UI
-  // -------------------------------
+  BookingItem? _nextVisibleBookingForDashboard() {
+    final visible = _visibleBookings;
+    if (visible.isEmpty) return null;
+    final now = DateTime.now();
+    final upcoming = visible
+        .where((b) {
+          final raw = (b.pickupIso ?? '').trim();
+          if (raw.isEmpty) return true;
+          final dt = DateTime.tryParse(raw);
+          if (dt == null) return true;
+          return !dt.toLocal().isBefore(
+            now.subtract(const Duration(minutes: 5)),
+          );
+        })
+        .toList(growable: false);
+    final base = upcoming.isNotEmpty ? upcoming : visible;
+    final sorted = [...base]
+      ..sort((a, b) {
+        DateTime normalize(BookingItem item) {
+          final raw = (item.pickupIso ?? '').trim();
+          final parsed = DateTime.tryParse(raw);
+          return parsed?.toLocal() ??
+              DateTime.fromMillisecondsSinceEpoch(1 << 62);
+        }
 
-  Widget _buildHintPanel() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF081126).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: const Color(0xFFFFD36A).withOpacity(0.22),
-              width: 1.1,
+        return normalize(a).compareTo(normalize(b));
+      });
+    return sorted.first;
+  }
+
+  String _dashboardDriverName() {
+    final session = activeDriverSessionNotifier.value;
+    final fullName = session?.fullName.trim() ?? '';
+    if (fullName.isNotEmpty) return fullName;
+    final employee = session?.employeeNumber.trim() ?? '';
+    if (employee.isNotEmpty) return employee;
+    return 'chauffeur';
+  }
+
+  String _dashboardGreeting() {
+    final name = _dashboardDriverName();
+    if (name.toLowerCase() == 'chauffeur') {
+      return _tr(
+        nl: 'Welkom chauffeur',
+        en: 'Welcome driver',
+        fr: 'Bienvenue chauffeur',
+        es: 'Bienvenido conductor',
+      );
+    }
+    final hour = DateTime.now().hour;
+    if (hour < 12) {
+      return _tr(
+        nl: 'Goedemorgen, $name!',
+        en: 'Good morning, $name!',
+        fr: 'Bonjour, $name !',
+        es: 'Buenos dias, $name!',
+      );
+    }
+    if (hour < 18) {
+      return _tr(
+        nl: 'Goedemiddag, $name!',
+        en: 'Good afternoon, $name!',
+        fr: 'Bon apres-midi, $name !',
+        es: 'Buenas tardes, $name!',
+      );
+    }
+    return _tr(
+      nl: 'Goedenavond, $name!',
+      en: 'Good evening, $name!',
+      fr: 'Bonsoir, $name !',
+      es: 'Buenas noches, $name!',
+    );
+  }
+
+  _DriverDashboardStatus _dashboardDriverStatus() {
+    final activeRide = _liveRideActive || _isTracking;
+    if (activeRide && _isWaiting) return _DriverDashboardStatus.waiting;
+    if (activeRide) return _DriverDashboardStatus.busy;
+
+    final hasNavLeg =
+        _activeBooking != null ||
+        (_cameraMode == _CameraMode.follow &&
+            (_activeBooking != null ||
+                (_directRideDestinationText ?? '').trim().isNotEmpty));
+    if (hasNavLeg) return _DriverDashboardStatus.onTheWay;
+
+    if (_driverManualPause) return _DriverDashboardStatus.pause;
+    return _DriverDashboardStatus.ready;
+  }
+
+  String _dashboardStatusLabel() {
+    switch (_dashboardDriverStatus()) {
+      case _DriverDashboardStatus.busy:
+        return _tr(nl: 'Bezet', en: 'Busy', fr: 'Occupe', es: 'Ocupado');
+      case _DriverDashboardStatus.waiting:
+        return _tr(
+          nl: 'Wachten',
+          en: 'Waiting',
+          fr: 'En attente',
+          es: 'Esperando',
+        );
+      case _DriverDashboardStatus.onTheWay:
+        return _tr(
+          nl: 'Onderweg',
+          en: 'On the way',
+          fr: 'En route',
+          es: 'En camino',
+        );
+      case _DriverDashboardStatus.pause:
+        return _tr(nl: 'Pauze', en: 'Pause', fr: 'Pause', es: 'Pausa');
+      case _DriverDashboardStatus.ready:
+        return _tr(nl: 'Klaar', en: 'Ready', fr: 'Pret', es: 'Listo');
+    }
+  }
+
+  String _dashboardNextRideTime(BookingItem? booking) {
+    if (booking == null) return '—';
+    final raw = (booking.pickupIso ?? '').trim();
+    if (raw.isEmpty) return '—';
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return '—';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  void _goBackToStartFromDashboard() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+      (route) => false,
+    );
+  }
+
+  String _dashboardAvatarLabel() {
+    final raw = _dashboardDriverName().trim();
+    if (raw.isEmpty) return 'D';
+    final parts = raw
+        .split(RegExp(r'\s+'))
+        .where((p) => p.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+    return raw[0].toUpperCase();
+  }
+
+  void _handleDriverStatusAction() {
+    final status = _dashboardDriverStatus();
+    final activeRideStatus =
+        status == _DriverDashboardStatus.busy ||
+        status == _DriverDashboardStatus.waiting ||
+        status == _DriverDashboardStatus.onTheWay;
+    if (activeRideStatus) {
+      _toast(
+        _tr(
+          nl: 'Je bent bezig met een rit.',
+          en: 'You are currently on a ride.',
+          fr: 'Vous etes en course.',
+          es: 'Estas realizando un viaje.',
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _driverManualPause = !_driverManualPause;
+    });
+    _toast(
+      _driverManualPause
+          ? _tr(
+              nl: 'Status aangepast: Pauze',
+              en: 'Status updated: Pause',
+              fr: 'Statut mis a jour : Pause',
+              es: 'Estado actualizado: Pausa',
+            )
+          : _tr(
+              nl: 'Status aangepast: Klaar',
+              en: 'Status updated: Ready',
+              fr: 'Statut mis a jour : Pret',
+              es: 'Estado actualizado: Listo',
+            ),
+    );
+  }
+
+  void _showDashboardMoreSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF101113),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.calculate_rounded,
+                    color: Color(0xFFFFD36A),
+                  ),
+                  title: Text(
+                    _tr(
+                      nl: 'Prijs berekenen',
+                      en: 'Fare calculator',
+                      fr: 'Calcul de tarif',
+                      es: 'Calcular tarifa',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _openCalculatorFromDashboard();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.receipt_long_outlined,
+                    color: Color(0xFFFFD36A),
+                  ),
+                  title: Text(
+                    _tr(
+                      nl: 'Ritbonnen / bewijzen',
+                      en: 'Receipts / proofs',
+                      fr: 'Recus / preuves',
+                      es: 'Recibos / comprobantes',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    _tr(
+                      nl: 'Via afgewerkte ritten in historiek',
+                      en: 'Via completed rides in history',
+                      fr: 'Via les courses terminees',
+                      es: 'Via viajes completados en historial',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.62),
+                      fontSize: 11.5,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _openTripHistoryFromDashboard();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.toggle_on_outlined,
+                    color: Color(0xFFFFD36A),
+                  ),
+                  title: Text(
+                    _tr(
+                      nl: 'Beschikbaarheid',
+                      en: 'Availability',
+                      fr: 'Disponibilite',
+                      es: 'Disponibilidad',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _handleDriverStatusAction();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.home_outlined,
+                    color: Color(0xFFFFD36A),
+                  ),
+                  title: Text(
+                    _tr(
+                      nl: 'Terug naar startpagina',
+                      en: 'Back to start page',
+                      fr: "Retour a l'accueil",
+                      es: 'Volver al inicio',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _goBackToStartFromDashboard();
+                  },
+                ),
+              ],
             ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.info_outline, color: Color(0xFFFFD36A)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _hintPanelText(),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5,
+        );
+      },
+    );
+  }
+
+  Widget _driverLanguagePill() {
+    final code = currentLanguageCode.toUpperCase();
+    return PopupMenuButton<String>(
+      onSelected: setAppLanguageByCode,
+      color: const Color(0xFF111827),
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: const Color(0xFFFFD36A).withOpacity(0.35)),
+      ),
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'nl', child: Text('🇳🇱 NL')),
+        PopupMenuItem(value: 'en', child: Text('🇬🇧 EN')),
+        PopupMenuItem(value: 'fr', child: Text('🇫🇷 FR')),
+        PopupMenuItem(value: 'es', child: Text('🇪🇸 ES')),
+      ],
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111214),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0x55FFD36A)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.language_rounded,
+              size: 13,
+              color: Color(0xFFFFD36A),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              code,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 10.3,
+              ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 14,
+              color: Color(0xFFFFD36A),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriverDashboardHeader() {
+    final screenW = MediaQuery.of(context).size.width;
+    const driverLogoTargetMaxWidth = 260.0;
+    final logoWidth = math.min(
+      driverLogoTargetMaxWidth,
+      math.max(220.0, screenW - 118),
+    );
+    final logoHeight = logoWidth * 0.39;
+    final topBandHeight = math.max(62.0, logoHeight - 34.0);
+    const headerIconButtonSize = 46.0;
+    const headerIconGlyphSize = 25.0;
+    const headerLeftPull = -16.0;
+    const headerTopPull = -16.0;
+    const logoVisualLift = -14.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(
+            left: headerLeftPull,
+            right: -headerLeftPull,
+            top: headerTopPull,
+          ),
+          child: SizedBox(
+            height: topBandHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  top: logoVisualLift,
+                  left: 0,
+                  child: SizedBox(
+                    width: logoWidth,
+                    height: logoHeight,
+                    child: Image.asset(
+                      kFluxidiLogoAsset,
+                      width: logoWidth,
+                      height: logoHeight,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.topLeft,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.local_taxi_rounded,
+                        color: Color(0xFFFFD36A),
+                        size: 64,
                       ),
                     ),
                   ),
-                ],
+                ),
+                Positioned(
+                  top: 2,
+                  right: 0,
+                  child: Row(
+                    children: [
+                      _driverLanguagePill(),
+                      const SizedBox(width: 8),
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: headerIconButtonSize,
+                            height: headerIconButtonSize,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF111214),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.10),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.notifications_none_rounded,
+                              color: Colors.white,
+                              size: headerIconGlyphSize,
+                            ),
+                          ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFFD36A),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 8),
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF16181B),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.20),
+                              ),
+                            ),
+                            child: Text(
+                              _dashboardAvatarLabel(),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.95),
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            bottom: 1,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2ECC71),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(0xFF050505),
+                                  width: 1.2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriverSummaryCards({required BookingItem? nextRide}) {
+    const summaryIconContainerSize = 52.0;
+    const summaryIconGlyphSize = 30.0;
+    Widget card({
+      required IconData icon,
+      required String label,
+      required String value,
+      required Color accentColor,
+      VoidCallback? onTap,
+    }) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(13),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111214),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: summaryIconContainerSize,
+                height: summaryIconContainerSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accentColor.withOpacity(0.16),
+                  border: Border.all(color: accentColor.withOpacity(0.55)),
+                ),
+                child: Icon(
+                  icon,
+                  size: summaryIconGlyphSize,
+                  color: accentColor,
+                ),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _openDirectRideEntry,
-                  icon: const Icon(Icons.local_taxi_outlined, size: 18),
-                  label: Text(
-                    _tr(
-                      nl: 'Straatrit starten',
-                      en: 'Start direct ride',
-                      fr: 'Demarrer une course directe',
-                      es: 'Iniciar viaje directo',
-                    ),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFFFD36A),
-                    side: BorderSide(
-                      color: const Color(0xFFFFD36A).withOpacity(0.70),
-                      width: 1.1,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 11,
-                      horizontal: 12,
-                    ),
-                  ),
+              const SizedBox(height: 7),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.66),
+                  fontSize: 10.2,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
         ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: card(
+            icon: Icons.event_note_rounded,
+            accentColor: const Color(0xFF2ECC71),
+            label: _tr(
+              nl: 'Gepland',
+              en: 'Planned',
+              fr: 'Prevues',
+              es: 'Planificados',
+            ),
+            value: '${_visibleBookings.length}',
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: card(
+            icon: Icons.check_circle_outline_rounded,
+            accentColor: const Color(0xFF4C9BFF),
+            label: _tr(
+              nl: 'Voltooid',
+              en: 'Completed',
+              fr: 'Terminees',
+              es: 'Completados',
+            ),
+            value: '0',
+            onTap: _openTripHistoryFromDashboard,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: card(
+            icon: Icons.schedule_rounded,
+            accentColor: const Color(0xFFFFB54D),
+            label: _tr(
+              nl: 'Volgende',
+              en: 'Next',
+              fr: 'Prochaine',
+              es: 'Siguiente',
+            ),
+            value: _dashboardNextRideTime(nextRide),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNextRideHeroCard({required BookingItem? nextRide}) {
+    if (nextRide == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF101113),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.10)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _tr(
+                nl: 'Geen ritten gepland',
+                en: 'No rides planned',
+                fr: 'Aucune course planifiee',
+                es: 'No hay viajes planificados',
+              ),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _tr(
+                nl: 'Haal nieuwe planning op of start een straatrit.',
+                en: 'Fetch latest planning or start a direct ride.',
+                fr: 'Actualisez le planning ou demarrez une course directe.',
+                es: 'Actualiza la planificación o inicia un viaje directo.',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.68),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: _ghostButtonStyle(),
+                    onPressed: () =>
+                        _refreshBookings(force: true, trigger: 'list_manual'),
+                    icon: const Icon(Icons.refresh, size: 17),
+                    label: Text(
+                      _tr(
+                        nl: 'Vernieuw',
+                        en: 'Refresh',
+                        fr: 'Actualiser',
+                        es: 'Actualizar',
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: _startButtonStyle(),
+                    onPressed: _openDirectRideEntry,
+                    icon: const Icon(Icons.local_taxi_outlined, size: 18),
+                    label: Text(
+                      _tr(
+                        nl: 'Straatrit starten',
+                        en: 'Start direct ride',
+                        fr: 'Demarrer course directe',
+                        es: 'Iniciar viaje directo',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final pickup = _formatPickup(nextRide.pickupIso);
+    final from = (nextRide.from ?? '').trim().isNotEmpty ? nextRide.from! : '—';
+    final to = (nextRide.to ?? '').trim().isNotEmpty ? nextRide.to! : '—';
+    final tier = (nextRide.tier ?? 'premium').toUpperCase();
+    final details = nextRide.details;
+    String? detailText(List<String> keys) {
+      for (final key in keys) {
+        final value = details[key];
+        if (value is String && value.trim().isNotEmpty) return value.trim();
+      }
+      return null;
+    }
+
+    num? detailNum(List<String> keys) {
+      for (final key in keys) {
+        final value = details[key];
+        if (value is num) return value;
+        if (value is String) {
+          final parsed = num.tryParse(value.trim());
+          if (parsed != null) return parsed;
+        }
+      }
+      return null;
+    }
+
+    final returnRaw = detailText([
+      'return_trip',
+      'returnTrip',
+      'round_trip',
+      'roundTrip',
+      'is_return',
+      'isReturn',
+    ]);
+    final returnTrip = (returnRaw ?? '').toLowerCase();
+    final hasReturnTrip =
+        returnTrip == 'true' ||
+        returnTrip == '1' ||
+        returnTrip == 'yes' ||
+        returnTrip == 'ja';
+    final distanceKm = detailNum([
+      'distance_km',
+      'distanceKm',
+      'distance',
+      'route_distance_km',
+    ]);
+    final durationMin = detailNum([
+      'duration_min',
+      'durationMin',
+      'duration_minutes',
+      'duration',
+      'estimated_duration_min',
+    ]);
+    final extraService = detailText([
+      'extra_service',
+      'extraService',
+      'service',
+      'service_label',
+      'serviceLabel',
+      'service_type',
+      'serviceType',
+      'ride_type',
+      'rideType',
+    ]);
+    final statusText = _rideStatusLabel(
+      _effectiveStatusFor(nextRide) ?? 'PENDING',
+    );
+    Widget metaChip({IconData? icon, required String text}) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF17191C),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0x33FFD36A)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 12, color: const Color(0xFFFFD36A)),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              text,
+              style: const TextStyle(
+                color: Color(0xFFF2D691),
+                fontSize: 10.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget infoLine({
+      required IconData icon,
+      required String text,
+      Color color = const Color(0xFFFFD36A),
+    }) {
+      return Row(
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFF3D486),
+                fontSize: 10.8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101113),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x55FFD36A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _tr(
+                    nl: 'Volgende rit',
+                    en: 'Next ride',
+                    fr: 'Prochaine course',
+                    es: 'Siguiente viaje',
+                  ),
+                  style: TextStyle(
+                    color: const Color(0xFFFFD36A).withOpacity(0.95),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11.5,
+                  ),
+                ),
+              ),
+              metaChip(
+                icon: Icons.schedule,
+                text: pickup == '—' ? statusText : pickup,
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          infoLine(icon: Icons.radio_button_checked, text: from),
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.only(left: 2),
+            child: Icon(
+              Icons.south_rounded,
+              size: 14,
+              color: Colors.white.withOpacity(0.35),
+            ),
+          ),
+          const SizedBox(height: 2),
+          infoLine(icon: Icons.flag_rounded, text: to),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              metaChip(icon: Icons.workspace_premium_rounded, text: tier),
+              metaChip(
+                icon: Icons.person_rounded,
+                text: '${nextRide.pax ?? 0} pax',
+              ),
+              metaChip(
+                icon: Icons.luggage_rounded,
+                text: '${nextRide.bags ?? 0} bagage',
+              ),
+              metaChip(
+                icon: Icons.compare_arrows_rounded,
+                text: hasReturnTrip ? 'Retour' : 'Enkel',
+              ),
+              if (extraService != null)
+                metaChip(
+                  icon: Icons.miscellaneous_services_rounded,
+                  text: extraService,
+                ),
+              metaChip(icon: Icons.info_outline_rounded, text: statusText),
+              if (distanceKm != null)
+                metaChip(
+                  icon: Icons.straighten_rounded,
+                  text: '${distanceKm.toStringAsFixed(1)} km',
+                ),
+              if (durationMin != null)
+                metaChip(
+                  icon: Icons.timer_outlined,
+                  text: '${durationMin.round()} min',
+                ),
+              if (nextRide.price != null)
+                metaChip(
+                  icon: Icons.payments_outlined,
+                  text:
+                      'Totaal ${_fmtMoney(nextRide.price!, nextRide.currency ?? 'EUR')}',
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildNextRideRoutePreview(nextRide),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: _ghostButtonStyle(),
+                  onPressed: () async {
+                    await _goToRide(nextRide);
+                    if (!mounted) return;
+                    await _openNavigation();
+                  },
+                  icon: const Icon(Icons.navigation_outlined, size: 15),
+                  label: const Text('Navigeer'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  style: _startButtonStyle(),
+                  onPressed: () async {
+                    await _goToRide(nextRide);
+                  },
+                  icon: const Icon(Icons.chevron_right_rounded, size: 15),
+                  label: const Text('Ga naar rit'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildDriverQuickActionsGrid() {
+    const quickActionIconContainerSize = 56.0;
+    const quickActionIconGlyphSize = 31.0;
+    Widget quickAction({
+      required IconData icon,
+      required String title,
+      String subtitle = '',
+      required VoidCallback onTap,
+      bool active = false,
+    }) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 68),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111111).withOpacity(0.96),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: active
+                  ? const Color(0x66FFD36A)
+                  : Colors.white.withOpacity(0.12),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: quickActionIconContainerSize,
+                height: quickActionIconContainerSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active
+                      ? const Color(0xFF21180A)
+                      : const Color(0xFF17130B),
+                  border: Border.all(
+                    color: active
+                        ? const Color(0x88FFD36A)
+                        : const Color(0x55FFD36A),
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  color: const Color(0xFFFFD36A),
+                  size: quickActionIconGlyphSize,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10.4,
+                      ),
+                    ),
+                    if (subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.67),
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final gap = 8.0;
+        const minTileWidth = 162.0;
+        int columns = (c.maxWidth / minTileWidth).floor();
+        columns = columns.clamp(2, 4);
+        final width = (c.maxWidth - (gap * (columns - 1))) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.local_taxi_outlined,
+                title: _tr(
+                  nl: 'Straatrit',
+                  en: 'Street ride',
+                  fr: 'Course directe',
+                  es: 'Viaje directo',
+                ),
+                onTap: _openDirectRideEntry,
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.calculate_rounded,
+                title: _tr(
+                  nl: 'Prijs berekenen',
+                  en: 'Fare calculator',
+                  fr: 'Calcul de tarif',
+                  es: 'Calcular tarifa',
+                ),
+                onTap: _openCalculatorFromDashboard,
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.list_alt_rounded,
+                title: _tr(
+                  nl: 'Mijn ritten',
+                  en: 'My rides',
+                  fr: 'Mes courses',
+                  es: 'Mis viajes',
+                ),
+                onTap: _openBookingsHubFromDashboard,
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.history_rounded,
+                title: _tr(
+                  nl: 'Historiek',
+                  en: 'History',
+                  fr: 'Historique',
+                  es: 'Historial',
+                ),
+                onTap: _openTripHistoryFromDashboard,
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.receipt_long_outlined,
+                title: _tr(
+                  nl: 'Ritbonnen',
+                  en: 'Receipts',
+                  fr: 'Recus',
+                  es: 'Recibos',
+                ),
+                onTap: _openTripHistoryFromDashboard,
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: quickAction(
+                icon: Icons.toggle_on_outlined,
+                title: _tr(
+                  nl: 'Status',
+                  en: 'Status',
+                  fr: 'Statut',
+                  es: 'Estado',
+                ),
+                subtitle: _dashboardStatusLabel(),
+                active:
+                    _dashboardDriverStatus() == _DriverDashboardStatus.ready,
+                onTap: _handleDriverStatusAction,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPremiumDriverDashboard() {
+    const navIconSize = 25.0;
+    final nextRide = _nextVisibleBookingForDashboard();
+    final driverName = _dashboardDriverName();
+    final statusKind = _dashboardDriverStatus();
+    final statusLabel = _dashboardStatusLabel();
+    final statusReady = statusKind == _DriverDashboardStatus.ready;
+    Widget sectionTitle(String text) {
+      return Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w800,
+        ),
+      );
+    }
+
+    Widget navItem({
+      required IconData icon,
+      required String label,
+      required VoidCallback onTap,
+      bool active = false,
+    }) {
+      final color = active ? const Color(0xFFFFD36A) : Colors.white70;
+      return Expanded(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: navIconSize, color: color),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10.1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ColoredBox(
+      color: const Color(0xFF050505),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildDriverDashboardHeader(),
+                    const SizedBox(height: 1),
+                    Text(
+                      _tr(
+                        nl: 'Chauffeur',
+                        en: 'Driver',
+                        fr: 'Chauffeur',
+                        es: 'Conductor',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.72),
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.30,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            driverName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: _handleDriverStatusAction,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF101113),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: statusReady
+                                    ? const Color(0x664CD964)
+                                    : const Color(0x66FFD36A),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: statusReady
+                                        ? const Color(0xFF2ECC71)
+                                        : const Color(0xFFFFD36A),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  statusLabel,
+                                  style: TextStyle(
+                                    color: statusReady
+                                        ? const Color(0xFFBCF6D0)
+                                        : const Color(0xFFFFE4A8),
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 11.5,
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                const Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 16,
+                                  color: Colors.white54,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildDriverSummaryCards(nextRide: nextRide),
+                    const SizedBox(height: 10),
+                    _buildNextRideHeroCard(nextRide: nextRide),
+                    const SizedBox(height: 10),
+                    sectionTitle(
+                      _tr(
+                        nl: 'Snelle acties',
+                        en: 'Quick actions',
+                        fr: 'Actions rapides',
+                        es: 'Acciones rapidas',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildDriverQuickActionsGrid(),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF101113),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.10)),
+              ),
+              child: Row(
+                children: [
+                  navItem(
+                    icon: Icons.home_filled,
+                    label: _tr(
+                      nl: 'Home',
+                      en: 'Home',
+                      fr: 'Accueil',
+                      es: 'Inicio',
+                    ),
+                    active: true,
+                    onTap: () {},
+                  ),
+                  navItem(
+                    icon: Icons.list_alt_rounded,
+                    label: _tr(
+                      nl: 'Ritten',
+                      en: 'Rides',
+                      fr: 'Courses',
+                      es: 'Viajes',
+                    ),
+                    onTap: _openBookingsHubFromDashboard,
+                  ),
+                  navItem(
+                    icon: Icons.local_taxi_outlined,
+                    label: _tr(
+                      nl: 'Straatrit',
+                      en: 'Street ride',
+                      fr: 'Course directe',
+                      es: 'Viaje directo',
+                    ),
+                    onTap: _openDirectRideEntry,
+                  ),
+                  navItem(
+                    icon: Icons.menu_rounded,
+                    label: _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
+                    onTap: _showDashboardMoreSheet,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // -------------------------------
+  // UI
+  // -------------------------------
+
+  Widget _buildHintPanel() {
+    return _buildPremiumDriverDashboard();
   }
 
   Widget _buildTurnInstructionBanner({required bool compact}) {
@@ -20189,16 +21945,27 @@ class _DriverHomePageState extends State<DriverHomePage>
         children: [
           // Map always at the back.
           Positioned.fill(child: _buildMapLayer()),
+          if (!showCockpit)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  color: const Color(0xFF040404).withOpacity(0.985),
+                ),
+              ),
+            ),
 
           // Top status / header (Fluxidi strip).
-          if (!collapseTopBarInLandscapeNav && !collapseTopBarInPortraitNav)
+          if (showCockpit &&
+              !collapseTopBarInLandscapeNav &&
+              !collapseTopBarInPortraitNav)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
               left: 12,
               right: 12,
               child: _buildStatusStrip(state),
             ),
-          if (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav)
+          if (showCockpit &&
+              (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 10,
@@ -20337,105 +22104,91 @@ class _DriverHomePageState extends State<DriverHomePage>
               child: _buildRecenterButton(),
             ),
 
-          // Bottom overlay layer (cockpit / idle / hint).
-          Positioned.fill(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeOut,
-              child: isLandscape
-                  ? SafeArea(
-                      key: ValueKey<String>(
-                        'landscape_${showCockpit ? 'cockpit' : 'hint'}',
-                      ),
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            left: 10,
-                            right: 10,
-                            bottom:
-                                MediaQuery.of(context).viewInsets.bottom + 4,
+          if (!showCockpit) Positioned.fill(child: _buildHintPanel()),
+
+          // Bottom overlay layer (cockpit only).
+          if (showCockpit)
+            Positioned.fill(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeOut,
+                child: isLandscape
+                    ? SafeArea(
+                        key: const ValueKey<String>('landscape_cockpit'),
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              left: 10,
+                              right: 10,
+                              bottom:
+                                  MediaQuery.of(context).viewInsets.bottom + 4,
+                            ),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CockpitWidget(
+                                    etaText: _etaText,
+                                    kmText: _kmRemainingText,
+                                    priceText: _cockpitPriceText,
+                                    tripStarted: _liveRideActive,
+                                    isWaiting: _isWaiting,
+                                    navActive:
+                                        _cameraMode == _CameraMode.follow,
+                                    onNav: _openNavigation,
+                                    onStart: _handleCockpitStart,
+                                    onStop: _stopTrip,
+                                    onWait: _enterWaitMode,
+                                    onGo: _exitWaitMode,
+                                  ),
+                                  if (showExternalNavButtons)
+                                    _buildExternalNavButtons(),
+                                ],
+                              ),
+                            ),
                           ),
-                          child: showCockpit
-                              ? SizedBox(
-                                  width: double.infinity,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      CockpitWidget(
-                                        etaText: _etaText,
-                                        kmText: _kmRemainingText,
-                                        priceText: _cockpitPriceText,
-                                        tripStarted: _liveRideActive,
-                                        isWaiting: _isWaiting,
-                                        navActive:
-                                            _cameraMode == _CameraMode.follow,
-                                        onNav: _openNavigation,
-                                        onStart: _handleCockpitStart,
-                                        onStop: _stopTrip,
-                                        onWait: _enterWaitMode,
-                                        onGo: _exitWaitMode,
-                                      ),
-                                      if (showExternalNavButtons)
-                                        _buildExternalNavButtons(),
-                                    ],
-                                  ),
-                                )
-                              : ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxWidth: math.min(
-                                      420,
-                                      MediaQuery.of(context).size.width * 0.5,
-                                    ),
-                                  ),
-                                  child: _buildHintPanel(),
+                        ),
+                      )
+                    : SafeArea(
+                        key: const ValueKey<String>('portrait_cockpit'),
+                        minimum: const EdgeInsets.only(bottom: 6),
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              left: 12,
+                              right: 12,
+                              bottom:
+                                  MediaQuery.of(context).viewInsets.bottom + 6,
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CockpitWidget(
+                                  etaText: _etaText,
+                                  kmText: _kmRemainingText,
+                                  priceText: _cockpitPriceText,
+                                  tripStarted: _liveRideActive,
+                                  isWaiting: _isWaiting,
+                                  navActive: _cameraMode == _CameraMode.follow,
+                                  onNav: _openNavigation,
+                                  onStart: _handleCockpitStart,
+                                  onStop: _stopTrip,
+                                  onWait: _enterWaitMode,
+                                  onGo: _exitWaitMode,
                                 ),
-                        ),
-                      ),
-                    )
-                  : SafeArea(
-                      key: ValueKey<String>(
-                        'portrait_${showCockpit ? 'cockpit' : 'hint'}',
-                      ),
-                      minimum: const EdgeInsets.only(bottom: 6),
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            left: 12,
-                            right: 12,
-                            bottom:
-                                MediaQuery.of(context).viewInsets.bottom + 6,
+                                if (showExternalNavButtons)
+                                  _buildExternalNavButtons(),
+                              ],
+                            ),
                           ),
-                          child: showCockpit
-                              ? Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    CockpitWidget(
-                                      etaText: _etaText,
-                                      kmText: _kmRemainingText,
-                                      priceText: _cockpitPriceText,
-                                      tripStarted: _liveRideActive,
-                                      isWaiting: _isWaiting,
-                                      navActive:
-                                          _cameraMode == _CameraMode.follow,
-                                      onNav: _openNavigation,
-                                      onStart: _handleCockpitStart,
-                                      onStop: _stopTrip,
-                                      onWait: _enterWaitMode,
-                                      onGo: _exitWaitMode,
-                                    ),
-                                    if (showExternalNavButtons)
-                                      _buildExternalNavButtons(),
-                                  ],
-                                )
-                              : _buildHintPanel(),
                         ),
                       ),
-                    ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -21669,6 +23422,33 @@ class _DriverHomePageState extends State<DriverHomePage>
     _startBookingPolling(reason: 'bookings_hub_closed');
   }
 
+  void _openBookingsHubFromDashboard() async {
+    if (!_canAccessDriverOpsScreens()) {
+      _denyRoleAccess();
+      return;
+    }
+    if (mounted) {
+      setState(() => _bookingsHubVisible = true);
+    } else {
+      _bookingsHubVisible = true;
+    }
+    _startBookingPolling(reason: 'bookings_hub_open');
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => _BookingsHubPage(
+          title: kBookingsTitle,
+          buildList: (h) => _buildBookingsList(h),
+          onRefresh: () =>
+              _refreshBookings(force: true, trigger: 'list_manual'),
+          repaintListenable: _bookingsUiVersion,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _bookingsHubVisible = false);
+    _startBookingPolling(reason: 'bookings_hub_closed');
+  }
+
   void _openLiveRide() async {
     if (!_canAccessDriverOpsScreens()) {
       Navigator.pop(context);
@@ -21705,6 +23485,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     Navigator.pop(context);
+    _openTripHistoryFromDashboard();
+  }
+
+  void _openTripHistoryFromDashboard() {
+    if (!_canAccessDriverOpsScreens()) {
+      _denyRoleAccess();
+      return;
+    }
     final bookingDetailsById = <String, Map<String, dynamic>>{};
     for (final booking in _bookings) {
       final bookingId = booking.bookingId.trim();
@@ -21744,6 +23532,21 @@ class _DriverHomePageState extends State<DriverHomePage>
           driverId: kDriverId,
           headers: _headers(admin: true),
           bookingDetailsById: bookingDetailsById,
+        ),
+      ),
+    );
+  }
+
+  void _openCalculatorFromDashboard() {
+    if (!_canAccessCustomerBookingScreens()) {
+      _denyRoleAccess();
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
         ),
       ),
     );
