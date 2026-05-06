@@ -10,6 +10,22 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+enum _SetupStatus { complete, attention, incomplete, comingSoon }
+
+class _SetupItem {
+  const _SetupItem({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.status,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final _SetupStatus status;
+}
+
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
 
@@ -84,6 +100,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Set<String> _serviceIds = <String>{};
   Set<String> _tierIds = <String>{};
   Set<String> _extraIds = <String>{};
+  final Set<String> _expandedSections = <String>{};
 
   void _onLogoSanitizationListeners() {
     _syncLocalTenantLogoFromNotifier();
@@ -1087,25 +1104,145 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  Widget _card({required String title, required Widget child}) {
+  Widget _collapsibleSettingsCard({
+    required String id,
+    required String title,
+    required IconData icon,
+    required String subtitle,
+    required Widget child,
+    _SetupStatus? status,
+  }) {
+    final isExpanded = _expandedSections.contains(id);
+    final statusResolved = status ?? _SetupStatus.comingSoon;
+    final statusColor = _statusColor(statusResolved);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF141B2F),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF101010), Color(0xFF07080C)],
+        ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+        border: Border.all(color: _setupGold.withOpacity(0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: _setupGold.withOpacity(0.05),
+            blurRadius: 10,
+            spreadRadius: 0.2,
           ),
-          const SizedBox(height: 10),
-          child,
         ],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          setState(() {
+            if (isExpanded) {
+              _expandedSections.remove(id);
+            } else {
+              _expandedSections.add(id);
+            }
+          });
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: const Color(0xFF15120A),
+                    border: Border.all(color: _setupGold.withOpacity(0.32)),
+                  ),
+                  child: Icon(icon, size: 19, color: _setupGold),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.65),
+                          fontSize: 11.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: statusColor.withOpacity(0.50),
+                        ),
+                      ),
+                      child: Text(
+                        _statusLabel(statusResolved),
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 10.6,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Icon(
+                      isExpanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: _setupGold.withOpacity(0.95),
+                      size: 22,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              child: isExpanded
+                  ? Column(
+                      children: [
+                        const SizedBox(height: 10),
+                        Container(
+                          height: 1,
+                          color: Colors.white.withOpacity(0.10),
+                        ),
+                        const SizedBox(height: 10),
+                        child,
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1245,6 +1382,482 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  bool _nonEmpty(String value) => value.trim().isNotEmpty;
+
+  bool _validPositiveNumber(String value) {
+    final parsed = double.tryParse(value.replaceAll(',', '.').trim());
+    return parsed != null && parsed.isFinite && parsed > 0;
+  }
+
+  Color get _setupGold => appConfig.primaryColor;
+
+  String _statusLabel(_SetupStatus status) {
+    switch (status) {
+      case _SetupStatus.complete:
+        return _t(
+          nl: 'Compleet',
+          en: 'Complete',
+          fr: 'Complet',
+          es: 'Completo',
+        );
+      case _SetupStatus.attention:
+        return _t(
+          nl: 'Aandacht nodig',
+          en: 'Needs attention',
+          fr: 'Attention requise',
+          es: 'Requiere atención',
+        );
+      case _SetupStatus.incomplete:
+        return _t(
+          nl: 'Onvolledig',
+          en: 'Incomplete',
+          fr: 'Incomplet',
+          es: 'Incompleto',
+        );
+      case _SetupStatus.comingSoon:
+        return _t(
+          nl: 'Binnenkort',
+          en: 'Coming soon',
+          fr: 'Bientôt',
+          es: 'Próximamente',
+        );
+    }
+  }
+
+  Color _statusColor(_SetupStatus status) {
+    switch (status) {
+      case _SetupStatus.complete:
+        return const Color(0xFF4ADE80);
+      case _SetupStatus.attention:
+        return const Color(0xFFE5B641);
+      case _SetupStatus.incomplete:
+        return const Color(0xFFF87171);
+      case _SetupStatus.comingSoon:
+        return Colors.grey.shade500;
+    }
+  }
+
+  _SetupStatus _detailsStatus() {
+    final fields = <String>[
+      _backendCompanyNameCtrl.text,
+      _backendLegalNameCtrl.text,
+      _backendVatNumberCtrl.text,
+      _backendAddressCtrl.text,
+      _backendPostcodeCtrl.text,
+      _backendCityCtrl.text,
+      _backendCountryCtrl.text,
+      _backendEmailCtrl.text,
+      _backendPhoneCtrl.text,
+    ];
+    final completed = fields.where((f) => _nonEmpty(f)).length;
+    if (completed == fields.length) return _SetupStatus.complete;
+    if (completed >= 4) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _billingVatStatus() {
+    final hasVatEnabled = _backendVatEnabled;
+    final hasVatRate = _validPositiveNumber(_backendVatRateCtrl.text);
+    final hasVatMode = _nonEmpty(_backendVatDisplayMode);
+    final hasInvoiceEmail = _nonEmpty(_backendInvoiceEmailCtrl.text);
+    final hasIban = _nonEmpty(_backendIbanCtrl.text);
+    final checks = <bool>[
+      hasVatEnabled,
+      hasVatRate,
+      hasVatMode,
+      hasInvoiceEmail,
+      hasIban,
+    ];
+    final score = checks.where((v) => v).length;
+    if (score == checks.length) return _SetupStatus.complete;
+    if (score >= 2) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _brandingSupportStatus() {
+    final hasBrandName = _nonEmpty(_companyCtrl.text);
+    final hasSupportEmail = _nonEmpty(_supportEmailCtrl.text);
+    final hasSupportPhone = _nonEmpty(_supportPhoneCtrl.text);
+    final hasLogo = _effectiveCompanyLogoRef(_logoPathCtrl.text) != null;
+    final checks = <bool>[
+      hasBrandName,
+      hasSupportEmail,
+      hasSupportPhone,
+      hasLogo,
+    ];
+    final score = checks.where((v) => v).length;
+    if (score == checks.length) return _SetupStatus.complete;
+    if (score >= 2) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _pricingStatus() {
+    final checks = <bool>[
+      _validPositiveNumber(_baseFareCtrl.text),
+      _validPositiveNumber(_perKmCtrl.text),
+      _validPositiveNumber(_perMinCtrl.text),
+      _validPositiveNumber(_minimumFareCtrl.text),
+    ];
+    final score = checks.where((v) => v).length;
+    if (score == checks.length) return _SetupStatus.complete;
+    if (score >= 1) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _servicesTiersStatus() {
+    final hasServices = _serviceIds.isNotEmpty;
+    final hasTiers = _tierIds.isNotEmpty;
+    if (hasServices && hasTiers) return _SetupStatus.complete;
+    if (hasServices || hasTiers) return _SetupStatus.attention;
+    return _SetupStatus.incomplete;
+  }
+
+  _SetupStatus _publicLinkStatus() {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim() ?? '';
+    final usingFallbackId = activeCompanyId.isEmpty;
+    if (usingFallbackId) return _SetupStatus.incomplete;
+    final prepared = _preparedPublicBookingUrl(_effectivePublicCompanyId());
+    if (_nonEmpty(prepared)) return _SetupStatus.attention;
+    return _SetupStatus.comingSoon;
+  }
+
+  List<_SetupItem> _setupItems() {
+    return <_SetupItem>[
+      _SetupItem(
+        title: _t(
+          nl: 'Bedrijfsgegevens',
+          en: 'Company details',
+          fr: 'Informations entreprise',
+          es: 'Datos de empresa',
+        ),
+        subtitle: _t(
+          nl: 'Naam, adres en contact',
+          en: 'Name, address and contact',
+          fr: 'Nom, adresse et contact',
+          es: 'Nombre, dirección y contacto',
+        ),
+        icon: Icons.business_outlined,
+        status: _detailsStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Facturatie & BTW',
+          en: 'Billing & VAT',
+          fr: 'Facturation et TVA',
+          es: 'Facturación e IVA',
+        ),
+        subtitle: _t(
+          nl: 'BTW, facturatie en IBAN',
+          en: 'Tax, invoicing and IBAN',
+          fr: 'TVA, facturation et IBAN',
+          es: 'IVA, facturación e IBAN',
+        ),
+        icon: Icons.receipt_long_outlined,
+        status: _billingVatStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Branding & support',
+          en: 'Branding & support',
+          fr: 'Branding et support',
+          es: 'Marca y soporte',
+        ),
+        subtitle: _t(
+          nl: 'Merknaam, support en logo',
+          en: 'Brand, support and logo',
+          fr: 'Marque, support et logo',
+          es: 'Marca, soporte y logo',
+        ),
+        icon: Icons.brush_outlined,
+        status: _brandingSupportStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Prijsinstellingen',
+          en: 'Pricing settings',
+          fr: 'Paramètres tarifaires',
+          es: 'Ajustes de precio',
+        ),
+        subtitle: _t(
+          nl: 'Basistarief en kernprijzen',
+          en: 'Base fare and core prices',
+          fr: 'Tarif de base et prix clés',
+          es: 'Tarifa base y precios clave',
+        ),
+        icon: Icons.local_offer_outlined,
+        status: _pricingStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Services & tiers',
+          en: 'Services & tiers',
+          fr: 'Services et catégories',
+          es: 'Servicios y categorías',
+        ),
+        subtitle: _t(
+          nl: 'Actieve ritopties',
+          en: 'Enabled ride options',
+          fr: 'Options de course actives',
+          es: 'Opciones de viaje activas',
+        ),
+        icon: Icons.local_taxi_outlined,
+        status: _servicesTiersStatus(),
+      ),
+      _SetupItem(
+        title: _t(
+          nl: 'Publieke boekingslink',
+          en: 'Public booking link',
+          fr: 'Lien de réservation public',
+          es: 'Enlace público de reserva',
+        ),
+        subtitle: _t(
+          nl: 'Voorbereid, nog niet live',
+          en: 'Prepared, not live yet',
+          fr: 'Préparé, pas encore en ligne',
+          es: 'Preparado, aún no en vivo',
+        ),
+        icon: Icons.link_outlined,
+        status: _publicLinkStatus(),
+      ),
+    ];
+  }
+
+  Widget _setupStatusChip(_SetupStatus status) {
+    final color = _statusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.55)),
+      ),
+      child: Text(
+        _statusLabel(status),
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetupItemCard(_SetupItem item, {required double width}) {
+    final statusColor = _statusColor(item.status);
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF101010), Color(0xFF07080C)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _setupGold.withOpacity(0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: statusColor.withOpacity(0.45)),
+                ),
+                child: Icon(item.icon, size: 18, color: statusColor),
+              ),
+              const Spacer(),
+              _setupStatusChip(item.status),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Text(
+            item.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            item.subtitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.66),
+              fontSize: 11.2,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSetupCockpit() {
+    final items = _setupItems();
+    final completeCount = items
+        .where((item) => item.status == _SetupStatus.complete)
+        .length;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF15120A), Color(0xFF101010), Color(0xFF07080C)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _setupGold.withOpacity(0.32)),
+        boxShadow: [
+          BoxShadow(
+            color: _setupGold.withOpacity(0.09),
+            blurRadius: 14,
+            spreadRadius: 0.4,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Setup voortgang',
+              en: 'Setup progress',
+              fr: 'Progression de configuration',
+              es: 'Progreso de configuración',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Maak je bedrijf klaar voor boekingen.',
+              en: 'Get your business ready for bookings.',
+              fr: 'Préparez votre entreprise pour les réservations.',
+              es: 'Prepara tu empresa para recibir reservas.',
+            ),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 12.3,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF07080C).withOpacity(0.86),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _setupGold.withOpacity(0.28)),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  _t(
+                    nl: 'Instellingen overzicht',
+                    en: 'Settings overview',
+                    fr: 'Aperçu des paramètres',
+                    es: 'Resumen de ajustes',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '$completeCount/${items.length} ${_t(nl: 'voltooid', en: 'completed', fr: 'terminé', es: 'completado')}',
+                  style: TextStyle(
+                    color: _setupGold,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 520;
+              if (compact) {
+                return Column(
+                  children: [
+                    for (var i = 0; i < items.length; i++) ...[
+                      _buildSetupItemCard(
+                        items[i],
+                        width: constraints.maxWidth,
+                      ),
+                      if (i < items.length - 1) const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              }
+              final cardWidth = (constraints.maxWidth - 8) / 2;
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final item in items)
+                    _buildSetupItemCard(item, width: cardWidth),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      _t(
+                        nl: 'Controleer de kaarten hierboven en vul ontbrekende velden in de formulieren hieronder aan.',
+                        en: 'Review the cards above and complete missing fields in the forms below.',
+                        fr: 'Vérifiez les cartes ci-dessus et complétez les champs manquants dans les formulaires ci-dessous.',
+                        es: 'Revisa las tarjetas de arriba y completa los campos faltantes en los formularios de abajo.',
+                      ),
+                    ),
+                  ),
+                );
+              },
+              icon: Icon(Icons.checklist_outlined, color: _setupGold, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Controleer ontbrekende items',
+                  en: 'Check missing items',
+                  fr: 'Vérifier les éléments manquants',
+                  es: 'Revisar elementos pendientes',
+                ),
+                style: TextStyle(
+                  color: _setupGold,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
@@ -1277,13 +1890,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _notice(_backendProfilesStatus!),
               const SizedBox(height: 10),
             ],
-            _card(
+            _buildSetupCockpit(),
+            _collapsibleSettingsCard(
+              id: 'local_company',
+              icon: Icons.apartment_outlined,
               title: _t(
                 nl: 'Lokaal bedrijf (dit toestel)',
                 en: 'Local company (this device)',
                 fr: 'Entreprise locale (cet appareil)',
                 es: 'Empresa local (este dispositivo)',
               ),
+              subtitle: _t(
+                nl: 'Tenant-ID en lokale status',
+                en: 'Tenant ID and local status',
+                fr: 'ID tenant et statut local',
+                es: 'ID de tenant y estado local',
+              ),
+              status: _detailsStatus(),
               child: ValueListenableBuilder<CompanyProfile?>(
                 valueListenable: companyProfileNotifier,
                 builder: (context, _, __) {
@@ -1421,13 +2044,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 },
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'public_booking_link',
+              icon: Icons.link_outlined,
               title: _t(
                 nl: 'Publieke boekingslink',
                 en: 'Public booking link',
                 fr: 'Lien de réservation public',
                 es: 'Enlace público de reserva',
               ),
+              subtitle: _t(
+                nl: 'Web/QR-link voorbereiding',
+                en: 'Web/QR link preparation',
+                fr: 'Préparation lien web/QR',
+                es: 'Preparación de enlace web/QR',
+              ),
+              status: _publicLinkStatus(),
               child: ValueListenableBuilder<CompanyProfile?>(
                 valueListenable: companyProfileNotifier,
                 builder: (context, _, __) {
@@ -1593,13 +2225,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 },
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'official_company_details',
+              icon: Icons.business_outlined,
               title: _t(
                 nl: 'Officiële bedrijfsgegevens',
                 en: 'Official company details',
                 fr: 'Informations officielles de l entreprise',
                 es: 'Datos oficiales de la empresa',
               ),
+              subtitle: _t(
+                nl: 'Juridische en factuurgegevens',
+                en: 'Legal and invoice details',
+                fr: 'Données juridiques et de facturation',
+                es: 'Datos legales y de facturación',
+              ),
+              status: _detailsStatus(),
               child: Column(
                 children: [
                   _txt(
@@ -1785,13 +2426,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ],
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'vat_settings',
+              icon: Icons.receipt_long_outlined,
               title: _t(
                 nl: 'BTW-instellingen',
                 en: 'VAT settings',
                 fr: 'Parametres TVA',
                 es: 'Configuracion de IVA',
               ),
+              subtitle: _t(
+                nl: 'BTW-profiel en weergavemodus',
+                en: 'VAT profile and display mode',
+                fr: 'Profil TVA et mode d’affichage',
+                es: 'Perfil de IVA y modo de visualización',
+              ),
+              status: _billingVatStatus(),
               child: Column(
                 children: [
                   SwitchListTile(
@@ -1913,13 +2563,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ],
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'branding_support',
+              icon: Icons.brush_outlined,
               title: _t(
                 nl: 'Branding & support',
                 en: 'Branding & support',
                 fr: 'Branding et support',
                 es: 'Marca y soporte',
               ),
+              subtitle: _t(
+                nl: 'Merknaam, contact en logo',
+                en: 'Brand name, contact and logo',
+                fr: 'Marque, contact et logo',
+                es: 'Marca, contacto y logo',
+              ),
+              status: _brandingSupportStatus(),
               child: Column(
                 children: [
                   _txt(
@@ -2089,13 +2748,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ],
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'service_setup',
+              icon: Icons.local_taxi_outlined,
               title: _t(
                 nl: 'Service setup',
                 en: 'Service setup',
                 fr: 'Configuration des services',
                 es: 'Configuracion de servicios',
               ),
+              subtitle: _t(
+                nl: 'Services, tiers en opties',
+                en: 'Services, tiers and options',
+                fr: 'Services, catégories et options',
+                es: 'Servicios, categorías y opciones',
+              ),
+              status: _servicesTiersStatus(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2143,13 +2811,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ],
               ),
             ),
-            _card(
+            _collapsibleSettingsCard(
+              id: 'pricing_engine',
+              icon: Icons.local_offer_outlined,
               title: _t(
                 nl: 'Pricing engine',
                 en: 'Pricing engine',
                 fr: 'Moteur tarifaire',
                 es: 'Motor de precios',
               ),
+              subtitle: _t(
+                nl: 'Basistarieven en toeslagen',
+                en: 'Base rates and surcharges',
+                fr: 'Tarifs de base et suppléments',
+                es: 'Tarifas base y recargos',
+              ),
+              status: _pricingStatus(),
               child: Column(
                 children: [
                   _txt(
