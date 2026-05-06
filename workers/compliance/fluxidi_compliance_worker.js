@@ -70,6 +70,10 @@ function ensureAuthorized(request, env) {
   return null;
 }
 
+function allowDevResetEndpoints(env) {
+  return String(env?.ALLOW_DEV_RESET_ENDPOINTS || "").trim().toLowerCase() === "true";
+}
+
 function requireJsonRequest(request) {
   const contentType = (request.headers.get("content-type") || "").toLowerCase();
   return contentType.includes("application/json");
@@ -629,11 +633,17 @@ export default {
         if (request.method !== "GET") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
+        if (!allowDevResetEndpoints(env)) {
+          return jsonResponse({ ok: false, error: "dev reset endpoints are disabled" }, 403, origin);
+        }
         return await handleAdminResetComplianceEvents(request, url, env, origin, true);
       }
       if (url.pathname === ADMIN_RESET_PATH) {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        if (!allowDevResetEndpoints(env)) {
+          return jsonResponse({ ok: false, error: "dev reset endpoints are disabled" }, 403, origin);
         }
         return await handleAdminResetComplianceEvents(request, url, env, origin, false);
       }
