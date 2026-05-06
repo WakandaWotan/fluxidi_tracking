@@ -2525,7 +2525,22 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    final drivers = driversNotifier.value;
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim().isNotEmpty == true
+        ? companyProfileNotifier.value!.companyId.trim()
+        : (activeCompanySessionNotifier.value?.companyId.trim().isNotEmpty ==
+                  true
+              ? activeCompanySessionNotifier.value!.companyId.trim()
+              : '');
+    final drivers = activeCompanyId.isNotEmpty
+        ? driversNotifier.value
+              .where(
+                (driver) => (driver.companyId?.trim() ?? '') == activeCompanyId,
+              )
+              .toList(growable: false)
+        // Temporary compatibility: if no active company is resolved yet,
+        // keep legacy/dev login behavior until company session is mandatory.
+        : driversNotifier.value;
     final match = DriverSessionStore.instance.findDriverByEnteredId(
       drivers,
       _idCtrl.text,
@@ -15284,22 +15299,41 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _directRideVehicleId() {
-    for (final vehicle in vehiclesNotifier.value) {
+    final activeCompanyId =
+        companyProfileNotifier.value?.companyId.trim().isNotEmpty == true
+        ? companyProfileNotifier.value!.companyId.trim()
+        : (activeCompanySessionNotifier.value?.companyId.trim().isNotEmpty ==
+                  true
+              ? activeCompanySessionNotifier.value!.companyId.trim()
+              : '');
+    final activeDriverId = kDriverId.trim();
+    final candidateVehicles = activeCompanyId.isNotEmpty
+        // Company-scoped fallback prevents cross-company vehicle reuse in direct rides.
+        ? vehiclesNotifier.value
+              .where(
+                (vehicle) =>
+                    (vehicle.companyId?.trim() ?? '') == activeCompanyId,
+              )
+              .toList(growable: false)
+        : vehiclesNotifier.value;
+
+    for (final vehicle in candidateVehicles) {
       if (vehicle.isActive &&
-          vehicle.driverId == kDriverId &&
+          vehicle.driverId == activeDriverId &&
           vehicle.id.trim().isNotEmpty) {
         return vehicle.id.trim();
       }
     }
-    for (final vehicle in vehiclesNotifier.value) {
+    for (final vehicle in candidateVehicles) {
       if (vehicle.isActive && vehicle.id.trim().isNotEmpty) {
         return vehicle.id.trim();
       }
     }
-    if (vehiclesNotifier.value.isNotEmpty) {
-      final firstId = vehiclesNotifier.value.first.id.trim();
+    if (candidateVehicles.isNotEmpty) {
+      final firstId = candidateVehicles.first.id.trim();
       if (firstId.isNotEmpty) return firstId;
     }
+    if (activeCompanyId.isNotEmpty) return '';
     return 'vh_1';
   }
 
