@@ -2494,18 +2494,22 @@ GET /oauth/callback
       if (url.pathname === "/admin/fleet/vehicles" && request.method === "GET") {
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-        const scope = normalizeFleetTenantScope(
-          extractBookingTenantScope({ request, url }),
-        );
-        if (!scope.hasScope) {
-          return json(missingTenantScopeError(), 400);
+        const requestedScope = extractBookingTenantScope({ request, url });
+        if (!requestedScope.tenant_id || !requestedScope.company_id) {
+          return json({ ok: false, error: "tenant_id and company_id are required" }, 400);
         }
-        const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+        const scope = normalizeFleetTenantScope(requestedScope);
+        const includeLegacyFallback =
+          String(url.searchParams.get("include_legacy_fallback") || "").trim().toLowerCase() ===
+          "true";
+        const fleetRead = await _loadFleetInventoryRawForScope(env, scope, {
+          allowLegacyFallback: includeLegacyFallback,
+        });
         const vehicles = fleetRead.vehiclesRaw;
         const normalized = vehicles
-          .map(_normalizeVehicleEntry)
+          .map((entry) => _normalizeVehicleEntry(entry, { scope }))
           .filter((v) => v !== null);
-        return json({
+        const response = {
           ok: true,
           key: fleetRead.key,
           source: fleetRead.source,
@@ -2513,24 +2517,53 @@ GET /oauth/callback
           legacy_key: fleetRead.legacy_key,
           count: normalized.length,
           vehicles: normalized,
-        }, 200);
+        };
+        if (includeLegacyFallback) {
+          // Legacy fleet fallback is diagnostic/read-only only; scoped fleet stays the active operational source.
+          const diagnosticLegacy = (fleetRead.legacyVehiclesRaw || [])
+            .map(_normalizeVehicleEntry)
+            .filter(
+              (vehicle) =>
+                vehicle !== null &&
+                _scopeText(vehicle.tenant_id ?? vehicle.tenantId) === scope.tenant_id &&
+                _scopeText(vehicle.company_id ?? vehicle.companyId) === scope.company_id,
+            );
+          response.legacy_diagnostic_enabled = true;
+          response.legacy_diagnostic_source = "legacy_read_only";
+          response.diagnostic_legacy_count = diagnosticLegacy.length;
+          response.diagnostic_legacy_vehicles = diagnosticLegacy;
+        }
+        return json(response, 200);
       }
 
       if (url.pathname === "/admin/fleet/vehicles" && request.method === "POST") {
         _requireAdmin(request, url, env);
         if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
         const body = await safeJson(request);
-        const scope = normalizeFleetTenantScope(
-          extractBookingTenantScope({ request, url, body }),
-        );
-        if (!scope.hasScope) {
-          return json(missingTenantScopeError(), 400);
+        const requestedScope = extractBookingTenantScope({ request, url, body });
+        if (!requestedScope.tenant_id || !requestedScope.company_id) {
+          return json({ ok: false, error: "tenant_id and company_id are required" }, 400);
         }
+        const scope = normalizeFleetTenantScope(requestedScope);
         const incoming = Array.isArray(body)
           ? body
           : (Array.isArray(body?.vehicles) ? body.vehicles : null);
         if (!Array.isArray(incoming)) {
           return json({ ok: false, error: "Body must be an array or { vehicles: [] }" }, 400);
+        }
+        for (const row of incoming) {
+          if (!row || typeof row !== "object") continue;
+          const rowTenantId = _scopeText(row.tenant_id ?? row.tenantId);
+          const rowCompanyId = _scopeText(row.company_id ?? row.companyId);
+          if (
+            (rowTenantId && rowTenantId !== scope.tenant_id) ||
+            (rowCompanyId && rowCompanyId !== scope.company_id)
+          ) {
+            return json(
+              { ok: false, error: "vehicle row scope does not match request scope" },
+              400,
+            );
+          }
         }
         const normalized = incoming
           .map((entry) => _normalizeVehicleEntry(entry, { scope }))
@@ -7511,33 +7544,53 @@ function fleetInventoryScopedKeyForScope(scope) {
   return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:fleet:vehicles:v1`;
 }
 
-async function _loadFleetInventoryRawForScope(env, scope) {
+function _fleetVehiclesRawFromKv(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object" && Array.isArray(raw.vehicles)) return raw.vehicles;
+  return [];
+}
+
+async function _loadFleetInventoryRawForScope(env, scope, { allowLegacyFallback = false } = {}) {
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalizedScope = normalizeFleetTenantScope(scope);
   const scopedKey = fleetInventoryScopedKeyForScope(normalizedScope);
   const scopedRaw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
-  const scopedVehiclesRaw = Array.isArray(scopedRaw)
-    ? scopedRaw
-    : (scopedRaw && typeof scopedRaw === "object" && Array.isArray(scopedRaw.vehicles) ? scopedRaw.vehicles : []);
+  const scopedVehiclesRaw = _fleetVehiclesRawFromKv(scopedRaw);
   if (scopedVehiclesRaw.length > 0) {
-    return {
+    const response = {
       key: scopedKey,
       source: "scoped",
       scoped_key: scopedKey,
       legacy_key: VEHICLE_INVENTORY_KEY,
       vehiclesRaw: scopedVehiclesRaw,
     };
+    if (allowLegacyFallback) {
+      const legacyRaw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
+      response.legacyVehiclesRaw = _fleetVehiclesRawFromKv(legacyRaw);
+      response.legacy_source = "legacy_diagnostic";
+    }
+    return response;
+  }
+  if (!allowLegacyFallback) {
+    // Default scoped fleet reads prevent global legacy rows from being treated as active company fleet.
+    return {
+      key: scopedKey,
+      source: "scoped_empty",
+      scoped_key: scopedKey,
+      legacy_key: VEHICLE_INVENTORY_KEY,
+      vehiclesRaw: [],
+    };
   }
   const legacyRaw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
-  const legacyVehiclesRaw = Array.isArray(legacyRaw)
-    ? legacyRaw
-    : (legacyRaw && typeof legacyRaw === "object" && Array.isArray(legacyRaw.vehicles) ? legacyRaw.vehicles : []);
+  const legacyVehiclesRaw = _fleetVehiclesRawFromKv(legacyRaw);
   return {
-    key: VEHICLE_INVENTORY_KEY,
-    source: "legacy_fallback",
+    key: scopedKey,
+    source: "scoped_empty",
     scoped_key: scopedKey,
     legacy_key: VEHICLE_INVENTORY_KEY,
-    vehiclesRaw: legacyVehiclesRaw,
+    vehiclesRaw: [],
+    legacyVehiclesRaw,
+    legacy_source: "legacy_diagnostic",
   };
 }
 
