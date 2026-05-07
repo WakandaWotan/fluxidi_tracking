@@ -22902,6 +22902,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     return LayoutBuilder(
       builder: (context, c) {
+        final compactPortrait =
+            c.maxWidth < 390 &&
+            MediaQuery.of(context).orientation == Orientation.portrait;
         final narrow = c.maxWidth < 380;
         final tight = c.maxWidth < 340;
         final actionHeight = narrow ? 40.0 : 38.0;
@@ -22916,6 +22919,231 @@ class _DriverHomePageState extends State<DriverHomePage>
           fr: '${b.bags ?? 0} bagages',
           es: '${b.bags ?? 0} equipaje',
         );
+
+        if (compactPortrait) {
+          final compactActionHeight = 36.0;
+          return Container(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
+              ),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.24),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _pill(
+                  icon: Icons.schedule,
+                  text: dt,
+                  borderColor: const Color(0x55FFD36A),
+                  textColor: const Color(0xFFFFD98A),
+                  compact: true,
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 34,
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 13,
+                            height: 13,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFFD36A),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          Container(
+                            width: 2,
+                            height: 28,
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.34),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                          ),
+                          Icon(
+                            Icons.flag_rounded,
+                            size: 19,
+                            color: Colors.white.withOpacity(0.86),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            b.from ?? '—',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15.1,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            b.to ?? '—',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.90),
+                              fontSize: 15.0,
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
+                            ),
+                          ),
+                          if (customerName.trim().isNotEmpty) ...[
+                            const SizedBox(height: 7),
+                            Text(
+                              '${_tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente')}: $customerName',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.62),
+                                fontSize: 11.8,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _pill(
+                      text: statusText,
+                      borderColor: const Color(0xFFB07A2A),
+                      textColor: const Color(0xFFE7B46A),
+                      compact: true,
+                    ),
+                    _pill(
+                      text: (b.tier ?? 'premium').toUpperCase(),
+                      compact: true,
+                    ),
+                    _pill(text: '${b.pax ?? 0} pax', compact: true),
+                    _pill(text: bagLabel, compact: true),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    if (b.price != null)
+                      _pill(
+                        text: _fmtMoney(b.price!, b.currency ?? 'EUR'),
+                        borderColor: const Color(0x55FFD36A),
+                        textColor: const Color(0xFFFFD98A),
+                        compact: true,
+                      ),
+                    const Spacer(),
+                    SizedBox(
+                      height: 42,
+                      width: 42,
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          backgroundColor: const Color(0x33FFD36A),
+                          foregroundColor: const Color(0xFFFFE4AA),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () => _goToRide(b),
+                        child: const Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (cardReference.value.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    referenceChipText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.44),
+                      fontSize: 10.8,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: compactActionHeight,
+                  child: OutlinedButton.icon(
+                    style: _ghostButtonStyle(),
+                    onPressed: actionBusy
+                        ? null
+                        : () => _setBookingStatus(b, 'COMPLETED'),
+                    icon: const Icon(Icons.check_circle_outline, size: 16),
+                    label: Text(
+                      kRideActionCompletedLabel,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: compactActionHeight,
+                        child: OutlinedButton.icon(
+                          style: _ghostButtonStyle(),
+                          onPressed: actionBusy
+                              ? null
+                              : () => _setBookingStatus(b, 'CANCELLED'),
+                          icon: const Icon(Icons.cancel_outlined, size: 16),
+                          label: Text(
+                            kRideActionCancelledLabel,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      height: compactActionHeight,
+                      width: compactActionHeight + 2,
+                      child: IconButton(
+                        onPressed: actionBusy ? null : () => _confirmDelete(b),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        tooltip: kRideDeleteLabel,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }
 
         return Container(
           padding: EdgeInsets.all(tight ? 11 : 12),
@@ -23823,9 +24051,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String text,
     Color? borderColor,
     Color? textColor,
+    bool compact = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 5 : 6,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF111111),
         borderRadius: BorderRadius.circular(14),
@@ -23837,10 +24069,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 16, color: (textColor ?? Colors.white70)),
-            const SizedBox(width: 6),
+            Icon(
+              icon,
+              size: compact ? 14 : 16,
+              color: (textColor ?? Colors.white70),
+            ),
+            SizedBox(width: compact ? 4 : 6),
           ],
-          Text(text, style: TextStyle(color: textColor ?? Colors.white)),
+          Text(
+            text,
+            style: TextStyle(
+              color: textColor ?? Colors.white,
+              fontSize: compact ? 12.2 : null,
+            ),
+          ),
         ],
       ),
     );
