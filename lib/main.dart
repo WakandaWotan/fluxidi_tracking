@@ -22623,6 +22623,18 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _buildBookingsList(double screenH) {
     final visibleBookings = _visibleBookings;
+    final emptyTitle = _tr(
+      nl: 'Geen ritten klaar',
+      en: 'No rides ready',
+      fr: 'Aucune course prête',
+      es: 'No hay viajes listos',
+    );
+    final emptyBody = _tr(
+      nl: 'Nieuwe boekingen verschijnen hier zodra ze aan jou of je bedrijf zijn gekoppeld.',
+      en: 'New bookings appear here once they are assigned to you or your company.',
+      fr: 'Les nouvelles réservations apparaissent ici dès qu’elles sont liées à vous ou à votre entreprise.',
+      es: 'Las nuevas reservas aparecerán aquí cuando estén vinculadas a ti o a tu empresa.',
+    );
     return Column(
       mainAxisSize: MainAxisSize.max,
       children: [
@@ -22632,7 +22644,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               child: Text(
                 kAvailableBookingsTitle,
                 style: const TextStyle(
-                  fontSize: 18,
+                  color: Colors.white,
+                  fontSize: 16.5,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -22647,22 +22660,99 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
         const SizedBox(height: 10),
         if (_loadingBookings)
-          const Padding(
-            padding: EdgeInsets.all(18),
-            child: Center(child: CircularProgressIndicator()),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF101826),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0x33FFD36A)),
+            ),
+            child: Column(
+              children: [
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _tr(
+                    nl: 'Ritten worden geladen...',
+                    en: 'Loading rides...',
+                    fr: 'Chargement des courses...',
+                    es: 'Cargando viajes...',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.78),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           )
         else if (_bookingsError != null)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              'Error: $_bookingsError',
-              style: const TextStyle(color: Colors.redAccent),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF27161A),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0x66FF7A7A)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _tr(
+                    nl: 'Ritten konden niet geladen worden.',
+                    en: 'Could not load rides.',
+                    fr: 'Impossible de charger les courses.',
+                    es: 'No se pudieron cargar los viajes.',
+                  ),
+                  style: const TextStyle(
+                    color: Color(0xFFFFB3B3),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Error: $_bookingsError',
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ],
             ),
           )
         else if (visibleBookings.isEmpty)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(kBookingsEmptyLabel),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF101826),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0x33FFD36A)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  emptyTitle,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  emptyBody,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.72),
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           )
         else
           Expanded(
@@ -22726,6 +22816,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     final dt = _formatPickup(b.pickupIso);
     final actionBusy = _bookingActionInFlight.contains(b.bookingId);
     final cardReference = _driverCardReferenceDisplay(b);
+    final customerName =
+        _bookingScopeFirstText(_bookingScopeViewFor(b), const [
+          ['customer_name'],
+          ['customerName'],
+          ['customer', 'name'],
+          ['booking', 'customer_name'],
+          ['booking', 'customerName'],
+          ['booking', 'customer', 'name'],
+        ]) ??
+        '';
 
     return LayoutBuilder(
       builder: (context, c) {
@@ -22739,9 +22839,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         return Container(
           padding: EdgeInsets.all(tight ? 12 : 14),
           decoration: BoxDecoration(
-            color: const Color(0xFF1A2240),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF171E34), Color(0xFF111829)],
+            ),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.18)),
+            border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.28),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -22841,6 +22952,20 @@ class _DriverHomePageState extends State<DriverHomePage>
                 value: b.to ?? '—',
                 maxLines: narrow ? 2 : 3,
               ),
+              if (customerName.trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                _line(
+                  icon: Icons.person_outline,
+                  title: _tr(
+                    nl: 'Klant',
+                    en: 'Customer',
+                    fr: 'Client',
+                    es: 'Cliente',
+                  ),
+                  value: customerName,
+                  maxLines: 2,
+                ),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 6,
