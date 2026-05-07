@@ -7394,6 +7394,30 @@ bool _isActiveCustomerLifecycleStatus(String status) {
       s != 'DECLINED';
 }
 
+bool _isCustomerBookingTerminalStatus(String? status) {
+  final raw = (status ?? '').trim();
+  if (raw.isEmpty) return false;
+  final normalized = _normalizeCustomerLifecycleStatus(
+    raw,
+  ).trim().toUpperCase().replaceAll(RegExp(r'[\s-]+'), '_');
+  switch (normalized) {
+    case 'CANCELLED':
+    case 'CANCELED':
+    case 'COMPLETED':
+    case 'COMPLETE':
+    case 'DELETED':
+    case 'ARCHIVED':
+    case 'CLOSED':
+    case 'DONE':
+    case 'FAILED':
+    case 'EXPIRED':
+    case 'DECLINED':
+      return true;
+    default:
+      return false;
+  }
+}
+
 StoredCustomerBooking _hydrateStoredCustomerBookingFromView({
   required StoredCustomerBooking stored,
   required CustomerBookingView view,
@@ -9905,23 +9929,30 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   Future<void> _removeFromMyBookings() async {
     final bookingId = widget.bookingId.trim();
     if (bookingId.isEmpty) return;
+    if (!_canLocalRemoveBookingOnly) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][ACTIVE_REMOVE_REDIRECT_CANCEL] booking=${_safeRefPreview(bookingId)}',
+      );
+      await _cancelBookingServerSide();
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
           _t(
-            nl: 'Boeking verwijderen?',
-            en: 'Remove booking?',
-            fr: 'Supprimer la réservation ?',
-            es: '¿Eliminar reserva?',
+            nl: 'Verwijderen uit mijn lijst?',
+            en: 'Remove from my list?',
+            fr: 'Supprimer de ma liste ?',
+            es: '¿Eliminar de mi lista?',
           ),
         ),
         content: Text(
           _t(
-            nl: 'Deze boeking wordt alleen uit jouw lokale overzicht verwijderd. De bedrijfsadministratie en ritgeschiedenis blijven bewaard.',
-            en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
-            fr: 'Cette réservation sera supprimée uniquement de votre aperçu local. L’administration de l’entreprise et l’historique des trajets restent conservés.',
-            es: 'Esta reserva solo se eliminará de tu vista local. La administración de la empresa y el historial del viaje se conservan.',
+            nl: 'Deze boeking wordt alleen uit je lijst verwijderd.',
+            en: 'This booking will only be removed from your list.',
+            fr: 'Cette réservation sera uniquement supprimée de votre liste.',
+            es: 'Esta reserva solo se eliminará de tu lista.',
           ),
         ),
         actions: [
@@ -9935,10 +9966,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(
-                nl: 'Verwijderen',
-                en: 'Remove',
-                fr: 'Supprimer',
-                es: 'Eliminar',
+                nl: 'Verwijderen uit mijn lijst',
+                en: 'Remove from my list',
+                fr: 'Supprimer de ma liste',
+                es: 'Eliminar de mi lista',
               ),
             ),
           ),
@@ -10010,13 +10041,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   bool get _canCancelBooking {
-    final status = _view.lifecycleStatus.trim().toUpperCase();
-    return status != 'CANCELLED' &&
-        status != 'COMPLETED' &&
-        status != 'DELETED' &&
-        status != 'FAILED' &&
-        status != 'EXPIRED' &&
-        status != 'DECLINED';
+    return !_isCustomerBookingTerminalStatus(_view.lifecycleStatus);
+  }
+
+  bool get _canLocalRemoveBookingOnly {
+    return _isCustomerBookingTerminalStatus(_view.lifecycleStatus);
   }
 
   bool _isCancellationTransportError(Object err) {
@@ -10080,10 +10109,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         ),
         content: Text(
           _t(
-            nl: 'Weet je zeker dat je deze boeking wil annuleren?',
-            en: 'Are you sure you want to cancel this booking?',
-            fr: 'Voulez-vous vraiment annuler cette réservation ?',
-            es: '¿Seguro que quieres cancelar esta reserva?',
+            nl: 'Deze boeking wordt geannuleerd. De chauffeur en agenda worden bijgewerkt.',
+            en: 'This booking will be cancelled. The driver and calendar will be updated.',
+            fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
+            es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
           ),
         ),
         actions: [
@@ -10489,16 +10518,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       )
                     : const Icon(Icons.cancel_outlined),
               ),
-              IconButton(
-                tooltip: _t(
-                  nl: 'Verwijder uit mijn boekingen',
-                  en: 'Remove from my bookings',
-                  fr: 'Supprimer de mes réservations',
-                  es: 'Eliminar de mis reservas',
+              if (_canLocalRemoveBookingOnly)
+                IconButton(
+                  tooltip: _t(
+                    nl: 'Verwijderen uit mijn lijst',
+                    en: 'Remove from my list',
+                    fr: 'Supprimer de ma liste',
+                    es: 'Eliminar de mi lista',
+                  ),
+                  onPressed: _removeFromMyBookings,
+                  icon: const Icon(Icons.delete_outline),
                 ),
-                onPressed: _removeFromMyBookings,
-                icon: const Icon(Icons.delete_outline),
-              ),
               IconButton(
                 tooltip: _t(
                   nl: 'Vernieuwen',
