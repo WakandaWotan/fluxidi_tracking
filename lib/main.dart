@@ -26227,6 +26227,34 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     return '';
   }
 
+  bool _looksLikeRawCoordinatePair(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return false;
+    final match = RegExp(
+      r'^([+-]?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{1,3}(?:\.\d+)?)$',
+    ).firstMatch(text);
+    if (match == null) return false;
+    final first = double.tryParse(match.group(1)!);
+    final second = double.tryParse(match.group(2)!);
+    if (first == null || second == null) return false;
+    final firstInLatLon = first.abs() <= 90.0 && second.abs() <= 180.0;
+    final secondInLatLon = first.abs() <= 180.0 && second.abs() <= 90.0;
+    return firstInLatLon || secondInLatLon;
+  }
+
+  String _displayHistoryOrigin(String rawOrigin) {
+    final trimmed = rawOrigin.trim();
+    if (_looksLikeRawCoordinatePair(trimmed)) {
+      return _tr(
+        nl: 'Startlocatie',
+        en: 'Start location',
+        fr: 'Point de départ',
+        es: 'Punto de inicio',
+      );
+    }
+    return trimmed.isEmpty ? '—' : trimmed;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
@@ -26353,6 +26381,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                   : _formatEur(item.totalEur!);
               final statusColor = _statusChipColor(item);
               final paymentChip = _paymentChipText(item);
+              final originText = _displayHistoryOrigin(item.origin);
               final kindOrCustomer = (item.customerName ?? '').trim().isNotEmpty
                   ? item.customerName!.trim()
                   : '${item.kindLabel}${item.isLocalOnlyDirectFallback ? ' • Lokaal' : ''}';
@@ -26446,7 +26475,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      item.origin,
+                                      originText,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
