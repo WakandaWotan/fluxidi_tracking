@@ -21583,17 +21583,20 @@ class _DriverHomePageState extends State<DriverHomePage>
             SizedBox(
               width: width,
               child: quickAction(
-                icon: Icons.toggle_on_outlined,
+                icon: Icons.folder_copy_outlined,
                 title: _tr(
-                  nl: 'Status',
-                  en: 'Status',
-                  fr: 'Statut',
-                  es: 'Estado',
+                  nl: 'Documenten',
+                  en: 'Documents',
+                  fr: 'Documents',
+                  es: 'Documentos',
                 ),
-                subtitle: _dashboardStatusLabel(),
-                active:
-                    _dashboardDriverStatus() == _DriverDashboardStatus.ready,
-                onTap: _handleDriverStatusAction,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const DriverMyDocumentsPage(),
+                    ),
+                  );
+                },
               ),
             ),
           ],
