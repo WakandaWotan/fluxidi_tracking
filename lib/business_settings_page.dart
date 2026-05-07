@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 enum _SetupStatus { complete, attention, incomplete, comingSoon }
 
@@ -93,8 +94,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendProfilesLoading = false;
   bool _backendBusinessSaving = false;
   bool _backendTaxSaving = false;
+  bool _googleCalendarLoading = false;
+  bool _googleCalendarReconnectLoading = false;
   String? _backendProfilesError;
   String? _backendProfilesStatus;
+  String? _googleCalendarStatusError;
+  Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
   final ImagePicker _imagePicker = ImagePicker();
   Set<String> _serviceIds = <String>{};
@@ -151,6 +156,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
+    _loadGoogleCalendarStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncLocalTenantLogoFromNotifier();
@@ -483,6 +489,364 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         setState(() => _backendProfilesLoading = false);
       }
     }
+  }
+
+  String _googleCalendarSource() {
+    return (_googleCalendarStatus?['source'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+  }
+
+  bool _googleCalendarConnected() {
+    return _googleCalendarStatus?['connected'] == true;
+  }
+
+  bool _googleCalendarConfigured() {
+    return _googleCalendarStatus?['configured'] == true;
+  }
+
+  String _googleCalendarStatusCode() {
+    if (_googleCalendarStatusError != null) return 'check_failed';
+    final source = _googleCalendarSource();
+    if (source == 'global_env') return 'legacy_global';
+    if (_googleCalendarConnected()) return 'connected';
+    final raw = (_googleCalendarStatus?['status'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (raw == 'auth_required') return 'auth_required';
+    if (raw == 'failed') return 'failed';
+    if (!_googleCalendarConfigured() || raw == 'not_configured') {
+      return 'not_configured';
+    }
+    return 'check_failed';
+  }
+
+  _SetupStatus _googleCalendarSetupStatus() {
+    switch (_googleCalendarStatusCode()) {
+      case 'connected':
+        return _SetupStatus.complete;
+      case 'legacy_global':
+      case 'auth_required':
+      case 'failed':
+        return _SetupStatus.attention;
+      case 'not_configured':
+      case 'check_failed':
+      default:
+        return _SetupStatus.incomplete;
+    }
+  }
+
+  String _googleCalendarStatusLabel() {
+    switch (_googleCalendarStatusCode()) {
+      case 'connected':
+        return _t(
+          nl: 'Verbonden',
+          en: 'Connected',
+          fr: 'Connecté',
+          es: 'Conectado',
+        );
+      case 'auth_required':
+      case 'failed':
+        return _t(
+          nl: 'Opnieuw koppelen vereist',
+          en: 'Reconnect required',
+          fr: 'Reconnexion requise',
+          es: 'Requiere reconexión',
+        );
+      case 'legacy_global':
+        return _t(
+          nl: 'Legacy-koppeling actief',
+          en: 'Legacy connection active',
+          fr: 'Connexion héritée active',
+          es: 'Conexión heredada activa',
+        );
+      case 'not_configured':
+        return _t(
+          nl: 'Niet geconfigureerd',
+          en: 'Not configured',
+          fr: 'Non configuré',
+          es: 'No configurado',
+        );
+      case 'check_failed':
+      default:
+        return _t(
+          nl: 'Controle mislukt',
+          en: 'Check failed',
+          fr: 'Échec du contrôle',
+          es: 'Error de comprobación',
+        );
+    }
+  }
+
+  String _googleCalendarDescription() {
+    switch (_googleCalendarStatusCode()) {
+      case 'connected':
+        return _t(
+          nl: 'Google Calendar is gekoppeld voor dit bedrijf.',
+          en: 'Google Calendar is connected for this company.',
+          fr: 'Google Agenda est connecté pour cette entreprise.',
+          es: 'Google Calendar está conectado para esta empresa.',
+        );
+      case 'legacy_global':
+        return _t(
+          nl: 'Deze koppeling gebruikt nog de legacy globale configuratie. Koppel Google Calendar opnieuw voor dit bedrijf.',
+          en: 'This connection still uses the legacy global configuration. Reconnect Google Calendar for this company.',
+          fr: 'Cette connexion utilise encore la configuration globale héritée. Reconnectez Google Agenda pour cette entreprise.',
+          es: 'Esta conexión aún usa la configuración global heredada. Vuelve a conectar Google Calendar para esta empresa.',
+        );
+      case 'auth_required':
+      case 'failed':
+      case 'not_configured':
+      case 'check_failed':
+      default:
+        return _t(
+          nl: 'Koppel Google Calendar opnieuw voor dit bedrijf.',
+          en: 'Reconnect Google Calendar for this company.',
+          fr: 'Reconnectez Google Agenda pour cette entreprise.',
+          es: 'Vuelve a conectar Google Calendar para esta empresa.',
+        );
+    }
+  }
+
+  String _googleCalendarPrimaryActionLabel() {
+    switch (_googleCalendarStatusCode()) {
+      case 'not_configured':
+        return _t(
+          nl: 'Koppelen',
+          en: 'Connect',
+          fr: 'Connecter',
+          es: 'Conectar',
+        );
+      default:
+        return _t(
+          nl: 'Opnieuw koppelen',
+          en: 'Reconnect',
+          fr: 'Reconnecter',
+          es: 'Volver a conectar',
+        );
+    }
+  }
+
+  String? _calendarStatusField(String key) {
+    final raw = (_googleCalendarStatus?[key] ?? '').toString().trim();
+    return raw.isEmpty ? null : raw;
+  }
+
+  Future<void> _loadGoogleCalendarStatus({bool showErrorSnack = false}) async {
+    setState(() {
+      _googleCalendarLoading = true;
+      _googleCalendarStatusError = null;
+    });
+    try {
+      final scope = _activeSettingsScope();
+      final data = await fetchBackendGoogleCalendarStatus(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _googleCalendarStatus = data;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _googleCalendarStatusError = e.toString();
+      });
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Google Calendar status kon niet geladen worden.',
+                en: 'Google Calendar status could not be loaded.',
+                fr: 'Le statut Google Agenda n’a pas pu être chargé.',
+                es: 'No se pudo cargar el estado de Google Calendar.',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _googleCalendarLoading = false);
+      }
+    }
+  }
+
+  Future<void> _startGoogleCalendarReconnect() async {
+    setState(() => _googleCalendarReconnectLoading = true);
+    try {
+      final scope = _activeSettingsScope();
+      final data = await startBackendGoogleCalendarOAuth(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final authUrl = (data['auth_url'] ?? '').toString().trim();
+      if (authUrl.isEmpty) {
+        throw Exception('missing_auth_url');
+      }
+      final launched = await launchUrl(
+        Uri.parse(authUrl),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('launch_failed');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Google OAuth geopend. Rond de koppeling af in je browser.',
+              en: 'Google OAuth opened. Finish the connection in your browser.',
+              fr: 'OAuth Google ouvert. Terminez la connexion dans votre navigateur.',
+              es: 'OAuth de Google abierto. Termina la conexión en tu navegador.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadGoogleCalendarStatus());
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Google Calendar koppeling kon niet gestart worden.',
+              en: 'Google Calendar connection could not be started.',
+              fr: 'La connexion Google Agenda n’a pas pu être démarrée.',
+              es: 'No se pudo iniciar la conexión de Google Calendar.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _googleCalendarReconnectLoading = false);
+      }
+    }
+  }
+
+  Widget _googleCalendarCard() {
+    final calendarId = _calendarStatusField('calendar_id');
+    final accountEmail = _calendarStatusField('account_email');
+    final lastConnectedAt = _calendarStatusField('last_connected_at');
+    final lastSyncAt = _calendarStatusField('last_sync_at');
+    final lastErrorCode = _calendarStatusField('last_error_code');
+    final lastErrorAt = _calendarStatusField('last_error_at');
+    return _collapsibleSettingsCard(
+      id: 'google_calendar',
+      icon: Icons.calendar_month_outlined,
+      title: _t(
+        nl: 'Google Calendar',
+        en: 'Google Calendar',
+        fr: 'Google Agenda',
+        es: 'Google Calendar',
+      ),
+      subtitle: _t(
+        nl: 'Kalenderkoppeling en herverbinden',
+        en: 'Calendar connection and reconnect',
+        fr: 'Connexion agenda et reconnexion',
+        es: 'Conexión de calendario y reconexión',
+      ),
+      status: _googleCalendarSetupStatus(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_googleCalendarLoading && _googleCalendarStatus == null)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          Text(
+            _googleCalendarStatusLabel(),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _googleCalendarDescription(),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (calendarId != null)
+            Text(
+              '${_t(nl: 'Kalender-ID', en: 'Calendar ID', fr: 'ID agenda', es: 'ID de calendario')}: $calendarId',
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          if (accountEmail != null)
+            Text(
+              '${_t(nl: 'Account', en: 'Account', fr: 'Compte', es: 'Cuenta')}: $accountEmail',
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          if (lastConnectedAt != null)
+            Text(
+              '${_t(nl: 'Laatste koppeling', en: 'Last connected', fr: 'Dernière connexion', es: 'Última conexión')}: $lastConnectedAt',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          if (lastSyncAt != null)
+            Text(
+              '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $lastSyncAt',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          if (lastErrorCode != null)
+            Text(
+              '${_t(nl: 'Foutcode', en: 'Error code', fr: 'Code erreur', es: 'Código de error')}: $lastErrorCode',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          if (lastErrorAt != null)
+            Text(
+              '${_t(nl: 'Laatste fout', en: 'Last error', fr: 'Dernière erreur', es: 'Último error')}: $lastErrorAt',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: _googleCalendarReconnectLoading
+                    ? null
+                    : _startGoogleCalendarReconnect,
+                icon: _googleCalendarReconnectLoading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.link_outlined),
+                label: Text(_googleCalendarPrimaryActionLabel()),
+              ),
+              OutlinedButton.icon(
+                onPressed: _googleCalendarLoading
+                    ? null
+                    : () => _loadGoogleCalendarStatus(showErrorSnack: true),
+                icon: const Icon(Icons.refresh),
+                label: Text(
+                  _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   BackendBusinessProfile _backendBusinessProfileFromForm() {
@@ -2225,6 +2589,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 },
               ),
             ),
+            _googleCalendarCard(),
             _collapsibleSettingsCard(
               id: 'official_company_details',
               icon: Icons.business_outlined,

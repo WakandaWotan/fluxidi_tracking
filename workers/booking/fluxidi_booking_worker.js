@@ -2454,6 +2454,105 @@ export default {
           200,
         );
       }
+      if (url.pathname === "/admin/google-calendar/status" && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const scopedKey = buildScopedGoogleCalendarAuthKey(explicitScope);
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        let scopedRecord = null;
+        if (scopedKey && env?.BOOKING_KV) {
+          try {
+            const raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+            const scoped = raw && typeof raw === "object"
+              ? (raw.google_calendar_auth && typeof raw.google_calendar_auth === "object"
+                  ? raw.google_calendar_auth
+                  : raw)
+              : null;
+            if (scoped) scopedRecord = scoped;
+          } catch (_) {
+            scopedRecord = null;
+          }
+        }
+        if (scopedRecord) {
+          return json(
+            {
+              ok: true,
+              tenant_id: tenantId,
+              company_id: companyId,
+              source: "scoped",
+              configured: true,
+              connected:
+                scopedRecord.connected === true &&
+                safeStr(scopedRecord.status, 64).toLowerCase() === "connected",
+              status: safeStr(scopedRecord.status, 64) || "connected",
+              calendar_id:
+                safeStr(scopedRecord.calendarId ?? scopedRecord.calendar_id, 160) ||
+                "primary",
+              account_email:
+                safeStr(scopedRecord.accountEmail ?? scopedRecord.account_email, 320) ||
+                null,
+              last_connected_at:
+                safeStr(
+                  scopedRecord.lastConnectedAt ?? scopedRecord.last_connected_at,
+                  64,
+                ) || null,
+              last_sync_at:
+                safeStr(scopedRecord.lastSyncAt ?? scopedRecord.last_sync_at, 64) ||
+                null,
+              last_error_code:
+                safeStr(
+                  scopedRecord.lastErrorCode ?? scopedRecord.last_error_code,
+                  120,
+                ) || null,
+              last_error_at:
+                safeStr(scopedRecord.lastErrorAt ?? scopedRecord.last_error_at, 64) ||
+                null,
+              updated_at:
+                safeStr(scopedRecord.updatedAt ?? scopedRecord.updated_at, 64) ||
+                null,
+            },
+            200,
+          );
+        }
+
+        const globalConfigured = !!(
+          safeStr(env?.GOOGLE_CLIENT_ID) &&
+          safeStr(env?.GOOGLE_CLIENT_SECRET) &&
+          safeStr(env?.GOOGLE_REFRESH_TOKEN)
+        );
+        if (globalConfigured) {
+          return json(
+            {
+              ok: true,
+              tenant_id: tenantId,
+              company_id: companyId,
+              source: "global_env",
+              configured: true,
+              connected: true,
+              status: "legacy_global",
+              calendar_id: safeStr(env?.GOOGLE_CALENDAR_ID, 160) || "primary",
+            },
+            200,
+          );
+        }
+
+        return json(
+          {
+            ok: true,
+            tenant_id: tenantId,
+            company_id: companyId,
+            source: "none",
+            configured: false,
+            connected: false,
+            status: "not_configured",
+          },
+          200,
+        );
+      }
 
       // Home
       if (url.pathname === "/" && request.method === "GET") {

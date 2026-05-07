@@ -1804,6 +1804,54 @@ Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   return BackendSubscriptionProfile.fromJson(Map<String, dynamic>.from(saved));
 }
 
+Future<Map<String, dynamic>> fetchBackendGoogleCalendarStatus({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/google-calendar/status'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return Map<String, dynamic>.from(decoded);
+}
+
+Future<Map<String, dynamic>> startBackendGoogleCalendarOAuth({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/google-calendar/oauth/start'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{...scope}),
+      )
+      .timeout(const Duration(seconds: 12));
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return Map<String, dynamic>.from(decoded);
+}
+
 Future<void> loadLocalTenantState() async {
   try {
     final file = await _tenantStateFile();
