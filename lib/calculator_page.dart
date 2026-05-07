@@ -3636,12 +3636,31 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                   icon: Icons.business_outlined,
                 ),
                 const SizedBox(height: 8),
-                _input(
-                  _vatNumberCtrl,
-                  widget.strings.bookingVatNumberOptionalLabel.of(
-                    widget.language,
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _vatNumberCtrl,
+                  builder: (_, value, __) => _input(
+                    _vatNumberCtrl,
+                    widget.strings.bookingVatNumberOptionalLabel.of(
+                      widget.language,
+                    ),
+                    icon: Icons.receipt_long_outlined,
+                    suffixIcon: value.text.trim().isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: _localizedText(
+                              nl: 'BTW-nummer wissen',
+                              en: 'Clear VAT number',
+                              fr: 'Effacer le numéro de TVA',
+                              es: 'Borrar número de IVA',
+                            ),
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 18,
+                              color: const Color(0xFFE5B641).withOpacity(0.92),
+                            ),
+                            onPressed: () => _vatNumberCtrl.clear(),
+                          ),
                   ),
-                  icon: Icons.receipt_long_outlined,
                 ),
                 const SizedBox(height: 6),
                 Align(
@@ -3934,6 +3953,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     TextInputType keyboardType = TextInputType.text,
     int maxLines = 1,
     IconData? icon,
+    Widget? suffixIcon,
   }) {
     return TextField(
       controller: ctrl,
@@ -3946,6 +3966,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         prefixIcon: icon == null
             ? null
             : Icon(icon, size: 18, color: const Color(0xFFE5B641)),
+        suffixIcon: suffixIcon,
         filled: true,
         fillColor: appConfig.branding.calculatorScaffoldColor.withOpacity(0.82),
         contentPadding: const EdgeInsets.symmetric(
