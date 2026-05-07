@@ -4887,6 +4887,70 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
+  String _driverCardInitials(DriverProfile driver) {
+    final raw = _displayDriverName(driver.fullName).trim();
+    if (raw.isEmpty) return 'D';
+    final parts = raw
+        .split(RegExp(r'\s+'))
+        .where((p) => p.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+    return raw[0].toUpperCase();
+  }
+
+  String? _driverCardPhotoPath(DriverProfile driver) {
+    if (kIsWeb) return null;
+    final path = driver.profilePhotoPath?.trim() ?? '';
+    if (path.isEmpty) return null;
+    try {
+      return File(path).existsSync() ? path : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _driverCardAvatar(DriverProfile driver) {
+    final photoPath = _driverCardPhotoPath(driver);
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A223A),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white24),
+      ),
+      child: ClipOval(
+        child: photoPath == null
+            ? Center(
+                child: Text(
+                  _driverCardInitials(driver),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              )
+            : Image.file(
+                File(photoPath),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Center(
+                  child: Text(
+                    _driverCardInitials(driver),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+
   Future<void> _confirmDeleteDocument(
     BuildContext context,
     DriverDocument doc,
@@ -5169,6 +5233,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              _driverCardAvatar(d),
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
                                   d.fullName.trim().isEmpty
@@ -20512,6 +20578,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 'chauffeur';
   }
 
+  DriverProfile? _dashboardActiveDriverProfile() {
+    final session = activeDriverSessionNotifier.value;
+    final sessionDriverId = session?.driverId.trim() ?? '';
+    if (sessionDriverId.isEmpty) return null;
+    for (final driver in driversNotifier.value) {
+      if (driver.id.trim() == sessionDriverId) return driver;
+    }
+    return null;
+  }
+
+  String? _dashboardAvatarPhotoPath() {
+    final candidate =
+        _dashboardActiveDriverProfile()?.profilePhotoPath?.trim() ?? '';
+    if (candidate.isEmpty) return null;
+    if (kIsWeb) return null;
+    try {
+      return File(candidate).existsSync() ? candidate : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   String _dashboardGreeting() {
     final name = _dashboardDriverName();
     if (name.toLowerCase() == 'chauffeur') {
@@ -20617,6 +20705,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
     }
     return raw[0].toUpperCase();
+  }
+
+  Widget _dashboardAvatarFallback() {
+    return Text(
+      _dashboardAvatarLabel(),
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.95),
+        fontSize: 13.5,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.2,
+      ),
+    );
   }
 
   void _handleDriverStatusAction() {
@@ -20852,6 +20952,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     const headerLeftPull = -16.0;
     const headerTopPull = -16.0;
     const logoVisualLift = -14.0;
+    final avatarPhotoPath = _dashboardAvatarPhotoPath();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -20942,13 +21043,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 color: Colors.white.withOpacity(0.20),
                               ),
                             ),
-                            child: Text(
-                              _dashboardAvatarLabel(),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.95),
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.2,
+                            child: ClipOval(
+                              child: SizedBox.expand(
+                                child: avatarPhotoPath == null
+                                    ? Center(child: _dashboardAvatarFallback())
+                                    : Image.file(
+                                        File(avatarPhotoPath),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                          child: _dashboardAvatarFallback(),
+                                        ),
+                                      ),
                               ),
                             ),
                           ),

@@ -723,6 +723,7 @@ class DriverProfile {
   final String taxiDriverCardNumber;
   final String taxiDriverCardExpiry;
   final bool isActive;
+  final String? profilePhotoPath;
 
   /// See [VehicleProfile.companyId].
   final String? companyId;
@@ -737,6 +738,7 @@ class DriverProfile {
     this.taxiDriverCardNumber = '',
     this.taxiDriverCardExpiry = '',
     required this.isActive,
+    this.profilePhotoPath,
     this.companyId,
   });
 
@@ -748,6 +750,7 @@ class DriverProfile {
     String? taxiDriverCardNumber,
     String? taxiDriverCardExpiry,
     bool? isActive,
+    Object? profilePhotoPath = _driverProfileUnset,
     String? companyId,
   }) {
     return DriverProfile(
@@ -758,10 +761,15 @@ class DriverProfile {
       taxiDriverCardNumber: taxiDriverCardNumber ?? this.taxiDriverCardNumber,
       taxiDriverCardExpiry: taxiDriverCardExpiry ?? this.taxiDriverCardExpiry,
       isActive: isActive ?? this.isActive,
+      profilePhotoPath: identical(profilePhotoPath, _driverProfileUnset)
+          ? this.profilePhotoPath
+          : profilePhotoPath as String?,
       companyId: companyId ?? this.companyId,
     );
   }
 }
+
+const Object _driverProfileUnset = Object();
 
 enum FleetUpsellMode { includedOnly, perVehicleMonthly, tierUpgrade }
 
@@ -1246,6 +1254,7 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'taxiDriverCardNumber': d.taxiDriverCardNumber,
     'taxiDriverCardExpiry': d.taxiDriverCardExpiry,
     'isActive': d.isActive,
+    'profilePhotoPath': d.profilePhotoPath,
     'companyId': d.companyId,
   };
 }
@@ -1317,11 +1326,18 @@ DriverProfile _decodeDriver(
   required DriverProfile fallback,
 }) {
   final cidRaw = m['companyId'] ?? m['tenantId'];
+  final profilePhotoRaw = m['profilePhotoPath'];
   final String? companyId = cidRaw == null
       ? fallback.companyId
       : () {
           final s = cidRaw.toString().trim();
           return s.isEmpty ? fallback.companyId : s;
+        }();
+  final String? profilePhotoPath = profilePhotoRaw == null
+      ? null
+      : () {
+          final text = profilePhotoRaw.toString().trim();
+          return text.isEmpty ? null : text;
         }();
 
   return fallback.copyWith(
@@ -1336,6 +1352,7 @@ DriverProfile _decodeDriver(
     isActive: (m['isActive'] is bool)
         ? m['isActive'] as bool
         : fallback.isActive,
+    profilePhotoPath: profilePhotoPath,
     companyId: companyId,
   );
 }

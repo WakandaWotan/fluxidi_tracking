@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io' show Directory, File, Platform;
 
 /// Chauffeur-facing compliance documents (same store as company admin).
 class DriverMyDocumentsPage extends StatefulWidget {
@@ -14,6 +18,8 @@ class DriverMyDocumentsPage extends StatefulWidget {
 }
 
 class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
+  final ImagePicker _imagePicker = ImagePicker();
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +51,284 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       if (d.id == session.driverId) return d;
     }
     return null;
+  }
+
+  bool _driverPhotoExists(String? path) {
+    final clean = path?.trim() ?? '';
+    if (clean.isEmpty || kIsWeb) return false;
+    try {
+      return File(clean).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _driverInitials(DriverProfile driver) {
+    final raw = driver.fullName.trim();
+    if (raw.isEmpty) return 'D';
+    final parts = raw
+        .split(RegExp(r'\s+'))
+        .where((p) => p.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+    return raw[0].toUpperCase();
+  }
+
+  String _profilePhotoActionLabel(DriverProfile driver) {
+    final hasPhoto = _driverPhotoExists(driver.profilePhotoPath);
+    if (hasPhoto) {
+      return _tr(
+        nl: 'Pasfoto wijzigen',
+        en: 'Change profile photo',
+        fr: 'Modifier la photo',
+        es: 'Cambiar foto',
+      );
+    }
+    return _tr(
+      nl: 'Pasfoto toevoegen',
+      en: 'Add profile photo',
+      fr: 'Ajouter une photo',
+      es: 'Añadir foto',
+    );
+  }
+
+  String _driverPhotoExtension(String path) {
+    final lower = path.toLowerCase();
+    final slash = lower.lastIndexOf(Platform.pathSeparator);
+    final altSlash = lower.lastIndexOf('/');
+    final base = lower.substring((slash > altSlash ? slash : altSlash) + 1);
+    final dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot == base.length - 1) return '';
+    const allowed = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'heic',
+    };
+    final ext = base.substring(dot + 1);
+    return allowed.contains(ext) ? ext : '';
+  }
+
+  String _safeDriverPhotoId(String driverId) {
+    final cleaned = driverId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_').trim();
+    if (cleaned.isEmpty) return 'driver';
+    return cleaned;
+  }
+
+  Future<String?> _persistPickedDriverPhoto(
+    String sourcePath, {
+    required String driverId,
+  }) async {
+    try {
+      if (kIsWeb) return null;
+      final source = sourcePath.trim();
+      if (source.isEmpty) return null;
+      final src = File(source);
+      if (!await src.exists()) return null;
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        '${base.path}${Platform.pathSeparator}driver_profile_photos',
+      );
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final ext = _driverPhotoExtension(source);
+      final safeDriverId = _safeDriverPhotoId(driverId);
+      final fileName =
+          'driver_${safeDriverId}_${DateTime.now().millisecondsSinceEpoch}'
+          '${ext.isEmpty ? '' : '.$ext'}';
+      final target = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await src.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<ImageSource?> _askProfilePhotoSource() async {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: const Color(0xFF141B2F),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(
+                _tr(
+                  nl: 'Foto kiezen',
+                  en: 'Choose photo',
+                  fr: 'Choisir une photo',
+                  es: 'Elegir foto',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: Text(
+                _tr(
+                  nl: 'Selfie nemen',
+                  en: 'Take selfie',
+                  fr: 'Prendre un selfie',
+                  es: 'Tomar selfie',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: Text(
+                _tr(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPhotoSelectionError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Foto kon niet worden gekozen.',
+            en: 'Photo could not be selected.',
+            fr: 'La photo n’a pas pu être sélectionnée.',
+            es: 'No se pudo seleccionar la foto.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndSaveProfilePhoto(
+    DriverProfile driver,
+    ImageSource source,
+  ) async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+      final persisted = await _persistPickedDriverPhoto(
+        picked.path,
+        driverId: driver.id,
+      );
+      final nextPath = (persisted ?? '').trim();
+      if (nextPath.isEmpty) return;
+      updateDriver(driver.id, driver.copyWith(profilePhotoPath: nextPath));
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Pasfoto opgeslagen.',
+              en: 'Profile photo saved.',
+              fr: 'Photo de profil enregistrée.',
+              es: 'Foto de perfil guardada.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      _showPhotoSelectionError();
+    }
+  }
+
+  Future<void> _onProfilePhotoActionTap(DriverProfile driver) async {
+    final source = await _askProfilePhotoSource();
+    if (source == null) return;
+    try {
+      await _pickAndSaveProfilePhoto(driver, source);
+    } catch (_) {
+      _showPhotoSelectionError();
+    }
+  }
+
+  Widget _profilePhotoActionCard(DriverProfile driver) {
+    final path = driver.profilePhotoPath?.trim() ?? '';
+    final hasPhoto = _driverPhotoExists(path);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141B2F),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A223A),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white24),
+            ),
+            child: ClipOval(
+              child: hasPhoto
+                  ? Image.file(
+                      File(path),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Text(
+                          _driverInitials(driver),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    )
+                  : Center(
+                      child: Text(
+                        _driverInitials(driver),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              _profilePhotoActionLabel(driver),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _onProfilePhotoActionTap(driver),
+            child: Text(
+              _tr(nl: 'Kies', en: 'Choose', fr: 'Choisir', es: 'Elegir'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -132,6 +416,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                         ),
                       ),
                       const SizedBox(height: 14),
+                      _profilePhotoActionCard(driver),
                       if (docs.isEmpty)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
