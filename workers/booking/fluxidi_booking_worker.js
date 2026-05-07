@@ -3278,6 +3278,22 @@ GET /oauth/callback
         return json({ ok: true, items, count: items.length }, 200);
       }
 
+      if (
+        url.pathname === "/admin/dashboard/bookings-kpis" &&
+        request.method === "GET"
+      ) {
+        _requireAdmin(request, url, env);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const out = await computeDashboardBookingsKpis(env, {
+          tenantScope: scopedRoute.scope,
+        });
+        if (!out?.ok) {
+          return json(out, out?.error === "tenant_scope_conflict" ? 409 : 400);
+        }
+        return json(out, 200);
+      }
+
       // GET /partners/nearby?postcode=...
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
@@ -9567,6 +9583,94 @@ async function listBookingsAuthoritative(
   });
 
   return out.slice(0, lim);
+}
+
+const DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES = [
+  "completed",
+  "cancelled",
+  "canceled",
+  "deleted",
+  "archived",
+  "closed",
+  "failed",
+  "expired",
+  "declined",
+];
+
+const DASHBOARD_BOOKINGS_KPI_TERMINAL_STATUS_SET = new Set(
+  DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+);
+
+function _normalizeDashboardBookingLifecycle(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("-", "_")
+    .replaceAll(" ", "_");
+  if (!raw) return "";
+  if (raw === "complete" || raw === "done") return "completed";
+  if (raw === "canceled") return "cancelled";
+  return raw;
+}
+
+function _isDashboardTerminalBookingLifecycle(value) {
+  const normalized = _normalizeDashboardBookingLifecycle(value);
+  if (!normalized) return false;
+  if (DASHBOARD_BOOKINGS_KPI_TERMINAL_STATUS_SET.has(normalized)) return true;
+  return isTerminalLifecycleStatus(value);
+}
+
+async function computeDashboardBookingsKpis(env, { tenantScope } = {}) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+
+  let scannedKeys = 0;
+  let matchedScope = 0;
+  let consideredOpen = 0;
+  let cursor = undefined;
+  let scanComplete = true;
+
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const item of page?.keys || []) {
+      const key = String(item?.name || "");
+      if (!key.startsWith("booking:")) continue;
+      scannedKeys += 1;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+      matchedScope += 1;
+      if (_isDashboardTerminalBookingLifecycle(_bookingLifecycleValue(rec))) {
+        continue;
+      }
+      consideredOpen += 1;
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) {
+      scanComplete = false;
+      break;
+    }
+  } while (cursor);
+
+  return {
+    ok: true,
+    tenant_id: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    generated_at: new Date().toISOString(),
+    open_bookings_count: consideredOpen,
+    excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+    scan_complete: scanComplete,
+    scan_stats: {
+      scanned_keys: scannedKeys,
+      matched_scope: matchedScope,
+      considered_open: consideredOpen,
+    },
+  };
 }
 
 async function getBookingAuthoritative(bookingId, env, tenantScope = null, preloadedRec = null) {
