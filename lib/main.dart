@@ -20980,7 +20980,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     const headerIconButtonSize = 46.0;
     const headerIconGlyphSize = 25.0;
     const headerLeftPull = -16.0;
-    const headerTopPull = -16.0;
+    const headerTopPull = -8.0;
     const logoVisualLift = -14.0;
     final avatarPhotoPath = _dashboardAvatarPhotoPath();
     return Column(
@@ -21019,7 +21019,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                 ),
                 Positioned(
-                  top: 2,
+                  top: 10,
                   right: 0,
                   child: Row(
                     children: [
@@ -21063,8 +21063,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                         clipBehavior: Clip.none,
                         children: [
                           Container(
-                            width: 44,
-                            height: 44,
+                            width: 50,
+                            height: 50,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
                               color: const Color(0xFF16181B),
@@ -21088,11 +21088,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                             ),
                           ),
                           Positioned(
-                            right: 0,
+                            right: -1,
                             bottom: 1,
                             child: Container(
-                              width: 10,
-                              height: 10,
+                              width: 11,
+                              height: 11,
                               decoration: BoxDecoration(
                                 color: const Color(0xFF2ECC71),
                                 shape: BoxShape.circle,
