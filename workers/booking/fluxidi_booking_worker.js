@@ -38,6 +38,33 @@ async function googleAccessToken(env) {
 async function getGoogleAccessToken(env) { return googleAccessToken(env); }
 async function refreshGoogleAccessToken(env) { return googleAccessToken(env); }
 
+function isGoogleCalendarAuthError(err) {
+  let serialized = "";
+  try {
+    serialized = JSON.stringify(err || {});
+  } catch (_) {
+    serialized = "";
+  }
+  const text = [
+    err?.message,
+    err?.error,
+    typeof err === "string" ? err : "",
+    serialized,
+  ]
+    .filter(Boolean)
+    .join(" | ")
+    .toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("invalid_grant") ||
+    text.includes("token has been expired or revoked") ||
+    text.includes("expired or revoked") ||
+    text.includes("unauthorized_client") ||
+    text.includes("invalid_client") ||
+    text.includes("failed to refresh google access token")
+  );
+}
+
 // Extra safety: expose in global scope (helps when older code references global names).
 try {
   globalThis.googleAccessToken = googleAccessToken;
@@ -5390,295 +5417,344 @@ async function handleBooking(payload, env, request) {
     let calendar_event_id = null;
     let htmlLink = null;
     let calendar = { configured: calendarConfigured, created: false };
+    let calendarSyncStatus = null;
+    let calendarSyncErrorCode = null;
+    let calendarSyncFailedAt = null;
+    let calendarSyncError = null;
+    let calendarSyncSuppressed = false;
+    let calendarAllocatorHandled = false;
+    let calendarPaymentHandled = false;
 
     if (calendarConfigured) {
-      const calendarId = env.GOOGLE_CALENDAR_ID || "primary";
-      const accessToken = await googleAccessToken(env);
+      try {
+        const calendarId = env.GOOGLE_CALENDAR_ID || "primary";
+        const accessToken = await googleAccessToken(env);
 
-      const stopHandlingMin = getStopHandlingMin(stop_count, env);
-      const postBufferMin = getPostBufferMin(env);
+        const stopHandlingMin = getStopHandlingMin(stop_count, env);
+        const postBufferMin = getPostBufferMin(env);
 
-      const duration_main_min = Math.max(0, duration_route_min);
-      const duration_return_min = Math.max(0, return_duration_min);
+        const duration_main_min = Math.max(0, duration_route_min);
+        const duration_return_min = Math.max(0, return_duration_min);
 
-      // If return is scheduled separately, the outbound window should only block the outbound time.
-      // Otherwise (classic round-trip), one event blocks both legs.
-      const duration_total_min = hasReturnSchedule ? duration_main_min : (duration_main_min + duration_return_min);
+        // If return is scheduled separately, the outbound window should only block the outbound time.
+        // Otherwise (classic round-trip), one event blocks both legs.
+        const duration_total_min = hasReturnSchedule ? duration_main_min : (duration_main_min + duration_return_min);
 
-      const totalServiceMin = duration_total_min + Math.max(0, wait_min) + Math.max(0, stopHandlingMin);
-      const busyMin = totalServiceMin + postBufferMin;
-      const win = computeWindow(pickup_iso, busyMin);
+        const totalServiceMin = duration_total_min + Math.max(0, wait_min) + Math.max(0, stopHandlingMin);
+        const busyMin = totalServiceMin + postBufferMin;
+        const win = computeWindow(pickup_iso, busyMin);
 
-      if (availabilityMode !== "multi_vehicle") {
-        // Travel gap rule: ensure enough time from previous drop-off to this pickup.
-        const gapCheck = await ensureTravelGapFromPreviousEvent({
-          accessToken,
-          calendarId,
-          pickupIso: pickup_iso,
-          pickupFromText: from,
-          env
-        });
-        if (gapCheck && gapCheck.ok === false) {
-          return { ok: false, error: "Niet beschikbaar: onvoldoende rijtijd tussen boekingen.", availability: gapCheck };
-        }
-
-        const busy = await googleFreeBusy(accessToken, calendarId, win.start.toISOString(), win.end.toISOString());
-        if (Array.isArray(busy) && busy.length) {
-          return { ok: false, error: "Niet beschikbaar op dit moment (agenda is bezet).", busy };
-        }
-
-        // If return is scheduled separately, also validate availability for the return pickup time.
-        if (hasReturnSchedule) {
-          if (!return_pickup_iso) {
-            return { ok: false, error: "Return scheduling selected but return_pickup_iso could not be built." };
-          }
-          const rPickup = new Date(return_pickup_iso);
-          if (isNaN(rPickup.getTime())) {
-            return { ok: false, error: "Ongeldige retourdatum/tijd." };
-          }
-
-          // Ensure enough travel time from previous events to the return pickup location.
-          const gapCheckR = await ensureTravelGapFromPreviousEvent({
+        if (availabilityMode !== "multi_vehicle") {
+          // Travel gap rule: ensure enough time from previous drop-off to this pickup.
+          const gapCheck = await ensureTravelGapFromPreviousEvent({
             accessToken,
             calendarId,
-            pickupIso: return_pickup_iso,
-            pickupFromText: return_from || to,
+            pickupIso: pickup_iso,
+            pickupFromText: from,
             env
           });
-          if (gapCheckR && gapCheckR.ok === false) {
-            return { ok: false, error: "Niet beschikbaar: onvoldoende rijtijd tussen boekingen (retour).", availability: gapCheckR };
+          if (gapCheck && gapCheck.ok === false) {
+            return { ok: false, error: "Niet beschikbaar: onvoldoende rijtijd tussen boekingen.", availability: gapCheck };
           }
 
-          const busyMinReturn = (duration_return_min + postBufferMin);
-          const winR = computeWindow(return_pickup_iso, busyMinReturn);
-          const busyR = await googleFreeBusy(accessToken, calendarId, winR.start.toISOString(), winR.end.toISOString());
-          if (Array.isArray(busyR) && busyR.length) {
-            return { ok: false, error: "Niet beschikbaar op het retourmoment (agenda is bezet).", busy: busyR };
+          const busy = await googleFreeBusy(accessToken, calendarId, win.start.toISOString(), win.end.toISOString());
+          if (Array.isArray(busy) && busy.length) {
+            return { ok: false, error: "Niet beschikbaar op dit moment (agenda is bezet).", busy };
           }
-        }
-      }
 
-      if (availabilityMode === "multi_vehicle") {
-        if (shouldReserveNow) {
-          const alloc = await _allocatorRequest(env, pickup_iso, {
-            action: "allocate",
-            booking_id: canonicalBookingId,
-            pickup_ms: Date.parse(pickup_iso),
-            service_min: bookingServiceMin,
-            tier,
-            pax,
-            bags,
-            tenantScope: fleetScope,
-          });
-          if (!alloc?.allowed) {
-            return {
-              ok: false,
-              error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
-              availability: {
-                reason: "vehicle_capacity",
-                availability_mode: availabilityMode,
-                allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
-                suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
-                available_slots: Number(alloc?.available_slots || 0),
-              },
-            };
-          }
-          if (alloc?.assigned_vehicle_id) {
-            resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
-            resolvedAssignedDriver = alloc?.assigned_driver || null;
-          }
-        } else {
-          const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
-            pickupMs: Date.parse(pickup_iso),
-            serviceMin: bookingServiceMin,
-            tier,
-            pax,
-            bags,
-            tenantScope: fleetScope,
-          });
-          if (!vehicleCapacity.ok) {
-            return {
-              ok: false,
-              error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
-              availability: {
-                reason: "vehicle_capacity",
-                availability_mode: availabilityMode,
-                ...vehicleCapacity,
-              },
-            };
+          // If return is scheduled separately, also validate availability for the return pickup time.
+          if (hasReturnSchedule) {
+            if (!return_pickup_iso) {
+              return { ok: false, error: "Return scheduling selected but return_pickup_iso could not be built." };
+            }
+            const rPickup = new Date(return_pickup_iso);
+            if (isNaN(rPickup.getTime())) {
+              return { ok: false, error: "Ongeldige retourdatum/tijd." };
+            }
+
+            // Ensure enough travel time from previous events to the return pickup location.
+            const gapCheckR = await ensureTravelGapFromPreviousEvent({
+              accessToken,
+              calendarId,
+              pickupIso: return_pickup_iso,
+              pickupFromText: return_from || to,
+              env
+            });
+            if (gapCheckR && gapCheckR.ok === false) {
+              return { ok: false, error: "Niet beschikbaar: onvoldoende rijtijd tussen boekingen (retour).", availability: gapCheckR };
+            }
+
+            const busyMinReturn = (duration_return_min + postBufferMin);
+            const winR = computeWindow(return_pickup_iso, busyMinReturn);
+            const busyR = await googleFreeBusy(accessToken, calendarId, winR.start.toISOString(), winR.end.toISOString());
+            if (Array.isArray(busyR) && busyR.length) {
+              return { ok: false, error: "Niet beschikbaar op het retourmoment (agenda is bezet).", busy: busyR };
+            }
           }
         }
-        if (!resolvedAssignedDriver && resolvedAssignedVehicleId) {
-          resolvedAssignedDriver = await _driverSummaryForVehicleId(
+
+        if (availabilityMode === "multi_vehicle") {
+          calendarAllocatorHandled = true;
+          if (shouldReserveNow) {
+            const alloc = await _allocatorRequest(env, pickup_iso, {
+              action: "allocate",
+              booking_id: canonicalBookingId,
+              pickup_ms: Date.parse(pickup_iso),
+              service_min: bookingServiceMin,
+              tier,
+              pax,
+              bags,
+              tenantScope: fleetScope,
+            });
+            if (!alloc?.allowed) {
+              return {
+                ok: false,
+                error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
+                availability: {
+                  reason: "vehicle_capacity",
+                  availability_mode: availabilityMode,
+                  allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
+                  suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
+                  available_slots: Number(alloc?.available_slots || 0),
+                },
+              };
+            }
+            if (alloc?.assigned_vehicle_id) {
+              resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
+              resolvedAssignedDriver = alloc?.assigned_driver || null;
+            }
+          } else {
+            const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
+              pickupMs: Date.parse(pickup_iso),
+              serviceMin: bookingServiceMin,
+              tier,
+              pax,
+              bags,
+              tenantScope: fleetScope,
+            });
+            if (!vehicleCapacity.ok) {
+              return {
+                ok: false,
+                error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
+                availability: {
+                  reason: "vehicle_capacity",
+                  availability_mode: availabilityMode,
+                  ...vehicleCapacity,
+                },
+              };
+            }
+          }
+          if (!resolvedAssignedDriver && resolvedAssignedVehicleId) {
+            resolvedAssignedDriver = await _driverSummaryForVehicleId(
+              env,
+              resolvedAssignedVehicleId,
+              fleetScope,
+            );
+          }
+        }
+
+        // Business bookings must be paid before creating the authoritative
+        // calendar event. Availability has been checked above; creation happens
+        // only when Mollie has actually reported "paid".
+        if (business_detected && !molliePaidConfirmed) {
+          calendarPaymentHandled = true;
+          const pay = await mollieCreatePayment(
+            {
+              ...payload,
+              __booking_id: canonicalBookingId,
+              __public_booking_reference: publicBookingReference,
+              bookingId: canonicalBookingId,
+              tenant_id: tenantContext.tenant_id,
+              tenantId: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              companyId: tenantContext.company_id,
+              total_incl_vat: totalPricing.price_incl_vat,
+              total_ex_vat: totalPricing.price_ex_vat,
+              vat_amount: totalPricing.price_vat,
+            },
             env,
-            resolvedAssignedVehicleId,
-            fleetScope,
+            request
           );
-        }
-      }
 
-      // Business bookings must be paid before creating the authoritative
-      // calendar event. Availability has been checked above; creation happens
-      // only when Mollie has actually reported "paid".
-      if (business_detected && !molliePaidConfirmed) {
-        const pay = await mollieCreatePayment(
-          {
-            ...payload,
-            __booking_id: canonicalBookingId,
-            __public_booking_reference: publicBookingReference,
+          return {
+            ok: true,
+            booking_id: canonicalBookingId,
             bookingId: canonicalBookingId,
-            tenant_id: tenantContext.tenant_id,
-            tenantId: tenantContext.tenant_id,
-            company_id: tenantContext.company_id,
-            companyId: tenantContext.company_id,
-            total_incl_vat: totalPricing.price_incl_vat,
-            total_ex_vat: totalPricing.price_ex_vat,
-            vat_amount: totalPricing.price_vat,
-          },
-          env,
-          request
-        );
+            public_booking_id: canonicalBookingId,
+            public_booking_reference: publicBookingReference,
+            publicBookingReference: publicBookingReference,
+            booking_reference: publicBookingReference,
+            bookingReference: publicBookingReference,
+            public_reference: publicBookingReference,
+            publicReference: publicBookingReference,
+            planning_reference: planningReference,
+            planningReference: planningReference,
+            payment_booking_id: pay.bookingId || null,
+            paymentBookingId: pay.bookingId || null,
+            requiresPayment: true,
+            paymentMode: "mollie",
+            checkoutUrl: pay.checkoutUrl,
+            statusUrl: pay.statusUrl || null,
+            amount: pay.amount || null,
+          };
+        }
 
-        return {
-          ok: true,
-          booking_id: canonicalBookingId,
+        const bookingForCalendar = {
           bookingId: canonicalBookingId,
-          public_booking_id: canonicalBookingId,
-          public_booking_reference: publicBookingReference,
-          publicBookingReference: publicBookingReference,
-          booking_reference: publicBookingReference,
-          bookingReference: publicBookingReference,
-          public_reference: publicBookingReference,
-          publicReference: publicBookingReference,
-          planning_reference: planningReference,
-          planningReference: planningReference,
-          payment_booking_id: pay.bookingId || null,
-          paymentBookingId: pay.bookingId || null,
-          requiresPayment: true,
-          paymentMode: "mollie",
-          checkoutUrl: pay.checkoutUrl,
-          statusUrl: pay.statusUrl || null,
-          amount: pay.amount || null,
-        };
-      }
-
-      const bookingForCalendar = {
-        bookingId: canonicalBookingId,
-        from,
-        to,
-        stops,
-        wait_min,
-        pax,
-        bags,
-        tier,
-        service,
-        return_enabled: ret.enabled,
-        return_from,
-        return_to,
-        business_detected,
-        invoice_requested,
-        company_name: biz.company_name || "",
-        vat_number: biz.vat_number || "",
-        extra_service_label: extra.label || "",
-        pickupStartIso: pickup_iso,
-        price_incl_vat: totalPricing?.price_incl_vat,
-        price_ex_vat: totalPricing?.price_ex_vat,
-        price_vat: totalPricing?.price_vat,
-        price_incl_vat_main: mainPricing?.price_incl_vat,
-        price_incl_vat_return: returnPricing?.price_incl_vat,
-        vat_rate
-      };
-
-      const title = `🚖 Fluxidi — ${humanServiceLabel(service)} — ${safeStr(payload?.name || payload?.custName || payload?.customer_name || "Klant")}`;
-      const legsMain = Array.isArray(routeOut?.legs) ? routeOut.legs : [];
-      const legsReturn = (ret.enabled && Array.isArray(returnLegs)) ? returnLegs : [];
-      const allLegs = legsReturn.length
-        ? [...legsMain, ...legsReturn.map((l, i) => ({ ...l, index: (legsMain.length + i + 1) }))]
-        : legsMain;
-
-      const desc = renderCalendarDescription(bookingForCalendar, allLegs, { returnPricing, returnRoute: { from: return_from, to: return_to, distance_km: return_distance_km, duration_min: return_duration_min } });
-
-      // Calendar event(s)
-      console.log(`[CALENDAR_CREATE][REQUEST] bookingId=${canonicalBookingId} reason=booking_confirmed hasCustomerCompany=${!!biz.company_name} hasCustomerVat=${!!biz.vat_number}`);
-      const existingCalendar = await existingCalendarForBooking(env, canonicalBookingId);
-      if (existingCalendar?.eventId) {
-        calendar_event_id = existingCalendar.eventId;
-        htmlLink = existingCalendar.htmlLink || null;
-        calendar = {
-          configured: true,
-          created: false,
-          skipped_duplicate: true,
-          calendar_event_id,
-          htmlLink,
-          ...(existingCalendar.returnEventId ? { return_event_id: existingCalendar.returnEventId } : {}),
-          ...(existingCalendar.returnHtmlLink ? { return_htmlLink: existingCalendar.returnHtmlLink } : {}),
-        };
-        console.log(`[CALENDAR_CREATE][SKIP_DUPLICATE] bookingId=${canonicalBookingId}`);
-      } else if (!hasReturnSchedule) {
-        const event = {
-          summary: title,
-          description: desc,
-          start: { dateTime: win.start.toISOString() },
-          end: { dateTime: win.end.toISOString() }
+          from,
+          to,
+          stops,
+          wait_min,
+          pax,
+          bags,
+          tier,
+          service,
+          return_enabled: ret.enabled,
+          return_from,
+          return_to,
+          business_detected,
+          invoice_requested,
+          company_name: biz.company_name || "",
+          vat_number: biz.vat_number || "",
+          extra_service_label: extra.label || "",
+          pickupStartIso: pickup_iso,
+          price_incl_vat: totalPricing?.price_incl_vat,
+          price_ex_vat: totalPricing?.price_ex_vat,
+          price_vat: totalPricing?.price_vat,
+          price_incl_vat_main: mainPricing?.price_incl_vat,
+          price_incl_vat_return: returnPricing?.price_incl_vat,
+          vat_rate
         };
 
-        const created = await googleCreateEvent(accessToken, calendarId, event);
-        calendar_event_id = created?.id || null;
-        htmlLink = created?.htmlLink || null;
-        calendar = { configured: true, created: true, calendar_event_id, htmlLink };
-        console.log(`[CALENDAR_CREATE][DONE] bookingId=${canonicalBookingId} eventId=${calendar_event_id || ""}`);
-      } else {
-        // Outbound event (only outbound time window)
-        const eventMain = {
-          summary: title,
-          description: desc + `
+        const title = `🚖 Fluxidi — ${humanServiceLabel(service)} — ${safeStr(payload?.name || payload?.custName || payload?.customer_name || "Klant")}`;
+        const legsMain = Array.isArray(routeOut?.legs) ? routeOut.legs : [];
+        const legsReturn = (ret.enabled && Array.isArray(returnLegs)) ? returnLegs : [];
+        const allLegs = legsReturn.length
+          ? [...legsMain, ...legsReturn.map((l, i) => ({ ...l, index: (legsMain.length + i + 1) }))]
+          : legsMain;
+
+        const desc = renderCalendarDescription(bookingForCalendar, allLegs, { returnPricing, returnRoute: { from: return_from, to: return_to, distance_km: return_distance_km, duration_min: return_duration_min } });
+
+        // Calendar event(s)
+        console.log(`[CALENDAR_CREATE][REQUEST] bookingId=${canonicalBookingId} reason=booking_confirmed hasCustomerCompany=${!!biz.company_name} hasCustomerVat=${!!biz.vat_number}`);
+        const existingCalendar = await existingCalendarForBooking(env, canonicalBookingId);
+        if (existingCalendar?.eventId) {
+          calendar_event_id = existingCalendar.eventId;
+          htmlLink = existingCalendar.htmlLink || null;
+          calendar = {
+            configured: true,
+            created: false,
+            skipped_duplicate: true,
+            calendar_event_id,
+            htmlLink,
+            ...(existingCalendar.returnEventId ? { return_event_id: existingCalendar.returnEventId } : {}),
+            ...(existingCalendar.returnHtmlLink ? { return_htmlLink: existingCalendar.returnHtmlLink } : {}),
+          };
+          console.log(`[CALENDAR_CREATE][SKIP_DUPLICATE] bookingId=${canonicalBookingId}`);
+        } else if (!hasReturnSchedule) {
+          const event = {
+            summary: title,
+            description: desc,
+            start: { dateTime: win.start.toISOString() },
+            end: { dateTime: win.end.toISOString() }
+          };
+
+          const created = await googleCreateEvent(accessToken, calendarId, event);
+          calendar_event_id = created?.id || null;
+          htmlLink = created?.htmlLink || null;
+          calendar = { configured: true, created: true, calendar_event_id, htmlLink };
+          console.log(`[CALENDAR_CREATE][DONE] bookingId=${canonicalBookingId} eventId=${calendar_event_id || ""}`);
+        } else {
+          // Outbound event (only outbound time window)
+          const eventMain = {
+            summary: title,
+            description: desc + `
 
 Retour gepland: ${whenFromPickupIsoBrussels(return_pickup_iso)}
 Retour route: ${return_from || to} → ${return_to || from}`,
-          start: { dateTime: win.start.toISOString() },
-          end: { dateTime: win.end.toISOString() }
-        };
-        const createdMain = await googleCreateEvent(accessToken, calendarId, eventMain);
+            start: { dateTime: win.start.toISOString() },
+            end: { dateTime: win.end.toISOString() }
+          };
+          const createdMain = await googleCreateEvent(accessToken, calendarId, eventMain);
 
-        // Return event
-        const busyMinReturn = (duration_return_min + postBufferMin);
-        const winReturn = computeWindow(return_pickup_iso, busyMinReturn);
-        const titleReturn = `${title} (Retour)`;
-        const bookingForCalendarReturn = {
-          ...bookingForCalendar,
-          bookingId: canonicalBookingId + "-R",
-          from: return_from || to,
-          to: return_to || from,
-          stops: [],
-          wait_min: 0,
-          pickupStartIso: return_pickup_iso,
-          return_enabled: false
-        };
-        const descReturn = renderCalendarDescription(bookingForCalendarReturn, legsReturn, { returnPricing: null, returnRoute: null });
+          // Return event
+          const busyMinReturn = (duration_return_min + postBufferMin);
+          const winReturn = computeWindow(return_pickup_iso, busyMinReturn);
+          const titleReturn = `${title} (Retour)`;
+          const bookingForCalendarReturn = {
+            ...bookingForCalendar,
+            bookingId: canonicalBookingId + "-R",
+            from: return_from || to,
+            to: return_to || from,
+            stops: [],
+            wait_min: 0,
+            pickupStartIso: return_pickup_iso,
+            return_enabled: false
+          };
+          const descReturn = renderCalendarDescription(bookingForCalendarReturn, legsReturn, { returnPricing: null, returnRoute: null });
 
-        const eventReturn = {
-          summary: titleReturn,
-          description: descReturn,
-          start: { dateTime: winReturn.start.toISOString() },
-          end: { dateTime: winReturn.end.toISOString() }
-        };
-        const createdReturn = await googleCreateEvent(accessToken, calendarId, eventReturn);
+          const eventReturn = {
+            summary: titleReturn,
+            description: descReturn,
+            start: { dateTime: winReturn.start.toISOString() },
+            end: { dateTime: winReturn.end.toISOString() }
+          };
+          const createdReturn = await googleCreateEvent(accessToken, calendarId, eventReturn);
 
-        calendar_event_id = createdMain?.id || null;
-        htmlLink = createdMain?.htmlLink || null;
+          calendar_event_id = createdMain?.id || null;
+          htmlLink = createdMain?.htmlLink || null;
+          calendar = {
+            configured: true,
+            created: true,
+            calendar_event_id,
+            htmlLink,
+            return_event_id: createdReturn?.id || null,
+            return_htmlLink: createdReturn?.htmlLink || null
+          };
+          console.log(`[CALENDAR_CREATE][DONE] bookingId=${canonicalBookingId} eventId=${calendar_event_id || ""}`);
+        }
+      } catch (calendarErr) {
+        const calendarErrorText = String(
+          calendarErr?.message || calendarErr?.error || calendarErr || "",
+        ).toLowerCase();
+        const isCalendarIntegrationError =
+          calendarErrorText.includes("google") ||
+          calendarErrorText.includes("calendar") ||
+          calendarErrorText.includes("oauth") ||
+          calendarErrorText.includes("freebusy") ||
+          calendarErrorText.includes("access token") ||
+          calendarErrorText.includes("invalid_grant") ||
+          calendarErrorText.includes("expired or revoked") ||
+          calendarErrorText.includes("unauthorized_client") ||
+          calendarErrorText.includes("invalid_client");
+        if (!isCalendarIntegrationError) {
+          throw calendarErr;
+        }
+        const isAuthError = isGoogleCalendarAuthError(calendarErr);
+        calendarSyncSuppressed = true;
+        calendarSyncStatus = isAuthError ? "auth_required" : "failed";
+        calendarSyncErrorCode = isAuthError ? "google_auth_expired" : "calendar_sync_failed";
+        calendarSyncFailedAt = new Date().toISOString();
+        calendarSyncError = calendarSyncErrorCode;
         calendar = {
-          configured: true,
-          created: true,
-          calendar_event_id,
-          htmlLink,
-          return_event_id: createdReturn?.id || null,
-          return_htmlLink: createdReturn?.htmlLink || null
+          ...calendar,
+          configured: calendarConfigured,
+          created: false,
+          sync_failed: true,
+          calendar_sync_status: calendarSyncStatus,
+          calendarSyncStatus: calendarSyncStatus,
+          calendar_sync_error_code: calendarSyncErrorCode,
+          calendarSyncErrorCode: calendarSyncErrorCode,
+          calendar_sync_failed_at: calendarSyncFailedAt,
+          calendarSyncFailedAt: calendarSyncFailedAt,
         };
-        console.log(`[CALENDAR_CREATE][DONE] bookingId=${canonicalBookingId} eventId=${calendar_event_id || ""}`);
+        console.log(
+          `[CALENDAR_SYNC][WARN] bookingId=${canonicalBookingId} status=${calendarSyncStatus} code=${calendarSyncErrorCode} reason=${safeStr(calendarErr?.message || calendarErr, 160) || "unknown"}`,
+        );
       }
     }
 
-    if (!calendarConfigured && availabilityMode === "multi_vehicle") {
+    if ((!calendarConfigured || calendarSyncSuppressed) && availabilityMode === "multi_vehicle" && !calendarAllocatorHandled) {
       if (shouldReserveNow) {
         const alloc = await _allocatorRequest(env, pickup_iso, {
           action: "allocate",
@@ -5737,7 +5813,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       }
     }
 
-    if (!calendarConfigured && business_detected && !molliePaidConfirmed) {
+    if ((!calendarConfigured || calendarSyncSuppressed) && business_detected && !molliePaidConfirmed && !calendarPaymentHandled) {
       const pay = await mollieCreatePayment(
         {
           ...payload,
@@ -5854,6 +5930,16 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
       note: mainPricing?.note || "",
       ...paymentFields,
+      ...(calendarSyncStatus
+        ? {
+            calendar_sync_status: calendarSyncStatus,
+            calendarSyncStatus: calendarSyncStatus,
+            calendar_sync_error_code: calendarSyncErrorCode,
+            calendarSyncErrorCode: calendarSyncErrorCode,
+            calendar_sync_failed_at: calendarSyncFailedAt,
+            calendarSyncFailedAt: calendarSyncFailedAt,
+          }
+        : {}),
 
       // quote meta
       distance_km,
@@ -5887,6 +5973,16 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
       ...paymentFields,
+      ...(calendarSyncStatus
+        ? {
+            calendar_sync_status: calendarSyncStatus,
+            calendarSyncStatus: calendarSyncStatus,
+            calendar_sync_error_code: calendarSyncErrorCode,
+            calendarSyncErrorCode: calendarSyncErrorCode,
+            calendar_sync_failed_at: calendarSyncFailedAt,
+            calendarSyncFailedAt: calendarSyncFailedAt,
+          }
+        : {}),
       booking: {
         bookingId: booking.bookingId,
         createdAt: booking.createdAt,
@@ -5942,6 +6038,16 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         return_htmlLink: safeStr(calendar?.return_htmlLink || null),
         returnHtmlLink: safeStr(calendar?.return_htmlLink || null),
         ...paymentFields,
+        ...(calendarSyncStatus
+          ? {
+              calendar_sync_status: calendarSyncStatus,
+              calendarSyncStatus: calendarSyncStatus,
+              calendar_sync_error_code: calendarSyncErrorCode,
+              calendarSyncErrorCode: calendarSyncErrorCode,
+              calendar_sync_failed_at: calendarSyncFailedAt,
+              calendarSyncFailedAt: calendarSyncFailedAt,
+            }
+          : {}),
       },
       quote: {
         ok: true,
@@ -6089,6 +6195,18 @@ return {
       calendar_event_id,
       htmlLink,
       calendar,
+      ...(calendarSyncStatus
+        ? {
+            calendar_sync_status: calendarSyncStatus,
+            calendarSyncStatus: calendarSyncStatus,
+            calendar_sync_error_code: calendarSyncErrorCode,
+            calendarSyncErrorCode: calendarSyncErrorCode,
+            calendar_sync_failed_at: calendarSyncFailedAt,
+            calendarSyncFailedAt: calendarSyncFailedAt,
+            calendar_sync_error: calendarSyncError,
+            calendarSyncError: calendarSyncError,
+          }
+        : {}),
       email,
       invoice
     };

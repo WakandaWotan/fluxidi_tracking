@@ -2556,6 +2556,23 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       }
       return 'Geen voertuig meer beschikbaar op dit tijdstip.';
     }
+    if (s.contains('token has been expired or revoked') ||
+        s.contains('invalid_grant') ||
+        s.contains('google access token') ||
+        s.contains('failed to refresh google') ||
+        s.contains('unauthorized_client') ||
+        s.contains('oauth')) {
+      if (widget.language == AppLanguage.en) {
+        return 'Booking could not be completed due to a temporary connection issue. Please try again or contact the company.';
+      }
+      if (widget.language == AppLanguage.fr) {
+        return 'La reservation n a pas pu etre finalisee en raison d un probleme de connexion temporaire. Reessayez ou contactez l entreprise.';
+      }
+      if (widget.language == AppLanguage.es) {
+        return 'La reserva no pudo completarse por un problema temporal de conexion. Intentalo de nuevo o contacta con la empresa.';
+      }
+      return 'Boeking kon niet worden afgerond door een tijdelijke koppeling. Probeer opnieuw of contacteer het bedrijf.';
+    }
     return raw;
   }
 
