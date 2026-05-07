@@ -13951,6 +13951,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _directTripStopWorkerOk = false;
   String? _directRideDestinationText;
   _LonLat? _directRideDestinationPoint;
+  double? _directRideEstimatedFare;
+  bool _directRideEstimateLoading = false;
+  String? _directRideEstimateError;
+  String _directRideEstimateCurrency = kDefaultCurrency;
+  Timer? _directRideEstimateDebounce;
+  int _directRideEstimateRequestSeq = 0;
+  String? _directRideEstimateSignature;
 
   // Location tracking
   StreamSubscription<geo.Position>? _posSub;
@@ -14136,6 +14143,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideActive = false;
         _directRideDestinationText = null;
         _directRideDestinationPoint = null;
+        _directRideEstimatedFare = null;
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = null;
+        _directRideEstimateCurrency = kDefaultCurrency;
+        _directRideEstimateSignature = null;
         _lastPing = '—';
         _pingCount = 0;
         _kmDriven = 0.0;
@@ -14522,6 +14534,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _manualToCtrl.dispose();
     _directRideDestinationText = null;
     _directRideDestinationPoint = null;
+    _directRideEstimateDebounce?.cancel();
     _fromDebounce?.cancel();
     _toDebounce?.cancel();
     _fromFocus.dispose();
@@ -15706,6 +15719,272 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   String get _cockpitPriceText =>
       _displayTotalText.replaceFirst('€', '').trim();
+
+  String _formatDirectRideEstimateText(double amount, String currency) {
+    final normalizedCurrency = currency.trim().isEmpty
+        ? kDefaultCurrency
+        : currency.trim().toUpperCase();
+    if (normalizedCurrency == 'EUR') {
+      return '€ ${amount.toStringAsFixed(2)}';
+    }
+    return '$normalizedCurrency ${amount.toStringAsFixed(2)}';
+  }
+
+  double? _quoteNumber(dynamic value) {
+    if (value is num) {
+      final v = value.toDouble();
+      return v.isFinite ? v : null;
+    }
+    if (value is String) {
+      var s = value.trim();
+      if (s.isEmpty) return null;
+      s = s.replaceAll(RegExp(r'[^0-9,\.\-]'), '');
+      if (s.contains(',') && !s.contains('.')) s = s.replaceAll(',', '.');
+      if (s.contains(',') && s.contains('.')) s = s.replaceAll(',', '');
+      final parsed = double.tryParse(s);
+      if (parsed == null || !parsed.isFinite) return null;
+      return parsed;
+    }
+    return null;
+  }
+
+  String _directRideEstimateCurrencyFrom(dynamic data) {
+    if (data is! Map) return kDefaultCurrency;
+    final map = Map<String, dynamic>.from(data);
+    final direct = map['currency']?.toString().trim();
+    if (direct != null && direct.isNotEmpty) return direct.toUpperCase();
+    final quote = map['quote'];
+    if (quote is Map) {
+      final nested = quote['currency']?.toString().trim();
+      if (nested != null && nested.isNotEmpty) return nested.toUpperCase();
+      final pricing = quote['pricing'];
+      if (pricing is Map) {
+        final pricingCurrency = pricing['currency']?.toString().trim();
+        if (pricingCurrency != null && pricingCurrency.isNotEmpty) {
+          return pricingCurrency.toUpperCase();
+        }
+      }
+    }
+    final pricing = map['pricing'];
+    if (pricing is Map) {
+      final pricingCurrency = pricing['currency']?.toString().trim();
+      if (pricingCurrency != null && pricingCurrency.isNotEmpty) {
+        return pricingCurrency.toUpperCase();
+      }
+    }
+    return kDefaultCurrency;
+  }
+
+  double? _extractQuoteEstimateTotal(dynamic data) {
+    Map<String, dynamic> asMap(dynamic value) =>
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    final root = asMap(data);
+    final quote = asMap(root['quote']);
+    final pricing = asMap(root['pricing']);
+    final quotePricing = asMap(quote['pricing']);
+    final quotePricingMain = asMap(
+      quote['pricing_main'] ?? quote['pricingMain'],
+    );
+    final pricingMain = asMap(root['pricing_main'] ?? root['pricingMain']);
+    final candidates = <dynamic>[
+      root['total_price_incl_vat'],
+      root['price_incl_vat'],
+      root['total_price'],
+      root['total'],
+      root['price'],
+      root['amount'],
+      root['eur'],
+      quote['total_price_incl_vat'],
+      quote['price_incl_vat'],
+      quote['total_price'],
+      quote['total'],
+      quote['price'],
+      quote['amount'],
+      quote['eur'],
+      pricing['price_incl_vat'],
+      pricing['total_price'],
+      pricing['total'],
+      pricing['price'],
+      pricing['amount'],
+      pricing['eur'],
+      quotePricing['price_incl_vat'],
+      quotePricing['total_price'],
+      quotePricing['total'],
+      quotePricing['price'],
+      quotePricing['amount'],
+      quotePricing['eur'],
+      quotePricingMain['price_incl_vat'],
+      pricingMain['price_incl_vat'],
+    ];
+    for (final candidate in candidates) {
+      final parsed = _quoteNumber(candidate);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  void _scheduleDirectRideEstimateRefresh({required String reason}) {
+    final destination = (_directRideDestinationText ?? '').trim();
+    if (destination.isEmpty) {
+      _directRideEstimateDebounce?.cancel();
+      if (!mounted) return;
+      setState(() {
+        _directRideEstimatedFare = null;
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = null;
+        _directRideEstimateCurrency = kDefaultCurrency;
+        _directRideEstimateSignature = null;
+      });
+      return;
+    }
+    _directRideEstimateDebounce?.cancel();
+    _directRideEstimateDebounce = Timer(const Duration(milliseconds: 450), () {
+      unawaited(_refreshDirectRideEstimate(reason: reason));
+    });
+  }
+
+  Future<void> _refreshDirectRideEstimate({required String reason}) async {
+    final destination = (_directRideDestinationText ?? '').trim();
+    final shouldEstimate = _directRideActive || _directRideDraft;
+    if (!shouldEstimate || destination.isEmpty) return;
+
+    var pos = _lastPos;
+    if (pos == null) {
+      try {
+        pos = await geo.Geolocator.getCurrentPosition(
+          desiredAccuracy: geo.LocationAccuracy.best,
+        );
+        _lastPos = pos;
+      } catch (_) {
+        pos = null;
+      }
+    }
+
+    if (pos == null) {
+      if (!mounted) return;
+      setState(() {
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = 'location_unavailable';
+      });
+      return;
+    }
+
+    final pickupText =
+        '${pos.longitude.toStringAsFixed(6)},${pos.latitude.toStringAsFixed(6)}';
+    final signature =
+        '$pickupText|$destination|${_routeKm?.toStringAsFixed(3) ?? '-'}|${_routeDurationSec ?? -1}';
+    if (!_directRideEstimateLoading &&
+        _directRideEstimateSignature == signature &&
+        _directRideEstimatedFare != null) {
+      return;
+    }
+
+    final requestSeq = ++_directRideEstimateRequestSeq;
+    if (mounted) {
+      setState(() {
+        _directRideEstimateLoading = true;
+        _directRideEstimateError = null;
+      });
+    }
+
+    final settings = businessSettingsNotifier.value;
+    final vat = localBackendTaxProfileNotifier.value;
+    final vatRateBase = vat?.vatRate ?? settings.pricingVatRate;
+    final vatRate =
+        (vatRateBase.isFinite ? vatRateBase : settings.pricingVatRate)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final vatMode = (vat?.vatDisplayMode ?? 'incl').trim().isEmpty
+        ? 'incl'
+        : (vat?.vatDisplayMode ?? 'incl').trim();
+    final scope = _activeBookingScopeQuery();
+    final pickupAt = DateTime.now().add(const Duration(minutes: 5));
+    String two(int v) => v.toString().padLeft(2, '0');
+    final date = '${pickupAt.year}-${two(pickupAt.month)}-${two(pickupAt.day)}';
+    final time = '${two(pickupAt.hour)}:${two(pickupAt.minute)}';
+    final pickupIso = '${date}T$time:00';
+
+    final body = <String, dynamic>{
+      'from': pickupText,
+      'to': destination,
+      'date': date,
+      'time': time,
+      'pickup_iso': pickupIso,
+      'tier': 'COMFORT',
+      'service': 'AIRPORT',
+      'pax': 1,
+      'bags': 0,
+      'wait_min': 0,
+      'return': false,
+      'return_enabled': false,
+      'return_from': '',
+      'return_to': '',
+      'return_date': '',
+      'return_time': '',
+      'return_pickup_iso': '',
+      'vat_rate': vatRate,
+      'vat_mode': vatMode,
+      'pricing_profile': <String, dynamic>{
+        'base_fare': settings.pricingBaseFare,
+        'price_per_km': settings.pricingPerKm,
+        'price_per_minute': settings.pricingPerMinute,
+        'minimum_fare': settings.pricingMinimumFare,
+        'wait_per_minute': settings.pricingWaitPerMinute,
+        'return_enabled': settings.pricingReturnEnabled,
+        'return_fee': settings.pricingReturnFee,
+        'fuel_surcharge': settings.pricingFuelSurcharge,
+        'vat_rate': vatRate,
+        'vat_mode': vatMode,
+      },
+      'surcharge_fuel': settings.pricingFuelSurcharge,
+      'return_fee': 0,
+      'extra_service': 'NONE',
+      'extra_service_key': 'NONE',
+      ...scope,
+    };
+
+    try {
+      final uri = _withActiveBookingScope(kBookingBaseUrl, '/quote');
+      final res = await http
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(body))
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        final bodySnippet = res.body
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim()
+            .replaceAll(RegExp(r'[\r\n\t]'), ' ');
+        final safeSnippet = bodySnippet.length > 280
+            ? '${bodySnippet.substring(0, 280)}...'
+            : bodySnippet;
+        throw Exception(
+          'quote_http_${res.statusCode}${safeSnippet.isNotEmpty ? ': $safeSnippet' : ''}',
+        );
+      }
+      final decoded = jsonDecode(res.body);
+      final estimate = _extractQuoteEstimateTotal(decoded);
+      if (estimate == null) {
+        throw Exception('quote_total_missing');
+      }
+      if (!mounted || requestSeq != _directRideEstimateRequestSeq) return;
+      setState(() {
+        _directRideEstimatedFare = estimate;
+        _directRideEstimateCurrency = _directRideEstimateCurrencyFrom(decoded);
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = null;
+        _directRideEstimateSignature = signature;
+      });
+      debugPrint(
+        '[DIRECT_RIDE][ESTIMATE][OK] reason=$reason amount=${estimate.toStringAsFixed(2)}',
+      );
+    } catch (e) {
+      if (!mounted || requestSeq != _directRideEstimateRequestSeq) return;
+      setState(() {
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = e.toString();
+      });
+      debugPrint('[DIRECT_RIDE][ESTIMATE][WARN] reason=$reason error=$e');
+    }
+  }
 
   Future<void> _sendDirectTripWaitEvent({
     required String path,
@@ -17410,8 +17689,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
       _trackingStartedAt = null;
+      _directRideEstimatedFare = null;
+      _directRideEstimateLoading = false;
+      _directRideEstimateError = null;
+      _directRideEstimateCurrency = kDefaultCurrency;
+      _directRideEstimateSignature = null;
     });
     _toast('Straatrit klaar. Druk START om te rijden.');
+    _scheduleDirectRideEstimateRefresh(reason: 'destination_changed');
   }
 
   Future<void> _startDirectRide() async {
@@ -18244,6 +18529,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
+      _scheduleDirectRideEstimateRefresh(reason: 'route_changed');
     } catch (e) {
       _toast('Straatrit route mislukt: $e');
     } finally {
@@ -22477,6 +22763,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                     onWait: _enterWaitMode,
                                     onGo: _exitWaitMode,
                                   ),
+                                  _buildDirectRideEstimatePanel(),
                                   if (showExternalNavButtons)
                                     _buildExternalNavButtons(),
                                 ],
@@ -22513,6 +22800,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                   onWait: _enterWaitMode,
                                   onGo: _exitWaitMode,
                                 ),
+                                _buildDirectRideEstimatePanel(),
                                 if (showExternalNavButtons)
                                   _buildExternalNavButtons(),
                               ],
@@ -23560,6 +23848,112 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDirectRideEstimatePanel() {
+    final destination = (_directRideDestinationText ?? '').trim();
+    final showEstimate =
+        (_directRideDraft || _directRideActive) &&
+        _activeBooking == null &&
+        destination.isNotEmpty;
+    if (!showEstimate) return const SizedBox.shrink();
+
+    final label = _tr(
+      nl: 'Geschatte ritprijs',
+      en: 'Estimated fare',
+      fr: 'Prix estimé',
+      es: 'Precio estimado',
+    );
+    final note = _tr(
+      nl: 'Definitieve prijs wordt berekend bij STOP.',
+      en: 'Final price is calculated at STOP.',
+      fr: 'Le prix final est calculé à l’arrêt.',
+      es: 'El precio final se calcula al finalizar.',
+    );
+    final loadingText = _tr(
+      nl: 'Prijs berekenen…',
+      en: 'Calculating fare…',
+      fr: 'Calcul du prix…',
+      es: 'Calculando precio…',
+    );
+    final unavailableText = _tr(
+      nl: 'Schatting niet beschikbaar. De ritmeter blijft werken.',
+      en: 'Estimate unavailable. The live meter still works.',
+      fr: 'Estimation indisponible. Le taximètre reste actif.',
+      es: 'Estimación no disponible. El taxímetro sigue funcionando.',
+    );
+
+    final estimateValue = _directRideEstimatedFare != null
+        ? _formatDirectRideEstimateText(
+            _directRideEstimatedFare!,
+            _directRideEstimateCurrency,
+          )
+        : null;
+    final statusText = _directRideEstimateLoading
+        ? loadingText
+        : (estimateValue ?? unavailableText);
+    final valueIsEstimate =
+        !_directRideEstimateLoading && estimateValue != null;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF090909).withOpacity(0.86),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x55E5B641)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.local_taxi_outlined,
+                size: 14,
+                color: Color(0xFFE5B641),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFE5B641),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            statusText,
+            maxLines: valueIsEstimate ? 1 : 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: valueIsEstimate ? const Color(0xFFFFD36A) : Colors.white70,
+              fontSize: valueIsEstimate ? 15 : 11.5,
+              fontWeight: valueIsEstimate ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            note,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.63),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
