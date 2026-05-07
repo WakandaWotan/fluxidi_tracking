@@ -25638,8 +25638,11 @@ class _TripHistoryPage extends StatefulWidget {
   State<_TripHistoryPage> createState() => _TripHistoryPageState();
 }
 
+enum _TripHistoryFilter { all, completed, cancelled }
+
 class _TripHistoryPageState extends State<_TripHistoryPage> {
   late Future<List<_TripHistoryItem>> _future;
+  _TripHistoryFilter _activeFilter = _TripHistoryFilter.all;
 
   _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
     _TripHistoryItem item, {
@@ -26051,151 +26054,862 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     }
   }
 
+  bool _isCompletedStatus(String? raw) {
+    final status = (raw ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return status == 'stopped' ||
+        status == 'completed' ||
+        status == 'complete' ||
+        status == 'done' ||
+        status == 'finished' ||
+        status == 'finalized';
+  }
+
+  bool _isCancelledStatus(String? raw) {
+    final status = (raw ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return status == 'cancelled' || status == 'canceled';
+  }
+
+  String _normalizePaymentStatus(_TripHistoryItem item) {
+    String? from(dynamic v) {
+      final text = v?.toString().trim().toLowerCase();
+      if (text == null || text.isEmpty || text == 'null') return null;
+      return text.replaceAll('-', '_').replaceAll(' ', '_');
+    }
+
+    final detail = item.bookingDetails;
+    final raw = item.rawSource;
+    final candidates = <String?>[
+      from(detail['payment_status']),
+      from(detail['paymentStatus']),
+      from(raw['payment_status']),
+      from(raw['paymentStatus']),
+      from(raw['payment'] is Map ? (raw['payment'] as Map)['status'] : null),
+      from(
+        detail['payment'] is Map ? (detail['payment'] as Map)['status'] : null,
+      ),
+    ];
+    final normalized = candidates.firstWhere(
+      (e) => e != null && e.isNotEmpty,
+      orElse: () => null,
+    );
+    if (normalized == null) return 'unknown';
+    if (normalized == 'paid' ||
+        normalized == 'settled' ||
+        normalized == 'confirmed' ||
+        normalized == 'completed' ||
+        normalized == 'succeeded' ||
+        normalized == 'success') {
+      return 'paid';
+    }
+    if (normalized == 'unpaid' ||
+        normalized == 'not_paid' ||
+        normalized == 'open' ||
+        normalized == 'pending' ||
+        normalized == 'authorized' ||
+        normalized == 'authorised' ||
+        normalized == 'processing') {
+      return 'unpaid';
+    }
+    if (normalized == 'cancelled' || normalized == 'canceled') {
+      return 'cancelled';
+    }
+    if (normalized == 'failed' ||
+        normalized == 'error' ||
+        normalized == 'declined') {
+      return 'failed';
+    }
+    return 'unknown';
+  }
+
+  String _formatEur(double value) {
+    return '€${value.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  List<_TripHistoryItem> _applyFilter(List<_TripHistoryItem> items) {
+    switch (_activeFilter) {
+      case _TripHistoryFilter.completed:
+        return items.where((item) => _isCompletedStatus(item.status)).toList();
+      case _TripHistoryFilter.cancelled:
+        return items.where((item) => _isCancelledStatus(item.status)).toList();
+      case _TripHistoryFilter.all:
+        return items;
+    }
+  }
+
+  ({int total, int completed, int cancelled, double revenue}) _summary(
+    List<_TripHistoryItem> items,
+  ) {
+    var completed = 0;
+    var cancelled = 0;
+    var revenue = 0.0;
+    for (final item in items) {
+      if (_isCancelledStatus(item.status)) {
+        cancelled++;
+        continue;
+      }
+      if (_isCompletedStatus(item.status)) {
+        completed++;
+        final payment = _normalizePaymentStatus(item);
+        final canInclude = payment != 'unpaid';
+        if (canInclude && item.totalEur != null) {
+          revenue += item.totalEur!;
+        }
+      }
+    }
+    return (
+      total: items.length,
+      completed: completed,
+      cancelled: cancelled,
+      revenue: revenue,
+    );
+  }
+
+  String _dateOnly(String? iso) {
+    if (iso == null || iso.trim().isEmpty) return '—';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '—';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.day)}-${two(local.month)}-${local.year}';
+  }
+
+  String _timeOnly(String? iso) {
+    if (iso == null || iso.trim().isEmpty) return '—';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '—';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _statusChipText(_TripHistoryItem item) {
+    if (_isCancelledStatus(item.status)) {
+      return _tr(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annulée',
+        es: 'Cancelada',
+      );
+    }
+    if (_isCompletedStatus(item.status)) {
+      return _tr(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Terminée',
+        es: 'Completada',
+      );
+    }
+    return _tr(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+  }
+
+  Color _statusChipColor(_TripHistoryItem item) {
+    if (_isCancelledStatus(item.status)) return const Color(0xFFF97373);
+    if (_isCompletedStatus(item.status)) return const Color(0xFF4ADE80);
+    return const Color(0xFFA3A3A3);
+  }
+
+  String _paymentChipText(_TripHistoryItem item) {
+    final payment = _normalizePaymentStatus(item);
+    if (payment == 'paid') {
+      return _tr(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+    }
+    if (payment == 'unpaid') {
+      return _tr(nl: 'Onbetaald', en: 'Unpaid', fr: 'Impayé', es: 'No pagado');
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: const Color(0xFF07080C),
         appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: const Color(0xFF07080C),
           elevation: 0,
-          title: Text(_receiptText('tripHistoryTitle')),
+          title: Text(
+            _tr(
+              nl: 'Historiek',
+              en: 'History',
+              fr: 'Historique',
+              es: 'Historial',
+            ),
+          ),
           actions: [
             IconButton(
               tooltip: _receiptText('refresh'),
               onPressed: _refresh,
-              icon: const Icon(Icons.refresh),
+              icon: Icon(
+                Icons.refresh,
+                color: kFluxidiYellow.withOpacity(0.95),
+              ),
             ),
           ],
         ),
         body: FutureBuilder<List<_TripHistoryItem>>(
           future: _future,
           builder: (context, snapshot) {
+            final tabLabels = <_TripHistoryFilter, String>{
+              _TripHistoryFilter.all: _tr(
+                nl: 'Alle ritten',
+                en: 'All rides',
+                fr: 'Toutes',
+                es: 'Todas',
+              ),
+              _TripHistoryFilter.completed: _tr(
+                nl: 'Voltooid',
+                en: 'Completed',
+                fr: 'Terminées',
+                es: 'Completadas',
+              ),
+              _TripHistoryFilter.cancelled: _tr(
+                nl: 'Geannuleerd',
+                en: 'Cancelled',
+                fr: 'Annulées',
+                es: 'Canceladas',
+              ),
+            };
+
+            Widget metric({
+              required String label,
+              required String value,
+              required IconData icon,
+              required Color accentColor,
+              Color valueColor = Colors.white,
+            }) {
+              return Container(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF101010),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: accentColor.withOpacity(0.16),
+                            border: Border.all(
+                              color: accentColor.withOpacity(0.52),
+                            ),
+                          ),
+                          child: Icon(icon, size: 13.5, color: accentColor),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.64),
+                              fontSize: 10.6,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: valueColor,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget historyCard(_TripHistoryItem item) {
+              final startedIso = (item.startedAt ?? '').trim().isNotEmpty
+                  ? item.startedAt
+                  : item.stoppedAt;
+              final km = item.kmTotal == null
+                  ? '—'
+                  : '${item.kmTotal!.toStringAsFixed(1)} km';
+              final total = item.totalEur == null
+                  ? '€ —'
+                  : _formatEur(item.totalEur!);
+              final statusColor = _statusChipColor(item);
+              final paymentChip = _paymentChipText(item);
+              final kindOrCustomer = (item.customerName ?? '').trim().isNotEmpty
+                  ? item.customerName!.trim()
+                  : '${item.kindLabel}${item.isLocalOnlyDirectFallback ? ' • Lokaal' : ''}';
+              return Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF101113),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.28)),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _openReceipt(item),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 24,
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.radio_button_checked,
+                                size: 12.5,
+                                color: statusColor,
+                              ),
+                              Container(
+                                width: 2,
+                                height: 76,
+                                margin: const EdgeInsets.only(top: 4),
+                                decoration: BoxDecoration(
+                                  color: kFluxidiYellow.withOpacity(0.28),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '${_dateOnly(startedIso)} • ${_timeOnly(startedIso)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: kFluxidiYellow.withOpacity(0.95),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF17120A),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color: kFluxidiYellow.withOpacity(0.45),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      total,
+                                      style: TextStyle(
+                                        color: kFluxidiYellow.withOpacity(0.98),
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 12.4,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.my_location_rounded,
+                                    size: 14,
+                                    color: Color(0xFFEAB308),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      item.origin,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12.2,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.location_on_outlined,
+                                    size: 14,
+                                    color: Color(0xFFEAB308),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      item.destination,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12.2,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                '$kindOrCustomer • $km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.70),
+                                  fontSize: 11.2,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 7,
+                                runSpacing: 7,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: statusColor.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color: statusColor.withOpacity(0.55),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _statusChipText(item),
+                                      style: TextStyle(
+                                        color: statusColor,
+                                        fontSize: 10.8,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  if (paymentChip.isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF161616),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: kFluxidiYellow.withOpacity(
+                                            0.42,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        paymentChip,
+                                        style: TextStyle(
+                                          color: kFluxidiYellow.withOpacity(
+                                            0.95,
+                                          ),
+                                          fontSize: 10.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.end,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      onPressed: () => _archiveTrip(item),
+                                      icon: const Icon(
+                                        Icons.archive_outlined,
+                                        size: 17,
+                                      ),
+                                      label: Text(
+                                        _receiptText('archiveTripLabel'),
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white70,
+                                        side: BorderSide(
+                                          color: kFluxidiYellow.withOpacity(
+                                            0.35,
+                                          ),
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                    FilledButton.icon(
+                                      onPressed: () => _openReceipt(item),
+                                      icon: const Icon(
+                                        Icons.receipt_long,
+                                        size: 17,
+                                      ),
+                                      label: Text(_receiptText('receiptTitle')),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: kFluxidiYellow,
+                                        foregroundColor: const Color(
+                                          0xFF101010,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return Center(
+                child: CircularProgressIndicator(color: kFluxidiYellow),
+              );
             }
             if (snapshot.hasError) {
               return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
+                child: Container(
+                  margin: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101113),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+                  ),
                   child: Text(
                     '${_receiptText('historyLoadFailed')}\n${snapshot.error}',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
+                    style: TextStyle(color: Colors.white.withOpacity(0.78)),
                   ),
                 ),
               );
             }
             final items = snapshot.data ?? const <_TripHistoryItem>[];
+            final filteredItems = _applyFilter(items);
+            final summary = _summary(items);
             if (items.isEmpty) {
               return Center(
-                child: Text(
-                  _receiptText('historyEmpty'),
-                  style: const TextStyle(color: Colors.white70),
+                child: Container(
+                  margin: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101113),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+                  ),
+                  child: Text(
+                    _receiptText('historyEmpty'),
+                    style: TextStyle(color: Colors.white.withOpacity(0.78)),
+                  ),
                 ),
               );
             }
-            return ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final km = item.kmTotal == null
-                    ? '—'
-                    : '${item.kmTotal!.toStringAsFixed(1)} km';
-                final total = item.totalEur == null
-                    ? '€ —'
-                    : '€ ${item.totalEur!.toStringAsFixed(2)}';
-                return Card(
-                  color: const Color(0xFF141B2F),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _openReceipt(item),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(0, 4, 12, 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          ListTile(
-                            leading: const Icon(
-                              Icons.local_taxi_outlined,
-                              color: Colors.white70,
-                            ),
-                            title: Text(
-                              item.destination,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                '${item.kindLabel}${item.isLocalOnlyDirectFallback ? ' • Lokaal' : ''} • ${_formatDate(item.startedAt)}\n$km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)} • ${_localizedRideStatus(item.status)}',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  height: 1.35,
-                                ),
-                              ),
-                            ),
-                            trailing: Text(
-                              total,
-                              style: const TextStyle(
-                                color: Color(0xFFFFD400),
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            contentPadding: const EdgeInsets.only(left: 16),
-                            isThreeLine: true,
-                          ),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              alignment: WrapAlignment.end,
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101113),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _tr(
+                          nl: 'Overzicht',
+                          en: 'Overview',
+                          fr: 'Aperçu',
+                          es: 'Resumen',
+                        ),
+                        style: TextStyle(
+                          color: kFluxidiYellow.withOpacity(0.98),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14.2,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _tr(
+                          nl: 'Laatste ritten',
+                          en: 'Recent rides',
+                          fr: 'Courses récentes',
+                          es: 'Viajes recientes',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.62),
+                          fontSize: 11.4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 380;
+                          if (compact) {
+                            return Column(
                               children: [
-                                OutlinedButton.icon(
-                                  onPressed: () => _archiveTrip(item),
-                                  icon: const Icon(
-                                    Icons.archive_outlined,
-                                    size: 18,
-                                  ),
-                                  label: Text(_receiptText('archiveTripLabel')),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white70,
-                                    side: const BorderSide(
-                                      color: Colors.white24,
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Totaal ritten',
+                                          en: 'Total rides',
+                                          fr: 'Total courses',
+                                          es: 'Total viajes',
+                                        ),
+                                        value: summary.total.toString(),
+                                        icon: Icons.list_alt_rounded,
+                                        accentColor: const Color(0xFF60A5FA),
+                                      ),
                                     ),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Voltooid',
+                                          en: 'Completed',
+                                          fr: 'Terminées',
+                                          es: 'Completados',
+                                        ),
+                                        value: summary.completed.toString(),
+                                        icon:
+                                            Icons.check_circle_outline_rounded,
+                                        accentColor: const Color(0xFF4ADE80),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                FilledButton.icon(
-                                  onPressed: () => _openReceipt(item),
-                                  icon: const Icon(
-                                    Icons.receipt_long,
-                                    size: 18,
-                                  ),
-                                  label: Text(_receiptText('receiptTitle')),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFFFFD400),
-                                    foregroundColor: const Color(0xFF101010),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Geannuleerd',
+                                          en: 'Cancelled',
+                                          fr: 'Annulées',
+                                          es: 'Cancelados',
+                                        ),
+                                        value: summary.cancelled.toString(),
+                                        icon: Icons.cancel_outlined,
+                                        accentColor: const Color(0xFFF97373),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Omzet',
+                                          en: 'Revenue',
+                                          fr: 'Revenus',
+                                          es: 'Ingresos',
+                                        ),
+                                        value: _formatEur(summary.revenue),
+                                        icon: Icons.euro_rounded,
+                                        accentColor: kFluxidiYellow,
+                                        valueColor: kFluxidiYellow,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: metric(
+                                  label: _tr(
+                                    nl: 'Totaal ritten',
+                                    en: 'Total rides',
+                                    fr: 'Total courses',
+                                    es: 'Total viajes',
+                                  ),
+                                  value: summary.total.toString(),
+                                  icon: Icons.list_alt_rounded,
+                                  accentColor: const Color(0xFF60A5FA),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: metric(
+                                  label: _tr(
+                                    nl: 'Voltooid',
+                                    en: 'Completed',
+                                    fr: 'Terminées',
+                                    es: 'Completados',
+                                  ),
+                                  value: summary.completed.toString(),
+                                  icon: Icons.check_circle_outline_rounded,
+                                  accentColor: const Color(0xFF4ADE80),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: metric(
+                                  label: _tr(
+                                    nl: 'Geannuleerd',
+                                    en: 'Cancelled',
+                                    fr: 'Annulées',
+                                    es: 'Cancelados',
+                                  ),
+                                  value: summary.cancelled.toString(),
+                                  icon: Icons.cancel_outlined,
+                                  accentColor: const Color(0xFFF97373),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: metric(
+                                  label: _tr(
+                                    nl: 'Omzet',
+                                    en: 'Revenue',
+                                    fr: 'Revenus',
+                                    es: 'Ingresos',
+                                  ),
+                                  value: _formatEur(summary.revenue),
+                                  icon: Icons.euro_rounded,
+                                  accentColor: kFluxidiYellow,
+                                  valueColor: kFluxidiYellow,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _TripHistoryFilter.values
+                        .map((filter) {
+                          final active = _activeFilter == filter;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(999),
+                              onTap: () =>
+                                  setState(() => _activeFilter = filter),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: active
+                                      ? const Color(0xFF17120A)
+                                      : const Color(0xFF111214),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: active
+                                        ? kFluxidiYellow.withOpacity(0.7)
+                                        : Colors.white.withOpacity(0.14),
+                                  ),
+                                ),
+                                child: Text(
+                                  tabLabels[filter]!,
+                                  style: TextStyle(
+                                    color: active
+                                        ? kFluxidiYellow.withOpacity(0.98)
+                                        : Colors.white.withOpacity(0.76),
+                                    fontSize: 11.8,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          );
+                        })
+                        .toList(growable: false),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _tr(
+                    nl: 'Rit geschiedenis',
+                    en: 'Ride history',
+                    fr: 'Historique des courses',
+                    es: 'Historial de viajes',
+                  ),
+                  style: TextStyle(
+                    color: kFluxidiYellow.withOpacity(0.95),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.8,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (filteredItems.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF101113),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: kFluxidiYellow.withOpacity(0.28),
                       ),
                     ),
+                    child: Text(
+                      _receiptText('historyEmpty'),
+                      style: TextStyle(color: Colors.white.withOpacity(0.72)),
+                    ),
+                  )
+                else
+                  ...filteredItems.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: historyCard(item),
+                    ),
                   ),
-                );
-              },
+              ],
             );
           },
         ),
