@@ -23307,16 +23307,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(4),
+          padding: const EdgeInsets.all(5),
           decoration: BoxDecoration(
-            color: const Color(0xFF111111),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.10)),
+            color: const Color(0xFF101113),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: _ridesSegmentChip(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _ridesSegmentChip(
                   label: _tr(
                     nl: 'Beschikbaar',
                     en: 'Available',
@@ -23325,10 +23326,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                   active: true,
                 ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _ridesSegmentChip(
+                const SizedBox(width: 6),
+                _ridesSegmentChip(
                   label: _tr(
                     nl: 'Mijn ritten',
                     en: 'My rides',
@@ -23336,10 +23335,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                     es: 'Mis viajes',
                   ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _ridesSegmentChip(
+                const SizedBox(width: 6),
+                _ridesSegmentChip(
                   label: _tr(
                     nl: 'Historiek',
                     en: 'History',
@@ -23347,8 +23344,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                     es: 'Historial',
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 10),
@@ -23357,16 +23354,19 @@ class _DriverHomePageState extends State<DriverHomePage>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
             decoration: BoxDecoration(
-              color: const Color(0xFF121212),
+              color: const Color(0xFF101113),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0x33FFD36A)),
+              border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
             ),
             child: Column(
               children: [
-                const SizedBox(
+                SizedBox(
                   width: 24,
                   height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: kFluxidiYellow,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Text(
@@ -23389,9 +23389,11 @@ class _DriverHomePageState extends State<DriverHomePage>
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFF27161A),
+              color: const Color(0xFF1B1212),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0x66FF7A7A)),
+              border: Border.all(
+                color: const Color(0xFF7A2A2A).withOpacity(0.8),
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -23423,9 +23425,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF121212),
+                  color: const Color(0xFF101113),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0x33FFD36A)),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -23454,9 +23456,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF111111),
+                  color: const Color(0xFF101113),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white.withOpacity(0.10)),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.25)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -23573,6 +23575,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           en: '${b.bags ?? 0} bags',
           fr: '${b.bags ?? 0} bagages',
           es: '${b.bags ?? 0} equipaje',
+        );
+        final goToRideLabel = _tr(
+          nl: 'Ga naar rit',
+          en: 'Open ride',
+          fr: 'Aller à la course',
+          es: 'Ir al viaje',
         );
 
         if (compactPortrait) {
@@ -23749,6 +23757,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                 ],
                 const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: compactActionHeight,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kFluxidiYellow,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: actionBusy ? null : () => _goToRide(b),
+                    icon: const Icon(Icons.navigation_rounded, size: 16),
+                    label: Text(
+                      goToRideLabel,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 SizedBox(
                   width: double.infinity,
                   height: compactActionHeight,
@@ -23970,6 +23999,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                 SizedBox(
                   width: double.infinity,
                   height: actionHeight,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kFluxidiYellow,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: actionBusy ? null : () => _goToRide(b),
+                    icon: const Icon(Icons.navigation_rounded, size: 16),
+                    label: Text(
+                      goToRideLabel,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  height: actionHeight,
                   child: OutlinedButton.icon(
                     style: _ghostButtonStyle(),
                     onPressed: actionBusy
@@ -24014,6 +24064,27 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ],
                 ),
               ] else ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: actionHeight,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kFluxidiYellow,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: actionBusy ? null : () => _goToRide(b),
+                    icon: const Icon(Icons.navigation_rounded, size: 16),
+                    label: Text(
+                      goToRideLabel,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 Row(
                   children: [
                     Expanded(
@@ -24849,27 +24920,29 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _ridesSegmentChip({required String label, bool active = false}) {
     return Container(
-      height: 34,
+      constraints: const BoxConstraints(minHeight: 34, minWidth: 108),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: active ? const Color(0x22FFD36A) : Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
+        color: active ? const Color(0xFF17120A) : const Color(0xFF111214),
+        borderRadius: BorderRadius.circular(999),
         border: Border.all(
           color: active
-              ? const Color(0x66FFD36A)
-              : Colors.white.withOpacity(0.12),
+              ? kFluxidiYellow.withOpacity(0.68)
+              : Colors.white.withOpacity(0.14),
         ),
       ),
       child: Text(
         label,
         maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        overflow: TextOverflow.fade,
+        softWrap: false,
         style: TextStyle(
           color: active
-              ? const Color(0xFFFFD98A)
+              ? kFluxidiYellow.withOpacity(0.98)
               : Colors.white.withOpacity(0.78),
           fontWeight: active ? FontWeight.w700 : FontWeight.w600,
-          fontSize: 12.2,
+          fontSize: 11.9,
         ),
       ),
     );
@@ -32016,9 +32089,9 @@ class _BookingsHubPage extends StatelessWidget {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
+      backgroundColor: const Color(0xFF07080C),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: const Color(0xFF07080C),
         elevation: 0,
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
@@ -32030,7 +32103,7 @@ class _BookingsHubPage extends StatelessWidget {
               es: 'Actualizar',
             ),
             onPressed: onRefresh,
-            icon: const Icon(Icons.refresh),
+            icon: Icon(Icons.refresh, color: kFluxidiYellow.withOpacity(0.95)),
           ),
         ],
       ),
@@ -32043,13 +32116,13 @@ class _BookingsHubPage extends StatelessWidget {
                 width: double.infinity,
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
+                  horizontal: 12,
+                  vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF111111),
+                  color: const Color(0xFF101113),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0x33FFD36A)),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.30)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -32067,11 +32140,11 @@ class _BookingsHubPage extends StatelessWidget {
                             ),
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 15.5,
+                              fontSize: 14.6,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          const SizedBox(height: 3),
+                          const SizedBox(height: 2),
                           Text(
                             tr(
                               nl: 'Overzicht van jouw beschikbare en recente ritten.',
@@ -32081,7 +32154,7 @@ class _BookingsHubPage extends StatelessWidget {
                             ),
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.70),
-                              fontSize: 12.1,
+                              fontSize: 11.6,
                               height: 1.3,
                             ),
                           ),
@@ -32091,11 +32164,14 @@ class _BookingsHubPage extends StatelessWidget {
                     const SizedBox(width: 10),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(color: Colors.white.withOpacity(0.16)),
+                        foregroundColor: kFluxidiYellow.withOpacity(0.95),
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.40),
+                        ),
+                        backgroundColor: const Color(0xFF15120A),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
-                          vertical: 8,
+                          vertical: 7,
                         ),
                         minimumSize: const Size(0, 32),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -32104,7 +32180,7 @@ class _BookingsHubPage extends StatelessWidget {
                         ),
                       ),
                       onPressed: onRefresh,
-                      icon: const Icon(Icons.refresh, size: 16),
+                      icon: const Icon(Icons.refresh, size: 15),
                       label: Text(
                         tr(
                           nl: 'Vernieuw',
@@ -32126,9 +32202,11 @@ class _BookingsHubPage extends StatelessWidget {
                   borderRadius: BorderRadius.circular(22),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF101010).withOpacity(0.96),
+                      color: const Color(0xFF101113).withOpacity(0.96),
                       borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: const Color(0x40E5B641)),
+                      border: Border.all(
+                        color: kFluxidiYellow.withOpacity(0.30),
+                      ),
                     ),
                     padding: const EdgeInsets.all(14),
                     child: ValueListenableBuilder<int>(
