@@ -3007,17 +3007,33 @@ GET /oauth/callback
           pathParts[2] === "status" &&
           request.method === "POST"
         ) {
-          _requireAdmin(request, url, env);
           const body = await safeJson(request);
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
           const { rec } = await loadBookingRecord(env, bookingId);
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
-          if (actorRole === "customer") {
-            const proof = _requestCustomerContactProof({ url, body });
-            if (!customerProofMatchesBooking(rec, proof)) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+          const adminAuthorized = hasValidAdminToken(request, url, env);
+          if (!adminAuthorized) {
+            if (actorRole === "customer") {
+              const proof = _requestCustomerContactProof({ url, body });
+              if (!customerProofMatchesBooking(rec, proof)) {
+                return json({ ok: false, error: "customer ownership verification failed" }, 403);
+              }
+            } else if (actorRole === "driver") {
+              const ownershipBlock = await enforceDriverOwnershipForMutation({
+                request,
+                url,
+                body,
+                rec,
+                tenantScope,
+                env,
+              });
+              if (ownershipBlock) {
+                return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+              }
+            } else {
+              return json({ ok: false, error: "Unauthorized" }, 401);
             }
           }
           const ownershipBlock = await enforceDriverOwnershipForMutation({
@@ -3190,13 +3206,36 @@ GET /oauth/callback
       }
 
       if (url.pathname === "/track/booking/status" && request.method === "POST") {
-        _requireAdmin(request, url, env);
         const body = await safeJson(request);
         const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
         const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
         const { rec } = await loadBookingRecord(env, bookingId);
+        const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+        const adminAuthorized = hasValidAdminToken(request, url, env);
+        if (!adminAuthorized) {
+          if (actorRole === "customer") {
+            const proof = _requestCustomerContactProof({ url, body });
+            if (!customerProofMatchesBooking(rec, proof)) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+          } else if (actorRole === "driver") {
+            const ownershipBlock = await enforceDriverOwnershipForMutation({
+              request,
+              url,
+              body,
+              rec,
+              tenantScope,
+              env,
+            });
+            if (ownershipBlock) {
+              return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+            }
+          } else {
+            return json({ ok: false, error: "Unauthorized" }, 401);
+          }
+        }
         const ownershipBlock = await enforceDriverOwnershipForMutation({
           request,
           url,
@@ -6090,18 +6129,31 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       }
       throw persistErr;
     }
-    try {
-      await env.BOOKING_KV.put(
-        bookingIntent.key,
-        booking.bookingId,
-        { expirationTtl: BOOKING_INTENT_TTL_SECONDS },
-      );
-      const maskedScope = _bookingIntentScopeMask(idempotencyScope);
-      console.log(
-        `[BOOKING][IDEMPOTENCY][STORE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(booking.bookingId)}`,
-      );
-    } catch (_) {
+    const maskedScope = _bookingIntentScopeMask(idempotencyScope);
+    let idempotencyStored = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await env.BOOKING_KV.put(
+          bookingIntent.key,
+          booking.bookingId,
+          { expirationTtl: BOOKING_INTENT_TTL_SECONDS },
+        );
+        idempotencyStored = true;
+        console.log(
+          `[BOOKING][IDEMPOTENCY][STORE] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(booking.bookingId)} attempt=${attempt}`,
+        );
+        break;
+      } catch (idempotencyErr) {
+        console.log(
+          `[BOOKING][IDEMPOTENCY][STORE_WARN] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(booking.bookingId)} attempt=${attempt} reason=${safeStr(idempotencyErr?.message || idempotencyErr, 140) || "unknown"}`,
+        );
+      }
+    }
+    if (!idempotencyStored) {
       // Best-effort only; booking persistence already succeeded.
+      console.log(
+        `[BOOKING][IDEMPOTENCY][STORE_GIVEUP] tenant=${maskedScope.tenant} company=${maskedScope.company} booking=${_bookingIntentMask(booking.bookingId)}`,
+      );
     }
 
     // Bridge website-created bookings into tracking index so they appear in /track/bookings.
@@ -7618,8 +7670,21 @@ async function trackingLast(url, env, requestedScope = null) {
 
 function _normLifecycleStatus(v) {
   const raw = String(v || "").toUpperCase().trim();
-  if (raw === "COMPLETED" || raw === "CANCELLED") return raw;
-  if (raw === "BOOKED" || raw === "CONFIRMED" || raw === "PENDING" || raw === "ACTIVE") {
+  if (raw === "COMPLETED" || raw === "COMPLETE" || raw === "DONE" || raw === "CLOSED") {
+    return "COMPLETED";
+  }
+  if (
+    raw === "CANCELLED" ||
+    raw === "CANCELED" ||
+    raw === "DELETED" ||
+    raw === "ARCHIVED" ||
+    raw === "DECLINED" ||
+    raw === "FAILED" ||
+    raw === "EXPIRED"
+  ) {
+    return "CANCELLED";
+  }
+  if (raw === "BOOKED" || raw === "CONFIRMED" || raw === "PENDING" || raw === "ACTIVE" || raw === "OPEN") {
     return "PENDING";
   }
   return "PENDING";
@@ -8624,9 +8689,41 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
   if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
+  const nowIso = new Date().toISOString();
   rec.status = normalized;
   rec.stage = normalized;
-  rec.updatedAt = new Date().toISOString();
+  rec.lifecycle_status = normalized.toLowerCase();
+  rec.lifecycleStatus = normalized.toLowerCase();
+  rec.booking_status = normalized.toLowerCase();
+  rec.bookingStatus = normalized.toLowerCase();
+  rec.updatedAt = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.status = normalized;
+    rec.booking.stage = normalized;
+    rec.booking.lifecycle_status = normalized.toLowerCase();
+    rec.booking.lifecycleStatus = normalized.toLowerCase();
+    rec.booking.booking_status = normalized.toLowerCase();
+    rec.booking.bookingStatus = normalized.toLowerCase();
+  }
+  if (normalized === "CANCELLED") {
+    rec.cancelled_at = rec.cancelled_at || nowIso;
+    rec.cancelledAt = rec.cancelledAt || rec.cancelled_at;
+    rec.canceled_at = rec.canceled_at || rec.cancelled_at;
+    rec.canceledAt = rec.canceledAt || rec.cancelled_at;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.cancelled_at = rec.booking.cancelled_at || rec.cancelled_at;
+      rec.booking.cancelledAt = rec.booking.cancelledAt || rec.cancelled_at;
+      rec.booking.canceled_at = rec.booking.canceled_at || rec.cancelled_at;
+      rec.booking.canceledAt = rec.booking.canceledAt || rec.cancelled_at;
+    }
+  } else if (normalized === "COMPLETED") {
+    rec.completed_at = rec.completed_at || nowIso;
+    rec.completedAt = rec.completedAt || rec.completed_at;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.completed_at = rec.booking.completed_at || rec.completed_at;
+      rec.booking.completedAt = rec.booking.completedAt || rec.completed_at;
+    }
+  }
   if (normalized === "COMPLETED" || normalized === "CANCELLED") {
     await cleanupBookingCalendarEvents(env, rec);
   }
@@ -9313,22 +9410,100 @@ async function cleanupBookingCalendarEvents(env, rec) {
   if (returnEventId && returnEventId !== mainEventId) {
     events.push({ kind: "return", eventId: returnEventId });
   }
-  if (!events.length) return;
-
   const attemptedAt = new Date().toISOString();
+  const setCalendarCancelMetadata = ({
+    status,
+    errorCode = null,
+    failedAt = null,
+    cancelledAt = null,
+  }) => {
+    const normalizedStatus = safeStr(status || "failed", 40) || "failed";
+    const normalizedErrorCode = safeStr(errorCode, 80) || null;
+    const normalizedFailedAt = safeStr(failedAt, 64) || null;
+    const normalizedCancelledAt = safeStr(cancelledAt, 64) || null;
+    rec.calendar_cancel_status = normalizedStatus;
+    rec.calendarCancelStatus = normalizedStatus;
+    if (normalizedErrorCode) {
+      rec.calendar_cancel_error_code = normalizedErrorCode;
+      rec.calendarCancelErrorCode = normalizedErrorCode;
+    } else {
+      rec.calendar_cancel_error_code = null;
+      rec.calendarCancelErrorCode = null;
+    }
+    if (normalizedFailedAt) {
+      rec.calendar_cancel_failed_at = normalizedFailedAt;
+      rec.calendarCancelFailedAt = normalizedFailedAt;
+    }
+    if (normalizedCancelledAt) {
+      rec.calendar_cancelled_at = normalizedCancelledAt;
+      rec.calendarCancelledAt = normalizedCancelledAt;
+    }
+    if (booking) {
+      booking.calendar_cancel_status = normalizedStatus;
+      booking.calendarCancelStatus = normalizedStatus;
+      if (normalizedErrorCode) {
+        booking.calendar_cancel_error_code = normalizedErrorCode;
+        booking.calendarCancelErrorCode = normalizedErrorCode;
+      } else {
+        booking.calendar_cancel_error_code = null;
+        booking.calendarCancelErrorCode = null;
+      }
+      if (normalizedFailedAt) {
+        booking.calendar_cancel_failed_at = normalizedFailedAt;
+        booking.calendarCancelFailedAt = normalizedFailedAt;
+      }
+      if (normalizedCancelledAt) {
+        booking.calendar_cancelled_at = normalizedCancelledAt;
+        booking.calendarCancelledAt = normalizedCancelledAt;
+      }
+    }
+    if (calendar) {
+      calendar.calendar_cancel_status = normalizedStatus;
+      calendar.calendarCancelStatus = normalizedStatus;
+      if (normalizedErrorCode) {
+        calendar.calendar_cancel_error_code = normalizedErrorCode;
+        calendar.calendarCancelErrorCode = normalizedErrorCode;
+      } else {
+        calendar.calendar_cancel_error_code = null;
+        calendar.calendarCancelErrorCode = null;
+      }
+      if (normalizedFailedAt) {
+        calendar.calendar_cancel_failed_at = normalizedFailedAt;
+        calendar.calendarCancelFailedAt = normalizedFailedAt;
+      }
+      if (normalizedCancelledAt) {
+        calendar.calendar_cancelled_at = normalizedCancelledAt;
+        calendar.calendarCancelledAt = normalizedCancelledAt;
+      }
+    }
+  };
   if (booking) booking.calendar_clear_attempted_at = attemptedAt;
   if (calendar) calendar.calendar_clear_attempted_at = attemptedAt;
   rec.calendar_clear_attempted_at = attemptedAt;
+  if (!events.length) {
+    setCalendarCancelMetadata({
+      status: "no_event",
+      cancelledAt: attemptedAt,
+    });
+    return;
+  }
 
   let accessToken = null;
   const calendarId = env?.GOOGLE_CALENDAR_ID || "primary";
   try {
     accessToken = await getGoogleAccessToken(env);
-  } catch (_) {
+  } catch (tokenErr) {
+    const authError = isGoogleCalendarAuthError(tokenErr);
+    setCalendarCancelMetadata({
+      status: authError ? "auth_required" : "failed",
+      errorCode: authError ? "google_auth_expired" : "calendar_delete_failed",
+      failedAt: attemptedAt,
+    });
     return;
   }
 
   let allCleared = true;
+  let deleteErrorCode = null;
   for (const item of events) {
     try {
       await googleDeleteEvent(accessToken, calendarId, item.eventId);
@@ -9355,8 +9530,13 @@ async function cleanupBookingCalendarEvents(env, rec) {
           booking.returnEventId = null;
         }
       }
-    } catch (_) {
+    } catch (deleteErr) {
       allCleared = false;
+      if (!deleteErrorCode) {
+        deleteErrorCode = isGoogleCalendarAuthError(deleteErr)
+          ? "google_auth_expired"
+          : "calendar_delete_failed";
+      }
     }
   }
 
@@ -9378,6 +9558,17 @@ async function cleanupBookingCalendarEvents(env, rec) {
     if (booking) booking.calendar_cleared_at = clearedAt;
     if (calendar) calendar.calendar_cleared_at = clearedAt;
     rec.calendar_cleared_at = clearedAt;
+    setCalendarCancelMetadata({
+      status: "deleted",
+      cancelledAt: clearedAt,
+    });
+  } else {
+    const failedAt = new Date().toISOString();
+    setCalendarCancelMetadata({
+      status: deleteErrorCode === "google_auth_expired" ? "auth_required" : "failed",
+      errorCode: deleteErrorCode || "calendar_delete_failed",
+      failedAt,
+    });
   }
 }
 

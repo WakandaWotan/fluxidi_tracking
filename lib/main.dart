@@ -9953,6 +9953,51 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         status != 'DECLINED';
   }
 
+  bool _isCancellationTransportError(Object err) {
+    final text = err.toString().toLowerCase();
+    return text.contains('clientsoftware caused connection abort') ||
+        text.contains('connection abort') ||
+        text.contains('connection reset') ||
+        text.contains('socketexception') ||
+        text.contains('timeoutexception') ||
+        text.contains('failed host lookup') ||
+        text.contains('network is unreachable') ||
+        text.contains('uri=https://');
+  }
+
+  Future<bool> _verifyCancellationServerState({
+    required String bookingId,
+    required Map<String, String> proof,
+  }) async {
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
+        extraQuery: proof.isEmpty ? null : proof,
+      );
+      final res = await http
+          .get(uri, headers: _cancelHeaders())
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) return false;
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map) return false;
+      final body = Map<String, dynamic>.from(decoded);
+      final status =
+          (body['status'] ??
+                  (body['record'] is Map ? body['record']['status'] : null) ??
+                  (body['record'] is Map && body['record']['booking'] is Map
+                      ? body['record']['booking']['status']
+                      : null) ??
+                  '')
+              .toString()
+              .trim()
+              .toUpperCase();
+      return status == 'CANCELLED' || status == 'CANCELED';
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _cancelBookingServerSide() async {
     final bookingId = widget.bookingId.trim();
     if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
@@ -10101,18 +10146,63 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         '[CUSTOMER_BOOKING][CANCEL_ERROR] booking=${_safeRefPreview(bookingId)} error=$err',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Annuleren mislukt. Probeer opnieuw.',
-              en: 'Cancellation failed. Please try again.',
-              fr: 'Échec de l’annulation. Réessayez.',
-              es: 'No se pudo cancelar. Inténtalo de nuevo.',
+      if (_isCancellationTransportError(err)) {
+        final cancelled = await _verifyCancellationServerState(
+          bookingId: bookingId,
+          proof: proof,
+        );
+        if (cancelled) {
+          final localResult = await _removeLocalCustomerBookingEverywhere(
+            bookingForLog: bookingId,
+            aliases: aliases,
+          );
+          debugPrint(
+            '[CUSTOMER_BOOKING][CANCEL_VERIFY_OK] booking=${_safeRefPreview(bookingId)} removed=${localResult.removed}',
+          );
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Boeking geannuleerd.',
+                  en: 'Booking cancelled.',
+                  fr: 'Réservation annulée.',
+                  es: 'Reserva cancelada.',
+                ),
+              ),
+            ),
+          );
+          Navigator.of(context).pop(<String, dynamic>{
+            'action': _customerDetailResultCancelledServer,
+          });
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'We konden de annulering niet bevestigen. Vernieuw Mijn boekingen of probeer opnieuw.',
+                en: 'We could not confirm the cancellation. Refresh My bookings or try again.',
+                fr: 'Nous n avons pas pu confirmer l annulation. Actualisez Mes reservations ou reessayez.',
+                es: 'No pudimos confirmar la cancelacion. Actualiza Mis reservas o intentalo de nuevo.',
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Annuleren mislukt. Probeer opnieuw.',
+                en: 'Cancellation failed. Please try again.',
+                fr: 'Échec de l’annulation. Réessayez.',
+                es: 'No se pudo cancelar. Inténtalo de nuevo.',
+              ),
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _cancelling = false);
@@ -13932,7 +14022,17 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool _isClosedRideStatus(String? rawStatus) {
     final s = (rawStatus ?? '').trim().toUpperCase();
-    return s == 'COMPLETED' || s == 'CANCELLED' || s == 'DELETED';
+    return s == 'COMPLETED' ||
+        s == 'COMPLETE' ||
+        s == 'CANCELLED' ||
+        s == 'CANCELED' ||
+        s == 'DELETED' ||
+        s == 'ARCHIVED' ||
+        s == 'CLOSED' ||
+        s == 'DONE' ||
+        s == 'FAILED' ||
+        s == 'EXPIRED' ||
+        s == 'DECLINED';
   }
 
   String? _effectiveStatusFor(BookingItem b) {
@@ -14818,6 +14918,48 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  bool _isRideMutationTransportError(Object err) {
+    final text = err.toString().toLowerCase();
+    return text.contains('clientsoftware caused connection abort') ||
+        text.contains('connection abort') ||
+        text.contains('connection reset') ||
+        text.contains('socketexception') ||
+        text.contains('timeoutexception') ||
+        text.contains('failed host lookup') ||
+        text.contains('network is unreachable') ||
+        text.contains('uri=https://');
+  }
+
+  Future<String?> _fetchAuthoritativeRideStatus(String bookingId) async {
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
+      );
+      final res = await http
+          .get(uri, headers: _headers(admin: true))
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final direct = (decoded['status'] ?? '').toString().trim();
+      if (direct.isNotEmpty) return direct.toUpperCase();
+      final record = decoded['record'];
+      if (record is Map) {
+        final recordStatus = (record['status'] ?? '').toString().trim();
+        if (recordStatus.isNotEmpty) return recordStatus.toUpperCase();
+        final booking = record['booking'];
+        if (booking is Map) {
+          final bookingStatus = (booking['status'] ?? '').toString().trim();
+          if (bookingStatus.isNotEmpty) return bookingStatus.toUpperCase();
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _setBookingStatus(BookingItem b, String status) async {
     if (!mounted) return;
     if (!_canOperateBookingWithGuard(
@@ -14857,33 +14999,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
-      var statusPersistedOnWorker = false;
+      final res = await http
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 12));
+      debugPrint(
+        '[RIDES][STATUS][RES] code=${res.statusCode} body=${res.body}',
+      );
+      dynamic decoded;
       try {
-        final res = await http
-            .post(
-              uri,
-              headers: _headers(admin: true),
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 12));
-        debugPrint(
-          '[RIDES][STATUS][RES] code=${res.statusCode} body=${res.body}',
-        );
-        dynamic decoded;
-        try {
-          decoded = jsonDecode(res.body);
-        } catch (_) {
-          decoded = null;
-        }
-        final ok = decoded is Map ? decoded['ok'] == true : false;
-        if (res.statusCode == 200 && ok) {
-          statusPersistedOnWorker = true;
-        } else {
-          throw Exception('HTTP ${res.statusCode}: ${res.body}');
-        }
-      } catch (e) {
-        // Keep safe compatibility with worker versions that don't expose this endpoint.
-        debugPrint('[RIDES][STATUS][WARN] fallback-local-only reason=$e');
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null;
+      }
+      final ok = decoded is Map ? decoded['ok'] == true : false;
+      if (res.statusCode != 200 || !ok) {
+        throw Exception('HTTP ${res.statusCode}: status_update_failed');
       }
 
       if (!mounted) return;
@@ -14915,12 +15045,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       _markBookingsUiDirty();
       _toast('✅ $status: ${b.shortId}');
-      if (!statusPersistedOnWorker) {
-        // Fallback for tracking-worker variants that have no status endpoint:
-        // removing from tracking index makes closed rides persistently disappear
-        // from the "available rides" source after app restart.
-        await _archiveClosedRideByDelete(bookingId: bookingId, status: status);
-      }
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'STATUS_AFTER_WRITE',
@@ -14955,7 +15079,42 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _refreshBookings(force: true, trigger: 'status_change');
     } catch (e) {
-      _toast('❌ Status update failed: $e');
+      final normalizedStatus = status.trim().toUpperCase();
+      if (_isRideMutationTransportError(e)) {
+        final authoritative = await _fetchAuthoritativeRideStatus(bookingId);
+        if (authoritative == normalizedStatus) {
+          if (!mounted) return;
+          setState(() {
+            _bookingStatusOverrides[bookingId] = normalizedStatus;
+            final idx = _bookings.indexWhere((x) => x.bookingId == bookingId);
+            if (idx >= 0) {
+              _bookings[idx] = _bookings[idx].copyWith(
+                status: normalizedStatus,
+              );
+            }
+            if (_activeBooking?.bookingId == bookingId) {
+              _activeBooking = _activeBooking!.copyWith(
+                status: normalizedStatus,
+              );
+            }
+          });
+          _markBookingsUiDirty();
+          _toast('✅ $status: ${b.shortId}');
+          await _refreshBookings(
+            force: true,
+            trigger: 'status_change_verified',
+          );
+          return;
+        }
+      }
+      _toast(
+        _tr(
+          nl: 'Status bijwerken mislukt. Vernieuw en probeer opnieuw.',
+          en: 'Status update failed. Refresh and try again.',
+          fr: 'La mise a jour du statut a echoue. Actualisez puis reessayez.',
+          es: 'No se pudo actualizar el estado. Actualiza e intentalo de nuevo.',
+        ),
+      );
     } finally {
       if (!mounted) return;
       setState(() => _bookingActionInFlight.remove(bookingId));

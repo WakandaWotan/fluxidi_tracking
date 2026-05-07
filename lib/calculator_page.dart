@@ -2573,6 +2573,25 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       }
       return 'Boeking kon niet worden afgerond door een tijdelijke koppeling. Probeer opnieuw of contacteer het bedrijf.';
     }
+    if (s.contains('clientsoftware caused connection abort') ||
+        s.contains('uri=https://') ||
+        s.contains('socketexception') ||
+        s.contains('timeoutexception') ||
+        s.contains('connection abort') ||
+        s.contains('connection reset') ||
+        s.contains('failed host lookup') ||
+        s.contains('network is unreachable')) {
+      if (widget.language == AppLanguage.en) {
+        return "We couldn't confirm the booking yet. Check My bookings or refresh.";
+      }
+      if (widget.language == AppLanguage.fr) {
+        return 'Nous n avons pas encore pu confirmer la reservation. Verifiez Mes reservations ou actualisez.';
+      }
+      if (widget.language == AppLanguage.es) {
+        return 'Todavia no pudimos confirmar la reserva. Revisa Mis reservas o actualiza.';
+      }
+      return 'We konden de boeking nog niet bevestigen. Kijk bij Mijn boekingen of vernieuw.';
+    }
     return raw;
   }
 
@@ -2727,6 +2746,237 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     }
   }
 
+  String _bookingCheckingStatusLabel() {
+    switch (widget.language) {
+      case AppLanguage.en:
+        return 'Checking booking status...';
+      case AppLanguage.fr:
+        return 'Vérification de la réservation...';
+      case AppLanguage.es:
+        return 'Comprobando la reserva...';
+      case AppLanguage.nl:
+        return 'Boeking wordt gecontroleerd...';
+    }
+  }
+
+  String _bookingUncertainStatusLabel() {
+    switch (widget.language) {
+      case AppLanguage.en:
+        return "We couldn't confirm the booking. Check My bookings or refresh.";
+      case AppLanguage.fr:
+        return "Nous n'avons pas pu confirmer la réservation. Vérifiez Mes réservations ou actualisez.";
+      case AppLanguage.es:
+        return 'No pudimos confirmar la reserva. Revisa Mis reservas o actualiza.';
+      case AppLanguage.nl:
+        return 'We konden de bevestiging niet controleren. Kijk bij Mijn boekingen of vernieuw.';
+    }
+  }
+
+  bool _isBookingTransportError(String raw) {
+    final s = raw.toLowerCase();
+    return s.contains('clientsoftware caused connection abort') ||
+        s.contains('connection abort') ||
+        s.contains('connection reset') ||
+        s.contains('socketexception') ||
+        s.contains('timeoutexception') ||
+        s.contains('failed host lookup') ||
+        s.contains('network is unreachable') ||
+        s.contains('uri=https://');
+  }
+
+  Future<Map<String, dynamic>?> _postBookAndDecode(
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    final url = Uri.parse('${widget.bookingBaseUrl}/book');
+    final res = await http
+        .post(
+          url,
+          headers: const {'content-type': 'application/json'},
+          body: jsonEncode(payload),
+        )
+        .timeout(timeout);
+    final rawText = res.body;
+    Map<String, dynamic> body = <String, dynamic>{};
+    if (rawText.trim().isNotEmpty) {
+      final decoded = jsonDecode(rawText);
+      if (decoded is Map<String, dynamic>) {
+        body = decoded;
+      } else if (decoded is Map) {
+        body = Map<String, dynamic>.from(decoded);
+      }
+    }
+    final ok =
+        res.statusCode >= 200 &&
+        res.statusCode < 300 &&
+        (body['ok'] == null || body['ok'] == true);
+    if (!ok) {
+      final err = (body['error'] ?? body['message'] ?? 'HTTP ${res.statusCode}')
+          .toString();
+      throw Exception(err);
+    }
+    return body;
+  }
+
+  Future<Map<String, dynamic>?> _verifyBookAfterTransportError(
+    Map<String, dynamic> payload,
+  ) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 700));
+        }
+        final body = await _postBookAndDecode(
+          payload,
+          timeout: const Duration(seconds: 15),
+        );
+        if (body != null && body.isNotEmpty) return body;
+      } catch (_) {
+        // Keep retry bounded; this verification flow is best-effort only.
+      }
+    }
+    return null;
+  }
+
+  Future<void> _handleBookSuccess({
+    required Map<String, dynamic> body,
+    required Map<String, dynamic> payload,
+    required String name,
+    required String phone,
+    required String email,
+    required String effectiveCompanyName,
+    required String effectiveVatNumber,
+    required String effectiveInvoiceEmail,
+    required String effectiveInvoiceAddress,
+    required Map<String, dynamic> businessPayload,
+  }) async {
+    final bookingRef =
+        (body['bookingId'] ??
+                body['booking_id'] ??
+                (body['booking'] is Map
+                    ? (body['booking']['bookingId'] ??
+                          body['booking']['booking_id'])
+                    : null) ??
+                '')
+            .toString();
+    final publicRefRaw =
+        (body['public_reference'] ??
+                body['publicReference'] ??
+                body['customer_reference'] ??
+                body['customerReference'] ??
+                body['receipt_number'] ??
+                body['receiptNumber'] ??
+                (body['booking'] is Map
+                    ? (body['booking']['public_reference'] ??
+                          body['booking']['publicReference'] ??
+                          body['booking']['customer_reference'] ??
+                          body['booking']['customerReference'] ??
+                          body['booking']['receipt_number'] ??
+                          body['booking']['receiptNumber'])
+                    : null) ??
+                '')
+            .toString()
+            .trim();
+    final publicRef = publicRefRaw.isNotEmpty
+        ? publicRefRaw
+        : bookingRef.trim();
+    final requiresPayment =
+        (body['requiresPayment'] == true || body['payment_required'] == true);
+    final checkoutUrl =
+        (body['checkoutUrl'] ?? body['paymentUrl'] ?? body['payment_url'] ?? '')
+            .toString()
+            .trim();
+    final safeCheckoutUrl = _isCustomerSafeCheckoutUrl(checkoutUrl)
+        ? checkoutUrl
+        : '';
+    final paymentFlow = requiresPayment || safeCheckoutUrl.isNotEmpty;
+    final paymentBookingId =
+        (body['paymentBookingId'] ??
+                body['payment_booking_id'] ??
+                (body['booking'] is Map
+                    ? (body['booking']['paymentBookingId'] ??
+                          body['booking']['payment_booking_id'])
+                    : null) ??
+                '')
+            .toString()
+            .trim();
+    if (paymentFlow && paymentBookingId.isNotEmpty) {
+      _ownPaymentBookingId = paymentBookingId;
+      _paymentConfirmed = false;
+      setFluxidiPendingPayment(
+        paymentBookingId: paymentBookingId,
+        publicBookingId: publicRef.isNotEmpty ? publicRef : null,
+      );
+    }
+    final storedBooking =
+        StoredCustomerBooking.fromBookSuccess(
+          response: body,
+          requestPayload: payload,
+          customerName: name,
+          customerPhone: phone,
+          customerEmail: email,
+        ).copyWith(
+          bookingId: bookingRef.isNotEmpty ? bookingRef : publicRef,
+          publicBookingId: publicRef,
+          paymentBookingId: paymentBookingId,
+          paymentStatus: paymentFlow
+              ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
+              : 'unpaid',
+          status: paymentFlow ? 'PENDING' : 'CONFIRMED',
+          companyName: effectiveCompanyName,
+          vatNumber: effectiveVatNumber,
+          invoiceEmail: effectiveInvoiceEmail,
+          invoiceAddress: effectiveInvoiceAddress,
+          businessDetected:
+              businessPayload['business_detected'] == true ||
+              businessPayload['businessDetected'] == true,
+          invoiceRequested:
+              businessPayload['invoice_requested'] == true ||
+              businessPayload['invoiceRequested'] == true,
+        );
+    await CustomerBookingsStore.instance.upsert(storedBooking);
+    final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)
+        .trim();
+    if (localBookingId.isEmpty) {
+      debugPrint('[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=missing_booking_id');
+    } else {
+      debugPrint('[CUSTOMER_BOOKINGS][SAVE][OK] booking=$localBookingId');
+    }
+    final finalPricing = bookingRef.isNotEmpty
+        ? await _fetchFinalAuthoritativePricing(bookingRef)
+        : null;
+
+    final successMessage = [
+      paymentFlow
+          ? widget.strings.bookingSuccessPaymentRequiredMessage.of(
+              widget.language,
+            )
+          : widget.strings.bookingSuccessCashMessage.of(widget.language),
+      if (publicRef.isNotEmpty)
+        '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $publicRef',
+    ].join('\n');
+
+    if (!mounted) return;
+    setState(() {
+      _submitState = successMessage;
+      _submitStateIsError = false;
+      _finalPricing = finalPricing;
+      _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
+      _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
+    });
+    if (safeCheckoutUrl.isNotEmpty) {
+      await _showBookingSuccessDialog(
+        requiresPayment: true,
+        paymentUrl: safeCheckoutUrl,
+        publicRef: publicRef,
+      );
+    } else if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
+    }
+  }
+
   Future<void> _onConfirmBooking() async {
     FocusScope.of(context).unfocus();
     final name = _nameCtrl.text.trim();
@@ -2856,173 +3106,57 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     });
 
     try {
-      final url = Uri.parse('${widget.bookingBaseUrl}/book');
       _logBusinessPayload(stage: 'book', payload: payload);
-      final res = await http.post(
-        url,
-        headers: const {'content-type': 'application/json'},
-        body: jsonEncode(payload),
+      final body = await _postBookAndDecode(payload);
+      if (body == null) {
+        throw Exception('book_response_missing');
+      }
+      await _handleBookSuccess(
+        body: body,
+        payload: payload,
+        name: name,
+        phone: phone,
+        email: email,
+        effectiveCompanyName: effectiveCompanyName,
+        effectiveVatNumber: effectiveVatNumber,
+        effectiveInvoiceEmail: effectiveInvoiceEmail,
+        effectiveInvoiceAddress: effectiveInvoiceAddress,
+        businessPayload: businessPayload,
       );
-
-      final rawText = res.body;
-      Map<String, dynamic> body = <String, dynamic>{};
-      if (rawText.trim().isNotEmpty) {
-        final decoded = jsonDecode(rawText);
-        if (decoded is Map<String, dynamic>) {
-          body = decoded;
-        } else if (decoded is Map) {
-          body = Map<String, dynamic>.from(decoded);
-        }
-      }
-
-      final ok =
-          res.statusCode >= 200 &&
-          res.statusCode < 300 &&
-          (body['ok'] == null || body['ok'] == true);
-      if (!ok) {
-        final err =
-            (body['error'] ?? body['message'] ?? 'HTTP ${res.statusCode}')
-                .toString();
-        throw Exception(err);
-      }
-
-      final bookingRef =
-          (body['bookingId'] ??
-                  body['booking_id'] ??
-                  (body['booking'] is Map
-                      ? (body['booking']['bookingId'] ??
-                            body['booking']['booking_id'])
-                      : null) ??
-                  '')
-              .toString();
-      final publicRefRaw =
-          (body['public_reference'] ??
-                  body['publicReference'] ??
-                  body['customer_reference'] ??
-                  body['customerReference'] ??
-                  body['receipt_number'] ??
-                  body['receiptNumber'] ??
-                  (body['booking'] is Map
-                      ? (body['booking']['public_reference'] ??
-                            body['booking']['publicReference'] ??
-                            body['booking']['customer_reference'] ??
-                            body['booking']['customerReference'] ??
-                            body['booking']['receipt_number'] ??
-                            body['booking']['receiptNumber'])
-                      : null) ??
-                  '')
-              .toString()
-              .trim();
-      // Fallback: many /book responses only return booking_id / bookingId.
-      // Use that as the customer-facing reference when no dedicated public
-      // reference field is set.
-      final publicRef = publicRefRaw.isNotEmpty
-          ? publicRefRaw
-          : bookingRef.trim();
-      final requiresPayment =
-          (body['requiresPayment'] == true || body['payment_required'] == true);
-      final checkoutUrl =
-          (body['checkoutUrl'] ??
-                  body['paymentUrl'] ??
-                  body['payment_url'] ??
-                  '')
-              .toString()
-              .trim();
-      final safeCheckoutUrl = _isCustomerSafeCheckoutUrl(checkoutUrl)
-          ? checkoutUrl
-          : '';
-      final paymentFlow = requiresPayment || safeCheckoutUrl.isNotEmpty;
-      final paymentBookingId =
-          (body['paymentBookingId'] ??
-                  body['payment_booking_id'] ??
-                  (body['booking'] is Map
-                      ? (body['booking']['paymentBookingId'] ??
-                            body['booking']['payment_booking_id'])
-                      : null) ??
-                  '')
-              .toString()
-              .trim();
-      // Register the pending payment so deep link / lifecycle handlers in
-      // _DriverHomePageState can reconcile via /pay/status when the user
-      // returns from Mollie checkout.
-      if (paymentFlow && paymentBookingId.isNotEmpty) {
-        _ownPaymentBookingId = paymentBookingId;
-        _paymentConfirmed = false;
-        setFluxidiPendingPayment(
-          paymentBookingId: paymentBookingId,
-          publicBookingId: publicRef.isNotEmpty ? publicRef : null,
-        );
-      }
-      final storedBooking =
-          StoredCustomerBooking.fromBookSuccess(
-            response: body,
-            requestPayload: payload,
-            customerName: name,
-            customerPhone: phone,
-            customerEmail: email,
-          ).copyWith(
-            bookingId: bookingRef.isNotEmpty ? bookingRef : publicRef,
-            publicBookingId: publicRef,
-            paymentBookingId: paymentBookingId,
-            paymentStatus: paymentFlow
-                ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
-                : 'unpaid',
-            status: paymentFlow ? 'PENDING' : 'CONFIRMED',
-            companyName: effectiveCompanyName,
-            vatNumber: effectiveVatNumber,
-            invoiceEmail: effectiveInvoiceEmail,
-            invoiceAddress: effectiveInvoiceAddress,
-            businessDetected:
-                businessPayload['business_detected'] == true ||
-                businessPayload['businessDetected'] == true,
-            invoiceRequested:
-                businessPayload['invoice_requested'] == true ||
-                businessPayload['invoiceRequested'] == true,
-          );
-      await CustomerBookingsStore.instance.upsert(storedBooking);
-      final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)
-          .trim();
-      if (localBookingId.isEmpty) {
-        debugPrint('[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=missing_booking_id');
-      } else {
-        debugPrint('[CUSTOMER_BOOKINGS][SAVE][OK] booking=$localBookingId');
-      }
-      final finalPricing = bookingRef.isNotEmpty
-          ? await _fetchFinalAuthoritativePricing(bookingRef)
-          : null;
-
-      final successMessage = [
-        paymentFlow
-            ? widget.strings.bookingSuccessPaymentRequiredMessage.of(
-                widget.language,
-              )
-            : widget.strings.bookingSuccessCashMessage.of(widget.language),
-        if (publicRef.isNotEmpty)
-          '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: $publicRef',
-      ].join('\n');
-
-      if (!mounted) return;
-      setState(() {
-        _submitState = successMessage;
-        _submitStateIsError = false;
-        _finalPricing = finalPricing;
-        _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
-        _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
-      });
-      if (safeCheckoutUrl.isNotEmpty) {
-        await _showBookingSuccessDialog(
-          requiresPayment: true,
-          paymentUrl: safeCheckoutUrl,
-          publicRef: publicRef,
-        );
-      } else if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(successMessage)));
-      }
     } catch (e) {
       if (!mounted) return;
       final rawErr = e.toString().replaceFirst('Exception: ', '').trim();
+      if (_isBookingTransportError(rawErr)) {
+        setState(() {
+          _submitState = _bookingCheckingStatusLabel();
+          _submitStateIsError = false;
+        });
+        final verified = await _verifyBookAfterTransportError(payload);
+        if (verified != null) {
+          await _handleBookSuccess(
+            body: verified,
+            payload: payload,
+            name: name,
+            phone: phone,
+            email: email,
+            effectiveCompanyName: effectiveCompanyName,
+            effectiveVatNumber: effectiveVatNumber,
+            effectiveInvoiceEmail: effectiveInvoiceEmail,
+            effectiveInvoiceAddress: effectiveInvoiceAddress,
+            businessPayload: businessPayload,
+          );
+          return;
+        }
+        final uncertain = _bookingUncertainStatusLabel();
+        setState(() {
+          _submitState = uncertain;
+          _submitStateIsError = false;
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(uncertain)));
+        return;
+      }
       final friendlyErr = _friendlyBookingError(rawErr);
       final msg =
           '${widget.strings.bookingSubmitFailedPrefix.of(widget.language)}: $friendlyErr';
