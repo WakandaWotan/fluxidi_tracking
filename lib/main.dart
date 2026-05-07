@@ -30036,6 +30036,23 @@ class _BookingsHubPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
+    String tr({
+      required String nl,
+      required String en,
+      required String fr,
+      required String es,
+    }) {
+      switch (appConfig.currentLanguage) {
+        case AppLanguage.nl:
+          return nl;
+        case AppLanguage.en:
+          return en;
+        case AppLanguage.fr:
+          return fr;
+        case AppLanguage.es:
+          return es;
+      }
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B1020),
@@ -30045,7 +30062,12 @@ class _BookingsHubPage extends StatelessWidget {
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
           IconButton(
-            tooltip: 'Vernieuw',
+            tooltip: tr(
+              nl: 'Vernieuwen',
+              en: 'Refresh',
+              fr: 'Actualiser',
+              es: 'Actualizar',
+            ),
             onPressed: onRefresh,
             icon: const Icon(Icons.refresh),
           ),
@@ -30054,20 +30076,70 @@ class _BookingsHubPage extends StatelessWidget {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF141B2F).withOpacity(0.94),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.white12),
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF121826),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0x33FFD36A)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr(
+                        nl: 'Mijn ritten',
+                        en: 'My rides',
+                        fr: 'Mes courses',
+                        es: 'Mis viajes',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      tr(
+                        nl: 'Geplande ritten en actieve opdrachten',
+                        en: 'Planned rides and active jobs',
+                        fr: 'Courses planifiées et missions actives',
+                        es: 'Viajes planificados y servicios activos',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.70),
+                        fontSize: 12.2,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              padding: const EdgeInsets.all(14),
-              child: ValueListenableBuilder<int>(
-                valueListenable: repaintListenable,
-                builder: (_, __, ___) => buildList(h),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141B2F).withOpacity(0.94),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: const Color(0x33FFD36A)),
+                    ),
+                    padding: const EdgeInsets.all(14),
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: repaintListenable,
+                      builder: (_, __, ___) => buildList(h),
+                    ),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
