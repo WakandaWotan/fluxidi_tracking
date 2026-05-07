@@ -11,12 +11,221 @@ function buildScopedGoogleCalendarAuthKey(scope = null) {
   return `tenant:${tenantId}:company:${companyId}:google_calendar_auth:v1`;
 }
 
+const CALENDAR_OAUTH_NONCE_TTL_SECONDS = 600;
+const CALENDAR_OAUTH_STATE_PURPOSE = "google_calendar_oauth";
+
+function base64urlEncodeBytes(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  let binary = "";
+  const chunkSize = 0x2000;
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    const end = Math.min(i + chunkSize, arr.length);
+    let chunk = "";
+    for (let j = i; j < end; j++) chunk += String.fromCharCode(arr[j]);
+    binary += chunk;
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64urlDecodeToBytes(str) {
+  const raw = String(str || "").trim();
+  if (!raw) return new Uint8Array();
+  const normalized = raw
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(Math.ceil(raw.length / 4) * 4, "=");
+  const bin = atob(normalized);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function jsonBase64urlEncode(obj) {
+  const text = JSON.stringify(obj ?? {});
+  const bytes = new TextEncoder().encode(text);
+  return base64urlEncodeBytes(bytes);
+}
+
+function jsonBase64urlDecode(str) {
+  const bytes = base64urlDecodeToBytes(str);
+  const text = new TextDecoder().decode(bytes);
+  return JSON.parse(text);
+}
+
+async function importHmacKey(secret) {
+  const normalized = String(secret || "").trim();
+  if (!normalized) throw new Error("missing_calendar_oauth_state_secret");
+  const raw = new TextEncoder().encode(normalized);
+  return crypto.subtle.importKey(
+    "raw",
+    raw,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+async function signCalendarOAuthState(payloadB64, secret) {
+  const key = await importHmacKey(secret);
+  const data = new TextEncoder().encode(String(payloadB64 || ""));
+  const signature = await crypto.subtle.sign("HMAC", key, data);
+  return base64urlEncodeBytes(new Uint8Array(signature));
+}
+
+async function verifyCalendarOAuthState(payloadB64, sigB64, secret) {
+  const key = await importHmacKey(secret);
+  const data = new TextEncoder().encode(String(payloadB64 || ""));
+  const sig = base64urlDecodeToBytes(sigB64);
+  if (!sig.length) return false;
+  return crypto.subtle.verify("HMAC", key, sig, data);
+}
+
+async function _importCalendarEncryptionKey(env) {
+  const rawSecret = String(env?.CALENDAR_AUTH_ENCRYPTION_KEY || "").trim();
+  if (!rawSecret) throw new Error("missing_calendar_auth_encryption_key");
+  const keyMaterial = new TextEncoder().encode(rawSecret);
+  const digest = await crypto.subtle.digest("SHA-256", keyMaterial);
+  return crypto.subtle.importKey(
+    "raw",
+    digest,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptCalendarRefreshToken(refreshToken, env) {
+  const token = String(refreshToken || "");
+  if (!token) throw new Error("missing_refresh_token");
+  const key = await _importCalendarEncryptionKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(token);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    plaintext,
+  );
+  return {
+    alg: "AES-GCM",
+    kid: safeStr(env?.CALENDAR_AUTH_ENCRYPTION_KID, 32) || "v1",
+    iv: base64urlEncodeBytes(iv),
+    ciphertext: base64urlEncodeBytes(new Uint8Array(encrypted)),
+  };
+}
+
+async function decryptCalendarRefreshToken(encryptedObj, env) {
+  if (!encryptedObj || typeof encryptedObj !== "object") {
+    throw new Error("invalid_encrypted_refresh_token");
+  }
+  const alg = String(encryptedObj.alg || "").trim();
+  if (alg !== "AES-GCM") throw new Error("unsupported_encrypted_refresh_token_alg");
+  const iv = base64urlDecodeToBytes(encryptedObj.iv);
+  const ciphertext = base64urlDecodeToBytes(encryptedObj.ciphertext);
+  if (!iv.length || !ciphertext.length) {
+    throw new Error("invalid_encrypted_refresh_token_payload");
+  }
+  const key = await _importCalendarEncryptionKey(env);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext,
+  );
+  return new TextDecoder().decode(new Uint8Array(decrypted));
+}
+
+function buildCalendarOAuthNonceKey(scope = null, nonce = "") {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const nonceId = String(nonce || "").trim().replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!tenantId || !companyId || !nonceId) return null;
+  return `tenant:${tenantId}:company:${companyId}:google_oauth_state_nonce:${nonceId}:v1`;
+}
+
+async function createCalendarOAuthNonce(env, scope) {
+  if (!env?.BOOKING_KV) throw new Error("missing_booking_kv");
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) throw new Error("missing_tenant_scope");
+  const nonce = (crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  const nowMs = Date.now();
+  const expiresMs = nowMs + CALENDAR_OAUTH_NONCE_TTL_SECONDS * 1000;
+  const key = buildCalendarOAuthNonceKey(
+    { tenant_id: tenantId, company_id: companyId },
+    nonce,
+  );
+  if (!key) throw new Error("invalid_oauth_nonce_key");
+  const record = {
+    purpose: CALENDAR_OAUTH_STATE_PURPOSE,
+    tenant_id: tenantId,
+    company_id: companyId,
+    nonce,
+    issued_at: new Date(nowMs).toISOString(),
+    expires_at: new Date(expiresMs).toISOString(),
+    consumed: false,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record), {
+    expirationTtl: CALENDAR_OAUTH_NONCE_TTL_SECONDS,
+  });
+  return {
+    nonce,
+    issuedAt: record.issued_at,
+    expiresAt: record.expires_at,
+    expiresIn: CALENDAR_OAUTH_NONCE_TTL_SECONDS,
+    key,
+  };
+}
+
+async function consumeCalendarOAuthNonce(env, scope, nonce) {
+  if (!env?.BOOKING_KV) {
+    return { ok: false, code: "missing_booking_kv" };
+  }
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const key = buildCalendarOAuthNonceKey(
+    { tenant_id: tenantId, company_id: companyId },
+    nonce,
+  );
+  if (!key || !tenantId || !companyId) {
+    return { ok: false, code: "invalid_nonce_scope" };
+  }
+  const rec = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!rec || typeof rec !== "object") {
+    return { ok: false, code: "nonce_missing" };
+  }
+  if (String(rec?.purpose || "") !== CALENDAR_OAUTH_STATE_PURPOSE) {
+    return { ok: false, code: "nonce_purpose_mismatch" };
+  }
+  if (
+    sanitizeTenantString(rec?.tenant_id ?? rec?.tenantId, 80) !== tenantId ||
+    sanitizeTenantString(rec?.company_id ?? rec?.companyId, 80) !== companyId
+  ) {
+    return { ok: false, code: "nonce_scope_mismatch" };
+  }
+  if (String(rec?.nonce || "").trim() !== String(nonce || "").trim()) {
+    return { ok: false, code: "nonce_value_mismatch" };
+  }
+  if (rec?.consumed === true) {
+    return { ok: false, code: "nonce_consumed" };
+  }
+  const expiresAt = Date.parse(String(rec?.expires_at || ""));
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+    return { ok: false, code: "nonce_expired" };
+  }
+  await env.BOOKING_KV.delete(key);
+  return { ok: true };
+}
+
 async function loadGoogleCalendarAuthConfig(env, scope = null) {
   const scopedKey = buildScopedGoogleCalendarAuthKey(scope);
   const baseClientId = safeStr(env?.GOOGLE_CLIENT_ID);
   const baseClientSecret = safeStr(env?.GOOGLE_CLIENT_SECRET);
   const baseRefreshToken = safeStr(env?.GOOGLE_REFRESH_TOKEN);
   const baseCalendarId = safeStr(env?.GOOGLE_CALENDAR_ID);
+  let scopedErrorCode = null;
 
   if (scopedKey && env?.BOOKING_KV) {
     try {
@@ -37,12 +246,30 @@ async function loadGoogleCalendarAuthConfig(env, scope = null) {
         const scopedClientSecret = safeStr(
           scoped.clientSecret ?? scoped.client_secret ?? baseClientSecret,
         );
-        // Phase 1 temporary compatibility path:
-        // plain refreshToken from KV is supported, but production should store
-        // encrypted refresh tokens with key rotation (planned Phase 4).
-        const scopedRefreshToken = safeStr(
-          scoped.refreshToken ?? scoped.refresh_token,
-        );
+        let scopedRefreshToken = "";
+        if (
+          scoped.refreshTokenEncrypted &&
+          typeof scoped.refreshTokenEncrypted === "object"
+        ) {
+          try {
+            scopedRefreshToken = safeStr(
+              await decryptCalendarRefreshToken(scoped.refreshTokenEncrypted, env),
+            );
+          } catch (_) {
+            scopedErrorCode = "scoped_token_decrypt_failed";
+            console.log(
+              `[CALENDAR_AUTH][WARN] source=scoped key=${scopedKey} reason=${scopedErrorCode}`,
+            );
+          }
+        }
+        if (!scopedRefreshToken) {
+          // Phase 1/2 migration compatibility path:
+          // plain refreshToken from KV is supported temporarily, but production
+          // should store encrypted refresh tokens with key rotation.
+          scopedRefreshToken = safeStr(
+            scoped.refreshToken ?? scoped.refresh_token,
+          );
+        }
         const scopedCalendarId = safeStr(
           scoped.calendarId ?? scoped.calendar_id,
         ) || "primary";
@@ -68,8 +295,15 @@ async function loadGoogleCalendarAuthConfig(env, scope = null) {
             scopedKey,
           };
         }
+        if (scoped.connected !== undefined && scoped.connected !== null) {
+          scopedErrorCode = scopedErrorCode || "scoped_not_usable";
+        }
       }
-    } catch (_) {
+    } catch (scopedErr) {
+      scopedErrorCode = scopedErrorCode || "scoped_lookup_failed";
+      console.log(
+        `[CALENDAR_AUTH][WARN] source=scoped key=${scopedKey} reason=${safeStr(scopedErr?.message || scopedErr, 140) || scopedErrorCode}`,
+      );
       // Best-effort scoped lookup. Global fallback remains available.
     }
   }
@@ -80,6 +314,11 @@ async function loadGoogleCalendarAuthConfig(env, scope = null) {
     !!baseRefreshToken &&
     !!baseCalendarId;
   if (globalConfigured) {
+    if (scopedErrorCode) {
+      console.log(
+        `[CALENDAR_AUTH][WARN] source=global_env reason=scoped_unusable code=${scopedErrorCode}`,
+      );
+    }
     return {
       source: "global_env",
       configured: true,
@@ -90,6 +329,7 @@ async function loadGoogleCalendarAuthConfig(env, scope = null) {
       status: null,
       accountEmail: null,
       scopedKey,
+      scopedErrorCode,
     };
   }
 
@@ -2146,6 +2386,74 @@ export default {
       // OAUTH
       if (url.pathname === "/oauth/start" && request.method === "GET") return oauthStart(request, env);
       if (url.pathname === "/oauth/callback" && request.method === "GET") return oauthCallback(request, env);
+      if (url.pathname === "/admin/google-calendar/oauth/start" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({
+          request,
+          url,
+          body,
+        });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const missingEnv = [];
+        if (!safeStr(env?.GOOGLE_CLIENT_ID)) missingEnv.push("GOOGLE_CLIENT_ID");
+        if (!safeStr(env?.GOOGLE_CLIENT_SECRET)) missingEnv.push("GOOGLE_CLIENT_SECRET");
+        if (!safeStr(env?.CALENDAR_OAUTH_STATE_SECRET)) missingEnv.push("CALENDAR_OAUTH_STATE_SECRET");
+        if (!safeStr(env?.CALENDAR_AUTH_ENCRYPTION_KEY)) missingEnv.push("CALENDAR_AUTH_ENCRYPTION_KEY");
+        if (!env?.BOOKING_KV) missingEnv.push("BOOKING_KV");
+        if (missingEnv.length) {
+          return json(
+            {
+              ok: false,
+              error: "calendar_oauth_not_configured",
+              missing: missingEnv,
+            },
+            500,
+          );
+        }
+        const nonceOut = await createCalendarOAuthNonce(env, explicitScope);
+        const iat = Math.floor(Date.now() / 1000);
+        const exp = iat + CALENDAR_OAUTH_NONCE_TTL_SECONDS;
+        const kid = safeStr(env?.CALENDAR_AUTH_ENCRYPTION_KID, 32) || "v1";
+        const statePayload = {
+          v: 1,
+          purpose: CALENDAR_OAUTH_STATE_PURPOSE,
+          tenant_id: explicitScope.tenant_id,
+          company_id: explicitScope.company_id,
+          nonce: nonceOut.nonce,
+          iat,
+          exp,
+          kid,
+        };
+        const signedState = await buildSignedCalendarOAuthState(
+          statePayload,
+          env.CALENDAR_OAUTH_STATE_SECRET,
+        );
+        const base = getBaseUrl(request);
+        const redirectUri = `${base}/oauth/callback`;
+        const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+        authUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("response_type", "code");
+        authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/calendar");
+        authUrl.searchParams.set("access_type", "offline");
+        authUrl.searchParams.set("prompt", "consent");
+        authUrl.searchParams.set("include_granted_scopes", "true");
+        authUrl.searchParams.set("state", signedState);
+        console.log(
+          `[CALENDAR_OAUTH][START] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} nonce=${nonceOut.nonce}`,
+        );
+        return json(
+          {
+            ok: true,
+            auth_url: authUrl.toString(),
+            expires_in: CALENDAR_OAUTH_NONCE_TTL_SECONDS,
+          },
+          200,
+        );
+      }
 
       // Home
       if (url.pathname === "/" && request.method === "GET") {
@@ -3990,6 +4298,85 @@ function getBaseUrl(request) {
   return `${u.protocol}//${u.host}`;
 }
 
+function _calendarOauthError(code) {
+  const err = new Error(String(code || "calendar_oauth_error"));
+  err.code = String(code || "calendar_oauth_error");
+  return err;
+}
+
+async function buildSignedCalendarOAuthState(payloadObj, secret) {
+  const payloadBase64 = jsonBase64urlEncode(payloadObj);
+  const signatureBase64 = await signCalendarOAuthState(payloadBase64, secret);
+  return `${payloadBase64}.${signatureBase64}`;
+}
+
+async function parseAndVerifyCalendarOAuthState(state, secret) {
+  const raw = String(state || "").trim();
+  if (!raw) throw _calendarOauthError("missing_state");
+  const parts = raw.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw _calendarOauthError("invalid_state_format");
+  }
+  const [payloadBase64, signatureBase64] = parts;
+  const ok = await verifyCalendarOAuthState(payloadBase64, signatureBase64, secret);
+  if (!ok) throw _calendarOauthError("invalid_state_signature");
+  const payload = jsonBase64urlDecode(payloadBase64);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw _calendarOauthError("invalid_state_payload");
+  }
+  return { payloadBase64, signatureBase64, payload };
+}
+
+async function saveScopedGoogleCalendarAuthRecord(env, scope, nextRecord) {
+  if (!env?.BOOKING_KV) throw _calendarOauthError("missing_booking_kv");
+  const scopedKey = buildScopedGoogleCalendarAuthKey(scope);
+  if (!scopedKey) throw _calendarOauthError("missing_tenant_scope");
+  await env.BOOKING_KV.put(scopedKey, JSON.stringify(nextRecord));
+  return { scopedKey };
+}
+
+async function saveScopedGoogleCalendarAuthFailureStatus(
+  env,
+  scope,
+  {
+    status = "failed",
+    errorCode = "oauth_callback_failed",
+  } = {},
+) {
+  if (!env?.BOOKING_KV) return;
+  const scopedKey = buildScopedGoogleCalendarAuthKey(scope);
+  if (!scopedKey) return;
+  const nowIso = new Date().toISOString();
+  let existing = null;
+  try {
+    const raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+    existing = raw && typeof raw === "object"
+      ? (raw.google_calendar_auth && typeof raw.google_calendar_auth === "object"
+          ? raw.google_calendar_auth
+          : raw)
+      : null;
+  } catch (_) {
+    existing = null;
+  }
+  const next = {
+    version: 1,
+    connected: false,
+    status: String(status || "failed"),
+    calendarId: safeStr(existing?.calendarId ?? existing?.calendar_id ?? env?.GOOGLE_CALENDAR_ID) || "primary",
+    accountEmail: safeStr(existing?.accountEmail ?? existing?.account_email, 320) || null,
+    refreshTokenEncrypted:
+      existing?.refreshTokenEncrypted && typeof existing.refreshTokenEncrypted === "object"
+        ? existing.refreshTokenEncrypted
+        : null,
+    lastConnectedAt: safeStr(existing?.lastConnectedAt ?? existing?.last_connected_at) || null,
+    lastSyncAt: safeStr(existing?.lastSyncAt ?? existing?.last_sync_at) || null,
+    lastErrorCode: String(errorCode || "oauth_callback_failed"),
+    lastErrorAt: nowIso,
+    updatedAt: nowIso,
+  };
+  await env.BOOKING_KV.put(scopedKey, JSON.stringify(next));
+}
+
 function oauthStart(request, env) {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     return html(`
@@ -4026,6 +4413,7 @@ async function oauthCallback(request, env) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const err = url.searchParams.get("error");
+  const state = url.searchParams.get("state");
 
   if (err) return html(`<h2>OAuth error</h2><p>${escapeHtml(err)}</p>`, 400);
   if (!code) return html("<h2>No authorization code</h2><p>Missing ?code=</p>", 400);
@@ -4033,37 +4421,167 @@ async function oauthCallback(request, env) {
   const base = getBaseUrl(request);
   const redirectUri = `${base}/oauth/callback`;
 
-  const tokens = await exchangeCodeForTokens({
-    code,
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    redirectUri
-  });
+  // Legacy manual flow: keep existing behavior unchanged when no state is provided.
+  if (!state) {
+    const tokens = await exchangeCodeForTokens({
+      code,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      redirectUri
+    });
 
-  const refresh = tokens.refresh_token || "";
+    const refresh = tokens.refresh_token || "";
 
-  return html(`
-    <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
-      <h1>✅ OAuth gelukt</h1>
+    return html(`
+      <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>✅ OAuth gelukt</h1>
 
-      <h3>1) Refresh token</h3>
-      <p>Kopieer dit naar Cloudflare → Worker → Settings → Variables & Secrets:</p>
-      <pre style="padding:12px; background:#0f0f10; color:#fff; border-radius:12px; overflow:auto;">${escapeHtml(refresh || "(geen refresh_token ontvangen — klik /oauth/start opnieuw en zorg dat prompt=consent gebruikt wordt)")}</pre>
+        <h3>1) Refresh token</h3>
+        <p>Kopieer dit naar Cloudflare → Worker → Settings → Variables & Secrets:</p>
+        <pre style="padding:12px; background:#0f0f10; color:#fff; border-radius:12px; overflow:auto;">${escapeHtml(refresh || "(geen refresh_token ontvangen — klik /oauth/start opnieuw en zorg dat prompt=consent gebruikt wordt)")}</pre>
 
-      <h3>2) Cloudflare secrets die je moet zetten</h3>
-      <ul>
-        <li><b>GOOGLE_REFRESH_TOKEN</b> = (bovenstaande waarde)</li>
-        <li><b>GOOGLE_CALENDAR_ID</b> = <code>primary</code> (simpel) of een specifieke calendar id</li>
-      </ul>
+        <h3>2) Cloudflare secrets die je moet zetten</h3>
+        <ul>
+          <li><b>GOOGLE_REFRESH_TOKEN</b> = (bovenstaande waarde)</li>
+          <li><b>GOOGLE_CALENDAR_ID</b> = <code>primary</code> (simpel) of een specifieke calendar id</li>
+        </ul>
 
-      <h3>3) Daarna</h3>
-      <p>Deploy opnieuw en test:</p>
-      <ul>
-        <li><code>POST /availability</code></li>
-        <li><code>POST /book</code></li>
-      </ul>
-    </div>
-  `);
+        <h3>3) Daarna</h3>
+        <p>Deploy opnieuw en test:</p>
+        <ul>
+          <li><code>POST /availability</code></li>
+          <li><code>POST /book</code></li>
+        </ul>
+      </div>
+    `);
+  }
+
+  let scopedState = null;
+  let callbackErrorCode = "oauth_callback_failed";
+  try {
+    if (!safeStr(env?.CALENDAR_OAUTH_STATE_SECRET)) {
+      throw _calendarOauthError("missing_calendar_oauth_state_secret");
+    }
+    if (!safeStr(env?.CALENDAR_AUTH_ENCRYPTION_KEY)) {
+      throw _calendarOauthError("missing_calendar_auth_encryption_key");
+    }
+    if (!env?.BOOKING_KV) {
+      throw _calendarOauthError("missing_booking_kv");
+    }
+
+    const parsed = await parseAndVerifyCalendarOAuthState(
+      state,
+      env.CALENDAR_OAUTH_STATE_SECRET,
+    );
+    const payload = parsed.payload;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const purpose = safeStr(payload?.purpose, 64);
+    const tenantId = sanitizeTenantString(payload?.tenant_id ?? payload?.tenantId, 80);
+    const companyId = sanitizeTenantString(payload?.company_id ?? payload?.companyId, 80);
+    const nonce = String(payload?.nonce || "").trim().replace(/[^a-zA-Z0-9_-]+/g, "");
+    const iat = Number(payload?.iat);
+    const exp = Number(payload?.exp);
+    if (purpose !== CALENDAR_OAUTH_STATE_PURPOSE) {
+      throw _calendarOauthError("invalid_state_purpose");
+    }
+    if (!tenantId || !companyId) {
+      throw _calendarOauthError("missing_state_scope");
+    }
+    if (!nonce) {
+      throw _calendarOauthError("missing_state_nonce");
+    }
+    if (!Number.isFinite(iat) || !Number.isFinite(exp) || iat <= 0 || exp <= 0 || exp <= iat) {
+      throw _calendarOauthError("invalid_state_timing");
+    }
+    if (nowSec < iat - 30 || nowSec > exp) {
+      throw _calendarOauthError("state_expired");
+    }
+    scopedState = {
+      tenant_id: tenantId,
+      company_id: companyId,
+      nonce,
+      kid: safeStr(payload?.kid, 32) || "v1",
+    };
+    const nonceResult = await consumeCalendarOAuthNonce(
+      env,
+      scopedState,
+      nonce,
+    );
+    if (!nonceResult?.ok) {
+      throw _calendarOauthError(nonceResult?.code || "nonce_invalid");
+    }
+
+    const tokens = await exchangeCodeForTokens({
+      code,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      redirectUri,
+    });
+    const refreshToken = safeStr(tokens?.refresh_token);
+    if (!refreshToken) {
+      callbackErrorCode = "missing_refresh_token";
+      await saveScopedGoogleCalendarAuthFailureStatus(env, scopedState, {
+        status: "auth_required",
+        errorCode: callbackErrorCode,
+      });
+      throw _calendarOauthError(callbackErrorCode);
+    }
+    const encryptedRefreshToken = await encryptCalendarRefreshToken(
+      refreshToken,
+      env,
+    );
+    const nowIso = new Date().toISOString();
+    const scopedRecord = {
+      version: 1,
+      connected: true,
+      status: "connected",
+      calendarId: safeStr(env?.GOOGLE_CALENDAR_ID) || "primary",
+      accountEmail: null,
+      refreshTokenEncrypted: encryptedRefreshToken,
+      lastConnectedAt: nowIso,
+      lastSyncAt: null,
+      lastErrorCode: null,
+      lastErrorAt: null,
+      updatedAt: nowIso,
+    };
+    await saveScopedGoogleCalendarAuthRecord(env, scopedState, scopedRecord);
+    console.log(
+      `[CALENDAR_OAUTH][CALLBACK_OK] tenant=${scopedState.tenant_id} company=${scopedState.company_id}`,
+    );
+    return html(`
+      <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>✅ Google Calendar is gekoppeld.</h1>
+        <p>Je kunt dit venster sluiten en teruggaan naar Fluxidi.</p>
+      </div>
+    `);
+  } catch (callbackErr) {
+    callbackErrorCode =
+      safeStr(callbackErr?.code || callbackErr?.message, 64) ||
+      callbackErrorCode;
+    if (scopedState?.tenant_id && scopedState?.company_id) {
+      try {
+        await saveScopedGoogleCalendarAuthFailureStatus(env, scopedState, {
+          status: callbackErrorCode === "missing_refresh_token" ? "auth_required" : "failed",
+          errorCode: callbackErrorCode,
+        });
+      } catch (_) {
+        // Best-effort status write only.
+      }
+      console.log(
+        `[CALENDAR_OAUTH][CALLBACK_FAIL] tenant=${scopedState.tenant_id} company=${scopedState.company_id} code=${callbackErrorCode}`,
+      );
+    } else {
+      console.log(
+        `[CALENDAR_OAUTH][CALLBACK_FAIL] code=${callbackErrorCode}`,
+      );
+    }
+    return html(`
+      <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+        <h1>⚠️ Google Calendar koppeling mislukt</h1>
+        <p>Probeer opnieuw vanuit de beheeromgeving.</p>
+      </div>
+    `, 400);
+  }
 }
 
 async function exchangeCodeForTokens({ code, clientId, clientSecret, redirectUri }) {
