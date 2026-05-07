@@ -22654,9 +22654,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           width: double.infinity,
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F1628),
+            color: const Color(0xFF111111),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
           child: Row(
             children: [
@@ -22702,7 +22702,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
             decoration: BoxDecoration(
-              color: const Color(0xFF101826),
+              color: const Color(0xFF121212),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: const Color(0x33FFD36A)),
             ),
@@ -22768,7 +22768,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF101826),
+                  color: const Color(0xFF121212),
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: const Color(0x33FFD36A)),
                 ),
@@ -22799,9 +22799,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F1525),
+                  color: const Color(0xFF111111),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                  border: Border.all(color: Colors.white.withOpacity(0.10)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -22923,7 +22923,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF151C2F), Color(0xFF0F1525)],
+              colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
             ),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
@@ -23827,9 +23827,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
+        color: const Color(0xFF111111),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor ?? Colors.white10),
+        border: Border.all(
+          color: borderColor ?? Colors.white.withOpacity(0.18),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -23854,7 +23856,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         border: Border.all(
           color: active
               ? const Color(0x66FFD36A)
-              : Colors.white.withOpacity(0.06),
+              : Colors.white.withOpacity(0.12),
         ),
       ),
       child: Text(
@@ -29817,9 +29819,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       );
     }
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
+      backgroundColor: const Color(0xFF050505),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: const Color(0xFF050505),
         elevation: 0,
         title: Text(_receiptText('receiptTitle')),
       ),
@@ -30214,7 +30216,7 @@ class _BookingsHubPage extends StatelessWidget {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF121826),
+                  color: const Color(0xFF111111),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: const Color(0x33FFD36A)),
                 ),
@@ -30293,9 +30295,9 @@ class _BookingsHubPage extends StatelessWidget {
                   borderRadius: BorderRadius.circular(22),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF141B2F).withOpacity(0.94),
+                      color: const Color(0xFF101010).withOpacity(0.96),
                       borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: const Color(0x33FFD36A)),
+                      border: Border.all(color: const Color(0x40E5B641)),
                     ),
                     padding: const EdgeInsets.all(14),
                     child: ValueListenableBuilder<int>(
