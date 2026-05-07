@@ -4,14 +4,114 @@
 const FLUXIDI_BUILD = 'v36-2026-04-27-white-label-communication';
 const BUILD_TAG = FLUXIDI_BUILD;
 
-/* Single source of truth for Google token refresh. */
-async function googleAccessToken(env) {
-  const clientId = env.GOOGLE_CLIENT_ID;
-  const clientSecret = env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = env.GOOGLE_REFRESH_TOKEN;
+function buildScopedGoogleCalendarAuthKey(scope = null) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:google_calendar_auth:v1`;
+}
 
+async function loadGoogleCalendarAuthConfig(env, scope = null) {
+  const scopedKey = buildScopedGoogleCalendarAuthKey(scope);
+  const baseClientId = safeStr(env?.GOOGLE_CLIENT_ID);
+  const baseClientSecret = safeStr(env?.GOOGLE_CLIENT_SECRET);
+  const baseRefreshToken = safeStr(env?.GOOGLE_REFRESH_TOKEN);
+  const baseCalendarId = safeStr(env?.GOOGLE_CALENDAR_ID);
+
+  if (scopedKey && env?.BOOKING_KV) {
+    try {
+      const raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+      const scoped = raw && typeof raw === "object"
+        ? (raw.google_calendar_auth && typeof raw.google_calendar_auth === "object"
+            ? raw.google_calendar_auth
+            : raw)
+        : null;
+      if (scoped) {
+        const connected = scoped.connected === undefined
+          ? true
+          : !!scoped.connected;
+        const status = safeStr(scoped.status, 64) || null;
+        const scopedClientId = safeStr(
+          scoped.clientId ?? scoped.client_id ?? baseClientId,
+        );
+        const scopedClientSecret = safeStr(
+          scoped.clientSecret ?? scoped.client_secret ?? baseClientSecret,
+        );
+        // Phase 1 temporary compatibility path:
+        // plain refreshToken from KV is supported, but production should store
+        // encrypted refresh tokens with key rotation (planned Phase 4).
+        const scopedRefreshToken = safeStr(
+          scoped.refreshToken ?? scoped.refresh_token,
+        );
+        const scopedCalendarId = safeStr(
+          scoped.calendarId ?? scoped.calendar_id,
+        ) || "primary";
+        const accountEmail = safeStr(
+          scoped.accountEmail ?? scoped.account_email,
+          320,
+        ) || null;
+        const scopedConfigured =
+          connected &&
+          !!scopedClientId &&
+          !!scopedClientSecret &&
+          !!scopedRefreshToken;
+        if (scopedConfigured) {
+          return {
+            source: "scoped",
+            configured: true,
+            clientId: scopedClientId,
+            clientSecret: scopedClientSecret,
+            refreshToken: scopedRefreshToken,
+            calendarId: scopedCalendarId,
+            status,
+            accountEmail,
+            scopedKey,
+          };
+        }
+      }
+    } catch (_) {
+      // Best-effort scoped lookup. Global fallback remains available.
+    }
+  }
+
+  const globalConfigured =
+    !!baseClientId &&
+    !!baseClientSecret &&
+    !!baseRefreshToken &&
+    !!baseCalendarId;
+  if (globalConfigured) {
+    return {
+      source: "global_env",
+      configured: true,
+      clientId: baseClientId,
+      clientSecret: baseClientSecret,
+      refreshToken: baseRefreshToken,
+      calendarId: baseCalendarId,
+      status: null,
+      accountEmail: null,
+      scopedKey,
+    };
+  }
+
+  return {
+    source: "none",
+    configured: false,
+    clientId: "",
+    clientSecret: "",
+    refreshToken: "",
+    calendarId: "",
+    status: null,
+    accountEmail: null,
+    scopedKey,
+  };
+}
+
+async function googleAccessTokenFromConfig(config) {
+  const clientId = safeStr(config?.clientId);
+  const clientSecret = safeStr(config?.clientSecret);
+  const refreshToken = safeStr(config?.refreshToken);
   if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('Google Calendar is not configured (missing GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN).');
+    throw new Error("Google Calendar is not configured (missing client credentials or refresh token).");
   }
 
   const tokenUrl = 'https://oauth2.googleapis.com/token';
@@ -32,6 +132,15 @@ async function googleAccessToken(env) {
     throw new Error(j?.error_description || j?.error || 'Failed to refresh Google access token.');
   }
   return j.access_token;
+}
+
+/* Single source of truth for Google token refresh. */
+async function googleAccessToken(env) {
+  const cfg = await loadGoogleCalendarAuthConfig(env, null);
+  if (!cfg?.configured) {
+    throw new Error('Google Calendar is not configured (missing GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN).');
+  }
+  return googleAccessTokenFromConfig(cfg);
 }
 
 /* Backward-compatible aliases (older code paths may call these). */
@@ -5441,7 +5550,12 @@ async function handleBooking(payload, env, request) {
     })();
 
     // Calendar availability + creation (if configured)
-    const calendarConfigured = !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN && env.GOOGLE_CALENDAR_ID);
+    const calendarAuthConfig = await loadGoogleCalendarAuthConfig(env, tenantContext);
+    const calendarConfigured = !!calendarAuthConfig?.configured;
+    const calendarAuthSource = safeStr(calendarAuthConfig?.source, 24) || "none";
+    console.log(
+      `[CALENDAR_AUTH][SOURCE] bookingId=${canonicalBookingId} source=${calendarAuthSource} tenant=${tenantContext?.tenant_id || "-"} company=${tenantContext?.company_id || "-"}`,
+    );
     const availabilityMode = _availabilityMode(env);
     const bookingServiceMin = Math.max(
       30,
@@ -5455,7 +5569,12 @@ async function handleBooking(payload, env, request) {
     );
     let calendar_event_id = null;
     let htmlLink = null;
-    let calendar = { configured: calendarConfigured, created: false };
+    let calendar = {
+      configured: calendarConfigured,
+      created: false,
+      calendar_auth_source: calendarAuthSource,
+      calendarAuthSource: calendarAuthSource,
+    };
     let calendarSyncStatus = null;
     let calendarSyncErrorCode = null;
     let calendarSyncFailedAt = null;
@@ -5466,8 +5585,8 @@ async function handleBooking(payload, env, request) {
 
     if (calendarConfigured) {
       try {
-        const calendarId = env.GOOGLE_CALENDAR_ID || "primary";
-        const accessToken = await googleAccessToken(env);
+        const calendarId = safeStr(calendarAuthConfig?.calendarId) || "primary";
+        const accessToken = await googleAccessTokenFromConfig(calendarAuthConfig);
 
         const stopHandlingMin = getStopHandlingMin(stop_count, env);
         const postBufferMin = getPostBufferMin(env);
@@ -5968,6 +6087,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       price_incl_vat_return: returnPricing?.price_incl_vat,
 
       note: mainPricing?.note || "",
+      calendar_auth_source: calendarAuthSource,
+      calendarAuthSource: calendarAuthSource,
       ...paymentFields,
       ...(calendarSyncStatus
         ? {
@@ -6011,6 +6132,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
+      calendar_auth_source: calendarAuthSource,
+      calendarAuthSource: calendarAuthSource,
       ...paymentFields,
       ...(calendarSyncStatus
         ? {
@@ -6076,6 +6199,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         htmlLink,
         return_htmlLink: safeStr(calendar?.return_htmlLink || null),
         returnHtmlLink: safeStr(calendar?.return_htmlLink || null),
+        calendar_auth_source: calendarAuthSource,
+        calendarAuthSource: calendarAuthSource,
         ...paymentFields,
         ...(calendarSyncStatus
           ? {
@@ -6247,6 +6372,8 @@ return {
       calendar_event_id,
       htmlLink,
       calendar,
+      calendar_auth_source: calendarAuthSource,
+      calendarAuthSource: calendarAuthSource,
       ...(calendarSyncStatus
         ? {
             calendar_sync_status: calendarSyncStatus,
@@ -8725,7 +8852,7 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
     }
   }
   if (normalized === "COMPLETED" || normalized === "CANCELLED") {
-    await cleanupBookingCalendarEvents(env, rec);
+    await cleanupBookingCalendarEvents(env, rec, tenantScope);
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
   if (isTerminalLifecycleStatus(normalized)) {
@@ -9371,7 +9498,7 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
   if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
-  await cleanupBookingCalendarEvents(env, rec);
+  await cleanupBookingCalendarEvents(env, rec, tenantScope);
   await releaseAllocatorReservationForBooking({
     env,
     bookingId,
@@ -9382,7 +9509,7 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
   return { ok: true, booking_id: bookingId, deleted: true };
 }
 
-async function cleanupBookingCalendarEvents(env, rec) {
+async function cleanupBookingCalendarEvents(env, rec, tenantScope = null) {
   const booking =
     rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
   const calendar =
@@ -9488,10 +9615,38 @@ async function cleanupBookingCalendarEvents(env, rec) {
     return;
   }
 
+  const derivedScope = tenantScope?.hasScope
+    ? tenantScope
+    : resolveBookingTenantScopeFromRecord(rec);
+  const calendarAuthConfig = await loadGoogleCalendarAuthConfig(
+    env,
+    derivedScope?.hasScope ? derivedScope : null,
+  );
+  const calendarAuthSource = safeStr(calendarAuthConfig?.source, 24) || "none";
+  const deleteBookingId = safeStr(
+    rec?.booking_id ??
+      rec?.bookingId ??
+      booking?.booking_id ??
+      booking?.bookingId,
+    120,
+  ) || "unknown";
+  console.log(
+    `[CALENDAR_AUTH][SOURCE] bookingId=${deleteBookingId} source=${calendarAuthSource} tenant=${derivedScope?.tenant_id || "-"} company=${derivedScope?.company_id || "-"}`,
+  );
+
+  if (!calendarAuthConfig?.configured) {
+    setCalendarCancelMetadata({
+      status: "failed",
+      errorCode: "calendar_delete_failed",
+      failedAt: attemptedAt,
+    });
+    return;
+  }
+
   let accessToken = null;
-  const calendarId = env?.GOOGLE_CALENDAR_ID || "primary";
+  const calendarId = safeStr(calendarAuthConfig?.calendarId) || "primary";
   try {
-    accessToken = await getGoogleAccessToken(env);
+    accessToken = await googleAccessTokenFromConfig(calendarAuthConfig);
   } catch (tokenErr) {
     const authError = isGoogleCalendarAuthError(tokenErr);
     setCalendarCancelMetadata({
@@ -9574,10 +9729,24 @@ async function cleanupBookingCalendarEvents(env, rec) {
 
 async function handleAvailability(body, env, request = null, url = null) {
   const availabilityMode = _availabilityMode(env);
-  const tenantContext = resolveBookingTenantContext({ payload: body || {}, request, env });
+  const explicitScope = resolveExplicitBookingRequestScope({
+    request,
+    url,
+    body,
+    allowLegacyFallback: false,
+  });
+  const scopedContext = explicitScope?.hasScope ? explicitScope : null;
+  const tenantContext =
+    scopedContext || resolveBookingTenantContext({ payload: body || {}, request, env });
   const fleetScope = normalizeFleetTenantScope(tenantContext);
+  const calendarAuthConfig = await loadGoogleCalendarAuthConfig(env, scopedContext);
+  const calendarConfigured = !!calendarAuthConfig?.configured;
+  const calendarAuthSource = safeStr(calendarAuthConfig?.source, 24) || "none";
+  console.log(
+    `[CALENDAR_AUTH][SOURCE] bookingId=- source=${calendarAuthSource} tenant=${tenantContext?.tenant_id || "-"} company=${tenantContext?.company_id || "-"}`,
+  );
   // Availability is optional. If Google creds are missing, default to available.
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN || !env.GOOGLE_CALENDAR_ID) {
+  if (!calendarConfigured) {
     return { ok: true, available: true, calendar_configured: false, build: BUILD_TAG };
   }
 
@@ -9619,12 +9788,7 @@ async function handleAvailability(body, env, request = null, url = null) {
       reason: "vehicle_capacity",
       vehicle_capacity: vehicleCapacity,
       availability_mode: availabilityMode,
-      calendar_configured: !!(
-        env.GOOGLE_CLIENT_ID &&
-        env.GOOGLE_CLIENT_SECRET &&
-        env.GOOGLE_REFRESH_TOKEN &&
-        env.GOOGLE_CALENDAR_ID
-      ),
+      calendar_configured: calendarConfigured,
       build: BUILD_TAG,
     };
   }
@@ -9636,18 +9800,13 @@ async function handleAvailability(body, env, request = null, url = null) {
       reason: "vehicle_capacity_ok",
       vehicle_capacity: vehicleCapacity,
       availability_mode: availabilityMode,
-      calendar_configured: !!(
-        env.GOOGLE_CLIENT_ID &&
-        env.GOOGLE_CLIENT_SECRET &&
-        env.GOOGLE_REFRESH_TOKEN &&
-        env.GOOGLE_CALENDAR_ID
-      ),
+      calendar_configured: calendarConfigured,
       build: BUILD_TAG,
     };
   }
 
-  const accessToken = await getGoogleAccessToken(env);
-  const calendarId = env.GOOGLE_CALENDAR_ID;
+  const accessToken = await googleAccessTokenFromConfig(calendarAuthConfig);
+  const calendarId = safeStr(calendarAuthConfig?.calendarId) || "primary";
 
   // 1) Basic free/busy check for the pickup moment
   const busy = await googleFreeBusy(accessToken, calendarId, timeMin, timeMax);
