@@ -3729,6 +3729,22 @@ class BusinessHomePage extends StatelessWidget {
     );
   }
 
+  Future<void> _openDriverCockpitView(BuildContext context) async {
+    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    await DriverDocumentsStore.instance.load();
+    if (!context.mounted) return;
+    if (activeDriverSessionNotifier.value != null) {
+      setAppRole(AppRole.driver);
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+      return;
+    }
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
+  }
+
   ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {
     return (
       bg: profile.isSuspended
@@ -4635,6 +4651,26 @@ class BusinessHomePage extends StatelessWidget {
                                   ),
                                 );
                               },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
+                              icon: Icons.speed_rounded,
+                              title: _t(
+                                nl: 'Chauffeur weergave',
+                                en: 'Driver view',
+                                fr: 'Vue chauffeur',
+                                es: 'Vista de conductor',
+                              ),
+                              subtitle: _t(
+                                nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
+                                en: 'Open the existing driver cockpit without signing out.',
+                                fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
+                                es: 'Abre la cabina de conductor existente sin cerrar sesión.',
+                              ),
+                              onTap: () => _openDriverCockpitView(context),
                             ),
                           ),
                           SizedBox(
