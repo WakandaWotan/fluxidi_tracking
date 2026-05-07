@@ -207,12 +207,14 @@ class CalculatorPage extends StatefulWidget {
     super.key,
     required this.bookingBaseUrl,
     required this.mapboxToken,
+    this.persistToCustomerBookings = false,
     this.onGoToStartPage,
   });
 
   final String
   bookingBaseUrl; // e.g. https://fluxidi-booking-api.fluxidi.workers.dev
   final String mapboxToken; // public pk...
+  final bool persistToCustomerBookings;
   final VoidCallback? onGoToStartPage;
 
   @override
@@ -691,6 +693,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           strings: _s,
           quote: quote,
           payload: payload,
+          persistToCustomerBookings: widget.persistToCustomerBookings,
           currencySymbol: _currencySymbol,
           distanceUnitLabel: appConfig.distanceUnitLabel,
           durationUnitLabel: appConfig.durationUnitLabel,
@@ -2374,6 +2377,7 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.strings,
     required this.quote,
     required this.payload,
+    required this.persistToCustomerBookings,
     required this.currencySymbol,
     required this.distanceUnitLabel,
     required this.durationUnitLabel,
@@ -2385,6 +2389,7 @@ class _BookingConfirmationPage extends StatefulWidget {
   final AppStrings strings;
   final Map<String, dynamic> quote;
   final Map<String, dynamic> payload;
+  final bool persistToCustomerBookings;
   final String currencySymbol;
   final String distanceUnitLabel;
   final String durationUnitLabel;
@@ -2934,10 +2939,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
               businessPayload['invoice_requested'] == true ||
               businessPayload['invoiceRequested'] == true,
         );
-    await CustomerBookingsStore.instance.upsert(storedBooking);
+    if (widget.persistToCustomerBookings) {
+      await CustomerBookingsStore.instance.upsert(storedBooking);
+    }
     final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)
         .trim();
-    if (localBookingId.isEmpty) {
+    if (!widget.persistToCustomerBookings) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=persist_disabled booking=$localBookingId',
+      );
+    } else if (localBookingId.isEmpty) {
       debugPrint('[CUSTOMER_BOOKINGS][SAVE][SKIP] reason=missing_booking_id');
     } else {
       debugPrint('[CUSTOMER_BOOKINGS][SAVE][OK] booking=$localBookingId');

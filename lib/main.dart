@@ -3724,6 +3724,7 @@ class BusinessHomePage extends StatelessWidget {
         builder: (_) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
+          persistToCustomerBookings: false,
         ),
       ),
     );
@@ -6029,6 +6030,7 @@ class CustomerHomePage extends StatelessWidget {
         builder: (_) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
+          persistToCustomerBookings: true,
           onGoToStartPage: () {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const RoleEntryPage()),
@@ -15824,6 +15826,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _scheduleDirectRideEstimateRefresh({required String reason}) {
+    if (!_directRideDraft) {
+      _directRideEstimateDebounce?.cancel();
+      return;
+    }
     final destination = (_directRideDestinationText ?? '').trim();
     if (destination.isEmpty) {
       _directRideEstimateDebounce?.cancel();
@@ -15845,7 +15851,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _refreshDirectRideEstimate({required String reason}) async {
     final destination = (_directRideDestinationText ?? '').trim();
-    final shouldEstimate = _directRideActive || _directRideDraft;
+    final shouldEstimate = _directRideDraft;
     if (!shouldEstimate || destination.isEmpty) return;
 
     var pos = _lastPos;
@@ -23855,9 +23861,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget _buildDirectRideEstimatePanel() {
     final destination = (_directRideDestinationText ?? '').trim();
     final showEstimate =
-        (_directRideDraft || _directRideActive) &&
-        _activeBooking == null &&
-        destination.isNotEmpty;
+        _directRideDraft && _activeBooking == null && destination.isNotEmpty;
     if (!showEstimate) return const SizedBox.shrink();
 
     final label = _tr(
@@ -24771,6 +24775,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
+          persistToCustomerBookings: false,
         ),
       ),
     );
@@ -24790,6 +24795,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
+          persistToCustomerBookings: false,
         ),
       ),
     );
