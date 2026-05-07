@@ -11,6 +11,49 @@ function buildScopedGoogleCalendarAuthKey(scope = null) {
   return `tenant:${tenantId}:company:${companyId}:google_calendar_auth:v1`;
 }
 
+function hasExplicitCalendarTenantScope(scope = null) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return false;
+  const resolutionMode = safeStr(
+    scope?.tenant_resolution_mode ?? scope?.tenantResolutionMode,
+    64,
+  ).toLowerCase();
+  if (resolutionMode === "legacy_fallback") return false;
+  if (scope?.legacy_fallback === true || scope?.legacyFallback === true) return false;
+  return true;
+}
+
+function shouldAllowGlobalGoogleCalendarFallback(env, scope = null) {
+  if (!hasExplicitCalendarTenantScope(scope)) return true;
+
+  const explicitAllowToggle = safeStr(
+    env?.CALENDAR_ALLOW_GLOBAL_FALLBACK_FOR_SCOPED_TENANTS,
+    24,
+  ).toLowerCase();
+  if (explicitAllowToggle === "true" || explicitAllowToggle === "1") return true;
+
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return false;
+
+  const allowlistRaw = safeStr(env?.CALENDAR_GLOBAL_FALLBACK_ALLOWLIST, 4096);
+  if (!allowlistRaw) return false;
+  const tenantLower = tenantId.toLowerCase();
+  const companyLower = companyId.toLowerCase();
+  const pairLower = `${tenantLower}:${companyLower}`;
+  const entries = allowlistRaw
+    .split(",")
+    .map((entry) => safeStr(entry, 200).toLowerCase())
+    .filter(Boolean);
+  for (const entry of entries) {
+    if (entry === pairLower || entry === tenantLower || entry === companyLower) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const CALENDAR_OAUTH_NONCE_TTL_SECONDS = 600;
 const CALENDAR_OAUTH_STATE_PURPOSE = "google_calendar_oauth";
 
@@ -314,6 +357,37 @@ async function loadGoogleCalendarAuthConfig(env, scope = null) {
     !!baseRefreshToken &&
     !!baseCalendarId;
   if (globalConfigured) {
+    // Global env Calendar fallback is disabled by default for explicit scoped
+    // tenants to prevent cross-company calendar leakage.
+    const allowGlobalFallback = shouldAllowGlobalGoogleCalendarFallback(
+      env,
+      scope,
+    );
+    if (!allowGlobalFallback) {
+      const blockedTenant = sanitizeTenantString(
+        scope?.tenant_id ?? scope?.tenantId,
+        80,
+      ) || "-";
+      const blockedCompany = sanitizeTenantString(
+        scope?.company_id ?? scope?.companyId,
+        80,
+      ) || "-";
+      console.log(
+        `[CALENDAR_AUTH][GLOBAL_FALLBACK_BLOCKED] tenant=${blockedTenant} company=${blockedCompany}`,
+      );
+      return {
+        source: "none",
+        configured: false,
+        clientId: "",
+        clientSecret: "",
+        refreshToken: "",
+        calendarId: "",
+        status: null,
+        accountEmail: null,
+        scopedKey,
+        scopedErrorCode: scopedErrorCode || "global_fallback_blocked",
+      };
+    }
     if (scopedErrorCode) {
       console.log(
         `[CALENDAR_AUTH][WARN] source=global_env reason=scoped_unusable code=${scopedErrorCode}`,
@@ -2524,7 +2598,10 @@ export default {
           safeStr(env?.GOOGLE_CLIENT_SECRET) &&
           safeStr(env?.GOOGLE_REFRESH_TOKEN)
         );
-        if (globalConfigured) {
+        if (
+          globalConfigured &&
+          shouldAllowGlobalGoogleCalendarFallback(env, explicitScope)
+        ) {
           return json(
             {
               ok: true,
