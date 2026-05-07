@@ -22643,6 +22643,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             Expanded(
               child: Text(
                 kAvailableBookingsTitle,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16.5,
@@ -22650,11 +22653,32 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-            OutlinedButton.icon(
-              style: _ghostButtonStyle(),
+            _GlowIconButton(
               onPressed: _loadingBookings ? null : _refreshBookings,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: Text(kRefreshShortLabel),
+              icon: Icons.refresh,
+              tooltip: _tr(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Actualiser',
+                es: 'Actualizar',
+              ),
+            ),
+            const SizedBox(width: 2),
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white70,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: _loadingBookings ? null : _refreshBookings,
+              child: Text(
+                kRefreshShortLabel,
+                style: const TextStyle(
+                  fontSize: 12.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ],
         ),
@@ -22835,9 +22859,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         final statusText = _rideStatusLabel(
           (_effectiveStatusFor(b) ?? 'PENDING'),
         );
+        final referenceChipText =
+            '${cardReference.label}: ${cardReference.value}';
+        String chipPreview(String text, int maxChars) {
+          if (text.length <= maxChars) return text;
+          return '${text.substring(0, maxChars - 1)}…';
+        }
 
         return Container(
-          padding: EdgeInsets.all(tight ? 12 : 14),
+          padding: EdgeInsets.fromLTRB(
+            tight ? 12 : 14,
+            tight ? 12 : 14,
+            tight ? 12 : 14,
+            tight ? 14 : 16,
+          ),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
@@ -22871,28 +22906,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: actionHeight,
-                  child: FilledButton(
-                    style: _startButtonStyle().copyWith(
-                      padding: MaterialStateProperty.all(
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                      ),
-                    ),
-                    onPressed: () => _goToRide(b),
-                    child: Text(
-                      kRideGoToRideLabel,
-                      overflow: TextOverflow.fade,
-                      softWrap: false,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        height: 1.05,
-                      ),
-                    ),
-                  ),
-                ),
               ] else ...[
                 Row(
                   children: [
@@ -22911,61 +22924,51 @@ class _DriverHomePageState extends State<DriverHomePage>
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      height: actionHeight,
-                      child: FilledButton(
-                        style: _startButtonStyle().copyWith(
-                          padding: MaterialStateProperty.all(
-                            const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 0,
-                            ),
-                          ),
-                        ),
-                        onPressed: () => _goToRide(b),
-                        child: Text(
-                          kRideGoToRideLabel,
-                          overflow: TextOverflow.fade,
-                          softWrap: false,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            height: 1.05,
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ],
               const SizedBox(height: 10),
-              _line(
-                icon: Icons.radio_button_checked,
-                title: kPickupLabel,
-                value: b.from ?? '—',
-                maxLines: narrow ? 2 : 3,
-              ),
-              const SizedBox(height: 6),
-              _line(
-                icon: Icons.place,
-                title: kDropoffLabel,
-                value: b.to ?? '—',
-                maxLines: narrow ? 2 : 3,
-              ),
-              if (customerName.trim().isNotEmpty) ...[
-                const SizedBox(height: 6),
-                _line(
-                  icon: Icons.person_outline,
-                  title: _tr(
-                    nl: 'Klant',
-                    en: 'Customer',
-                    fr: 'Client',
-                    es: 'Cliente',
-                  ),
-                  value: customerName,
-                  maxLines: 2,
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.045),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.08)),
                 ),
-              ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _line(
+                      icon: Icons.radio_button_checked,
+                      title: kPickupLabel,
+                      value: b.from ?? '—',
+                      maxLines: narrow ? 2 : 3,
+                    ),
+                    const SizedBox(height: 6),
+                    _line(
+                      icon: Icons.place,
+                      title: kDropoffLabel,
+                      value: b.to ?? '—',
+                      maxLines: narrow ? 2 : 3,
+                    ),
+                    if (customerName.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      _line(
+                        icon: Icons.person_outline,
+                        title: _tr(
+                          nl: 'Klant',
+                          en: 'Customer',
+                          fr: 'Client',
+                          es: 'Cliente',
+                        ),
+                        value: customerName,
+                        maxLines: 2,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 6,
@@ -22974,13 +22977,38 @@ class _DriverHomePageState extends State<DriverHomePage>
                   _pill(text: (b.tier ?? 'premium').toUpperCase()),
                   _pill(text: '${b.pax ?? 0} pax'),
                   _pill(text: '${b.bags ?? 0} bags'),
-                  _pill(
-                    text: '${cardReference.label}: ${cardReference.value}',
-                    textColor: Colors.white70,
+                  Tooltip(
+                    message: referenceChipText,
+                    child: _pill(
+                      text: chipPreview(referenceChipText, narrow ? 32 : 46),
+                      textColor: Colors.white70,
+                    ),
                   ),
                   if (b.price != null)
                     _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
                 ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: actionHeight,
+                child: FilledButton(
+                  style: _startButtonStyle().copyWith(
+                    padding: MaterialStateProperty.all(
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                    ),
+                  ),
+                  onPressed: () => _goToRide(b),
+                  child: Text(
+                    kRideGoToRideLabel,
+                    overflow: TextOverflow.fade,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      height: 1.05,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 10),
               if (narrow) ...[
