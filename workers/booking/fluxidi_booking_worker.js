@@ -2528,6 +2528,74 @@ export default {
           200,
         );
       }
+      if (url.pathname === "/admin/google-calendar/disconnect" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({
+          request,
+          url,
+          body,
+        });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        if (!env?.BOOKING_KV) {
+          return json({ ok: false, error: "missing_booking_kv" }, 500);
+        }
+        const tenantId = explicitScope.tenant_id;
+        const companyId = explicitScope.company_id;
+        const scopedKey = buildScopedGoogleCalendarAuthKey(explicitScope);
+        if (!scopedKey) {
+          return json(missingTenantScopeError(), 400);
+        }
+        let existing = null;
+        try {
+          const raw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
+          existing = raw && typeof raw === "object"
+            ? (raw.google_calendar_auth && typeof raw.google_calendar_auth === "object"
+                ? raw.google_calendar_auth
+                : raw)
+            : null;
+        } catch (_) {
+          existing = null;
+        }
+        const nowIso = new Date().toISOString();
+        const disconnected = {
+          version: 1,
+          connected: false,
+          status: "disconnected",
+          calendarId:
+            safeStr(existing?.calendarId ?? existing?.calendar_id, 160) || "primary",
+          accountEmail:
+            safeStr(existing?.accountEmail ?? existing?.account_email, 320) || null,
+          lastConnectedAt:
+            safeStr(existing?.lastConnectedAt ?? existing?.last_connected_at, 64) ||
+            null,
+          lastDisconnectedAt: nowIso,
+          lastSyncAt:
+            safeStr(existing?.lastSyncAt ?? existing?.last_sync_at, 64) || null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          updatedAt: nowIso,
+        };
+        await env.BOOKING_KV.put(scopedKey, JSON.stringify(disconnected));
+        console.log(
+          `[CALENDAR_AUTH][DISCONNECT] tenant=${tenantId} company=${companyId}`,
+        );
+        return json(
+          {
+            ok: true,
+            tenant_id: tenantId,
+            company_id: companyId,
+            source: "scoped",
+            connected: false,
+            status: "disconnected",
+            calendar_id: disconnected.calendarId,
+            last_disconnected_at: disconnected.lastDisconnectedAt,
+          },
+          200,
+        );
+      }
       if (url.pathname === "/admin/google-calendar/status" && request.method === "GET") {
         _requireAdmin(request, url, env);
         const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
@@ -2552,17 +2620,30 @@ export default {
           }
         }
         if (scopedRecord) {
+          const scopedStatusRaw = safeStr(scopedRecord.status, 64);
+          const scopedStatus = scopedStatusRaw || "connected";
+          const scopedStatusLower = scopedStatus.toLowerCase();
+          const scopedConnected =
+            scopedRecord.connected === true && scopedStatusLower === "connected";
+          const hasScopedTokenMaterial = !!(
+            safeStr(scopedRecord.refreshToken ?? scopedRecord.refresh_token) ||
+            (scopedRecord.refreshTokenEncrypted &&
+              typeof scopedRecord.refreshTokenEncrypted === "object")
+          );
+          const scopedConfigured = scopedConnected && hasScopedTokenMaterial;
+          const scopedReportedStatus =
+            scopedStatusLower === "disconnected" || scopedRecord.connected === false
+              ? "disconnected"
+              : scopedStatus;
           return json(
             {
               ok: true,
               tenant_id: tenantId,
               company_id: companyId,
               source: "scoped",
-              configured: true,
-              connected:
-                scopedRecord.connected === true &&
-                safeStr(scopedRecord.status, 64).toLowerCase() === "connected",
-              status: safeStr(scopedRecord.status, 64) || "connected",
+              configured: scopedConfigured,
+              connected: scopedConnected,
+              status: scopedReportedStatus,
               calendar_id:
                 safeStr(scopedRecord.calendarId ?? scopedRecord.calendar_id, 160) ||
                 "primary",
@@ -2572,6 +2653,12 @@ export default {
               last_connected_at:
                 safeStr(
                   scopedRecord.lastConnectedAt ?? scopedRecord.last_connected_at,
+                  64,
+                ) || null,
+              last_disconnected_at:
+                safeStr(
+                  scopedRecord.lastDisconnectedAt ??
+                    scopedRecord.last_disconnected_at,
                   64,
                 ) || null,
               last_sync_at:

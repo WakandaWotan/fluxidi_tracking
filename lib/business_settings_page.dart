@@ -96,6 +96,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendTaxSaving = false;
   bool _googleCalendarLoading = false;
   bool _googleCalendarReconnectLoading = false;
+  bool _googleCalendarDisconnectLoading = false;
   String? _backendProfilesError;
   String? _backendProfilesStatus;
   String? _googleCalendarStatusError;
@@ -506,6 +507,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return _googleCalendarStatus?['configured'] == true;
   }
 
+  bool _googleCalendarCanDisconnect() {
+    if (_googleCalendarSource() != 'scoped') return false;
+    final raw = (_googleCalendarStatus?['status'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return _googleCalendarConnected() || raw == 'connected';
+  }
+
   String _googleCalendarStatusCode() {
     if (_googleCalendarStatusError != null) return 'check_failed';
     final source = _googleCalendarSource();
@@ -517,6 +527,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         .toLowerCase();
     if (raw == 'auth_required') return 'auth_required';
     if (raw == 'failed') return 'failed';
+    if (raw == 'disconnected') return 'disconnected';
     if (!_googleCalendarConfigured() || raw == 'not_configured') {
       return 'not_configured';
     }
@@ -530,6 +541,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       case 'legacy_global':
       case 'auth_required':
       case 'failed':
+      case 'disconnected':
         return _SetupStatus.attention;
       case 'not_configured':
       case 'check_failed':
@@ -561,6 +573,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           en: 'Legacy connection active',
           fr: 'Connexion héritée active',
           es: 'Conexión heredada activa',
+        );
+      case 'disconnected':
+        return _t(
+          nl: 'Losgekoppeld',
+          en: 'Disconnected',
+          fr: 'Déconnecté',
+          es: 'Desconectado',
         );
       case 'not_configured':
         return _t(
@@ -595,6 +614,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           en: 'This connection still uses the legacy global configuration. Reconnect Google Calendar for this company.',
           fr: 'Cette connexion utilise encore la configuration globale héritée. Reconnectez Google Agenda pour cette entreprise.',
           es: 'Esta conexión aún usa la configuración global heredada. Vuelve a conectar Google Calendar para esta empresa.',
+        );
+      case 'disconnected':
+        return _t(
+          nl: 'Google Calendar is losgekoppeld voor dit bedrijf. Nieuwe boekingen worden niet meer automatisch in de agenda geplaatst.',
+          en: 'Google Calendar is disconnected for this company. New bookings will no longer be added automatically to the calendar.',
+          fr: 'Google Agenda est déconnecté pour cette entreprise. Les nouvelles réservations ne seront plus ajoutées automatiquement au calendrier.',
+          es: 'Google Calendar está desconectado para esta empresa. Las nuevas reservas ya no se añadirán automáticamente al calendario.',
         );
       case 'auth_required':
       case 'failed':
@@ -727,10 +753,107 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  Future<bool> _confirmGoogleCalendarDisconnect() async {
+    final decision = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(
+            _t(
+              nl: 'Google Calendar loskoppelen?',
+              en: 'Disconnect Google Calendar?',
+              fr: 'Déconnecter Google Agenda ?',
+              es: '¿Desconectar Google Calendar?',
+            ),
+          ),
+          content: Text(
+            _t(
+              nl: 'Nieuwe boekingen worden niet meer automatisch in Google Calendar geplaatst tot je opnieuw koppelt. Bestaande boekingen en agenda-items blijven behouden.',
+              en: 'New bookings will no longer be added automatically to Google Calendar until you reconnect. Existing bookings and calendar events remain unchanged.',
+              fr: 'Les nouvelles réservations ne seront plus ajoutées automatiquement à Google Agenda jusqu’à reconnexion. Les réservations et événements existants restent inchangés.',
+              es: 'Las nuevas reservas ya no se añadirán automáticamente a Google Calendar hasta que vuelvas a conectar. Las reservas y eventos existentes permanecen sin cambios.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Loskoppelen',
+                  en: 'Disconnect',
+                  fr: 'Déconnecter',
+                  es: 'Desconectar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return decision == true;
+  }
+
+  Future<void> _disconnectGoogleCalendar() async {
+    final confirmed = await _confirmGoogleCalendarDisconnect();
+    if (!confirmed || !mounted) return;
+    setState(() => _googleCalendarDisconnectLoading = true);
+    try {
+      final scope = _activeSettingsScope();
+      await disconnectBackendGoogleCalendar(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Google Calendar is losgekoppeld.',
+              en: 'Google Calendar is disconnected.',
+              fr: 'Google Agenda est déconnecté.',
+              es: 'Google Calendar está desconectado.',
+            ),
+          ),
+        ),
+      );
+      unawaited(_loadGoogleCalendarStatus());
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Google Calendar kon niet worden losgekoppeld.',
+              en: 'Google Calendar could not be disconnected.',
+              fr: 'Google Agenda n’a pas pu être déconnecté.',
+              es: 'No se pudo desconectar Google Calendar.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _googleCalendarDisconnectLoading = false);
+      }
+    }
+  }
+
   Widget _googleCalendarCard() {
     final calendarId = _calendarStatusField('calendar_id');
     final accountEmail = _calendarStatusField('account_email');
     final lastConnectedAt = _calendarStatusField('last_connected_at');
+    final lastDisconnectedAt = _calendarStatusField('last_disconnected_at');
     final lastSyncAt = _calendarStatusField('last_sync_at');
     final lastErrorCode = _calendarStatusField('last_error_code');
     final lastErrorAt = _calendarStatusField('last_error_at');
@@ -795,6 +918,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               '${_t(nl: 'Laatste koppeling', en: 'Last connected', fr: 'Dernière connexion', es: 'Última conexión')}: $lastConnectedAt',
               style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
+          if (lastDisconnectedAt != null)
+            Text(
+              '${_t(nl: 'Laatst losgekoppeld', en: 'Last disconnected', fr: 'Dernière déconnexion', es: 'Última desconexión')}: $lastDisconnectedAt',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
           if (lastSyncAt != null)
             Text(
               '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $lastSyncAt',
@@ -816,7 +944,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             runSpacing: 8,
             children: [
               FilledButton.icon(
-                onPressed: _googleCalendarReconnectLoading
+                onPressed:
+                    (_googleCalendarReconnectLoading ||
+                        _googleCalendarDisconnectLoading)
                     ? null
                     : _startGoogleCalendarReconnect,
                 icon: _googleCalendarReconnectLoading
@@ -828,6 +958,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     : const Icon(Icons.link_outlined),
                 label: Text(_googleCalendarPrimaryActionLabel()),
               ),
+              if (_googleCalendarCanDisconnect())
+                OutlinedButton.icon(
+                  onPressed: _googleCalendarDisconnectLoading
+                      ? null
+                      : _disconnectGoogleCalendar,
+                  icon: _googleCalendarDisconnectLoading
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_off_outlined),
+                  label: Text(
+                    _t(
+                      nl: 'Loskoppelen',
+                      en: 'Disconnect',
+                      fr: 'Déconnecter',
+                      es: 'Desconectar',
+                    ),
+                  ),
+                ),
               OutlinedButton.icon(
                 onPressed: _googleCalendarLoading
                     ? null
