@@ -9,6 +9,12 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:http/http.dart' as http;
 
+const Color _chironBg = Color(0xFF07080C);
+const Color _chironCard = Color(0xFF101113);
+const Color _chironPanel = Color(0xFF16120A);
+const Color _chironGold = Color(0xFFE5B641);
+const Color _chironBorder = Color(0x55E5B641);
+
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
 
@@ -35,9 +41,9 @@ class ChironComplianceDashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
+      backgroundColor: _chironBg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: _chironBg,
         title: Text(
           _t(
             nl: 'Chiron-compliance',
@@ -157,12 +163,12 @@ Widget _baseCard({
   String? subtitle,
 }) {
   return Card(
-    color: const Color(0xFF141B2F),
+    color: _chironCard,
     elevation: 0,
     margin: const EdgeInsets.only(bottom: 10),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(14),
-      side: const BorderSide(color: Color(0x22FFFFFF)),
+      side: const BorderSide(color: _chironBorder),
     ),
     child: Padding(
       padding: const EdgeInsets.all(14),
@@ -172,7 +178,7 @@ Widget _baseCard({
           Text(
             title,
             style: const TextStyle(
-              color: Color(0xFFFFD54F),
+              color: _chironGold,
               fontWeight: FontWeight.w800,
               fontSize: 15,
             ),
@@ -210,12 +216,12 @@ class _HubActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: const Color(0xFF141B2F),
+      color: _chironCard,
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0x22FFFFFF)),
+        side: const BorderSide(color: _chironBorder),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -232,7 +238,7 @@ class _HubActionCard extends StatelessWidget {
                     Text(
                       title,
                       style: const TextStyle(
-                        color: Color(0xFFFFD54F),
+                        color: _chironGold,
                         fontWeight: FontWeight.w800,
                         fontSize: 16,
                       ),
@@ -253,14 +259,14 @@ class _HubActionCard extends StatelessWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.06),
+                          color: _chironPanel,
                           borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: const Color(0x22FFFFFF)),
+                          border: Border.all(color: _chironBorder),
                         ),
                         child: Text(
                           note!,
                           style: const TextStyle(
-                            color: Colors.white70,
+                            color: Color(0xFFEAD9A3),
                             fontSize: 11,
                           ),
                         ),
@@ -270,7 +276,7 @@ class _HubActionCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Icon(trailingIcon, color: Colors.white70),
+              Icon(trailingIcon, color: _chironGold.withOpacity(0.95)),
             ],
           ),
         ),
@@ -363,9 +369,9 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
+        color: _chironPanel,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Text(
         text,
@@ -418,7 +424,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           Text(
             title,
             style: const TextStyle(
-              color: Color(0xFFFFD54F),
+              color: _chironGold,
               fontWeight: FontWeight.w700,
               fontSize: 13,
             ),
@@ -747,9 +753,9 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         );
 
         return Scaffold(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: _chironBg,
           appBar: AppBar(
-            backgroundColor: const Color(0xFF0B1020),
+            backgroundColor: _chironBg,
             title: Text(
               _t(
                 nl: 'Checklist & readiness',
@@ -1334,9 +1340,9 @@ class _ChironLocalLedgerPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
+      backgroundColor: _chironBg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: _chironBg,
         title: Text(
           _t(
             nl: 'Lokaal rittenregister',
@@ -1504,9 +1510,9 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
+      backgroundColor: _chironBg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: _chironBg,
         title: Text(
           _t(
             nl: 'Backendmeldingen',
@@ -2087,13 +2093,13 @@ class _RemoteComplianceEventsSectionState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: _chironPanel,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white70, fontSize: 11),
+        style: const TextStyle(color: Color(0xFFEAD9A3), fontSize: 11),
       ),
     );
   }
@@ -2582,9 +2588,9 @@ class _RemoteComplianceEventsSectionState
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.black26,
+        color: _chironPanel,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2679,9 +2685,9 @@ class _RemoteComplianceEventsSectionState
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0x1AFFFFFF),
+        color: _chironCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2756,7 +2762,7 @@ class _RemoteComplianceEventsSectionState
               es: 'Historial de auditoría',
             ),
             style: const TextStyle(
-              color: Color(0xFFFFD54F),
+              color: _chironGold,
               fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
@@ -2796,7 +2802,7 @@ class _RemoteComplianceEventsSectionState
                 es: 'Actualizar',
               ),
               onPressed: _refresh,
-              icon: const Icon(Icons.refresh, color: Colors.white70),
+              icon: Icon(Icons.refresh, color: _chironGold.withOpacity(0.95)),
             ),
             IconButton(
               tooltip: _t(
@@ -2809,12 +2815,18 @@ class _RemoteComplianceEventsSectionState
                   ? null
                   : _resetRemoteComplianceEvents,
               icon: _isResettingRemoteEvents
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _chironGold,
+                      ),
                     )
-                  : const Icon(Icons.delete_forever, color: Colors.white70),
+                  : Icon(
+                      Icons.delete_forever,
+                      color: _chironGold.withOpacity(0.95),
+                    ),
             ),
           ],
         ),
@@ -2827,7 +2839,10 @@ class _RemoteComplianceEventsSectionState
                   const SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _chironGold,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -2867,9 +2882,9 @@ class _RemoteComplianceEventsSectionState
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
+                  color: _chironPanel,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0x22FFFFFF)),
+                  border: Border.all(color: _chironBorder),
                 ),
                 child: Text(
                   result.errorMessage.isEmpty
@@ -2893,9 +2908,9 @@ class _RemoteComplianceEventsSectionState
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
+                  color: _chironPanel,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0x22FFFFFF)),
+                  border: Border.all(color: _chironBorder),
                 ),
                 child: Text(
                   _t(
@@ -3669,13 +3684,13 @@ class _LocalComplianceLedgerSectionState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: _chironPanel,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white70, fontSize: 11),
+        style: const TextStyle(color: Color(0xFFEAD9A3), fontSize: 11),
       ),
     );
   }
@@ -4206,9 +4221,9 @@ class _LocalComplianceLedgerSectionState
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.black26,
+        color: _chironPanel,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4322,9 +4337,9 @@ class _LocalComplianceLedgerSectionState
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0x1AFFFFFF),
+        color: _chironCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0x22FFFFFF)),
+        border: Border.all(color: _chironBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4380,7 +4395,7 @@ class _LocalComplianceLedgerSectionState
               child: Text(
                 _labelValue(_amountLabel(), fare),
                 style: const TextStyle(
-                  color: Color(0xFFFFD54F),
+                  color: _chironGold,
                   fontWeight: FontWeight.w700,
                   fontSize: 12,
                 ),
@@ -4456,7 +4471,7 @@ class _LocalComplianceLedgerSectionState
             title: Text(
               _auditHistoryLabel(),
               style: const TextStyle(
-                color: Color(0xFFFFD54F),
+                color: _chironGold,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
               ),
@@ -4479,11 +4494,11 @@ class _LocalComplianceLedgerSectionState
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: const Color(0xFF141B2F),
+      color: _chironCard,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0x22FFFFFF)),
+        side: const BorderSide(color: _chironBorder),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -4501,7 +4516,7 @@ class _LocalComplianceLedgerSectionState
                       es: 'Registro local de viajes',
                     ),
                     style: const TextStyle(
-                      color: Color(0xFFFFD54F),
+                      color: _chironGold,
                       fontWeight: FontWeight.w800,
                       fontSize: 15,
                     ),
@@ -4515,7 +4530,10 @@ class _LocalComplianceLedgerSectionState
                     es: 'Actualizar',
                   ),
                   onPressed: _refresh,
-                  icon: const Icon(Icons.refresh, color: Colors.white70),
+                  icon: Icon(
+                    Icons.refresh,
+                    color: _chironGold.withOpacity(0.95),
+                  ),
                 ),
                 IconButton(
                   tooltip: _t(
@@ -4528,12 +4546,18 @@ class _LocalComplianceLedgerSectionState
                       ? null
                       : _clearLocalTestData,
                   icon: _isClearingLocalTestData
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _chironGold,
+                          ),
                         )
-                      : const Icon(Icons.delete_sweep, color: Colors.white70),
+                      : Icon(
+                          Icons.delete_sweep,
+                          color: _chironGold.withOpacity(0.95),
+                        ),
                 ),
                 IconButton(
                   tooltip: _t(
@@ -4546,12 +4570,18 @@ class _LocalComplianceLedgerSectionState
                       ? null
                       : _clearLocalCustomerBookings,
                   icon: _isClearingLocalCustomerBookings
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _chironGold,
+                          ),
                         )
-                      : const Icon(Icons.person_remove, color: Colors.white70),
+                      : Icon(
+                          Icons.person_remove,
+                          color: _chironGold.withOpacity(0.95),
+                        ),
                 ),
               ],
             ),
@@ -4575,7 +4605,10 @@ class _LocalComplianceLedgerSectionState
                       const SizedBox(
                         width: 14,
                         height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _chironGold,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -4607,9 +4640,9 @@ class _LocalComplianceLedgerSectionState
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
+                      color: _chironPanel,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0x22FFFFFF)),
+                      border: Border.all(color: _chironBorder),
                     ),
                     child: Text(
                       _t(
