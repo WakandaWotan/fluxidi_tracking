@@ -22635,52 +22635,66 @@ class _DriverHomePageState extends State<DriverHomePage>
       fr: 'Les nouvelles réservations apparaissent ici dès qu’elles sont liées à vous ou à votre entreprise.',
       es: 'Las nuevas reservas aparecerán aquí cuando estén vinculadas a ti o a tu empresa.',
     );
+    final emptyInfoTitle = _tr(
+      nl: 'Geen rit gevonden?',
+      en: 'No ride found?',
+      fr: 'Aucune course trouvée ?',
+      es: '¿No encontraste un viaje?',
+    );
+    final emptyInfoBody = _tr(
+      nl: 'Er zijn momenteel geen ritten beschikbaar. Trek omlaag om te vernieuwen.',
+      en: 'There are currently no rides available. Pull down to refresh.',
+      fr: 'Aucune course n’est disponible pour le moment. Tirez vers le bas pour actualiser.',
+      es: 'Actualmente no hay viajes disponibles. Desliza hacia abajo para actualizar.',
+    );
     return Column(
       mainAxisSize: MainAxisSize.max,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                kAvailableBookingsTitle,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16.5,
-                  fontWeight: FontWeight.w800,
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F1628),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _ridesSegmentChip(
+                  label: _tr(
+                    nl: 'Beschikbaar',
+                    en: 'Available',
+                    fr: 'Disponibles',
+                    es: 'Disponibles',
+                  ),
+                  active: true,
                 ),
               ),
-            ),
-            _GlowIconButton(
-              onPressed: _loadingBookings ? null : _refreshBookings,
-              icon: Icons.refresh,
-              tooltip: _tr(
-                nl: 'Vernieuwen',
-                en: 'Refresh',
-                fr: 'Actualiser',
-                es: 'Actualizar',
-              ),
-            ),
-            const SizedBox(width: 2),
-            TextButton(
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.white70,
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              onPressed: _loadingBookings ? null : _refreshBookings,
-              child: Text(
-                kRefreshShortLabel,
-                style: const TextStyle(
-                  fontSize: 12.2,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(width: 4),
+              Expanded(
+                child: _ridesSegmentChip(
+                  label: _tr(
+                    nl: 'Mijn ritten',
+                    en: 'My rides',
+                    fr: 'Mes courses',
+                    es: 'Mis viajes',
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 4),
+              Expanded(
+                child: _ridesSegmentChip(
+                  label: _tr(
+                    nl: 'Historiek',
+                    en: 'History',
+                    fr: 'Historique',
+                    es: 'Historial',
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 10),
         if (_loadingBookings)
@@ -22748,35 +22762,70 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           )
         else if (visibleBookings.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF101826),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0x33FFD36A)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  emptyTitle,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+          Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF101826),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0x33FFD36A)),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  emptyBody,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
-                    height: 1.35,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      emptyTitle,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      emptyBody,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.72),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F1525),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      emptyInfoTitle,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      emptyInfoBody,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.70),
+                        fontSize: 12.4,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           )
         else
           Expanded(
@@ -22855,162 +22904,185 @@ class _DriverHomePageState extends State<DriverHomePage>
       builder: (context, c) {
         final narrow = c.maxWidth < 380;
         final tight = c.maxWidth < 340;
-        final actionHeight = narrow ? 44.0 : 42.0;
+        final actionHeight = narrow ? 40.0 : 38.0;
         final statusText = _rideStatusLabel(
           (_effectiveStatusFor(b) ?? 'PENDING'),
         );
         final referenceChipText =
             '${cardReference.label}: ${cardReference.value}';
-        String chipPreview(String text, int maxChars) {
-          if (text.length <= maxChars) return text;
-          return '${text.substring(0, maxChars - 1)}…';
-        }
+        final bagLabel = _tr(
+          nl: '${b.bags ?? 0} bagage',
+          en: '${b.bags ?? 0} bags',
+          fr: '${b.bags ?? 0} bagages',
+          es: '${b.bags ?? 0} equipaje',
+        );
 
         return Container(
-          padding: EdgeInsets.fromLTRB(
-            tight ? 12 : 14,
-            tight ? 12 : 14,
-            tight ? 12 : 14,
-            tight ? 14 : 16,
-          ),
+          padding: EdgeInsets.all(tight ? 11 : 12),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF171E34), Color(0xFF111829)],
+              colors: [Color(0xFF151C2F), Color(0xFF0F1525)],
             ),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kFluxidiYellow.withOpacity(0.24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.28),
-                blurRadius: 14,
-                offset: const Offset(0, 5),
+                color: Colors.black.withOpacity(0.24),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (narrow) ...[
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _pill(icon: Icons.schedule, text: dt),
-                    _pill(
-                      icon: Icons.timelapse,
-                      text: statusText,
-                      borderColor: const Color(0xFFB07A2A),
-                      textColor: const Color(0xFFE7B46A),
-                    ),
-                  ],
-                ),
-              ] else ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _pill(icon: Icons.schedule, text: dt),
-                          _pill(
-                            icon: Icons.timelapse,
-                            text: statusText,
-                            borderColor: const Color(0xFFB07A2A),
-                            textColor: const Color(0xFFE7B46A),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 10),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.045),
+                  color: Colors.white.withOpacity(0.035),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                  border: Border.all(color: Colors.white.withOpacity(0.07)),
                 ),
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _line(
-                      icon: Icons.radio_button_checked,
-                      title: kPickupLabel,
-                      value: b.from ?? '—',
-                      maxLines: narrow ? 2 : 3,
-                    ),
-                    const SizedBox(height: 6),
-                    _line(
-                      icon: Icons.place,
-                      title: kDropoffLabel,
-                      value: b.to ?? '—',
-                      maxLines: narrow ? 2 : 3,
-                    ),
-                    if (customerName.trim().isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      _line(
-                        icon: Icons.person_outline,
-                        title: _tr(
-                          nl: 'Klant',
-                          en: 'Customer',
-                          fr: 'Client',
-                          es: 'Cliente',
+                    Column(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFFFD36A),
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                        value: customerName,
-                        maxLines: 2,
+                        Container(
+                          width: 2,
+                          height: narrow ? 28 : 32,
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.30),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                        Icon(
+                          Icons.flag_rounded,
+                          size: 15,
+                          color: Colors.white.withOpacity(0.80),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            b.from ?? '—',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            b.to ?? '—',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.85),
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
+                            ),
+                          ),
+                          if (customerName.trim().isNotEmpty) ...[
+                            const SizedBox(height: 7),
+                            Text(
+                              '${_tr(nl: 'Klant', en: 'Customer', fr: 'Client', es: 'Cliente')}: $customerName',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.66),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    ],
+                    ),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _pill(
+                          icon: Icons.schedule,
+                          text: dt,
+                          borderColor: const Color(0x55FFD36A),
+                          textColor: const Color(0xFFFFD98A),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 34,
+                          width: 34,
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              backgroundColor: const Color(0x33FFD36A),
+                              foregroundColor: const Color(0xFFFFE4AA),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            onPressed: () => _goToRide(b),
+                            child: const Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 children: [
+                  _pill(
+                    text: statusText,
+                    borderColor: const Color(0xFFB07A2A),
+                    textColor: const Color(0xFFE7B46A),
+                  ),
                   _pill(text: (b.tier ?? 'premium').toUpperCase()),
                   _pill(text: '${b.pax ?? 0} pax'),
-                  _pill(text: '${b.bags ?? 0} bags'),
-                  Tooltip(
-                    message: referenceChipText,
-                    child: _pill(
-                      text: chipPreview(referenceChipText, narrow ? 32 : 46),
-                      textColor: Colors.white70,
-                    ),
-                  ),
+                  _pill(text: bagLabel),
                   if (b.price != null)
                     _pill(text: _fmtMoney(b.price!, b.currency ?? 'EUR')),
                 ],
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: actionHeight,
-                child: FilledButton(
-                  style: _startButtonStyle().copyWith(
-                    padding: MaterialStateProperty.all(
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                    ),
-                  ),
-                  onPressed: () => _goToRide(b),
-                  child: Text(
-                    kRideGoToRideLabel,
-                    overflow: TextOverflow.fade,
-                    softWrap: false,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      height: 1.05,
-                    ),
+              if (cardReference.value.trim().isNotEmpty) ...[
+                const SizedBox(height: 7),
+                Text(
+                  referenceChipText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.48),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 8),
               if (narrow) ...[
                 SizedBox(
                   width: double.infinity,
@@ -23020,14 +23092,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                     onPressed: actionBusy
                         ? null
                         : () => _setBookingStatus(b, 'COMPLETED'),
-                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    icon: const Icon(Icons.check_circle_outline, size: 16),
                     label: Text(
                       kRideActionCompletedLabel,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Row(
                   children: [
                     Expanded(
@@ -23038,7 +23110,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           onPressed: actionBusy
                               ? null
                               : () => _setBookingStatus(b, 'CANCELLED'),
-                          icon: const Icon(Icons.cancel_outlined, size: 18),
+                          icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(
                             kRideActionCancelledLabel,
                             overflow: TextOverflow.ellipsis,
@@ -23046,13 +23118,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     SizedBox(
                       height: actionHeight,
                       width: actionHeight + 2,
                       child: IconButton(
                         onPressed: actionBusy ? null : () => _confirmDelete(b),
-                        icon: const Icon(Icons.delete_outline),
+                        icon: const Icon(Icons.delete_outline, size: 18),
                         tooltip: kRideDeleteLabel,
                       ),
                     ),
@@ -23071,13 +23143,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                               : () => _setBookingStatus(b, 'COMPLETED'),
                           icon: const Icon(
                             Icons.check_circle_outline,
-                            size: 18,
+                            size: 16,
                           ),
                           label: Text(kRideActionCompletedLabel),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: SizedBox(
                         height: actionHeight,
@@ -23086,18 +23158,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                           onPressed: actionBusy
                               ? null
                               : () => _setBookingStatus(b, 'CANCELLED'),
-                          icon: const Icon(Icons.cancel_outlined, size: 18),
+                          icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(kRideActionCancelledLabel),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     SizedBox(
                       height: actionHeight,
                       width: actionHeight + 2,
                       child: IconButton(
                         onPressed: actionBusy ? null : () => _confirmDelete(b),
-                        icon: const Icon(Icons.delete_outline),
+                        icon: const Icon(Icons.delete_outline, size: 18),
                         tooltip: kRideDeleteLabel,
                       ),
                     ),
@@ -23768,6 +23840,34 @@ class _DriverHomePageState extends State<DriverHomePage>
           ],
           Text(text, style: TextStyle(color: textColor ?? Colors.white)),
         ],
+      ),
+    );
+  }
+
+  Widget _ridesSegmentChip({required String label, bool active = false}) {
+    return Container(
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: active ? const Color(0x22FFD36A) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: active
+              ? const Color(0x66FFD36A)
+              : Colors.white.withOpacity(0.06),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: active
+              ? const Color(0xFFFFD98A)
+              : Colors.white.withOpacity(0.78),
+          fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+          fontSize: 12.2,
+        ),
       ),
     );
   }
@@ -30103,7 +30203,7 @@ class _BookingsHubPage extends StatelessWidget {
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
           child: Column(
             children: [
               Container(
@@ -30115,36 +30215,74 @@ class _BookingsHubPage extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF121826),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: const Color(0x33FFD36A)),
                 ),
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      tr(
-                        nl: 'Mijn ritten',
-                        en: 'My rides',
-                        fr: 'Mes courses',
-                        es: 'Mis viajes',
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            tr(
+                              nl: 'Beschikbare ritten',
+                              en: 'Available rides',
+                              fr: 'Courses disponibles',
+                              es: 'Viajes disponibles',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            tr(
+                              nl: 'Overzicht van jouw beschikbare en recente ritten.',
+                              en: 'Overview of your available and recent rides.',
+                              fr: 'Aperçu de vos courses disponibles et récentes.',
+                              es: 'Resumen de tus viajes disponibles y recientes.',
+                            ),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.70),
+                              fontSize: 12.1,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      tr(
-                        nl: 'Geplande ritten en actieve opdrachten',
-                        en: 'Planned rides and active jobs',
-                        fr: 'Courses planifiées et missions actives',
-                        es: 'Viajes planificados y servicios activos',
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(color: Colors.white.withOpacity(0.16)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                       ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.70),
-                        fontSize: 12.2,
+                      onPressed: onRefresh,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: Text(
+                        tr(
+                          nl: 'Vernieuw',
+                          en: 'Refresh',
+                          fr: 'Actualiser',
+                          es: 'Actualizar',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
