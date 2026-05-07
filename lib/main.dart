@@ -14110,6 +14110,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   List<BookingItem> _bookings = [];
   bool _loadingBookings = true;
   String? _bookingsError;
+  int? _completedTodayCount;
+  bool _completedTodayLoading = false;
   final Set<String> _bookingActionInFlight = <String>{};
   final Map<String, String> _bookingStatusOverrides = <String, String>{};
   final Set<String> _deletedBookingIds = <String>{};
@@ -14667,6 +14669,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _maybeHideBootSplash();
     });
     _refreshBookings(trigger: 'init_boot');
+    unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
     _startBookingPolling(reason: 'init');
     _renderDebugWindowTimer?.cancel();
     _renderDebugWindowTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -17581,6 +17584,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final shownTotal = serverDirectTotal ?? finalTotal;
       _toast('Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}');
     }
+    unawaited(_refreshCompletedTodayCount(reason: 'trip_stop'));
   }
 
   Future<void> _completeStoppedBooking(BookingItem b) async {
@@ -21243,6 +21247,129 @@ class _DriverHomePageState extends State<DriverHomePage>
     return '${two(local.hour)}:${two(local.minute)}';
   }
 
+  bool _isCompletedTripStatusForDashboard(dynamic rawStatus) {
+    final status = (rawStatus ?? '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return status == 'completed' ||
+        status == 'stopped' ||
+        status == 'finalized' ||
+        status == 'finished' ||
+        status == 'done' ||
+        status == 'closed';
+  }
+
+  DateTime? _dashboardTripCompletionLocalDate(Map<String, dynamic> trip) {
+    final candidates = <dynamic>[
+      trip['stopped_at'],
+      trip['stoppedAt'],
+      trip['ended_at'],
+      trip['endedAt'],
+      trip['completed_at'],
+      trip['completedAt'],
+      trip['created_at'],
+      trip['createdAt'],
+    ];
+    for (final candidate in candidates) {
+      final text = candidate?.toString().trim() ?? '';
+      if (text.isEmpty) continue;
+      final parsed = DateTime.tryParse(text);
+      if (parsed != null) return parsed.toLocal();
+    }
+    return null;
+  }
+
+  bool _isSameLocalDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _completedTodayCardValue() {
+    if (_completedTodayLoading) return '—';
+    return _completedTodayCount?.toString() ?? '—';
+  }
+
+  Future<void> _refreshCompletedTodayCount({required String reason}) async {
+    if (!mounted) return;
+    setState(() => _completedTodayLoading = true);
+
+    try {
+      final companyId = resolvedCompanyId.trim().isNotEmpty
+          ? resolvedCompanyId.trim()
+          : kOutboundTenantId;
+      final driverId = kDriverId.trim();
+      if (driverId.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _completedTodayCount = null;
+          _completedTodayLoading = false;
+        });
+        return;
+      }
+
+      final uri = Uri.parse(
+        '$kWorkerBaseUrl$kTripsHistoryPath'
+        '?tenant_id=${Uri.encodeQueryComponent(kOutboundTenantId)}'
+        '&company_id=${Uri.encodeQueryComponent(companyId)}'
+        '&tenantId=${Uri.encodeQueryComponent(kOutboundTenantId)}'
+        '&companyId=${Uri.encodeQueryComponent(companyId)}'
+        '&driver_id=${Uri.encodeQueryComponent(driverId)}'
+        '&limit=200',
+      );
+      final res = await http
+          .get(uri, headers: _headers(admin: true))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) {
+        throw Exception('history_http_${res.statusCode}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map || decoded['ok'] != true) {
+        throw Exception('history_invalid_payload');
+      }
+
+      final tripsRaw = decoded['trips'];
+      final trips = tripsRaw is List
+          ? tripsRaw.whereType<Map>().map((e) => Map<String, dynamic>.from(e))
+          : const Iterable<Map<String, dynamic>>.empty();
+      final today = DateTime.now();
+      final seenTripIds = <String>{};
+      var completedToday = 0;
+      for (final trip in trips) {
+        final tripId = (trip['trip_id'] ?? trip['tripId'] ?? '')
+            .toString()
+            .trim();
+        if (tripId.isNotEmpty && !seenTripIds.add(tripId)) {
+          continue;
+        }
+        if (!_isCompletedTripStatusForDashboard(trip['status'])) continue;
+        final completionDate = _dashboardTripCompletionLocalDate(trip);
+        if (completionDate == null) continue;
+        if (_isSameLocalDay(completionDate, today)) {
+          completedToday++;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _completedTodayCount = completedToday;
+        _completedTodayLoading = false;
+      });
+    } catch (e) {
+      debugPrint(
+        '[DRIVER_DASHBOARD][COMPLETED_TODAY][WARN] reason=$reason error=$e',
+      );
+      if (!mounted) return;
+      setState(() {
+        _completedTodayCount = null;
+        _completedTodayLoading = false;
+      });
+    }
+  }
+
   void _goBackToStartFromDashboard() {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const RoleEntryPage()),
@@ -21733,7 +21860,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               fr: 'Terminees',
               es: 'Completados',
             ),
-            value: '0',
+            value: _completedTodayCardValue(),
             onTap: _openTripHistoryFromDashboard,
           ),
         ),
@@ -24947,19 +25074,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       activeDetails['booking'] = nestedBooking;
       bookingDetailsById[activeBookingId] = activeDetails;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (ctx) => _TripHistoryPage(
-          workerBaseUrl: kWorkerBaseUrl,
-          tenantId: kOutboundTenantId,
-          companyId: resolvedCompanyId.trim().isNotEmpty
-              ? resolvedCompanyId.trim()
-              : kOutboundTenantId,
-          driverId: kDriverId,
-          headers: _headers(admin: true),
-          bookingDetailsById: bookingDetailsById,
-        ),
-      ),
+    unawaited(
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (ctx) => _TripHistoryPage(
+                workerBaseUrl: kWorkerBaseUrl,
+                tenantId: kOutboundTenantId,
+                companyId: resolvedCompanyId.trim().isNotEmpty
+                    ? resolvedCompanyId.trim()
+                    : kOutboundTenantId,
+                driverId: kDriverId,
+                headers: _headers(admin: true),
+                bookingDetailsById: bookingDetailsById,
+              ),
+            ),
+          )
+          .then((_) {
+            if (!mounted) return;
+            unawaited(
+              _refreshCompletedTodayCount(reason: 'trip_history_return'),
+            );
+          }),
     );
   }
 
