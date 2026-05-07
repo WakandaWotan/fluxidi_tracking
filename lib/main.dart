@@ -24399,177 +24399,432 @@ class _DriverHomePageState extends State<DriverHomePage>
     final canSeeAdminManagement = isCompanyAdmin;
     final canSeeCustomerBooking = isCustomer || isDriver || isCompanyAdmin;
 
+    const drawerBg = Color(0xFF050505);
+    const cardBg = Color(0xFF101010);
+    const rowBg = Color(0xFF121212);
+    const gold = Color(0xFFE5B641);
+    const divider = Color(0x33E5B641);
+
+    InputDecoration compactSelectDecoration() => InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: rowBg,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0x35E5B641)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0x35E5B641)),
+      ),
+    );
+
+    Widget controlLabel(String text) => Text(
+      text,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.83),
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.2,
+      ),
+    );
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    final railWidth = screenWidth < 380
+        ? 94.0
+        : (screenWidth < 700 ? 110.0 : 126.0);
+
+    Widget cockpitRailButton({
+      required IconData icon,
+      required String semanticLabel,
+      required VoidCallback onTap,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Tooltip(
+          message: semanticLabel,
+          child: Semantics(
+            button: true,
+            label: semanticLabel,
+            child: Material(
+              color: rowBg,
+              borderRadius: BorderRadius.circular(13),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(13),
+                onTap: onTap,
+                child: Container(
+                  width: double.infinity,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: const Color(0x33E5B641)),
+                  ),
+                  child: Icon(icon, size: 24, color: gold),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget miniAction({
+      required IconData icon,
+      required String label,
+      required VoidCallback onTap,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Tooltip(
+          message: label,
+          child: Semantics(
+            button: true,
+            label: label,
+            child: SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: OutlinedButton(
+                onPressed: onTap,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: gold,
+                  backgroundColor: cardBg,
+                  side: BorderSide(color: gold.withOpacity(0.66), width: 1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 6,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, size: 18),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Drawer(
-      backgroundColor: const Color(0xFF141B2F),
+      width: railWidth + 20,
+      backgroundColor: drawerBg,
       child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            const Text(
-              'Fluxidi Driver',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              kDrawerLanguageLabel,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.80),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            DropdownButtonFormField<String>(
-              value: currentLanguageCode,
-              items: const [
-                DropdownMenuItem(value: 'nl', child: Text('Nederlands')),
-                DropdownMenuItem(value: 'en', child: Text('English')),
-                DropdownMenuItem(value: 'fr', child: Text('Francais')),
-                DropdownMenuItem(value: 'es', child: Text('Espanol')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                setAppLanguageByCode(v);
-                setState(() {});
-              },
-              dropdownColor: const Color(0xFF111111),
-              decoration: InputDecoration(
-                isDense: true,
-                filled: true,
-                fillColor: const Color(0xFF0B0B0B),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0x22FFFFFF)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0x22FFFFFF)),
-                ),
-              ),
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _tr(
-                nl: 'Kaartmodus',
-                en: 'Map mode',
-                fr: 'Mode de carte',
-                es: 'Modo de mapa',
-              ),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.80),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            DropdownButtonFormField<MapThemeMode>(
-              value: _effectiveMapThemeFor(_cameraMode),
-              items: [
-                DropdownMenuItem(
-                  value: MapThemeMode.light,
-                  child: Text(
-                    _tr(nl: 'Licht', en: 'Light', fr: 'Clair', es: 'Claro'),
+        child: Center(
+          child: SizedBox(
+            width: railWidth,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
+              children: [
+                Text(
+                  _tr(
+                    nl: 'Cockpit',
+                    en: 'Cockpit',
+                    fr: 'Cockpit',
+                    es: 'Cabina',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.3,
                   ),
                 ),
-                DropdownMenuItem(
-                  value: MapThemeMode.dark,
-                  child: Text(
-                    _tr(nl: 'Donker', en: 'Dark', fr: 'Sombre', es: 'Oscuro'),
+                Text(
+                  'Fluxidi',
+                  style: TextStyle(
+                    color: gold.withOpacity(0.92),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.35,
                   ),
                 ),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                _setMapTheme(v);
-              },
-              dropdownColor: const Color(0xFF111111),
-              decoration: InputDecoration(
-                isDense: true,
-                filled: true,
-                fillColor: const Color(0xFF0B0B0B),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0x22FFFFFF)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0x22FFFFFF)),
-                ),
-              ),
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white12),
-            const SizedBox(height: 8),
-            ValueListenableBuilder<ActiveDriverSession?>(
-              valueListenable: activeDriverSessionNotifier,
-              builder: (context, session, _) {
-                if (!(isDriver && session != null)) {
-                  return const SizedBox.shrink();
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: cardBg,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0x24E5B641)),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ListTile(
-                        leading: const Icon(Icons.folder_copy_outlined),
-                        title: Text(
-                          _tr(
-                            nl: 'Mijn documenten',
-                            en: 'My documents',
-                            fr: 'Mes documents',
-                            es: 'Mis documentos',
+                      controlLabel(
+                        _tr(
+                          nl: 'Taal',
+                          en: 'Language',
+                          fr: 'Langue',
+                          es: 'Idioma',
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      DropdownButtonFormField<String>(
+                        value: currentLanguageCode,
+                        items: const [
+                          DropdownMenuItem(value: 'nl', child: Text('NL')),
+                          DropdownMenuItem(value: 'en', child: Text('EN')),
+                          DropdownMenuItem(value: 'fr', child: Text('FR')),
+                          DropdownMenuItem(value: 'es', child: Text('ES')),
+                        ],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setAppLanguageByCode(v);
+                          setState(() {});
+                        },
+                        dropdownColor: cardBg,
+                        decoration: compactSelectDecoration(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        iconEnabledColor: gold,
+                      ),
+                      const SizedBox(height: 9),
+                      controlLabel(
+                        _tr(nl: 'Kaart', en: 'Map', fr: 'Carte', es: 'Mapa'),
+                      ),
+                      const SizedBox(height: 5),
+                      DropdownButtonFormField<MapThemeMode>(
+                        value: _effectiveMapThemeFor(_cameraMode),
+                        items: [
+                          DropdownMenuItem(
+                            value: MapThemeMode.light,
+                            child: Text(
+                              _tr(
+                                nl: 'Licht',
+                                en: 'Light',
+                                fr: 'Clair',
+                                es: 'Claro',
+                              ),
+                            ),
                           ),
+                          DropdownMenuItem(
+                            value: MapThemeMode.dark,
+                            child: Text(
+                              _tr(
+                                nl: 'Donker',
+                                en: 'Dark',
+                                fr: 'Sombre',
+                                es: 'Oscuro',
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          _setMapTheme(v);
+                        },
+                        dropdownColor: cardBg,
+                        decoration: compactSelectDecoration(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        iconEnabledColor: gold,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Divider(color: divider),
+                const SizedBox(height: 6),
+                ValueListenableBuilder<ActiveDriverSession?>(
+                  valueListenable: activeDriverSessionNotifier,
+                  builder: (context, session, _) {
+                    if (!(isDriver && session != null)) {
+                      return const SizedBox.shrink();
+                    }
+                    return Column(
+                      children: [
+                        cockpitRailButton(
+                          icon: Icons.folder_copy_outlined,
+                          semanticLabel: _tr(
+                            nl: 'Documenten',
+                            en: 'Documents',
+                            fr: 'Documents',
+                            es: 'Documentos',
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const DriverMyDocumentsPage(),
+                              ),
+                            );
+                          },
+                        ),
+                        cockpitRailButton(
+                          icon: Icons.swap_horiz_rounded,
+                          semanticLabel: _tr(
+                            nl: 'Wissel',
+                            en: 'Switch',
+                            fr: 'Changer',
+                            es: 'Cambiar',
+                          ),
+                          onTap: () async {
+                            Navigator.pop(context);
+                            await DriverSessionStore.instance.clear();
+                            if (!context.mounted) return;
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (_) => const ChauffeurLoginPage(),
+                              ),
+                              (route) => false,
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                if (canSeeDriverOps)
+                  cockpitRailButton(
+                    icon: Icons.list_alt_rounded,
+                    semanticLabel: _tr(
+                      nl: 'Ritten',
+                      en: 'Rides',
+                      fr: 'Courses',
+                      es: 'Viajes',
+                    ),
+                    onTap: _openBookingsHub,
+                  ),
+                if (canSeeDriverOps)
+                  cockpitRailButton(
+                    icon: Icons.local_taxi_outlined,
+                    semanticLabel: _tr(
+                      nl: 'Straatrit',
+                      en: 'Street',
+                      fr: 'Rue',
+                      es: 'Calle',
+                    ),
+                    onTap: _openDirectRideEntry,
+                  ),
+                if (canSeeDriverOps)
+                  cockpitRailButton(
+                    icon: Icons.history,
+                    semanticLabel: _tr(
+                      nl: 'Historiek',
+                      en: 'History',
+                      fr: 'Historique',
+                      es: 'Historial',
+                    ),
+                    onTap: _openTripHistory,
+                  ),
+                if (canSeeCustomerBooking)
+                  cockpitRailButton(
+                    icon: Icons.calculate_outlined,
+                    semanticLabel: _tr(
+                      nl: 'Prijs',
+                      en: 'Price',
+                      fr: 'Prix',
+                      es: 'Precio',
+                    ),
+                    onTap: _openCalculator,
+                  ),
+                if (canSeeAdminManagement)
+                  cockpitRailButton(
+                    icon: Icons.business_center_outlined,
+                    semanticLabel: _tr(
+                      nl: 'Bedrijf',
+                      en: 'Business',
+                      fr: 'Entreprise',
+                      es: 'Empresa',
+                    ),
+                    onTap: _openBusinessSettings,
+                  ),
+                if (canSeeAdminManagement)
+                  cockpitRailButton(
+                    icon: Icons.directions_car_filled_outlined,
+                    semanticLabel: _tr(
+                      nl: 'Voertuigen',
+                      en: 'Vehicles',
+                      fr: 'Vehicules',
+                      es: 'Vehiculos',
+                    ),
+                    onTap: _openVehicles,
+                  ),
+                const SizedBox(height: 2),
+                const Divider(color: divider),
+                const SizedBox(height: 6),
+                if (canSeeDriverOps)
+                  cockpitRailButton(
+                    icon: Icons.refresh_rounded,
+                    semanticLabel: _tr(
+                      nl: 'Vernieuw',
+                      en: 'Refresh',
+                      fr: 'Actualiser',
+                      es: 'Actualizar',
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _refreshBookings(force: true, trigger: 'drawer_manual');
+                    },
+                  ),
+                if (canSeeDriverOps)
+                  cockpitRailButton(
+                    icon: Icons.my_location_rounded,
+                    semanticLabel: _tr(
+                      nl: 'Centreer',
+                      en: 'Center',
+                      fr: 'Centrer',
+                      es: 'Centrar',
+                    ),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await _centerOnMe();
+                    },
+                  ),
+                if (canSeeDriverOps) const SizedBox(height: 6),
+                if (canSeeDriverOps)
+                  Column(
+                    children: [
+                      miniAction(
+                        icon: Icons.home_outlined,
+                        label: _tr(
+                          nl: 'Start',
+                          en: 'Start',
+                          fr: 'Accueil',
+                          es: 'Inicio',
                         ),
                         onTap: () {
-                          Navigator.pop(context);
-                          Navigator.of(context).push(
+                          Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
-                              builder: (_) => const DriverMyDocumentsPage(),
+                              builder: (_) => const RoleEntryPage(),
                             ),
+                            (route) => false,
                           );
                         },
                       ),
-                      ListTile(
-                        leading: const Icon(Icons.swap_horiz_rounded),
-                        title: Text(
-                          _tr(
-                            nl: 'Andere chauffeur',
-                            en: 'Switch driver',
-                            fr: 'Changer de chauffeur',
-                            es: 'Cambiar conductor',
-                          ),
+                      miniAction(
+                        icon: Icons.badge_outlined,
+                        label: _tr(
+                          nl: 'Chauffeur',
+                          en: 'Driver',
+                          fr: 'Chauffeur',
+                          es: 'Conductor',
                         ),
-                        subtitle: Text(
-                          _tr(
-                            nl: 'Afmelden en opnieuw inloggen met een ander ID.',
-                            en: 'Sign out and log in with a different ID.',
-                            fr: 'Se déconnecter et se reconnecter avec un autre ID.',
-                            es: 'Cerrar sesión e iniciar con otro ID.',
-                          ),
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.65),
-                            fontSize: 12,
-                          ),
-                        ),
-                        onTap: () async {
-                          Navigator.pop(context);
-                          await DriverSessionStore.instance.clear();
-                          if (!context.mounted) return;
+                        onTap: () {
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
-                              builder: (_) => const ChauffeurLoginPage(),
+                              builder: (_) => const DriverHomePage(),
                             ),
                             (route) => false,
                           );
@@ -24577,188 +24832,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                     ],
                   ),
-                );
-              },
+              ],
             ),
-            // === Menu: Bookings hub ===
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.list_alt),
-                title: Text(kBookingsTitle),
-                subtitle: Text(
-                  kBookingsMenuSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openBookingsHub,
-              ),
-
-            // === Menu: Live rit ===
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.play_arrow),
-                title: Text(kLiveRideTitle),
-                subtitle: Text(
-                  kLiveRideMenuSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openLiveRide,
-              ),
-
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.local_taxi_outlined),
-                title: Text(
-                  _tr(
-                    nl: 'Straatrit',
-                    en: 'Direct ride',
-                    fr: 'Course directe',
-                    es: 'Viaje directo',
-                  ),
-                ),
-                subtitle: Text(
-                  _tr(
-                    nl: 'Start een rit zonder voorafgaande boeking',
-                    en: 'Start a ride without a planned booking',
-                    fr: 'Demarrer une course sans reservation',
-                    es: 'Iniciar un viaje sin reserva',
-                  ),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openDirectRideEntry,
-              ),
-
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.history),
-                title: Text(
-                  _tr(
-                    nl: 'Ritgeschiedenis',
-                    en: 'Ride history',
-                    fr: 'Historique des courses',
-                    es: 'Historial de viajes',
-                  ),
-                ),
-                subtitle: Text(
-                  _tr(
-                    nl: 'Bekijk afgeronde straatritten',
-                    en: 'View completed direct rides',
-                    fr: 'Voir les courses directes terminees',
-                    es: 'Ver viajes directos completados',
-                  ),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openTripHistory,
-              ),
-
-            // === Menu: Calculator ===
-            if (canSeeCustomerBooking)
-              ListTile(
-                leading: const Icon(Icons.calculate_outlined),
-                title: Text(
-                  _tr(
-                    nl: 'Ritprijs berekenen',
-                    en: 'Fare calculator',
-                    fr: 'Calculateur de tarif',
-                    es: 'Calculadora de tarifa',
-                  ),
-                ),
-                subtitle: Text(
-                  appConfig.currentLanguage == AppLanguage.nl
-                      ? 'Bereken en boek ritten'
-                      : kCalculatorMenuSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openCalculator,
-              ),
-            if (canSeeAdminManagement)
-              ListTile(
-                leading: const Icon(Icons.business_center_outlined),
-                title: Text(kDrawerBusinessSettingsLabel),
-                subtitle: Text(
-                  kDrawerBusinessSettingsSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openBusinessSettings,
-              ),
-            if (canSeeAdminManagement)
-              ListTile(
-                leading: const Icon(Icons.directions_car_filled_outlined),
-                title: Text(kDrawerVehiclesLabel),
-                subtitle: Text(
-                  kDrawerVehiclesSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openVehicles,
-              ),
-
-            // === Menu: Actieve rit (alleen zichtbaar wanneer een rit actief is) ===
-            if (canSeeDriverOps && _liveRideActive)
-              ListTile(
-                leading: const Icon(Icons.directions_car),
-                title: Text(kActiveRideTitle),
-                subtitle: Text(
-                  kActiveRideMenuSubtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openLiveRide,
-              ),
-
-            const SizedBox(height: 8),
-            const Divider(color: Colors.white12),
-            const SizedBox(height: 8),
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.refresh),
-                title: Text(kRefreshBookingsLabel),
-                onTap: () {
-                  Navigator.pop(context);
-                  _refreshBookings(force: true, trigger: 'drawer_manual');
-                },
-              ),
-            if (canSeeDriverOps)
-              ListTile(
-                leading: const Icon(Icons.my_location),
-                title: Text(kCenterOnMeLabel),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _centerOnMe();
-                },
-              ),
-            if (canSeeDriverOps) const SizedBox(height: 8),
-            if (canSeeDriverOps) const FluxidiBackToStartButton(),
-          ],
+          ),
         ),
       ),
     );
