@@ -3708,15 +3708,167 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   }
 }
 
-class BusinessHomePage extends StatelessWidget {
+class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
 
+  @override
+  State<BusinessHomePage> createState() => _BusinessHomePageState();
+}
+
+class _BusinessHomePageState extends State<BusinessHomePage> {
   String _t({
     required String nl,
     required String en,
     required String fr,
     required String es,
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  int? _openBookingsCount;
+  int? _completedRidesCount;
+  int? _unpaidCompletedRidesCount;
+  int? _monthlyIncomeCents;
+  String _kpiCurrency = 'EUR';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshDashboardKpis(reason: 'init'));
+  }
+
+  int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  double? _asDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    return double.tryParse(text.replaceAll(',', '.'));
+  }
+
+  Map<String, String> _adminHeaders() {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    final token = kAdminToken.trim();
+    if (token.isNotEmpty) {
+      headers['x-admin-token'] = token;
+    }
+    return headers;
+  }
+
+  String _activeMonthToken() {
+    final now = DateTime.now();
+    final mm = now.month.toString().padLeft(2, '0');
+    return '${now.year}-$mm';
+  }
+
+  String _metricCountText(int? value) {
+    return value == null ? '—' : value.toString();
+  }
+
+  String _metricIncomeText() {
+    if (_monthlyIncomeCents == null) return '—';
+    final amount = _monthlyIncomeCents! / 100.0;
+    final useComma = appConfig.currentLanguage != AppLanguage.en;
+    final text = amount.toStringAsFixed(2);
+    final normalized = useComma ? text.replaceAll('.', ',') : text;
+    if (_kpiCurrency.trim().toUpperCase() == 'EUR') {
+      return '€$normalized';
+    }
+    return '${_kpiCurrency.toUpperCase()} $normalized';
+  }
+
+  Future<void> _refreshDashboardKpis({required String reason}) async {
+    final month = _activeMonthToken();
+    final headers = _adminHeaders();
+    final bookingsUri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      '/admin/dashboard/bookings-kpis',
+    );
+    final tripKpisUri = _withActiveBookingScope(
+      kWorkerBaseUrl,
+      '/admin/dashboard/trip-kpis',
+      extraQuery: <String, String>{'month': month},
+    );
+
+    int? nextOpenBookings;
+    int? nextCompletedRides;
+    int? nextUnpaidCompleted;
+    int? nextMonthlyIncomeCents;
+    var nextCurrency = 'EUR';
+
+    try {
+      final responses = await Future.wait([
+        http
+            .get(bookingsUri, headers: headers)
+            .timeout(const Duration(seconds: 12)),
+        http
+            .get(tripKpisUri, headers: headers)
+            .timeout(const Duration(seconds: 12)),
+      ]);
+
+      final bookingsRes = responses[0];
+      if (bookingsRes.statusCode == 200) {
+        final decoded = jsonDecode(bookingsRes.body);
+        if (decoded is Map && decoded['ok'] == true) {
+          nextOpenBookings = _asInt(decoded['open_bookings_count']);
+        } else {
+          debugPrint(
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+          );
+        }
+      } else {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
+        );
+      }
+
+      final tripRes = responses[1];
+      if (tripRes.statusCode == 200) {
+        final decoded = jsonDecode(tripRes.body);
+        if (decoded is Map && decoded['ok'] == true) {
+          nextCompletedRides = _asInt(decoded['completed_rides_count']);
+          nextUnpaidCompleted = _asInt(decoded['unpaid_completed_rides_count']);
+          nextCurrency =
+              (decoded['currency']?.toString().trim().isNotEmpty ?? false)
+              ? decoded['currency'].toString().trim().toUpperCase()
+              : 'EUR';
+          final cents = _asInt(decoded['monthly_income_cents']);
+          if (cents != null) {
+            nextMonthlyIncomeCents = cents;
+          } else {
+            final eur = _asDouble(decoded['monthly_income_eur']);
+            nextMonthlyIncomeCents = eur == null ? null : (eur * 100).round();
+          }
+        } else {
+          debugPrint(
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+          );
+        }
+      } else {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        '[BUSINESS_DASHBOARD][KPI][WARN] reason=fetch_failed trigger=$reason error=$e',
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _openBookingsCount = nextOpenBookings;
+      _completedRidesCount = nextCompletedRides;
+      _unpaidCompletedRidesCount = nextUnpaidCompleted;
+      _monthlyIncomeCents = nextMonthlyIncomeCents;
+      _kpiCurrency = nextCurrency;
+    });
+  }
 
   void _openCalculator(BuildContext context) {
     Navigator.of(context).push(
@@ -4161,10 +4313,10 @@ class BusinessHomePage extends StatelessWidget {
                 children: [
                   Text(
                     _t(
-                      nl: 'Nieuwe boeking',
-                      en: 'New booking',
-                      fr: 'Nouvelle réservation',
-                      es: 'Nueva reserva',
+                      nl: 'Bereken & boek je rit',
+                      en: 'Calculate & book your ride',
+                      fr: 'Calculez et réservez votre course',
+                      es: 'Calcula y reserva tu viaje',
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -4378,104 +4530,128 @@ class BusinessHomePage extends StatelessWidget {
                         return Column(
                           children: [
                             _metricCard(
-                              icon: Icons.directions_car_outlined,
+                              icon: Icons.calendar_month_outlined,
                               title: _t(
-                                nl: 'Ritten',
-                                en: 'Rides',
-                                fr: 'Courses',
-                                es: 'Viajes',
+                                nl: 'Open boekingen',
+                                en: 'Open bookings',
+                                fr: 'Réservations ouvertes',
+                                es: 'Reservas abiertas',
                               ),
                               subtitle: _t(
-                                nl: 'Actief',
-                                en: 'Active',
-                                fr: 'Actif',
-                                es: 'Activo',
+                                nl: 'Gepland',
+                                en: 'Planned',
+                                fr: 'Planifiées',
+                                es: 'Planificadas',
                               ),
-                              value: '—',
-                              accentColor: const Color(0xFF4ADE80),
+                              value: _metricCountText(_openBookingsCount),
+                              accentColor: const Color(0xFF60A5FA),
                             ),
                             const SizedBox(height: 8),
                             _metricCard(
-                              icon: Icons.calendar_month_outlined,
+                              icon: Icons.directions_car_outlined,
                               title: _t(
-                                nl: 'Boekingen',
-                                en: 'Bookings',
-                                fr: 'Réservations',
-                                es: 'Reservas',
+                                nl: 'Voltooide ritten',
+                                en: 'Completed rides',
+                                fr: 'Courses terminées',
+                                es: 'Viajes completados',
                               ),
                               subtitle: _t(
-                                nl: 'Vandaag',
-                                en: 'Today',
-                                fr: 'Aujourd’hui',
-                                es: 'Hoy',
+                                nl: 'Afgerond',
+                                en: 'Completed',
+                                fr: 'Terminées',
+                                es: 'Completados',
                               ),
-                              value: '—',
-                              accentColor: const Color(0xFF60A5FA),
+                              value: _metricCountText(_completedRidesCount),
+                              accentColor: const Color(0xFF4ADE80),
                             ),
                             const SizedBox(height: 8),
                             _metricCard(
                               icon: Icons.payments_outlined,
                               title: _t(
-                                nl: 'Betalingen',
-                                en: 'Payments',
-                                fr: 'Paiements',
-                                es: 'Pagos',
+                                nl: 'Nog te betalen',
+                                en: 'To be paid',
+                                fr: 'À payer',
+                                es: 'Por pagar',
                               ),
                               subtitle: _t(
-                                nl: 'Open',
-                                en: 'Open',
-                                fr: 'Ouvert',
-                                es: 'Abierto',
+                                nl: 'Afgerond maar onbetaald',
+                                en: 'Completed but unpaid',
+                                fr: 'Terminées mais impayées',
+                                es: 'Completados sin pagar',
                               ),
-                              value: '—',
+                              value: _metricCountText(
+                                _unpaidCompletedRidesCount,
+                              ),
                               accentColor: const Color(0xFFF97373),
+                            ),
+                            const SizedBox(height: 8),
+                            _metricCard(
+                              icon: Icons.euro_rounded,
+                              title: _t(
+                                nl: 'Maandomzet',
+                                en: 'Monthly income',
+                                fr: 'Revenus mensuels',
+                                es: 'Ingresos mensuales',
+                              ),
+                              subtitle: _t(
+                                nl: 'Betaald',
+                                en: 'Paid',
+                                fr: 'Payées',
+                                es: 'Pagado',
+                              ),
+                              value: _metricIncomeText(),
+                              accentColor: const Color(0xFFE5B641),
                             ),
                           ],
                         );
                       }
-                      final cardWidth = (constraints.maxWidth - 16) / 3;
+                      final columns = constraints.maxWidth < 760 ? 2 : 4;
+                      final spacing = 8.0;
+                      final cardWidth =
+                          (constraints.maxWidth - ((columns - 1) * spacing)) /
+                          columns;
                       return Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: spacing,
+                        runSpacing: spacing,
                         children: [
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.directions_car_outlined,
-                              title: _t(
-                                nl: 'Ritten',
-                                en: 'Rides',
-                                fr: 'Courses',
-                                es: 'Viajes',
-                              ),
-                              subtitle: _t(
-                                nl: 'Actief',
-                                en: 'Active',
-                                fr: 'Actif',
-                                es: 'Activo',
-                              ),
-                              value: '—',
-                              accentColor: const Color(0xFF4ADE80),
-                            ),
-                          ),
                           SizedBox(
                             width: cardWidth,
                             child: _metricCard(
                               icon: Icons.calendar_month_outlined,
                               title: _t(
-                                nl: 'Boekingen',
-                                en: 'Bookings',
-                                fr: 'Réservations',
-                                es: 'Reservas',
+                                nl: 'Open boekingen',
+                                en: 'Open bookings',
+                                fr: 'Réservations ouvertes',
+                                es: 'Reservas abiertas',
                               ),
                               subtitle: _t(
-                                nl: 'Vandaag',
-                                en: 'Today',
-                                fr: 'Aujourd’hui',
-                                es: 'Hoy',
+                                nl: 'Gepland',
+                                en: 'Planned',
+                                fr: 'Planifiées',
+                                es: 'Planificadas',
                               ),
-                              value: '—',
+                              value: _metricCountText(_openBookingsCount),
                               accentColor: const Color(0xFF60A5FA),
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            child: _metricCard(
+                              icon: Icons.directions_car_outlined,
+                              title: _t(
+                                nl: 'Voltooide ritten',
+                                en: 'Completed rides',
+                                fr: 'Courses terminées',
+                                es: 'Viajes completados',
+                              ),
+                              subtitle: _t(
+                                nl: 'Afgerond',
+                                en: 'Completed',
+                                fr: 'Terminées',
+                                es: 'Completados',
+                              ),
+                              value: _metricCountText(_completedRidesCount),
+                              accentColor: const Color(0xFF4ADE80),
                             ),
                           ),
                           SizedBox(
@@ -4483,19 +4659,41 @@ class BusinessHomePage extends StatelessWidget {
                             child: _metricCard(
                               icon: Icons.payments_outlined,
                               title: _t(
-                                nl: 'Betalingen',
-                                en: 'Payments',
-                                fr: 'Paiements',
-                                es: 'Pagos',
+                                nl: 'Nog te betalen',
+                                en: 'To be paid',
+                                fr: 'À payer',
+                                es: 'Por pagar',
                               ),
                               subtitle: _t(
-                                nl: 'Open',
-                                en: 'Open',
-                                fr: 'Ouvert',
-                                es: 'Abierto',
+                                nl: 'Afgerond maar onbetaald',
+                                en: 'Completed but unpaid',
+                                fr: 'Terminées mais impayées',
+                                es: 'Completados sin pagar',
                               ),
-                              value: '—',
+                              value: _metricCountText(
+                                _unpaidCompletedRidesCount,
+                              ),
                               accentColor: const Color(0xFFF97373),
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            child: _metricCard(
+                              icon: Icons.euro_rounded,
+                              title: _t(
+                                nl: 'Maandomzet',
+                                en: 'Monthly income',
+                                fr: 'Revenus mensuels',
+                                es: 'Ingresos mensuales',
+                              ),
+                              subtitle: _t(
+                                nl: 'Betaald',
+                                en: 'Paid',
+                                fr: 'Payées',
+                                es: 'Pagado',
+                              ),
+                              value: _metricIncomeText(),
+                              accentColor: const Color(0xFFE5B641),
                             ),
                           ),
                         ],
