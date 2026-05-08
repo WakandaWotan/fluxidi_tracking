@@ -273,6 +273,7 @@ class BackendBusinessProfile {
   final String bookingEmail;
   final String publicLogoUrl;
   final String publicHeroPhotoUrl;
+  final String publicServedPostcodes;
   final String publicPartnerProfilePublishedAt;
   final String publicPartnerProfilePublishStatus;
   final String invoiceEmail;
@@ -295,6 +296,7 @@ class BackendBusinessProfile {
     required this.bookingEmail,
     this.publicLogoUrl = '',
     this.publicHeroPhotoUrl = '',
+    this.publicServedPostcodes = '',
     this.publicPartnerProfilePublishedAt = '',
     this.publicPartnerProfilePublishStatus = '',
     required this.invoiceEmail,
@@ -318,6 +320,7 @@ class BackendBusinessProfile {
     bookingEmail: '',
     publicLogoUrl: '',
     publicHeroPhotoUrl: '',
+    publicServedPostcodes: '',
     publicPartnerProfilePublishedAt: '',
     publicPartnerProfilePublishStatus: '',
     invoiceEmail: appConfig.supportEmail,
@@ -364,6 +367,10 @@ class BackendBusinessProfile {
         'publicHeroPhotoUrl',
         'public_hero_photo_url',
       ], fallback.publicHeroPhotoUrl),
+      publicServedPostcodes: textAny(const [
+        'publicServedPostcodes',
+        'public_served_postcodes',
+      ], fallback.publicServedPostcodes),
       publicPartnerProfilePublishedAt: textAny(const [
         'publicPartnerProfilePublishedAt',
         'public_partner_profile_published_at',
@@ -402,6 +409,8 @@ class BackendBusinessProfile {
     'public_logo_url': publicLogoUrl,
     'publicHeroPhotoUrl': publicHeroPhotoUrl,
     'public_hero_photo_url': publicHeroPhotoUrl,
+    'publicServedPostcodes': publicServedPostcodes,
+    'public_served_postcodes': publicServedPostcodes,
     'publicPartnerProfilePublishedAt': publicPartnerProfilePublishedAt,
     'public_partner_profile_published_at': publicPartnerProfilePublishedAt,
     'publicPartnerProfilePublishStatus': publicPartnerProfilePublishStatus,

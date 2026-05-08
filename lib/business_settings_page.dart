@@ -75,6 +75,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _backendBookingEmailCtrl = TextEditingController();
   final _publicLogoUrlCtrl = TextEditingController();
   final _publicHeroPhotoUrlCtrl = TextEditingController();
+  final _publicServedPostcodesCtrl = TextEditingController();
   final _backendInvoiceEmailCtrl = TextEditingController();
   final _backendIbanCtrl = TextEditingController();
   final _backendPaymentPrefixCtrl = TextEditingController();
@@ -219,6 +220,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendBookingEmailCtrl.dispose();
     _publicLogoUrlCtrl.dispose();
     _publicHeroPhotoUrlCtrl.dispose();
+    _publicServedPostcodesCtrl.dispose();
     _backendInvoiceEmailCtrl.dispose();
     _backendIbanCtrl.dispose();
     _backendPaymentPrefixCtrl.dispose();
@@ -287,6 +289,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendBookingEmailCtrl.text = p.bookingEmail;
     _publicLogoUrlCtrl.text = p.publicLogoUrl;
     _publicHeroPhotoUrlCtrl.text = p.publicHeroPhotoUrl;
+    _publicServedPostcodesCtrl.text = p.publicServedPostcodes;
     _publicPartnerProfilePublishedAt = p.publicPartnerProfilePublishedAt;
     _publicPartnerProfilePublishStatus = p.publicPartnerProfilePublishStatus;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
@@ -403,6 +406,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicHeroPhotoUrl: pick(
         local.publicHeroPhotoUrl,
         server.publicHeroPhotoUrl,
+      ),
+      publicServedPostcodes: pick(
+        local.publicServedPostcodes,
+        server.publicServedPostcodes,
       ),
       publicPartnerProfilePublishedAt: pick(
         local.publicPartnerProfilePublishedAt,
@@ -1045,6 +1052,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       bookingEmail: _backendBookingEmailCtrl.text.trim(),
       publicLogoUrl: _publicLogoUrlCtrl.text.trim(),
       publicHeroPhotoUrl: _publicHeroPhotoUrlCtrl.text.trim(),
+      publicServedPostcodes: _publicServedPostcodesCtrl.text.trim(),
       publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
       publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
           .trim(),
@@ -1564,6 +1572,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return needle.isEmpty ? 'Comfort' : needle;
   }
 
+  String _normalizeServedPostcodeToken(String value) {
+    return value.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  List<String> _normalizeServedPostcodes(String raw) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final part in raw.split(RegExp(r'[\s,;]+'))) {
+      final token = _normalizeServedPostcodeToken(part);
+      if (token.isEmpty || seen.contains(token)) continue;
+      seen.add(token);
+      out.add(token);
+    }
+    return out;
+  }
+
   Map<String, dynamic> _buildPublicPartnerProfilePayload({
     required String companyId,
   }) {
@@ -1577,6 +1601,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final postcode = profileForm.postcode.trim().isNotEmpty
         ? profileForm.postcode.trim()
         : (localCompany?.postalCode.trim() ?? '');
+    final primaryPostcode = _normalizeServedPostcodeToken(postcode);
+    final extraServedPostcodes = _normalizeServedPostcodes(
+      profileForm.publicServedPostcodes,
+    );
+    final coveragePostcodes = <String>[
+      if (primaryPostcode.isNotEmpty) primaryPostcode,
+      ...extraServedPostcodes.where((pc) => pc != primaryPostcode),
+    ];
     final city = profileForm.city.trim().isNotEmpty
         ? profileForm.city.trim()
         : (localCompany?.city.trim() ?? '');
@@ -1678,7 +1710,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       ),
       'coverage': <String, dynamic>{
         'region_label': regionLabel,
-        'postcodes': postcode.isEmpty ? const <String>[] : <String>[postcode],
+        'primary_postcode': primaryPostcode,
+        'postcodes': coveragePostcodes,
       },
       'public_contact': <String, dynamic>{
         'website': profileForm.website.trim(),
@@ -1761,6 +1794,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         bookingEmail: mergedBusiness.bookingEmail,
         publicLogoUrl: mergedBusiness.publicLogoUrl,
         publicHeroPhotoUrl: mergedBusiness.publicHeroPhotoUrl,
+        publicServedPostcodes: mergedBusiness.publicServedPostcodes,
         publicPartnerProfilePublishedAt: publishedAt,
         publicPartnerProfilePublishStatus: 'published',
         invoiceEmail: mergedBusiness.invoiceEmail,
@@ -2503,6 +2537,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     TextEditingController ctrl,
     String label, {
     ValueChanged<String>? onChanged,
+    String? hint,
     int maxLines = 1,
     bool readOnly = false,
   }) {
@@ -2517,6 +2552,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(color: Colors.white70),
+          hintText: hint,
+          hintStyle: const TextStyle(color: Colors.white38),
           floatingLabelBehavior: FloatingLabelBehavior.always,
           alignLabelWithHint: maxLines > 1,
           contentPadding: const EdgeInsets.symmetric(
@@ -3800,6 +3837,37 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     style: const TextStyle(
                       color: Colors.white60,
                       fontSize: 11.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _txt(
+                    _publicServedPostcodesCtrl,
+                    _t(
+                      nl: 'Bediende postcodes',
+                      en: 'Served postcodes',
+                      fr: 'Codes postaux desservis',
+                      es: 'Códigos postales atendidos',
+                    ),
+                    hint: _t(
+                      nl: 'Bijv. 9688, 9680, 9600, 9700',
+                      en: 'E.g. 9688, 9680, 9600, 9700',
+                      fr: 'Ex. 9688, 9680, 9600, 9700',
+                      es: 'Ej. 9688, 9680, 9600, 9700',
+                    ),
+                    maxLines: 2,
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Gebruik komma, spatie of nieuwe lijn tussen postcodes.',
+                      en: 'Use commas, spaces, or new lines between postcodes.',
+                      fr: 'Utilisez des virgules, espaces ou retours à la ligne entre les codes postaux.',
+                      es: 'Usa comas, espacios o saltos de línea entre códigos postales.',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.2,
                     ),
                   ),
                   const SizedBox(height: 10),

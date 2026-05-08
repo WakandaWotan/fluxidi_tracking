@@ -14004,10 +14004,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     )
                   : _emptyStateCard(
                       _t(
-                        nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
-                        en: 'No active partners found yet for postal code $_normalizedPostcode.',
-                        fr: 'Aucun partenaire actif trouvé pour le code postal $_normalizedPostcode.',
-                        es: 'Aún no se encontraron socios activos para el código postal $_normalizedPostcode.',
+                        nl: 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.',
+                        en: 'No partners found for postcode or service area $_normalizedPostcode.',
+                        fr: 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.',
+                        es: 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.',
                       ),
                       action: OutlinedButton(
                         onPressed: () {

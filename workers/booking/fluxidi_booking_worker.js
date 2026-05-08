@@ -958,6 +958,7 @@ const DEFAULT_BUSINESS_PROFILE = {
   website: "",
   publicLogoUrl: "",
   publicHeroPhotoUrl: "",
+  publicServedPostcodes: "",
   publicPartnerProfilePublishedAt: "",
   publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
@@ -1129,6 +1130,12 @@ function normalizeBusinessProfile(input = {}) {
       source.public_hero_photo_url ??
       DEFAULT_BUSINESS_PROFILE.publicHeroPhotoUrl,
       600
+    ),
+    publicServedPostcodes: sanitizeTenantString(
+      source.publicServedPostcodes ??
+      source.public_served_postcodes ??
+      DEFAULT_BUSINESS_PROFILE.publicServedPostcodes,
+      1200
     ),
     publicPartnerProfilePublishedAt: sanitizeTenantString(
       source.publicPartnerProfilePublishedAt ??
@@ -3759,6 +3766,7 @@ GET /oauth/callback
           company_name: normalizedProfile.company_name,
           is_active: normalizedProfile.is_active === true,
           subscription_status: normalizedProfile.subscription_status,
+          primary_postcode: normalizedProfile?.coverage?.primary_postcode ?? "",
           supported_postcodes: Array.isArray(normalizedProfile?.coverage?.postcodes)
             ? normalizedProfile.coverage.postcodes
             : [],
@@ -9291,15 +9299,22 @@ function _normalizePartnerEntry(raw) {
   const isActive = raw.is_active === true;
   const subscriptionStatus = String(raw.subscription_status || "").trim().toLowerCase();
   const sourcePostcodes = Array.isArray(raw.supported_postcodes) ? raw.supported_postcodes : [];
-  const supportedPostcodes = sourcePostcodes
-    .map(_normalizePostcode)
-    .filter((x) => !!x);
+  const sourcePrimary = raw.primary_postcode ?? raw.primaryPostcode ?? "";
+  const primaryPostcode = _normalizePostcode(sourcePrimary);
+  const supportedSet = new Set(
+    sourcePostcodes
+      .map(_normalizePostcode)
+      .filter((x) => !!x),
+  );
+  if (primaryPostcode) supportedSet.add(primaryPostcode);
+  const supportedPostcodes = Array.from(supportedSet);
   if (!partnerId || !companyName) return null;
   return {
     partner_id: partnerId,
     company_name: companyName,
     is_active: isActive,
     subscription_status: subscriptionStatus,
+    primary_postcode: primaryPostcode,
     supported_postcodes: supportedPostcodes,
   };
 }
@@ -9340,18 +9355,70 @@ async function listNearbyPartnersByPostcode(env, postcode) {
         return [profile.partner_id, { hero_photo_url: heroUrl, logo_url: logoUrl }];
       }),
   );
+  const coverageByPartnerId = new Map(
+    profiles
+      .filter((profile) => _isPublicPartnerProfileVisible(profile))
+      .map((profile) => {
+        const coverage = profile && typeof profile.coverage === "object" ? profile.coverage : {};
+        const profilePostcodes = Array.isArray(coverage.postcodes) ? coverage.postcodes : [];
+        const normalizedPostcodes = Array.from(
+          new Set(
+            profilePostcodes
+              .map(_normalizePostcode)
+              .filter((x) => !!x),
+          ),
+        );
+        const profilePrimary = _normalizePostcode(coverage.primary_postcode ?? coverage.primaryPostcode);
+        return [
+          profile.partner_id,
+          {
+            primary_postcode: profilePrimary,
+            postcodes: normalizedPostcodes,
+          },
+        ];
+      }),
+  );
   return partners
-    .filter((p) => p.is_active === true)
-    .filter((p) => _isSubscriptionActive(p.subscription_status))
-    .filter((p) => p.supported_postcodes.includes(needle))
-    .map((p) => {
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => p.is_active === true)
+    .filter(({ p }) => _isSubscriptionActive(p.subscription_status))
+    .map(({ p, idx }) => {
+      const profileCoverage = coverageByPartnerId.get(p.partner_id) || {};
+      const supportedSet = new Set(
+        Array.isArray(p.supported_postcodes) ? p.supported_postcodes : [],
+      );
+      const profilePostcodes = Array.isArray(profileCoverage.postcodes)
+        ? profileCoverage.postcodes
+        : [];
+      for (const code of profilePostcodes) supportedSet.add(code);
+      const supportedPostcodes = Array.from(supportedSet);
+      const primaryPostcode = _normalizePostcode(
+        p.primary_postcode || profileCoverage.primary_postcode,
+      );
+      return {
+        p,
+        idx,
+        supportedPostcodes,
+        primaryPostcode,
+        matches: supportedPostcodes.includes(needle),
+      };
+    })
+    .filter((entry) => entry.matches)
+    .sort((a, b) => {
+      const aRank = a.primaryPostcode && a.primaryPostcode === needle ? 0 : 1;
+      const bRank = b.primaryPostcode && b.primaryPostcode === needle ? 0 : 1;
+      if (aRank !== bRank) return aRank - bRank;
+      return a.idx - b.idx;
+    })
+    .map((entry) => {
+      const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
       return {
         partner_id: p.partner_id,
         company_name: p.company_name,
         is_active: true,
         subscription_status: p.subscription_status,
-        supported_postcodes: p.supported_postcodes,
+        supported_postcodes: entry.supportedPostcodes,
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
       };
@@ -9602,11 +9669,19 @@ function _safePublicHttpsUrl(value, maxLen = 600) {
 
 function _normalizePublicCoverage(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  return {
-    region_label: _safePublicText(src.region_label ?? src.regionLabel, 120),
-    postcodes: _safePublicStringList(src.postcodes, { maxItems: 40, maxItemLen: 24 })
+  const primaryPostcode = _normalizePostcode(
+    src.primary_postcode ?? src.primaryPostcode,
+  );
+  const supportedSet = new Set(
+    _safePublicStringList(src.postcodes, { maxItems: 40, maxItemLen: 24 })
       .map(_normalizePostcode)
       .filter((v) => !!v),
+  );
+  if (primaryPostcode) supportedSet.add(primaryPostcode);
+  return {
+    region_label: _safePublicText(src.region_label ?? src.regionLabel, 120),
+    primary_postcode: primaryPostcode,
+    postcodes: Array.from(supportedSet),
   };
 }
 
