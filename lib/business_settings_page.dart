@@ -94,11 +94,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendProfilesLoading = false;
   bool _backendBusinessSaving = false;
   bool _backendTaxSaving = false;
+  bool _publicPartnerProfilePublishing = false;
   bool _googleCalendarLoading = false;
   bool _googleCalendarReconnectLoading = false;
   bool _googleCalendarDisconnectLoading = false;
   String? _backendProfilesError;
   String? _backendProfilesStatus;
+  String? _publicPartnerProfileStatus;
+  String? _publicPartnerProfileError;
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
@@ -1133,6 +1136,227 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       );
     } finally {
       if (mounted) setState(() => _backendTaxSaving = false);
+    }
+  }
+
+  bool _isPublicHttpsUrl(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return false;
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('assets/')) return false;
+    if (lower.contains(r':\') ||
+        lower.startsWith('/') ||
+        lower.startsWith('.')) {
+      return false;
+    }
+    return lower.startsWith('https://');
+  }
+
+  List<String> _mappedPublicServiceIds() {
+    final selected = _serviceIds.map((s) => s.trim().toLowerCase()).toSet();
+    final mapped = <String>{};
+    if (selected.contains('airport')) mapped.add('airport_transfer');
+    if (selected.contains('passenger')) mapped.add('taxi_vvb');
+    if (selected.contains('business')) mapped.add('business_rides');
+    if (selected.contains('event')) mapped.add('event_mobility');
+    if (selected.contains('courier')) mapped.add('hotel_bnb_pickup');
+    if (selected.contains('care')) mapped.add('taxi_vvb');
+    if (mapped.isNotEmpty) {
+      mapped.add('online_payments');
+      return mapped.toList(growable: false);
+    }
+    return const <String>[
+      'taxi_vvb',
+      'airport_transfer',
+      'business_rides',
+      'hotel_bnb_pickup',
+      'event_mobility',
+      'online_payments',
+    ];
+  }
+
+  String _publicTierCategoryLabel(String tierId) {
+    final needle = tierId.trim();
+    for (final t in appConfig.enabledTiers) {
+      if (t.id == needle) {
+        return t.labelFor(_lang).trim();
+      }
+    }
+    return needle.isEmpty ? 'Comfort' : needle;
+  }
+
+  Map<String, dynamic> _buildPublicPartnerProfilePayload({
+    required String companyId,
+  }) {
+    final profileForm = _backendBusinessProfileFromForm();
+    final localCompany = companyProfileNotifier.value;
+    final companyName = profileForm.companyName.trim().isNotEmpty
+        ? profileForm.companyName.trim()
+        : (localCompany?.companyName.trim().isNotEmpty == true
+              ? localCompany!.companyName.trim()
+              : businessSettingsNotifier.value.companyName.trim());
+    final postcode = profileForm.postcode.trim().isNotEmpty
+        ? profileForm.postcode.trim()
+        : (localCompany?.postalCode.trim() ?? '');
+    final city = profileForm.city.trim().isNotEmpty
+        ? profileForm.city.trim()
+        : (localCompany?.city.trim() ?? '');
+    final country = profileForm.country.trim().isNotEmpty
+        ? profileForm.country.trim()
+        : (localCompany?.countryCode.trim() ?? '');
+    final regionLabel = <String>[
+      if (city.isNotEmpty) city,
+      if (postcode.isNotEmpty) postcode,
+      if (country.isNotEmpty) country,
+    ].join(' • ');
+    final services = _mappedPublicServiceIds();
+    final companyPhone = profileForm.phone.trim().isNotEmpty
+        ? profileForm.phone.trim()
+        : (localCompany?.phone.trim() ?? '');
+    final onlinePaymentsEnabled = services.contains('online_payments');
+
+    final vehicles = vehiclesNotifier.value
+        .where((v) => v.isActive)
+        .where((v) => (v.companyId?.trim() ?? '') == companyId)
+        .map((v) {
+          final brand = v.brandModel.trim();
+          final tier = v.tierId.trim().toLowerCase();
+          final features = <String>{
+            if (tier == 'comfort' || tier == 'private' || tier == 'premium')
+              'comfort',
+            if (brand.toLowerCase().contains('tesla') ||
+                brand.toLowerCase().contains('electric') ||
+                brand.toLowerCase().contains('ev'))
+              'ev_available',
+          };
+          final photoRef = v.primaryPhotoRef.trim();
+          return <String, dynamic>{
+            'name': v.vehicleName.trim(),
+            'brand_model': brand,
+            'category': _publicTierCategoryLabel(v.tierId),
+            'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
+            'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
+            'features': features.toList(growable: false),
+            'photo_url': _isPublicHttpsUrl(photoRef) ? photoRef : '',
+          };
+        })
+        .toList(growable: false);
+
+    final drivers = driversNotifier.value
+        .where((d) => d.publicProfileEnabled)
+        .where((d) => d.isActive)
+        .where((d) => (d.companyId?.trim() ?? '') == companyId)
+        .map((d) {
+          final displayName = d.publicDisplayName?.trim() ?? '';
+          final candidatePortrait = d.profilePhotoPath?.trim() ?? '';
+          return <String, dynamic>{
+            'display_name': displayName.isNotEmpty
+                ? displayName
+                : _t(
+                    nl: 'Professionele chauffeur',
+                    en: 'Professional driver',
+                    fr: 'Chauffeur professionnel',
+                    es: 'Conductor profesional',
+                  ),
+            'languages': const <String>[],
+            'badges': const <String>['verified_professional'],
+            'portrait_url':
+                d.publicPhotoEnabled && _isPublicHttpsUrl(candidatePortrait)
+                ? candidatePortrait
+                : '',
+          };
+        })
+        .toList(growable: false);
+
+    return <String, dynamic>{
+      'partner_id': companyId,
+      'company_name': companyName,
+      'profile_enabled': true,
+      'is_active': true,
+      'subscription_status': 'active',
+      'tagline': _t(
+        nl: 'Premium mobiliteit in jouw regio',
+        en: 'Premium mobility in your area',
+        fr: 'Mobilite premium dans votre region',
+        es: 'Movilidad premium en tu zona',
+      ),
+      'about_short': _t(
+        nl: 'Betrouwbare ritten voor particulieren en bedrijven.',
+        en: 'Reliable rides for private and business customers.',
+        fr: 'Trajets fiables pour particuliers et entreprises.',
+        es: 'Viajes fiables para clientes particulares y empresas.',
+      ),
+      'about_long': _t(
+        nl: 'Dit publiek profiel bevat enkel veilige bedrijfsinformatie. Gevoelige interne gegevens worden niet gepubliceerd.',
+        en: 'This public profile contains only safe company information. Sensitive internal data is not published.',
+        fr: 'Ce profil public contient uniquement des informations d entreprise securisees. Les donnees internes sensibles ne sont pas publiees.',
+        es: 'Este perfil publico contiene solo informacion empresarial segura. Los datos internos sensibles no se publican.',
+      ),
+      'coverage': <String, dynamic>{
+        'region_label': regionLabel,
+        'postcodes': postcode.isEmpty ? const <String>[] : <String>[postcode],
+      },
+      'public_contact': <String, dynamic>{
+        'website': profileForm.website.trim(),
+        'public_phone': companyPhone,
+        'booking_email': profileForm.bookingEmail.trim(),
+      },
+      'media': <String, dynamic>{
+        'logo_url': '',
+        'hero_photo_url': '',
+        'gallery': const <String>[],
+      },
+      'services': services,
+      'payment_methods': const <String>['cash', 'qr', 'online_payment'],
+      'vehicles': vehicles,
+      'drivers': drivers,
+      'trust': const <String, dynamic>{
+        'verified_partner': false,
+        'professional_badge': false,
+      },
+      'booking_capabilities': <String, dynamic>{
+        'online_payments': onlinePaymentsEnabled,
+        'instant_quote': false,
+        'profile_enabled': true,
+      },
+    };
+  }
+
+  Future<void> _publishPublicPartnerProfile() async {
+    setState(() {
+      _publicPartnerProfilePublishing = true;
+      _publicPartnerProfileStatus = null;
+      _publicPartnerProfileError = null;
+    });
+    try {
+      final scope = _activeSettingsScope();
+      final payload = _buildPublicPartnerProfilePayload(
+        companyId: scope.companyId,
+      );
+      await publishBackendPublicPartnerProfile(
+        partnerProfile: payload,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _publicPartnerProfileStatus = _t(
+          nl: 'Publiek partnerprofiel gepubliceerd.',
+          en: 'Public partner profile published.',
+          fr: 'Profil partenaire public publie.',
+          es: 'Perfil publico del socio publicado.',
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _publicPartnerProfileError =
+            '${_t(nl: 'Publiceren mislukt', en: 'Publish failed', fr: 'Publication echouee', es: 'Error al publicar')}: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _publicPartnerProfilePublishing = false);
+      }
     }
   }
 
@@ -3076,6 +3300,95 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       ],
                     ),
                   ),
+                ],
+              ),
+            ),
+            _collapsibleSettingsCard(
+              id: 'public_partner_profile',
+              icon: Icons.public_outlined,
+              title: _t(
+                nl: 'Publiek partnerprofiel',
+                en: 'Public partner profile',
+                fr: 'Profil partenaire public',
+                es: 'Perfil público de socio',
+              ),
+              subtitle: _t(
+                nl: 'Publiceer veilige profielgegevens voor klanten',
+                en: 'Publish safe profile data for customers',
+                fr: 'Publier des donnees de profil securisees',
+                es: 'Publicar datos de perfil seguros',
+              ),
+              status: _publicPartnerProfileError != null
+                  ? _SetupStatus.attention
+                  : (_publicPartnerProfileStatus != null
+                        ? _SetupStatus.complete
+                        : _SetupStatus.incomplete),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Publiceer veilige bedrijfsinformatie zodat klanten je kunnen vinden via Taxi’s in de buurt.',
+                      en: 'Publish safe company information so customers can find you through Nearby taxis.',
+                      fr: 'Publiez des informations publiques sécurisées afin que les clients puissent vous trouver.',
+                      es: 'Publica información segura de la empresa para que los clientes puedan encontrarte.',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: _publicPartnerProfilePublishing
+                        ? null
+                        : _publishPublicPartnerProfile,
+                    icon: _publicPartnerProfilePublishing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.publish_outlined),
+                    label: Text(
+                      _t(
+                        nl: 'Publiek profiel publiceren',
+                        en: 'Publish public profile',
+                        fr: 'Publier le profil public',
+                        es: 'Publicar perfil público',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _t(
+                      nl: 'Lokale foto’s worden nog niet gepubliceerd. Alleen publieke HTTPS-afbeeldingen worden meegenomen.',
+                      en: 'Local photos are not published yet. Only public HTTPS images are included.',
+                      fr: 'Les photos locales ne sont pas encore publiées. Seules les images HTTPS publiques sont incluses.',
+                      es: 'Las fotos locales aún no se publican. Solo se incluyen imágenes HTTPS públicas.',
+                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  if (_publicPartnerProfileStatus != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _publicPartnerProfileStatus!,
+                      style: const TextStyle(
+                        color: Color(0xFF34D29A),
+                        fontSize: 11.8,
+                      ),
+                    ),
+                  ],
+                  if (_publicPartnerProfileError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _publicPartnerProfileError!,
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 11.8,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

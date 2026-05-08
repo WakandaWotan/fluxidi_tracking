@@ -3512,6 +3512,88 @@ GET /oauth/callback
         }, 200);
       }
 
+      if (url.pathname === "/admin/partners/profile/publish" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const incoming = body?.partner_profile && typeof body.partner_profile === "object"
+          ? body.partner_profile
+          : body;
+        if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+          return json({ ok: false, error: "partner_profile object is required" }, 400);
+        }
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
+
+        const scopeCompanyId = sanitizeTenantString(explicitScope.company_id, 120);
+        const normalizedProfile = _normalizePublicPartnerProfileEntry({
+          ...incoming,
+          partner_id: incoming.partner_id ?? incoming.partnerId ?? scopeCompanyId,
+          company_name: incoming.company_name ?? incoming.companyName,
+        });
+        if (!normalizedProfile) {
+          return json({ ok: false, error: "invalid partner_profile payload" }, 400);
+        }
+
+        const rawProfiles = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
+        const currentProfiles = Array.isArray(rawProfiles)
+          ? rawProfiles
+          : (rawProfiles && typeof rawProfiles === "object" && Array.isArray(rawProfiles.profiles)
+              ? rawProfiles.profiles
+              : []);
+        const existingProfiles = currentProfiles
+          .map(_normalizePublicPartnerProfileEntry)
+          .filter((p) => p !== null);
+        const nextProfiles = existingProfiles
+          .filter((p) => p.partner_id !== normalizedProfile.partner_id)
+          .concat([normalizedProfile]);
+        await env.BOOKING_KV.put(
+          PARTNER_PROFILES_KEY,
+          JSON.stringify({ profiles: nextProfiles }),
+        );
+
+        const normalizedDirectoryEntry = _normalizePartnerEntry({
+          partner_id: normalizedProfile.partner_id,
+          company_name: normalizedProfile.company_name,
+          is_active: normalizedProfile.is_active === true,
+          subscription_status: normalizedProfile.subscription_status,
+          supported_postcodes: Array.isArray(normalizedProfile?.coverage?.postcodes)
+            ? normalizedProfile.coverage.postcodes
+            : [],
+        });
+        if (!normalizedDirectoryEntry) {
+          return json({ ok: false, error: "invalid directory projection" }, 400);
+        }
+        const rawDirectory = await env.BOOKING_KV.get(PARTNER_DIRECTORY_KEY, { type: "json" });
+        const currentDirectory = Array.isArray(rawDirectory)
+          ? rawDirectory
+          : (rawDirectory && typeof rawDirectory === "object" && Array.isArray(rawDirectory.partners)
+              ? rawDirectory.partners
+              : []);
+        const existingDirectory = currentDirectory
+          .map(_normalizePartnerEntry)
+          .filter((p) => p !== null);
+        const nextDirectory = existingDirectory
+          .filter((p) => p.partner_id !== normalizedDirectoryEntry.partner_id)
+          .concat([normalizedDirectoryEntry]);
+        await env.BOOKING_KV.put(
+          PARTNER_DIRECTORY_KEY,
+          JSON.stringify({ partners: nextDirectory }),
+        );
+
+        return json({
+          ok: true,
+          profile: normalizedProfile,
+          directory_entry: normalizedDirectoryEntry,
+        }, 200);
+      }
+
       if (url.pathname === "/admin/tax/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
         const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
@@ -9023,6 +9105,16 @@ function _safePublicStringList(value, { maxItems = 20, maxItemLen = 80 } = {}) {
   return out;
 }
 
+function _safePublicHttpsUrl(value, maxLen = 600) {
+  const text = _safePublicText(value, maxLen);
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  if (!lower.startsWith("https://")) return "";
+  if (lower.startsWith("https://localhost")) return "";
+  if (lower.includes("..\\")) return "";
+  return text;
+}
+
 function _normalizePublicCoverage(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   return {
@@ -9045,9 +9137,11 @@ function _normalizePublicContact(raw) {
 function _normalizePublicMedia(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   return {
-    logo_url: _safePublicText(src.logo_url ?? src.logoUrl, 600),
-    hero_photo_url: _safePublicText(src.hero_photo_url ?? src.heroPhotoUrl, 600),
-    gallery: _safePublicStringList(src.gallery, { maxItems: 12, maxItemLen: 600 }),
+    logo_url: _safePublicHttpsUrl(src.logo_url ?? src.logoUrl, 600),
+    hero_photo_url: _safePublicHttpsUrl(src.hero_photo_url ?? src.heroPhotoUrl, 600),
+    gallery: _safePublicStringList(src.gallery, { maxItems: 12, maxItemLen: 600 })
+      .map((v) => _safePublicHttpsUrl(v, 600))
+      .filter((v) => !!v),
   };
 }
 
@@ -9063,7 +9157,7 @@ function _normalizePublicVehicles(raw) {
       pax: _safePublicInt(row.pax, 0, 0, 99),
       luggage: _safePublicInt(row.luggage, 0, 0, 99),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
-      photo_url: _safePublicText(row.photo_url ?? row.photoUrl, 600),
+      photo_url: _safePublicHttpsUrl(row.photo_url ?? row.photoUrl, 600),
     });
   }
   return out;
@@ -9078,7 +9172,7 @@ function _normalizePublicDrivers(raw) {
       display_name: _safePublicText(row.display_name ?? row.displayName, 120),
       languages: _safePublicStringList(row.languages, { maxItems: 8, maxItemLen: 12 }),
       badges: _safePublicStringList(row.badges, { maxItems: 8, maxItemLen: 64 }),
-      portrait_url: _safePublicText(row.portrait_url ?? row.portraitUrl, 600),
+      portrait_url: _safePublicHttpsUrl(row.portrait_url ?? row.portraitUrl, 600),
     });
   }
   return out;
