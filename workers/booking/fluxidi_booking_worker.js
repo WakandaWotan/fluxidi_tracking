@@ -3591,6 +3591,13 @@ GET /oauth/callback
         if (!mediaTypeValidation.ok) {
           return json({ ok: false, error: mediaTypeValidation.error }, 400);
         }
+        const entityIdValidation = _validatePublicMediaEntityId(
+          mediaType,
+          form.get("entity_id"),
+        );
+        if (!entityIdValidation.ok) {
+          return json({ ok: false, error: entityIdValidation.error }, 400);
+        }
         const filePart = form.get("file");
         if (!filePart || typeof filePart.arrayBuffer !== "function") {
           return json({ ok: false, error: "file is required" }, 400);
@@ -3619,6 +3626,7 @@ GET /oauth/callback
           tenantId,
           companyId,
           mediaType,
+          entityId: entityIdValidation.entity_id,
           ext: detected.ext,
         });
         await env.PUBLIC_MEDIA.put(objectKey, bytes, {
@@ -3633,6 +3641,7 @@ GET /oauth/callback
         return json({
           ok: true,
           media_type: mediaType,
+          entity_id: entityIdValidation.entity_id || "",
           key: objectKey,
           url: mediaUrl,
           uploaded_at: uploadedAt,
@@ -9272,19 +9281,47 @@ function _sanitizePublicMediaSegment(value) {
 }
 
 function _validateCompanyMediaType(mediaType) {
-  if (mediaType === "company_logo" || mediaType === "company_hero") return { ok: true };
+  if (
+    mediaType === "company_logo" ||
+    mediaType === "company_hero" ||
+    mediaType === "vehicle_photo"
+  ) {
+    return { ok: true };
+  }
   return { ok: false, error: "unsupported media_type" };
 }
 
-function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, ext }) {
+function _validatePublicMediaEntityId(mediaType, entityIdRaw) {
+  if (mediaType !== "vehicle_photo") return { ok: true, entity_id: "" };
+  const raw = sanitizeTenantString(entityIdRaw, 120);
+  if (!raw) return { ok: false, error: "entity_id is required for vehicle_photo" };
+  if (raw.includes("/") || raw.includes("\\") || raw.includes("..")) {
+    return { ok: false, error: "invalid entity_id" };
+  }
+  const safe = _sanitizePublicMediaSegment(raw);
+  if (!safe || !/^[a-z0-9._-]+$/.test(safe)) {
+    return { ok: false, error: "invalid entity_id" };
+  }
+  return { ok: true, entity_id: safe };
+}
+
+function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId, ext }) {
   const tenantSeg = _sanitizePublicMediaSegment(tenantId);
   const companySeg = _sanitizePublicMediaSegment(companyId);
   if (!tenantSeg || !companySeg) {
     throw new Error("invalid tenant/company scope");
   }
   const safeExt = _sanitizePublicMediaSegment(ext || "jpg") || "jpg";
-  const fileName = mediaType === "company_logo" ? `logo.${safeExt}` : `hero.${safeExt}`;
-  return `public-media/${tenantSeg}/${companySeg}/company/${fileName}`;
+  if (mediaType === "company_logo" || mediaType === "company_hero") {
+    const fileName = mediaType === "company_logo" ? `logo.${safeExt}` : `hero.${safeExt}`;
+    return `public-media/${tenantSeg}/${companySeg}/company/${fileName}`;
+  }
+  if (mediaType === "vehicle_photo") {
+    const entitySeg = _sanitizePublicMediaSegment(entityId);
+    if (!entitySeg) throw new Error("invalid vehicle entity scope");
+    return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/photo.${safeExt}`;
+  }
+  throw new Error("unsupported media type");
 }
 
 function _encodePublicMediaKeyForUrl(key) {

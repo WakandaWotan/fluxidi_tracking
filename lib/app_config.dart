@@ -1946,6 +1946,7 @@ Future<Map<String, dynamic>> uploadPublicPartnerMedia({
   required String mediaType,
   String? tenantId,
   String? companyId,
+  String? entityId,
   String? filePath,
   Uint8List? fileBytes,
   String? filename,
@@ -2000,6 +2001,10 @@ Future<Map<String, dynamic>> uploadPublicPartnerMedia({
   request.fields['tenant_id'] = scope['tenant_id'] ?? '';
   request.fields['company_id'] = scope['company_id'] ?? '';
   request.fields['media_type'] = normalizedType;
+  final trimmedEntityId = (entityId ?? '').trim();
+  if (trimmedEntityId.isNotEmpty) {
+    request.fields['entity_id'] = trimmedEntityId;
+  }
 
   final uploadFilename = fallbackFilename();
   String mimeFromFilename(String name) {
