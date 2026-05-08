@@ -10140,6 +10140,206 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
   }
 
+  Color _savedStatusColor(CustomerSavedBooking booking) {
+    switch (_normalizeCustomerLifecycleStatus(booking.bookingStatus)) {
+      case 'CONFIRMED':
+        return const Color(0xFF34D29A);
+      case 'COMPLETED':
+        return const Color(0xFF66D9A8);
+      case 'PENDING':
+        return kFluxidiYellow;
+      case 'CANCELLED':
+        return const Color(0xFFE88989);
+      default:
+        return Colors.white70;
+    }
+  }
+
+  Widget _savedPremiumBookingCard(CustomerSavedBooking booking) {
+    final statusColor = _savedStatusColor(booking);
+    final paid =
+        booking.paymentStatus.toLowerCase().trim() == 'paid' ||
+        booking.paymentStatus.toLowerCase().trim() == 'confirmed' ||
+        booking.paymentStatus.toLowerCase().trim() == 'completed' ||
+        booking.paymentStatus.toLowerCase().trim() == 'success';
+    final reference = booking.publicReference.trim().isNotEmpty
+        ? booking.publicReference.trim()
+        : booking.bookingId.trim();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF121212), Color(0xFF0A0A0B), Color(0xFF080809)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.28),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openSavedBooking(booking),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: statusColor.withOpacity(0.45)),
+                    ),
+                    child: Text(
+                      _bookingStatusLabel(booking),
+                      style: TextStyle(
+                        color: statusColor.withOpacity(0.98),
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _formatPrice(booking),
+                    style: TextStyle(
+                      color: kFluxidiYellow.withOpacity(0.98),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.86),
+                  fontSize: 12.1,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Column(
+                    children: [
+                      Icon(
+                        Icons.radio_button_checked,
+                        size: 11.5,
+                        color: kFluxidiYellow.withOpacity(0.94),
+                      ),
+                      Container(
+                        width: 1.8,
+                        height: 30,
+                        margin: const EdgeInsets.symmetric(vertical: 3),
+                        color: kFluxidiYellow.withOpacity(0.35),
+                      ),
+                      const Icon(
+                        Icons.location_on,
+                        size: 13.5,
+                        color: Color(0xFF34D29A),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          booking.from.isEmpty ? '-' : booking.from,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.8,
+                            fontWeight: FontWeight.w600,
+                            height: 1.24,
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        Text(
+                          booking.to.isEmpty ? '-' : booking.to,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 12.8,
+                            fontWeight: FontWeight.w600,
+                            height: 1.24,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: paid
+                          ? const Color(0xFF34D29A).withOpacity(0.14)
+                          : kFluxidiYellow.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: paid
+                            ? const Color(0xFF34D29A).withOpacity(0.4)
+                            : kFluxidiYellow.withOpacity(0.35),
+                      ),
+                    ),
+                    child: Text(
+                      _paymentLabel(booking),
+                      style: TextStyle(
+                        color: paid
+                            ? const Color(0xFF9DF2CF)
+                            : kFluxidiYellow.withOpacity(0.97),
+                        fontSize: 11.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: $reference',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.58),
+                      fontSize: 10.8,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openSavedBooking(CustomerSavedBooking booking) async {
     final id = booking.bookingId.trim();
     if (id.isEmpty) return;
@@ -10335,9 +10535,10 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           '[CUSTOMER_BOOKINGS][VISIBLE_BUILD] count=${_bookings.length}',
         );
         return Scaffold(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: const Color(0xFF07080C),
           appBar: AppBar(
-            backgroundColor: const Color(0xFF0B1020),
+            backgroundColor: const Color(0xFF07080C),
+            surfaceTintColor: Colors.transparent,
             title: Text(
               _t(
                 nl: 'Mijn boekingen',
@@ -10413,65 +10614,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     ),
                   )
                 else
-                  ..._bookings.map(
-                    (booking) => Card(
-                      color: const Color(0xFF141B2F),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => _openSavedBooking(booking),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${booking.from.trim().isEmpty ? '-' : booking.from} → ${booking.to.trim().isEmpty ? '-' : booking.to}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_t(nl: 'Ophaal', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${_formatPickup(booking.pickupIso)}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                ),
-                              ),
-                              Text(
-                                '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ${_formatPrice(booking)}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                ),
-                              ),
-                              Text(
-                                '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                ),
-                              ),
-                              Text(
-                                '${_t(nl: 'Boekingsstatus', en: 'Booking status', fr: 'Statut de réservation', es: 'Estado de la reserva')}: ${_bookingStatusLabel(booking)}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                ),
-                              ),
-                              Text(
-                                '${_t(nl: 'Referentie', en: 'Reference', fr: 'Référence', es: 'Referencia')}: ${(booking.publicReference.trim().isNotEmpty ? booking.publicReference.trim() : booking.bookingId.trim())}',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.82),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  ..._bookings.map(_savedPremiumBookingCard),
                 const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
@@ -11057,6 +11200,239 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     return '${two(local.day)}/${two(local.month)} ${two(local.hour)}:${two(local.minute)}';
   }
 
+  Color _statusColor(StoredCustomerBooking booking) {
+    switch (_normalizeCustomerLifecycleStatus(booking.status)) {
+      case 'CONFIRMED':
+        return const Color(0xFF34D29A);
+      case 'COMPLETED':
+        return const Color(0xFF66D9A8);
+      case 'PENDING':
+        return kFluxidiYellow;
+      case 'CANCELLED':
+        return const Color(0xFFE88989);
+      default:
+        return Colors.white70;
+    }
+  }
+
+  Widget _premiumBookingCard(StoredCustomerBooking booking) {
+    final statusColor = _statusColor(booking);
+    final paymentKnownPaid =
+        booking.paymentStatus.toLowerCase().trim() == 'paid' ||
+        booking.paymentStatus.toLowerCase().trim() == 'confirmed' ||
+        booking.paymentStatus.toLowerCase().trim() == 'success' ||
+        booking.paymentStatus.toLowerCase().trim() == 'completed';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF121212), Color(0xFF0A0A0B), Color(0xFF080809)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.28),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: statusColor.withOpacity(0.45)),
+                ),
+                child: Text(
+                  _statusLabel(booking),
+                  style: TextStyle(
+                    color: statusColor.withOpacity(0.98),
+                    fontSize: 11.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatPrice(booking),
+                style: TextStyle(
+                  color: kFluxidiYellow.withOpacity(0.98),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.86),
+              fontSize: 12.1,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                children: [
+                  Icon(
+                    Icons.radio_button_checked,
+                    size: 11.5,
+                    color: kFluxidiYellow.withOpacity(0.94),
+                  ),
+                  Container(
+                    width: 1.8,
+                    height: 30,
+                    margin: const EdgeInsets.symmetric(vertical: 3),
+                    color: kFluxidiYellow.withOpacity(0.35),
+                  ),
+                  const Icon(
+                    Icons.location_on,
+                    size: 13.5,
+                    color: Color(0xFF34D29A),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      booking.from.isEmpty ? '-' : booking.from,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.8,
+                        fontWeight: FontWeight.w600,
+                        height: 1.24,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    Text(
+                      booking.to.isEmpty ? '-' : booking.to,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 12.8,
+                        fontWeight: FontWeight.w600,
+                        height: 1.24,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: paymentKnownPaid
+                      ? const Color(0xFF34D29A).withOpacity(0.14)
+                      : kFluxidiYellow.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: paymentKnownPaid
+                        ? const Color(0xFF34D29A).withOpacity(0.4)
+                        : kFluxidiYellow.withOpacity(0.35),
+                  ),
+                ),
+                child: Text(
+                  _paymentLabel(booking),
+                  style: TextStyle(
+                    color: paymentKnownPaid
+                        ? const Color(0xFF9DF2CF)
+                        : kFluxidiYellow.withOpacity(0.97),
+                    fontSize: 11.1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: ${booking.publicBookingReference.isEmpty ? booking.bookingId : booking.publicBookingReference}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.58),
+                  fontSize: 10.8,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              OutlinedButton(
+                onPressed: () => _removeFromMyBookings(booking),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white.withOpacity(0.9),
+                  side: BorderSide(color: Colors.white.withOpacity(0.22)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Verwijderen',
+                    en: 'Remove',
+                    fr: 'Supprimer',
+                    es: 'Eliminar',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: () => _openDetails(booking),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kFluxidiYellow.withOpacity(0.97),
+                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.4)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Boeking bekijken',
+                    en: 'View booking',
+                    fr: 'Voir la reservation',
+                    es: 'Ver reserva',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openDetails(StoredCustomerBooking booking) async {
     final id = booking.canonicalBookingId.trim();
     if (id.isEmpty) return;
@@ -11262,9 +11638,10 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: const Color(0xFF07080C),
         appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: const Color(0xFF07080C),
+          surfaceTintColor: Colors.transparent,
           title: Text(
             _t(
               nl: 'Mijn boekingen',
@@ -11275,6 +11652,11 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           ),
           actions: [
             IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFF111214),
+                foregroundColor: kFluxidiYellow.withOpacity(0.98),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.3)),
+              ),
               tooltip: _t(
                 nl: 'Vernieuwen',
                 en: 'Refresh',
@@ -11290,6 +11672,23 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     )
                   : const Icon(Icons.refresh),
             ),
+            const SizedBox(width: 6),
+            IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFF111214),
+                foregroundColor: Colors.white.withOpacity(0.9),
+                side: BorderSide(color: Colors.white.withOpacity(0.22)),
+              ),
+              tooltip: _t(
+                nl: 'Alles verwijderen',
+                en: 'Remove all',
+                fr: 'Tout supprimer',
+                es: 'Eliminar todo',
+              ),
+              onPressed: _bookings.isEmpty ? null : _removeAllFromMyBookings,
+              icon: const Icon(Icons.delete_sweep_outlined),
+            ),
+            const SizedBox(width: 6),
           ],
         ),
         body: SafeArea(
@@ -11302,36 +11701,19 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 Text(
                   '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Derniere mise a jour', es: 'Ultima actualizacion')}: ${_formatLastUpdated()}',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
+                    color: Colors.white.withOpacity(0.62),
                     fontSize: 12,
                   ),
                 ),
                 const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _bookings.isEmpty
-                        ? null
-                        : _removeAllFromMyBookings,
-                    icon: const Icon(Icons.delete_sweep, size: 18),
-                    label: Text(
-                      _t(
-                        nl: 'Alles verwijderen',
-                        en: 'Remove all',
-                        fr: 'Tout supprimer',
-                        es: 'Eliminar todo',
-                      ),
-                    ),
-                  ),
-                ),
                 if (_error != null) ...[
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.withOpacity(0.4)),
+                      color: const Color(0xFF2A1114),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFCD5C6C)),
                     ),
                     child: Text(
                       _error!,
@@ -11351,8 +11733,15 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF141B2F),
-                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF121212), Color(0xFF0B0C0E)],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: kFluxidiYellow.withOpacity(0.2),
+                      ),
                     ),
                     child: Text(
                       _t(
@@ -11365,127 +11754,21 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     ),
                   )
                 else
-                  ..._bookings.map(
-                    (booking) => Card(
-                      color: const Color(0xFF141B2F),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _t(
-                                nl: 'Route',
-                                en: 'Route',
-                                fr: 'Itineraire',
-                                es: 'Ruta',
-                              ),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${_t(nl: 'Ophaaladres', en: 'Pickup', fr: 'Prise en charge', es: 'Recogida')}: ${booking.from.isEmpty ? '-' : booking.from}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.86),
-                              ),
-                              softWrap: true,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${_t(nl: 'Bestemming', en: 'Destination', fr: 'Destination', es: 'Destino')}: ${booking.to.isEmpty ? '-' : booking.to}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.86),
-                              ),
-                              softWrap: true,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                              ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${_statusLabel(booking)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                              ),
-                            ),
-                            Text(
-                              '${_t(nl: 'Betaalstatus', en: 'Payment status', fr: 'Statut de paiement', es: 'Estado de pago')}: ${_paymentLabel(booking)}',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${_t(nl: 'Prijs', en: 'Price', fr: 'Prix', es: 'Precio')}: ',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.8),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: Text(
-                                    _formatPrice(booking),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    textAlign: TextAlign.right,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                OutlinedButton(
-                                  onPressed: () =>
-                                      _removeFromMyBookings(booking),
-                                  child: Text(
-                                    _t(
-                                      nl: 'Verwijder uit mijn boekingen',
-                                      en: 'Remove from my bookings',
-                                      fr: 'Supprimer de mes réservations',
-                                      es: 'Eliminar de mis reservas',
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                OutlinedButton(
-                                  onPressed: () => _openDetails(booking),
-                                  child: Text(
-                                    _t(
-                                      nl: 'Boeking bekijken',
-                                      en: 'View booking',
-                                      fr: 'Voir la reservation',
-                                      es: 'Ver reserva',
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  ..._bookings.map(_premiumBookingCard),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.search_outlined),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kFluxidiYellow.withOpacity(0.98),
+                      side: BorderSide(color: kFluxidiYellow.withOpacity(0.42)),
+                      backgroundColor: const Color(0xFF111214),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
                     onPressed: () async {
                       await Navigator.of(context).push(
                         MaterialPageRoute(
@@ -11496,10 +11779,10 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     },
                     label: Text(
                       _t(
-                        nl: 'Andere boeking opzoeken',
-                        en: 'Look up another booking',
-                        fr: 'Rechercher une autre reservation',
-                        es: 'Buscar otra reserva',
+                        nl: 'Boeking handmatig zoeken',
+                        en: 'Find booking manually',
+                        fr: 'Rechercher une réservation manuellement',
+                        es: 'Buscar reserva manualmente',
                       ),
                     ),
                   ),
@@ -13726,24 +14009,38 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   Widget _section({required String title, required List<Widget> children}) {
-    return Card(
-      color: const Color(0xFF141B2F),
+    return Container(
       margin: const EdgeInsets.only(bottom: 14),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF121212), Color(0xFF0A0A0B), Color(0xFF080809)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.26),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w800,
-                fontSize: 16,
-                color: Color(0xFFE5B641),
+                fontSize: 14.4,
+                color: kFluxidiYellow.withOpacity(0.98),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 9),
             ...children,
           ],
         ),
@@ -13758,38 +14055,70 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     String? emptyText,
   }) {
     final v = value.trim().isEmpty ? (emptyText ?? '-') : value.trim();
-    if (stacked) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(color: Colors.white.withOpacity(0.7))),
-            const SizedBox(height: 4),
-            Text(v, style: const TextStyle(color: Colors.white)),
-          ],
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 130,
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useStacked = stacked || constraints.maxWidth < 380;
+        if (useStacked) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.74),
+                    fontSize: 12.1,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  v,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.8,
+                    height: 1.28,
+                  ),
+                  softWrap: true,
+                ),
+              ],
             ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 128,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.74),
+                    fontSize: 12.2,
+                    height: 1.25,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  v,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.8,
+                    height: 1.28,
+                  ),
+                  softWrap: true,
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: Text(v, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -13828,6 +14157,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             ),
             actions: [
               IconButton(
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFF111214),
+                  foregroundColor: _canCancelBooking
+                      ? const Color(0xFFFFC1C1)
+                      : Colors.white38,
+                  side: BorderSide(
+                    color: _canCancelBooking
+                        ? const Color(0xFFCD5C6C).withOpacity(0.6)
+                        : Colors.white24,
+                  ),
+                ),
                 tooltip: _t(
                   nl: 'Boeking annuleren',
                   en: 'Cancel booking',
@@ -13847,6 +14187,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               ),
               if (_canLocalRemoveBookingOnly)
                 IconButton(
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFF111214),
+                    foregroundColor: Colors.white.withOpacity(0.9),
+                    side: BorderSide(color: Colors.white.withOpacity(0.22)),
+                  ),
                   tooltip: _t(
                     nl: 'Verwijderen uit mijn lijst',
                     en: 'Remove from my list',
@@ -13857,6 +14202,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   icon: const Icon(Icons.delete_outline),
                 ),
               IconButton(
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFF111214),
+                  foregroundColor: kFluxidiYellow.withOpacity(0.98),
+                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.3)),
+                ),
                 tooltip: _t(
                   nl: 'Vernieuwen',
                   en: 'Refresh',
@@ -13870,8 +14220,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.refresh),
+                    : const Icon(Icons.refresh_outlined),
               ),
+              const SizedBox(width: 6),
             ],
           ),
           body: SafeArea(
@@ -13918,10 +14269,21 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                     Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       width: double.infinity,
-                      child: FilledButton.icon(
+                      child: OutlinedButton.icon(
                         onPressed: _cancelling
                             ? null
                             : _cancelBookingServerSide,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFFFCDCD),
+                          side: BorderSide(
+                            color: const Color(0xFFCD5C6C).withOpacity(0.72),
+                          ),
+                          backgroundColor: const Color(0xFF2A1114),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                         icon: _cancelling
                             ? const SizedBox(
                                 width: 16,
@@ -13946,9 +14308,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                     margin: const EdgeInsets.only(bottom: 14),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: paid
-                          ? const Color(0xFF11331F)
-                          : const Color(0xFF2A2410),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: paid
+                            ? const [Color(0xFF103325), Color(0xFF0A1E16)]
+                            : const [Color(0xFF2A2410), Color(0xFF161109)],
+                      ),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: paid
@@ -13972,6 +14338,20 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(
+                                _t(
+                                  nl: 'Betaalstatus',
+                                  en: 'Payment status',
+                                  fr: 'Statut de paiement',
+                                  es: 'Estado de pago',
+                                ),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.72),
+                                  fontSize: 11.1,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
                               Text(
                                 paid
                                     ? _t(
@@ -14083,26 +14463,89 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       es: 'Ruta',
                     ),
                     children: [
-                      _kv(
-                        _t(
-                          nl: 'Ophaaladres',
-                          en: 'Pickup',
-                          fr: 'Prise en charge',
-                          es: 'Recogida',
-                        ),
-                        v.fromAddress,
-                        stacked: true,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Column(
+                            children: [
+                              Icon(
+                                Icons.radio_button_checked,
+                                size: 12,
+                                color: kFluxidiYellow.withOpacity(0.95),
+                              ),
+                              Container(
+                                width: 2,
+                                height: 34,
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                color: kFluxidiYellow.withOpacity(0.34),
+                              ),
+                              const Icon(
+                                Icons.location_on,
+                                size: 14,
+                                color: Color(0xFF34D29A),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _t(
+                                    nl: 'Ophaaladres',
+                                    en: 'Pickup',
+                                    fr: 'Prise en charge',
+                                    es: 'Recogida',
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 11.8,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  v.fromAddress.trim().isEmpty
+                                      ? _notFilled()
+                                      : v.fromAddress.trim(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.8,
+                                    height: 1.26,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  _t(
+                                    nl: 'Bestemming',
+                                    en: 'Destination',
+                                    fr: 'Destination',
+                                    es: 'Destino',
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 11.8,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  v.toAddress.trim().isEmpty
+                                      ? _notFilled()
+                                      : v.toAddress.trim(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.8,
+                                    height: 1.26,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      _kv(
-                        _t(
-                          nl: 'Bestemming',
-                          en: 'Destination',
-                          fr: 'Destination',
-                          es: 'Destino',
-                        ),
-                        v.toAddress,
-                        stacked: true,
-                      ),
+                      const SizedBox(height: 10),
                       _kv(
                         _t(
                           nl: 'Geplande ophaal',
