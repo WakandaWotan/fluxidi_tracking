@@ -97,6 +97,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _backendBusinessSaving = false;
   bool _backendTaxSaving = false;
   bool _publicPartnerProfilePublishing = false;
+  bool _publicLogoUploading = false;
+  bool _publicHeroUploading = false;
   bool _googleCalendarLoading = false;
   bool _googleCalendarReconnectLoading = false;
   bool _googleCalendarDisconnectLoading = false;
@@ -109,6 +111,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
+  bool _showAdvancedPublicMediaUrls = false;
   final ImagePicker _imagePicker = ImagePicker();
   Set<String> _serviceIds = <String>{};
   Set<String> _tierIds = <String>{};
@@ -1118,6 +1121,100 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  Future<void> _uploadPublicCompanyMedia({required String mediaType}) async {
+    final isLogo = mediaType == 'company_logo';
+    setState(() {
+      if (isLogo) {
+        _publicLogoUploading = true;
+      } else {
+        _publicHeroUploading = true;
+      }
+      _publicPartnerProfileError = null;
+      _publicPartnerProfileStatus = null;
+    });
+    try {
+      final maxWidth = isLogo ? 800.0 : 1600.0;
+      final quality = isLogo ? 88 : 82;
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: maxWidth,
+        imageQuality: quality,
+      );
+      if (picked == null) return;
+      final scope = _activeSettingsScope();
+      final bytes = kIsWeb ? await picked.readAsBytes() : null;
+      final uploaded = await uploadPublicPartnerMedia(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        mediaType: mediaType,
+        filePath: kIsWeb ? null : picked.path,
+        fileBytes: bytes,
+        filename: picked.name,
+      );
+      final url = (uploaded['url'] ?? '').toString().trim();
+      if (!_isPublicHttpsUrl(url)) {
+        throw Exception('Upload did not return a valid HTTPS URL');
+      }
+
+      if (isLogo) {
+        _publicLogoUrlCtrl.text = url;
+      } else {
+        _publicHeroPhotoUrlCtrl.text = url;
+      }
+
+      final formProfile = _backendBusinessProfileFromForm();
+      await updateLocalBackendBusinessProfileCache(formProfile);
+      final saved = await saveBackendBusinessProfile(
+        formProfile,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      final merged = _mergeBackendBusinessProfile(
+        local: formProfile,
+        server: saved,
+      );
+      setState(() {
+        _hydrateBackendBusinessProfile(merged);
+        _publicPartnerProfileStatus = _t(
+          nl: isLogo
+              ? 'Publiek logo geüpload en opgeslagen.'
+              : 'Publieke coverfoto geüpload en opgeslagen.',
+          en: isLogo
+              ? 'Public logo uploaded and saved.'
+              : 'Public cover photo uploaded and saved.',
+          fr: isLogo
+              ? 'Logo public téléversé et enregistré.'
+              : 'Photo de couverture publique téléversée et enregistrée.',
+          es: isLogo
+              ? 'Logo público subido y guardado.'
+              : 'Foto de portada pública subida y guardada.',
+        );
+      });
+      unawaited(updateLocalBackendBusinessProfileCache(merged));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _publicPartnerProfileError = _t(
+          nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
+          en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
+          fr: 'Échec du téléversement. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
+          es: 'La carga falló. Verifica que sea una imagen JPG, PNG o WEBP.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (isLogo) {
+            _publicLogoUploading = false;
+          } else {
+            _publicHeroUploading = false;
+          }
+        });
+      }
+    }
+  }
+
   Future<void> _saveBackendTaxProfile() async {
     setState(() {
       _backendTaxSaving = true;
@@ -1178,6 +1275,260 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       return false;
     }
     return lower.startsWith('https://');
+  }
+
+  Widget _publicMediaPreview() {
+    final logoUrl = _isPublicHttpsUrl(_publicLogoUrlCtrl.text)
+        ? _publicLogoUrlCtrl.text.trim()
+        : '';
+    final heroUrl = _isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)
+        ? _publicHeroPhotoUrlCtrl.text.trim()
+        : '';
+    final hasLogo = logoUrl.isNotEmpty;
+    final hasHero = heroUrl.isNotEmpty;
+    final hasAny = hasLogo || hasHero;
+
+    Widget fallbackTile({
+      required String label,
+      required IconData icon,
+      double height = 120,
+    }) {
+      return Container(
+        height: height,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF17110A),
+              const Color(0xFF111214),
+              _setupGold.withOpacity(0.18),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _setupGold.withOpacity(0.22)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(icon, color: _setupGold.withOpacity(0.96)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.86),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0F12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _setupGold.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Publieke media preview',
+              en: 'Public media preview',
+              fr: 'Aperçu des médias publics',
+              es: 'Vista previa de medios públicos',
+            ),
+            style: TextStyle(
+              color: _setupGold.withOpacity(0.98),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (!hasAny)
+            fallbackTile(
+              label: _t(
+                nl: 'Nog geen publieke media geüpload.',
+                en: 'No public media uploaded yet.',
+                fr: 'Aucun média public téléversé pour le moment.',
+                es: 'Aún no se ha subido ningún medio público.',
+              ),
+              icon: Icons.image_not_supported_outlined,
+              height: 72,
+            )
+          else ...[
+            if (hasHero)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  height: 156,
+                  width: double.infinity,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.network(
+                        heroUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => fallbackTile(
+                          label: _t(
+                            nl: 'Publieke coverfoto',
+                            en: 'Public cover photo',
+                            fr: 'Photo de couverture publique',
+                            es: 'Foto de portada pública',
+                          ),
+                          icon: Icons.image_outlined,
+                          height: 156,
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.black.withOpacity(0.15),
+                                Colors.black.withOpacity(0.55),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 10,
+                        bottom: 10,
+                        child: _statusPill(
+                          _t(
+                            nl: 'Cover geüpload',
+                            en: 'Cover uploaded',
+                            fr: 'Couverture téléversée',
+                            es: 'Portada subida',
+                          ),
+                          _setupGold,
+                        ),
+                      ),
+                      if (hasLogo)
+                        Positioned(
+                          right: 10,
+                          bottom: 10,
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.82),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.25),
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Image.network(
+                              logoUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Icon(
+                                Icons.business_outlined,
+                                color: _setupGold.withOpacity(0.96),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            if (!hasHero && hasLogo)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: fallbackTile(
+                  label: _t(
+                    nl: 'Publiek logo',
+                    en: 'Public logo',
+                    fr: 'Logo public',
+                    es: 'Logo público',
+                  ),
+                  icon: Icons.business_outlined,
+                ),
+              ),
+            if (!hasHero && hasLogo) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _setupGold.withOpacity(0.24)),
+                  color: const Color(0xFF0F1014),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Image.network(
+                  logoUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Center(
+                    child: Icon(
+                      Icons.business_outlined,
+                      color: _setupGold.withOpacity(0.96),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (hasLogo)
+                  _statusPill(
+                    _t(
+                      nl: 'Logo geüpload',
+                      en: 'Logo uploaded',
+                      fr: 'Logo téléversé',
+                      es: 'Logo subido',
+                    ),
+                    const Color(0xFF34D29A),
+                  ),
+                if (hasHero)
+                  _statusPill(
+                    _t(
+                      nl: 'Cover geüpload',
+                      en: 'Cover uploaded',
+                      fr: 'Couverture téléversée',
+                      es: 'Portada subida',
+                    ),
+                    const Color(0xFF34D29A),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _statusPill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
   }
 
   List<String> _mappedPublicServiceIds() {
@@ -3439,58 +3790,173 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  _txt(
-                    _publicLogoUrlCtrl,
+                  Text(
                     _t(
-                      nl: 'Publieke logo-URL',
-                      en: 'Public logo URL',
-                      fr: 'URL du logo public',
-                      es: 'URL del logo público',
+                      nl: 'Upload een logo of coverfoto. Fluxidi maakt automatisch een publieke veilige link.',
+                      en: 'Upload a logo or cover photo. Fluxidi automatically creates a safe public link.',
+                      fr: 'Téléversez un logo ou une photo de couverture. Fluxidi crée automatiquement un lien public sécurisé.',
+                      es: 'Sube un logo o una foto de portada. Fluxidi crea automáticamente un enlace público seguro.',
                     ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  _txt(
-                    _publicHeroPhotoUrlCtrl,
-                    _t(
-                      nl: 'Publieke coverfoto-URL',
-                      en: 'Public cover photo URL',
-                      fr: 'URL de la photo de couverture publique',
-                      es: 'URL de la foto de portada pública',
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.4,
                     ),
-                    onChanged: (_) => setState(() {}),
                   ),
-                  if (_publicLogoUrlCtrl.text.trim().isNotEmpty &&
-                      !_isPublicHttpsUrl(_publicLogoUrlCtrl.text)) ...[
-                    Text(
+                  const SizedBox(height: 10),
+                  _publicMediaPreview(),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed:
+                              (_publicLogoUploading ||
+                                  _publicHeroUploading ||
+                                  _publicPartnerProfilePublishing)
+                              ? null
+                              : () => _uploadPublicCompanyMedia(
+                                  mediaType: 'company_logo',
+                                ),
+                          icon: _publicLogoUploading
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.upload_file_outlined),
+                          label: Text(
+                            _isPublicHttpsUrl(_publicLogoUrlCtrl.text)
+                                ? _t(
+                                    nl: 'Vervang logo',
+                                    en: 'Replace logo',
+                                    fr: 'Remplacer le logo',
+                                    es: 'Reemplazar logo',
+                                  )
+                                : _t(
+                                    nl: 'Upload publiek logo',
+                                    en: 'Upload public logo',
+                                    fr: 'Téléverser le logo public',
+                                    es: 'Subir logo público',
+                                  ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed:
+                              (_publicLogoUploading ||
+                                  _publicHeroUploading ||
+                                  _publicPartnerProfilePublishing)
+                              ? null
+                              : () => _uploadPublicCompanyMedia(
+                                  mediaType: 'company_hero',
+                                ),
+                          icon: _publicHeroUploading
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.image_outlined),
+                          label: Text(
+                            _isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)
+                                ? _t(
+                                    nl: 'Vervang coverfoto',
+                                    en: 'Replace cover photo',
+                                    fr: 'Remplacer la photo de couverture',
+                                    es: 'Reemplazar foto de portada',
+                                  )
+                                : _t(
+                                    nl: 'Upload publieke coverfoto',
+                                    en: 'Upload public cover photo',
+                                    fr: 'Téléverser la couverture publique',
+                                    es: 'Subir portada pública',
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    initiallyExpanded: _showAdvancedPublicMediaUrls,
+                    onExpansionChanged: (v) {
+                      setState(() => _showAdvancedPublicMediaUrls = v);
+                    },
+                    title: Text(
                       _t(
-                        nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
-                        en: 'Warning: logo URL must start with https:// to be published.',
-                        fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
-                        es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
+                        nl: 'Geavanceerd: handmatige publieke URL\'s (fallback)',
+                        en: 'Advanced: manual public URLs (fallback)',
+                        fr: 'Avancé : URLs publiques manuelles (secours)',
+                        es: 'Avanzado: URLs públicas manuales (respaldo)',
                       ),
                       style: const TextStyle(
-                        color: Colors.orangeAccent,
-                        fontSize: 11,
+                        color: Colors.white70,
+                        fontSize: 12.3,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                  ],
-                  if (_publicHeroPhotoUrlCtrl.text.trim().isNotEmpty &&
-                      !_isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)) ...[
-                    Text(
-                      _t(
-                        nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
-                        en: 'Warning: cover photo URL must start with https:// to be published.',
-                        fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
-                        es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
+                    children: [
+                      _txt(
+                        _publicLogoUrlCtrl,
+                        _t(
+                          nl: 'Publieke logo-URL',
+                          en: 'Public logo URL',
+                          fr: 'URL du logo public',
+                          es: 'URL del logo público',
+                        ),
+                        onChanged: (_) => setState(() {}),
                       ),
-                      style: const TextStyle(
-                        color: Colors.orangeAccent,
-                        fontSize: 11,
+                      _txt(
+                        _publicHeroPhotoUrlCtrl,
+                        _t(
+                          nl: 'Publieke coverfoto-URL',
+                          en: 'Public cover photo URL',
+                          fr: 'URL de la photo de couverture publique',
+                          es: 'URL de la foto de portada pública',
+                        ),
+                        onChanged: (_) => setState(() {}),
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                  ],
+                      if (_publicLogoUrlCtrl.text.trim().isNotEmpty &&
+                          !_isPublicHttpsUrl(_publicLogoUrlCtrl.text)) ...[
+                        Text(
+                          _t(
+                            nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
+                            en: 'Warning: logo URL must start with https:// to be published.',
+                            fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
+                            es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      if (_publicHeroPhotoUrlCtrl.text.trim().isNotEmpty &&
+                          !_isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)) ...[
+                        Text(
+                          _t(
+                            nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
+                            en: 'Warning: cover photo URL must start with https:// to be published.',
+                            fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
+                            es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                    ],
+                  ),
                   const SizedBox(height: 10),
                   FilledButton.icon(
                     onPressed: _publicPartnerProfilePublishing

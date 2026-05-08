@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 
 class CompanyIdentityConfig {
@@ -1936,6 +1938,171 @@ Future<Map<String, dynamic>> publishBackendPublicPartnerProfile({
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
   final decoded = jsonDecode(res.body);
+  if (decoded is! Map) throw Exception('Invalid response');
+  return Map<String, dynamic>.from(decoded);
+}
+
+Future<Map<String, dynamic>> uploadPublicPartnerMedia({
+  required String mediaType,
+  String? tenantId,
+  String? companyId,
+  String? filePath,
+  Uint8List? fileBytes,
+  String? filename,
+  String? contentType,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/partners/media/upload'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final normalizedType = mediaType.trim().toLowerCase();
+  if (normalizedType.isEmpty) {
+    throw Exception('mediaType is required');
+  }
+  final hasPath = (filePath ?? '').trim().isNotEmpty;
+  final bytesForUpload = fileBytes ?? Uint8List(0);
+  final hasBytes = bytesForUpload.isNotEmpty;
+  if (!hasPath && !hasBytes) {
+    throw Exception('filePath or fileBytes is required');
+  }
+
+  String fallbackFilename() {
+    if ((filename ?? '').trim().isNotEmpty) return filename!.trim();
+    if (hasPath) {
+      final raw = filePath!.trim();
+      final slash = raw.lastIndexOf('/');
+      final backSlash = raw.lastIndexOf('\\');
+      final idx = slash > backSlash ? slash : backSlash;
+      if (idx >= 0 && idx < raw.length - 1) {
+        return raw.substring(idx + 1);
+      }
+      return raw;
+    }
+    switch (contentType?.trim().toLowerCase()) {
+      case 'image/png':
+        return 'upload.png';
+      case 'image/webp':
+        return 'upload.webp';
+      default:
+        return 'upload.jpg';
+    }
+  }
+
+  final request = http.MultipartRequest('POST', endpoint);
+  final headers = Map<String, String>.from(_adminJsonHeaders());
+  headers.removeWhere((k, _) => k.toLowerCase() == 'content-type');
+  request.headers.addAll(headers);
+  request.fields['tenant_id'] = scope['tenant_id'] ?? '';
+  request.fields['company_id'] = scope['company_id'] ?? '';
+  request.fields['media_type'] = normalizedType;
+
+  final uploadFilename = fallbackFilename();
+  String mimeFromFilename(String name) {
+    final lower = name.trim().toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    return '';
+  }
+
+  String mimeFromBytes(Uint8List bytes) {
+    final len = bytes.length;
+    if (len >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+      return 'image/jpeg';
+    }
+    if (len >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0D &&
+        bytes[5] == 0x0A &&
+        bytes[6] == 0x1A &&
+        bytes[7] == 0x0A) {
+      return 'image/png';
+    }
+    if (len >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return 'image/webp';
+    }
+    return '';
+  }
+
+  Future<Uint8List?> sniffBytesFromPath(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final all = await file.readAsBytes();
+      final count = all.length < 32 ? all.length : 32;
+      return Uint8List.sublistView(all, 0, count);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final mimeFromName = mimeFromFilename(uploadFilename);
+  final providedContentType = (contentType ?? '').trim().toLowerCase();
+  final bytesForSniff = hasBytes
+      ? Uint8List.sublistView(
+          bytesForUpload,
+          0,
+          bytesForUpload.length < 32 ? bytesForUpload.length : 32,
+        )
+      : await sniffBytesFromPath(filePath!.trim());
+  final mimeFromMagic = bytesForSniff == null
+      ? ''
+      : mimeFromBytes(bytesForSniff);
+  final resolvedMime =
+      <String>[mimeFromMagic, mimeFromName, providedContentType].firstWhere(
+        (m) => m == 'image/jpeg' || m == 'image/png' || m == 'image/webp',
+        orElse: () => 'application/octet-stream',
+      );
+  final slash = resolvedMime.indexOf('/');
+  final multipartMediaType = slash > 0 && slash < resolvedMime.length - 1
+      ? MediaType(
+          resolvedMime.substring(0, slash),
+          resolvedMime.substring(slash + 1),
+        )
+      : MediaType('application', 'octet-stream');
+
+  if (hasBytes) {
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytesForUpload,
+        filename: uploadFilename,
+        contentType: multipartMediaType,
+      ),
+    );
+  } else {
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        filePath!.trim(),
+        filename: uploadFilename,
+        contentType: multipartMediaType,
+      ),
+    );
+  }
+
+  final streamed = await request.send().timeout(const Duration(seconds: 30));
+  final body = await streamed.stream.bytesToString();
+  if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+    throw Exception('HTTP ${streamed.statusCode}: $body');
+  }
+  final decoded = jsonDecode(body);
   if (decoded is! Map) throw Exception('Invalid response');
   return Map<String, dynamic>.from(decoded);
 }

@@ -42,6 +42,10 @@ id = "e457c0f51cfe44bca031250a0485b31e"
 binding = "INVOICE_KV"
 id = "c945929b64a743fdb10e09059d835746"
 
+[[r2_buckets]]
+binding = "PUBLIC_MEDIA"
+bucket_name = "fluxidi-public-media"
+
 [[migrations]]
 tag = "fleet-allocator-v1"
 new_sqlite_classes = ["FleetAllocatorDO"]

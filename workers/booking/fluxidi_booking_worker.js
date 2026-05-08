@@ -3286,6 +3286,35 @@ GET /oauth/callback
         return handlePublicBookingPreview(url, env);
       }
 
+      // PUBLIC MEDIA (read-only, path-limited)
+      if (url.pathname.startsWith("/public/media/") && request.method === "GET") {
+        const keyPart = url.pathname.slice("/public/media/".length);
+        const decodedKey = _decodePublicMediaKeyFromPath(keyPart);
+        const keyValidation = _validatePublicMediaReadKey(decodedKey);
+        if (!keyValidation.ok) {
+          return json({ ok: false, error: keyValidation.error }, 400);
+        }
+        if (!env.PUBLIC_MEDIA) {
+          return json({ ok: false, error: "PUBLIC_MEDIA binding is missing" }, 500);
+        }
+        const object = await env.PUBLIC_MEDIA.get(decodedKey);
+        if (!object) {
+          return new Response("Not Found", { status: 404, headers: corsHeaders() });
+        }
+        const headers = new Headers(corsHeaders());
+        if (typeof object.writeHttpMetadata === "function") {
+          object.writeHttpMetadata(headers);
+        }
+        if (!headers.has("Content-Type")) {
+          headers.set("Content-Type", "application/octet-stream");
+        }
+        if (!headers.has("Cache-Control")) {
+          headers.set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+        }
+        if (object.httpEtag) headers.set("ETag", object.httpEtag);
+        return new Response(object.body, { status: 200, headers });
+      }
+
       // =========================
       // AUTHORITATIVE BOOKINGS API (minimal v1 for app rides list/lifecycle)
       // =========================
@@ -3537,6 +3566,78 @@ GET /oauth/callback
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/partners/media/upload" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        if (!env.PUBLIC_MEDIA) return json({ ok: false, error: "PUBLIC_MEDIA binding is missing" }, 500);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const tenantId = sanitizeTenantString(explicitScope.tenant_id, 120);
+        const companyId = sanitizeTenantString(explicitScope.company_id, 120);
+        if (!tenantId || !companyId) {
+          return json({ ok: false, error: "tenant_id and company_id are required" }, 400);
+        }
+        const contentType = String(request.headers.get("content-type") || "").toLowerCase();
+        if (!contentType.includes("multipart/form-data")) {
+          return json({ ok: false, error: "multipart/form-data is required" }, 400);
+        }
+        const form = await request.formData();
+        const mediaType = sanitizeTenantString(form.get("media_type"), 64).toLowerCase();
+        const mediaTypeValidation = _validateCompanyMediaType(mediaType);
+        if (!mediaTypeValidation.ok) {
+          return json({ ok: false, error: mediaTypeValidation.error }, 400);
+        }
+        const filePart = form.get("file");
+        if (!filePart || typeof filePart.arrayBuffer !== "function") {
+          return json({ ok: false, error: "file is required" }, 400);
+        }
+        const bytes = new Uint8Array(await filePart.arrayBuffer());
+        if (!bytes.length) return json({ ok: false, error: "file is empty" }, 400);
+        if (bytes.length > 5 * 1024 * 1024) {
+          return json({ ok: false, error: "file exceeds 5MB limit" }, 400);
+        }
+        const declaredType = String(filePart.type || "").trim().toLowerCase();
+        const declaredUnknownOrMissing =
+          !declaredType ||
+          declaredType === "application/octet-stream" ||
+          declaredType === "binary/octet-stream";
+        const declaredAllowed = _isAllowedPublicImageContentType(declaredType);
+        if (!declaredUnknownOrMissing && !declaredAllowed) {
+          return json({ ok: false, error: "unsupported content type" }, 400);
+        }
+        const detected = _detectPublicImageFormat(bytes);
+        if (!detected.ok) return json({ ok: false, error: "unsupported content type" }, 400);
+        if (declaredAllowed && declaredType !== detected.content_type) {
+          return json({ ok: false, error: "content_type_mismatch" }, 400);
+        }
+
+        const objectKey = _buildPublicCompanyMediaKey({
+          tenantId,
+          companyId,
+          mediaType,
+          ext: detected.ext,
+        });
+        await env.PUBLIC_MEDIA.put(objectKey, bytes, {
+          httpMetadata: {
+            contentType: detected.content_type,
+            cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
+          },
+        });
+        const uploadedAt = Date.now();
+        const mediaUrl =
+          `${url.origin}/public/media/${_encodePublicMediaKeyForUrl(objectKey)}?v=${uploadedAt}`;
+        return json({
+          ok: true,
+          media_type: mediaType,
+          key: objectKey,
+          url: mediaUrl,
+          uploaded_at: uploadedAt,
+          content_type: detected.content_type,
+          size: bytes.length,
         }, 200);
       }
 
@@ -9121,6 +9222,97 @@ async function listNearbyPartnersByPostcode(env, postcode) {
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
       };
     });
+}
+
+function _isAllowedPublicImageContentType(contentType) {
+  const normalized = String(contentType || "").trim().toLowerCase();
+  return (
+    normalized === "image/jpeg" ||
+    normalized === "image/png" ||
+    normalized === "image/webp"
+  );
+}
+
+function _detectPublicImageFormat(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 12) {
+    return { ok: false, error: "invalid or too small image" };
+  }
+  const startsWithPng =
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  if (startsWithPng) return { ok: true, ext: "png", content_type: "image/png" };
+
+  const startsWithJpeg =
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff;
+  if (startsWithJpeg) return { ok: true, ext: "jpg", content_type: "image/jpeg" };
+
+  const startsWithWebp =
+    bytes.length >= 12 &&
+    String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === "RIFF" &&
+    String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) === "WEBP";
+  if (startsWithWebp) return { ok: true, ext: "webp", content_type: "image/webp" };
+
+  return { ok: false, error: "unsupported image format" };
+}
+
+function _sanitizePublicMediaSegment(value) {
+  const raw = sanitizeTenantString(value, 120).toLowerCase();
+  const sanitized = raw.replace(/[^a-z0-9._-]/g, "-").replace(/-+/g, "-");
+  return sanitized.replace(/^-+/, "").replace(/-+$/, "");
+}
+
+function _validateCompanyMediaType(mediaType) {
+  if (mediaType === "company_logo" || mediaType === "company_hero") return { ok: true };
+  return { ok: false, error: "unsupported media_type" };
+}
+
+function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, ext }) {
+  const tenantSeg = _sanitizePublicMediaSegment(tenantId);
+  const companySeg = _sanitizePublicMediaSegment(companyId);
+  if (!tenantSeg || !companySeg) {
+    throw new Error("invalid tenant/company scope");
+  }
+  const safeExt = _sanitizePublicMediaSegment(ext || "jpg") || "jpg";
+  const fileName = mediaType === "company_logo" ? `logo.${safeExt}` : `hero.${safeExt}`;
+  return `public-media/${tenantSeg}/${companySeg}/company/${fileName}`;
+}
+
+function _encodePublicMediaKeyForUrl(key) {
+  return String(key || "")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function _decodePublicMediaKeyFromPath(pathPart) {
+  const chunks = String(pathPart || "").split("/").filter((s) => s.length > 0);
+  try {
+    return chunks.map((s) => decodeURIComponent(s)).join("/");
+  } catch {
+    return "";
+  }
+}
+
+function _validatePublicMediaReadKey(key) {
+  const candidate = String(key || "");
+  if (!candidate) return { ok: false, error: "missing media key" };
+  if (!candidate.startsWith("public-media/")) {
+    return { ok: false, error: "invalid media key prefix" };
+  }
+  if (candidate.includes("..") || candidate.includes("\\")) {
+    return { ok: false, error: "invalid media key" };
+  }
+  return { ok: true };
 }
 
 function _safePublicText(value, maxLen = 240) {
