@@ -3147,6 +3147,7 @@ class CustomerProfileEditPage extends StatefulWidget {
 class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
+  final _postcodeCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _companyNameCtrl = TextEditingController();
@@ -3170,6 +3171,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   int _completedProfileFields() {
     return <TextEditingController>[
       _nameCtrl,
+      _postcodeCtrl,
       _phoneCtrl,
       _emailCtrl,
       _companyNameCtrl,
@@ -3255,7 +3257,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                         ),
                       ),
                       child: Text(
-                        '$completed/5 ${_t(nl: 'compleet', en: 'complete', fr: 'complet', es: 'completo')}',
+                        '$completed/6 ${_t(nl: 'compleet', en: 'complete', fr: 'complet', es: 'completo')}',
                         style: TextStyle(
                           color: kFluxidiYellow.withOpacity(0.98),
                           fontSize: 11,
@@ -3365,6 +3367,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _postcodeCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _companyNameCtrl.dispose();
@@ -3376,6 +3379,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     final profile = await CustomerProfileStore.instance.load();
     if (!mounted || profile == null) return;
     _nameCtrl.text = profile.name;
+    _postcodeCtrl.text = profile.preferredPostcode;
     _phoneCtrl.text = profile.phone;
     _emailCtrl.text = profile.email;
     _companyNameCtrl.text = profile.companyName;
@@ -3388,6 +3392,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     setState(() => _saving = true);
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
+      preferredPostcode: _postcodeCtrl.text,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
@@ -3513,6 +3518,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                         AnimatedBuilder(
                           animation: Listenable.merge([
                             _nameCtrl,
+                            _postcodeCtrl,
                             _phoneCtrl,
                             _emailCtrl,
                             _companyNameCtrl,
@@ -3552,6 +3558,28 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                     en: 'Enter your name',
                                     fr: 'Saisissez votre nom',
                                     es: 'Introduce tu nombre',
+                                  );
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                            _field(
+                              label: _t(
+                                nl: 'Postcode',
+                                en: 'Postcode',
+                                fr: 'Code postal',
+                                es: 'Código postal',
+                              ),
+                              controller: _postcodeCtrl,
+                              validator: (v) {
+                                final text = (v ?? '').trim();
+                                if (text.isEmpty) {
+                                  return _t(
+                                    nl: 'Vul je postcode in',
+                                    en: 'Enter your postcode',
+                                    fr: 'Saisissez votre code postal',
+                                    es: 'Introduce tu código postal',
                                   );
                                 }
                                 return null;
@@ -8342,10 +8370,10 @@ class CustomerHomePage extends StatelessWidget {
       (
         icon: Icons.app_registration_outlined,
         label: _t(
-          nl: 'Registreer je regio',
-          en: 'Register your region',
-          fr: 'Enregistrer votre région',
-          es: 'Registrar tu región',
+          nl: 'Regio Radar',
+          en: 'Region Radar',
+          fr: 'Radar régional',
+          es: 'Radar regional',
         ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(
@@ -10388,10 +10416,22 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
             hintText: hintText,
             hintStyle: const TextStyle(color: Colors.white38),
             filled: true,
-            fillColor: const Color(0xFF141B2F),
+            fillColor: const Color(0xFF111317),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: const Color(0xFFE5B641).withOpacity(0.18),
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: const Color(0xFFE5B641).withOpacity(0.52),
+              ),
             ),
           ),
         ),
@@ -13025,14 +13065,12 @@ class CustomerRegionRegistrationPage extends StatefulWidget {
 
 class _CustomerRegionRegistrationPageState
     extends State<CustomerRegionRegistrationPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _firstNameCtrl = TextEditingController();
-  final _lastNameCtrl = TextEditingController();
-  final _postalCodeCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  bool _wantsUpdates = true;
+  final bool _wantsUpdates = true;
   bool _submitting = false;
+  String _profileName = '';
+  String _profileEmail = '';
+  String _profilePhone = '';
+  String _profilePostcode = '';
 
   String _t({
     required String nl,
@@ -13042,54 +13080,194 @@ class _CustomerRegionRegistrationPageState
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   @override
-  void dispose() {
-    _firstNameCtrl.dispose();
-    _lastNameCtrl.dispose();
-    _postalCodeCtrl.dispose();
-    _emailCtrl.dispose();
-    _phoneCtrl.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    unawaited(_prefillFromProfile());
   }
 
-  String? _required(String? value) {
-    final v = (value ?? '').trim();
-    if (v.isEmpty) {
-      return _t(
-        nl: 'Dit veld is verplicht',
-        en: 'This field is required',
-        fr: 'Ce champ est obligatoire',
-        es: 'Este campo es obligatorio',
-      );
-    }
-    return null;
+  Future<void> _prefillFromProfile() async {
+    final profile = await _loadCachedCustomerProfileIfNeeded();
+    if (!mounted) return;
+    final name = profile?.name.trim() ?? '';
+    final email = profile?.email.trim() ?? '';
+    final phone = profile?.phone.trim() ?? '';
+    final profilePostcode = profile?.preferredPostcode.trim() ?? '';
+    final postcode = profilePostcode.isNotEmpty
+        ? profilePostcode.toUpperCase()
+        : _latestKnownRegionPostcode(email: email, name: name);
+    setState(() {
+      _profileName = name;
+      _profileEmail = email;
+      _profilePhone = phone;
+      _profilePostcode = postcode;
+    });
   }
 
-  String? _emailValidator(String? value) {
-    final requiredError = _required(value);
-    if (requiredError != null) return requiredError;
-    final v = value!.trim();
-    if (!v.contains('@') || !v.contains('.')) {
+  String _latestKnownRegionPostcode({
+    required String email,
+    required String name,
+  }) {
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedName = name.trim().toLowerCase();
+    for (final row in _customerRegionLeadInbox.reversed) {
+      final rowPostcode = (row['postal_code'] ?? '').toString().trim();
+      if (rowPostcode.isEmpty) continue;
+      final rowEmail = (row['email'] ?? '').toString().trim().toLowerCase();
+      final rowName = <String>[
+        (row['first_name'] ?? '').toString().trim(),
+        (row['last_name'] ?? '').toString().trim(),
+      ].where((v) => v.isNotEmpty).join(' ').toLowerCase();
+      if (normalizedEmail.isNotEmpty && rowEmail == normalizedEmail) {
+        return rowPostcode.toUpperCase();
+      }
+      if (normalizedName.isNotEmpty && rowName == normalizedName) {
+        return rowPostcode.toUpperCase();
+      }
+    }
+    return '';
+  }
+
+  bool _hasRequiredProfileData() {
+    final name = _profileName.trim();
+    final email = _profileEmail.trim();
+    final postcode = _profilePostcode.trim();
+    final hasValidEmail = email.contains('@') && email.contains('.');
+    return name.isNotEmpty && hasValidEmail && postcode.isNotEmpty;
+  }
+
+  Future<void> _openProfileForCompletion() async {
+    if (!mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()));
+    await _refreshCachedCustomerProfile();
+    await _prefillFromProfile();
+  }
+
+  Future<void> _submitFromProfileGuarded() async {
+    await _refreshCachedCustomerProfile();
+    await _prefillFromProfile();
+    if (!_hasRequiredProfileData()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Vul eerst je profielgegevens aan zodat we je kunnen verwittigen.',
+              en: 'Complete your profile details first so we can notify you.',
+              fr: 'Complétez d’abord votre profil afin que nous puissions vous informer.',
+              es: 'Completa primero tu perfil para que podamos avisarte.',
+            ),
+          ),
+        ),
+      );
+      await _openProfileForCompletion();
+      return;
+    }
+    await _submit();
+  }
+
+  String _regionBadgeText() {
+    final postcode = _profilePostcode.trim();
+    if (postcode.isNotEmpty) {
       return _t(
-        nl: 'Voer een geldig e-mailadres in',
-        en: 'Enter a valid email address',
-        fr: 'Entrez une adresse e-mail valide',
-        es: 'Introduce un correo electronico valido',
+        nl: '$postcode · jouw regio',
+        en: '$postcode · your area',
+        fr: '$postcode · votre région',
+        es: '$postcode · tu zona',
       );
     }
-    return null;
+    return _t(
+      nl: 'Jouw regio',
+      en: 'Your area',
+      fr: 'Votre région',
+      es: 'Tu zona',
+    );
+  }
+
+  InlineSpan _radarHeadlineSpan() {
+    const baseStyle = TextStyle(
+      color: Colors.white,
+      fontSize: 24,
+      fontWeight: FontWeight.w900,
+      height: 1.12,
+    );
+    final highlightStyle = baseStyle.copyWith(
+      color: kFluxidiYellow.withOpacity(0.98),
+    );
+    switch (appLanguageNotifier.value) {
+      case AppLanguage.nl:
+        return TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Fluxidi is nog niet actief in '),
+            TextSpan(text: 'jouw regio', style: highlightStyle),
+          ],
+        );
+      case AppLanguage.fr:
+        return TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Fluxidi n’est pas encore actif dans '),
+            TextSpan(text: 'votre région', style: highlightStyle),
+          ],
+        );
+      case AppLanguage.es:
+        return TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Fluxidi aún no está activo en '),
+            TextSpan(text: 'tu región', style: highlightStyle),
+          ],
+        );
+      case AppLanguage.en:
+        return TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Fluxidi is not active in '),
+            TextSpan(text: 'your region', style: highlightStyle),
+            const TextSpan(text: ' yet'),
+          ],
+        );
+    }
+  }
+
+  bool _hasVerifiedActivePartnersSignal() {
+    // Regio Radar currently has no partner availability feed in this view.
+    return false;
+  }
+
+  Future<void> _shareRadar() async {
+    await Share.share(
+      _t(
+        nl: 'Ik volg Regio Radar op Fluxidi. Sluit je aan zodat we Fluxidi sneller in onze regio krijgen.',
+        en: 'I am following Region Radar on Fluxidi. Join in so we can get Fluxidi in our area sooner.',
+        fr: 'Je suis Radar régional sur Fluxidi. Rejoins-nous pour activer Fluxidi plus vite dans notre région.',
+        es: 'Estoy siguiendo Radar regional en Fluxidi. Únete para que Fluxidi llegue antes a nuestra zona.',
+      ),
+    );
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+    final fullName = _profileName.trim();
+    final email = _profileEmail.trim();
+    final postcode = _profilePostcode.trim();
     setState(() => _submitting = true);
+
+    final parts = fullName
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList(growable: false);
+    final firstName = parts.isEmpty ? fullName : parts.first;
+    final lastName = parts.length > 1 ? parts.skip(1).join(' ') : '';
 
     // Temporary safe local capture until backend lead endpoint is introduced.
     _customerRegionLeadInbox.add(<String, dynamic>{
-      'first_name': _firstNameCtrl.text.trim(),
-      'last_name': _lastNameCtrl.text.trim(),
-      'postal_code': _postalCodeCtrl.text.trim(),
-      'email': _emailCtrl.text.trim(),
-      'phone': _phoneCtrl.text.trim(),
+      'first_name': firstName,
+      'last_name': lastName,
+      'postal_code': postcode,
+      'email': email,
+      'phone': _profilePhone.trim(),
       'notify_updates': _wantsUpdates,
       'created_at': DateTime.now().toIso8601String(),
     });
@@ -13112,186 +13290,540 @@ class _CustomerRegionRegistrationPageState
     Navigator.pop(context);
   }
 
-  Widget _field({
-    required String label,
-    required TextEditingController controller,
-    String? Function(String?)? validator,
-    TextInputType keyboardType = TextInputType.text,
-    String? hintText,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
-        ),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: controller,
-          validator: validator,
-          keyboardType: keyboardType,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: hintText,
-            hintStyle: const TextStyle(color: Colors.white38),
-            filled: true,
-            fillColor: const Color(0xFF141B2F),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    const partnerColor = Color(0xFF34D29A);
+    final hasActivePartnerSignals = _hasVerifiedActivePartnersSignal();
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: const Color(0xFF07080C),
         appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: const Color(0xFF07080C),
           title: Text(
             _t(
-              nl: 'Registreer je regio',
-              en: 'Register your region',
-              fr: 'Enregistrez votre region',
-              es: 'Registra tu region',
+              nl: 'Regio Radar',
+              en: 'Region Radar',
+              fr: 'Radar régional',
+              es: 'Radar regional',
             ),
           ),
         ),
         body: SafeArea(
-          child: Form(
-            key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  _t(
-                    nl: 'Laat je gegevens achter zodat we je kunnen informeren wanneer Fluxidi actief wordt in jouw regio.',
-                    en: 'Leave your details so we can inform you when Fluxidi becomes active in your region.',
-                    fr: 'Laissez vos coordonnees afin que nous puissions vous informer lorsque Fluxidi sera actif dans votre region.',
-                    es: 'Deja tus datos para que podamos avisarte cuando Fluxidi este activo en tu region.',
-                  ),
-                  style: TextStyle(color: Colors.white.withOpacity(0.78)),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              RichText(text: _radarHeadlineSpan()),
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Maar je bent niet alleen. Steeds meer mensen vragen Fluxidi in hun buurt.',
+                  en: 'You are not alone. More people are asking for Fluxidi in their area.',
+                  fr: 'Vous n’êtes pas seul. De plus en plus de personnes demandent Fluxidi dans leur région.',
+                  es: 'No estás solo. Cada vez más personas piden Fluxidi en su zona.',
                 ),
-                const SizedBox(height: 14),
-                _field(
-                  label: _t(
-                    nl: 'Voornaam',
-                    en: 'First name',
-                    fr: 'Prenom',
-                    es: 'Nombre',
-                  ),
-                  controller: _firstNameCtrl,
-                  validator: _required,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.76),
+                  fontSize: 13,
+                  height: 1.3,
                 ),
-                const SizedBox(height: 12),
-                _field(
-                  label: _t(
-                    nl: 'Naam',
-                    en: 'Last name',
-                    fr: 'Nom',
-                    es: 'Apellido',
-                  ),
-                  controller: _lastNameCtrl,
-                  validator: _required,
-                ),
-                const SizedBox(height: 12),
-                _field(
-                  label: _t(
-                    nl: 'Postcode',
-                    en: 'Postal code',
-                    fr: 'Code postal',
-                    es: 'Codigo postal',
-                  ),
-                  controller: _postalCodeCtrl,
-                  validator: _required,
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 12),
-                _field(
-                  label: _t(
-                    nl: 'E-mail',
-                    en: 'Email',
-                    fr: 'E-mail',
-                    es: 'Correo electronico',
-                  ),
-                  controller: _emailCtrl,
-                  validator: _emailValidator,
-                  keyboardType: TextInputType.emailAddress,
-                ),
-                const SizedBox(height: 12),
-                _field(
-                  label: _t(
-                    nl: 'Telefoon (optioneel)',
-                    en: 'Phone (optional)',
-                    fr: 'Téléphone (optionnel)',
-                    es: 'Teléfono (opcional)',
-                  ),
-                  controller: _phoneCtrl,
-                  keyboardType: TextInputType.phone,
-                ),
-                const SizedBox(height: 8),
-                CheckboxListTile(
-                  value: _wantsUpdates,
-                  onChanged: (v) => setState(() => _wantsUpdates = v ?? false),
-                  contentPadding: EdgeInsets.zero,
-                  activeColor: const Color(0xFFE5B641),
-                  title: Text(
-                    _t(
-                      nl: 'Hou me op de hoogte wanneer Fluxidi beschikbaar is in mijn regio',
-                      en: 'Keep me updated when Fluxidi is available in my region',
-                      fr: 'Tenez-moi informe lorsque Fluxidi est disponible dans ma region',
-                      es: 'Mantenme informado cuando Fluxidi este disponible en mi region',
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Container(
+                    width: 11,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: kFluxidiYellow.withOpacity(0.98),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: kFluxidiYellow.withOpacity(0.72),
+                          blurRadius: 14,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
                   ),
-                  controlAffinity: ListTileControlAffinity.leading,
+                  const SizedBox(width: 8),
+                  Text(
+                    _regionBadgeText(),
+                    style: TextStyle(
+                      color: kFluxidiYellow.withOpacity(0.98),
+                      fontSize: 12.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  _legendDotLabel(
+                    color: kFluxidiYellow.withOpacity(0.98),
+                    label: _t(
+                      nl: 'Klantinteresse',
+                      en: 'Customer interest',
+                      fr: 'Intérêt clients',
+                      es: 'Interés de clientes',
+                    ),
+                  ),
+                  _legendDotLabel(
+                    color: partnerColor,
+                    label: _t(
+                      nl: 'Partners',
+                      en: 'Partners',
+                      fr: 'Partenaires',
+                      es: 'Socios',
+                    ),
+                  ),
+                  _statusLegendChip(
+                    text: hasActivePartnerSignals
+                        ? _t(
+                            nl: 'Partners actief',
+                            en: 'Partners active',
+                            fr: 'Partenaires actifs',
+                            es: 'Socios activos',
+                          )
+                        : _t(
+                            nl: 'Partners gezocht in jouw regio',
+                            en: 'Partners wanted in your area',
+                            fr: 'Partenaires recherchés dans votre région',
+                            es: 'Se buscan socios en tu zona',
+                          ),
+                    color: hasActivePartnerSignals
+                        ? partnerColor
+                        : kFluxidiYellow.withOpacity(0.95),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                height: 372,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      const Color(0xFF101114),
+                      const Color(0xFF0B0C10),
+                      const Color(0xFF151008),
+                    ],
+                  ),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kFluxidiYellow.withOpacity(0.14),
+                      blurRadius: 22,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                FilledButton(
-                  onPressed: _submitting ? null : _submit,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      _submitting
-                          ? _t(
-                              nl: 'Bezig...',
-                              en: 'Sending...',
-                              fr: 'Envoi...',
-                              es: 'Enviando...',
-                            )
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _RegionRadarPainter(
+                          customerColor: kFluxidiYellow.withOpacity(0.98),
+                          partnerColor: partnerColor,
+                          showPartnerOpportunity: !hasActivePartnerSignals,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.42),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: kFluxidiYellow.withOpacity(0.44),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Anonieme interesse in jouw regio',
+                            en: 'Anonymous interest in your region',
+                            fr: 'Intérêt anonyme dans votre région',
+                            es: 'Interés anónimo en tu zona',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 10.9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F1013).withOpacity(0.92),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFFE5B641).withOpacity(0.36),
+                          ),
+                        ),
+                        child: Text(
+                          _regionBadgeText(),
+                          style: const TextStyle(
+                            color: Color(0xFFFFF1C7),
+                            fontSize: 11.6,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _radarStatTile(
+                      value: '24+',
+                      icon: Icons.groups_rounded,
+                      tooltip: _t(
+                        nl: 'Geïnteresseerden',
+                        en: 'Interested people',
+                        fr: 'Personnes intéressées',
+                        es: 'Personas interesadas',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _radarStatTile(
+                      value: _profilePostcode.trim().isNotEmpty
+                          ? _profilePostcode.trim()
                           : _t(
-                              nl: 'Verzenden',
-                              en: 'Send',
-                              fr: 'Envoyer',
-                              es: 'Enviar',
+                              nl: 'Jouw regio',
+                              en: 'Your area',
+                              fr: 'Votre région',
+                              es: 'Tu zona',
                             ),
+                      icon: Icons.location_on_rounded,
+                      tooltip: _t(
+                        nl: 'Jouw regio',
+                        en: 'Your area',
+                        fr: 'Votre région',
+                        es: 'Tu zona',
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(
-                    _t(
-                      nl: 'Terug naar klantenpagina',
-                      en: 'Back to customer page',
-                      fr: 'Retour a la page client',
-                      es: 'Volver a la pagina de cliente',
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _radarStatTile(
+                      value: _t(
+                        nl: 'Update',
+                        en: 'Update',
+                        fr: 'Info',
+                        es: 'Aviso',
+                      ),
+                      icon: Icons.notifications_active_rounded,
+                      tooltip: _t(
+                        nl: 'Zodra actief',
+                        en: 'When active',
+                        fr: 'Dès activation',
+                        es: 'Cuando esté activo',
+                      ),
                     ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _t(
+                  nl: 'We gebruiken je gegevens enkel om je op de hoogte te houden. Geen spam, enkel belangrijk nieuws.',
+                  en: 'We only use your details to keep you updated. No spam, only important news.',
+                  fr: 'Nous utilisons vos données uniquement pour vous tenir informé. Pas de spam, seulement les nouvelles importantes.',
+                  es: 'Solo usamos tus datos para mantenerte informado. Sin spam, solo noticias importantes.',
                 ),
-              ],
-            ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.66),
+                  fontSize: 11.4,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _submitting ? null : _submitFromProfileGuarded,
+                style: FilledButton.styleFrom(
+                  backgroundColor: kFluxidiYellow,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.notifications_active_outlined),
+                label: Text(
+                  _submitting
+                      ? _t(
+                          nl: 'Bezig...',
+                          en: 'Sending...',
+                          fr: 'Envoi...',
+                          es: 'Enviando...',
+                        )
+                      : _t(
+                          nl: 'Hou mij op de hoogte',
+                          en: 'Keep me updated',
+                          fr: 'Me tenir informé',
+                          es: 'Mantenerme informado',
+                        ),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _shareRadar,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kFluxidiYellow.withOpacity(0.98),
+                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.44)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.ios_share_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Deel met vrienden',
+                    en: 'Share with friends',
+                    fr: 'Partager avec des amis',
+                    es: 'Compartir con amigos',
+                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _legendDotLabel({required Color color, required String label}) {
+    return Tooltip(
+      message: label,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.55),
+                  blurRadius: 8,
+                  spreadRadius: 0.8,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.84),
+              fontSize: 11.1,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusLegendChip({required String text, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.48)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color.withOpacity(0.98),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _radarStatTile({
+    required String value,
+    required IconData icon,
+    required String tooltip,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Semantics(
+        label: tooltip,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 92),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111317),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: kFluxidiYellow.withOpacity(0.98), size: 28),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: kFluxidiYellow.withOpacity(0.98),
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.15,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RegionRadarPainter extends CustomPainter {
+  const _RegionRadarPainter({
+    required this.customerColor,
+    required this.partnerColor,
+    required this.showPartnerOpportunity,
+  });
+
+  final Color customerColor;
+  final Color partnerColor;
+  final bool showPartnerOpportunity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width * 0.5, size.height * 0.56);
+    final baseRadius = math.min(size.width, size.height) * 0.38;
+
+    final bgGrid = Paint()
+      ..color = Colors.white.withOpacity(0.05)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (int i = 1; i <= 3; i++) {
+      canvas.drawCircle(center, baseRadius * (i / 3), bgGrid);
+    }
+
+    final glow = Paint()
+      ..shader =
+          RadialGradient(
+            colors: [
+              customerColor.withOpacity(0.30),
+              customerColor.withOpacity(0.10),
+              Colors.transparent,
+            ],
+          ).createShader(
+            Rect.fromCircle(center: center, radius: baseRadius * 1.02),
+          );
+    canvas.drawCircle(center, baseRadius, glow);
+
+    final ring = Paint()
+      ..color = customerColor.withOpacity(0.40)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, baseRadius * 0.9, ring);
+
+    final pulse = Paint()
+      ..color = customerColor.withOpacity(0.26)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3;
+    canvas.drawCircle(center, baseRadius * 0.58, pulse);
+
+    const normalizedDots = <Offset>[
+      Offset(0.18, 0.27),
+      Offset(0.32, 0.34),
+      Offset(0.66, 0.24),
+      Offset(0.78, 0.38),
+      Offset(0.22, 0.52),
+      Offset(0.42, 0.58),
+      Offset(0.62, 0.56),
+      Offset(0.81, 0.63),
+      Offset(0.48, 0.73),
+      Offset(0.30, 0.71),
+      Offset(0.67, 0.78),
+    ];
+    for (final p in normalizedDots) {
+      final dot = Offset(size.width * p.dx, size.height * p.dy);
+      final dotPaint = Paint()..color = customerColor.withOpacity(0.96);
+      canvas.drawCircle(dot, 2.8, dotPaint);
+      final halo = Paint()..color = customerColor.withOpacity(0.28);
+      canvas.drawCircle(dot, 6.5, halo);
+    }
+
+    if (showPartnerOpportunity) {
+      final partnerDot = Offset(size.width * 0.74, size.height * 0.48);
+      final partnerPaint = Paint()..color = partnerColor.withOpacity(0.92);
+      canvas.drawCircle(partnerDot, 3.3, partnerPaint);
+      final partnerHalo = Paint()..color = partnerColor.withOpacity(0.22);
+      canvas.drawCircle(partnerDot, 8.0, partnerHalo);
+    }
+
+    final mapLabelStyle = TextStyle(
+      color: Colors.white.withOpacity(0.56),
+      fontSize: 10.5,
+      fontWeight: FontWeight.w600,
+    );
+    final labels = <({String text, Offset pos})>[
+      (text: 'Schorisse', pos: const Offset(0.13, 0.20)),
+      (text: 'Ronse', pos: const Offset(0.76, 0.19)),
+      (text: 'Oudenaarde', pos: const Offset(0.17, 0.82)),
+      (text: 'Kluisbergen', pos: const Offset(0.66, 0.73)),
+      (text: 'Flobecq', pos: const Offset(0.58, 0.34)),
+    ];
+    for (final entry in labels) {
+      final tp = TextPainter(
+        text: TextSpan(text: entry.text, style: mapLabelStyle),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 120);
+      tp.paint(
+        canvas,
+        Offset(size.width * entry.pos.dx, size.height * entry.pos.dy),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RegionRadarPainter oldDelegate) {
+    return oldDelegate.customerColor != customerColor ||
+        oldDelegate.partnerColor != partnerColor ||
+        oldDelegate.showPartnerOpportunity != showPartnerOpportunity;
   }
 }
 
@@ -14270,10 +14802,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         ),
                         child: Text(
                           _t(
-                            nl: 'Registreer je regio',
-                            en: 'Register your region',
-                            fr: 'Enregistrez votre région',
-                            es: 'Registra tu región',
+                            nl: 'Open Regio Radar',
+                            en: 'Open Region Radar',
+                            fr: 'Ouvrir Radar régional',
+                            es: 'Abrir Radar regional',
                           ),
                         ),
                       ),

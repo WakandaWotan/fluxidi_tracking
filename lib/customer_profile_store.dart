@@ -13,6 +13,7 @@ class CustomerProfile {
     required this.name,
     required this.phone,
     required this.email,
+    required this.preferredPostcode,
     required this.companyName,
     required this.vatNumber,
     required this.createdAt,
@@ -23,6 +24,7 @@ class CustomerProfile {
   final String name;
   final String phone;
   final String email;
+  final String preferredPostcode;
   final String companyName;
   final String vatNumber;
   final String createdAt;
@@ -35,11 +37,28 @@ class CustomerProfile {
 
   factory CustomerProfile.fromJson(Map<String, dynamic> json) {
     String read(String key) => (json[key] ?? '').toString().trim();
+    String readAny(List<String> keys) {
+      for (final key in keys) {
+        final value = json[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
     return CustomerProfile(
       customerId: read('customerId'),
       name: read('name'),
       phone: read('phone'),
       email: read('email').toLowerCase(),
+      preferredPostcode: readAny(const [
+        'preferredPostcode',
+        'preferred_postcode',
+        'postcode',
+        'postalCode',
+        'postal_code',
+      ]),
       companyName: read('companyName'),
       vatNumber: read('vatNumber'),
       createdAt: read('createdAt'),
@@ -53,6 +72,8 @@ class CustomerProfile {
       'name': name,
       'phone': phone,
       'email': email,
+      'preferredPostcode': preferredPostcode,
+      'preferred_postcode': preferredPostcode,
       'companyName': companyName,
       'vatNumber': vatNumber,
       'createdAt': createdAt,
@@ -178,6 +199,7 @@ class CustomerProfileStore {
     required String name,
     required String phone,
     required String email,
+    String preferredPostcode = '',
     String companyName = '',
     String vatNumber = '',
   }) async {
@@ -190,6 +212,7 @@ class CustomerProfileStore {
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim().toLowerCase(),
+      preferredPostcode: preferredPostcode.trim().toUpperCase(),
       companyName: companyName.trim(),
       vatNumber: vatNumber.trim(),
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
