@@ -4905,6 +4905,33 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             width: cardWidth,
                             height: 132,
                             child: _quickActionCard(
+                              icon: Icons.radar_rounded,
+                              title: _t(
+                                nl: 'Vraagradar',
+                                en: 'Demand radar',
+                                fr: 'Radar demande',
+                                es: 'Radar demanda',
+                              ),
+                              subtitle: _t(
+                                nl: 'Klantvraag',
+                                en: 'Customer demand',
+                                fr: 'Demande clients',
+                                es: 'Demanda clientes',
+                              ),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        const BusinessRegionalDemandPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: cardWidth,
+                            height: 132,
+                            child: _quickActionCard(
                               icon: Icons.auto_awesome_outlined,
                               title: _t(
                                 nl: 'AI Dispatch',
@@ -4941,6 +4968,566 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       ),
     );
   }
+}
+
+class BusinessRegionalDemandPage extends StatefulWidget {
+  const BusinessRegionalDemandPage({super.key});
+
+  @override
+  State<BusinessRegionalDemandPage> createState() =>
+      _BusinessRegionalDemandPageState();
+}
+
+class _BusinessRegionalDemandPageState
+    extends State<BusinessRegionalDemandPage> {
+  bool _loading = false;
+  String _country = 'BE';
+  String _city = '';
+  String _primaryPostcode = '';
+  String _serviceRadiusKm = '';
+  List<String> _postcodes = const <String>[];
+  List<_BusinessRegionalDemandRow> _rows = const <_BusinessRegionalDemandRow>[];
+  int _totalCount = 0;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadDemand());
+  }
+
+  int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  String _normalizeCountry(String raw) {
+    final cleaned = raw.trim().toUpperCase();
+    if (cleaned.length >= 2) return cleaned.substring(0, 2);
+    return 'BE';
+  }
+
+  String _normalizePostcode(String raw) {
+    return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  List<String> _parseServedPostcodes(String raw) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final token in raw.split(RegExp(r'[,;\n\r]+'))) {
+      final code = _normalizePostcode(token);
+      if (code.isEmpty || seen.contains(code)) continue;
+      seen.add(code);
+      out.add(code);
+    }
+    return out;
+  }
+
+  String _locationLabel() {
+    if (_primaryPostcode.isNotEmpty && _city.isNotEmpty) {
+      return '$_primaryPostcode · $_city';
+    }
+    if (_primaryPostcode.isNotEmpty) return _primaryPostcode;
+    return _t(
+      nl: 'jouw regio',
+      en: 'your area',
+      fr: 'votre région',
+      es: 'tu zona',
+    );
+  }
+
+  String _totalDisplayCount() {
+    return '$_totalCount+';
+  }
+
+  Future<_BusinessRegionalDemandRow> _fetchPostcodeDemand({
+    required String country,
+    required String postcode,
+  }) async {
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/region-interest/radar?country=${Uri.encodeQueryComponent(country)}&postcode=${Uri.encodeQueryComponent(postcode)}',
+    );
+    try {
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return _BusinessRegionalDemandRow(
+          postcode: postcode,
+          displayCount: '0+',
+          count: 0,
+          status: '',
+          unavailable: true,
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
+        return _BusinessRegionalDemandRow(
+          postcode: postcode,
+          displayCount: '0+',
+          count: 0,
+          status: '',
+          unavailable: true,
+        );
+      }
+      final count = _asInt(decoded['count']) ?? 0;
+      final rawDisplay = (decoded['display_count'] ?? '').toString().trim();
+      final display = rawDisplay.isNotEmpty
+          ? rawDisplay
+          : '${count.clamp(0, 999999)}+';
+      final status = (decoded['status'] ?? '').toString().trim();
+      return _BusinessRegionalDemandRow(
+        postcode: postcode,
+        displayCount: display,
+        count: count,
+        status: status,
+        unavailable: false,
+      );
+    } catch (_) {
+      return _BusinessRegionalDemandRow(
+        postcode: postcode,
+        displayCount: '0+',
+        count: 0,
+        status: '',
+        unavailable: true,
+      );
+    }
+  }
+
+  Future<void> _loadDemand() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+    });
+
+    final company = companyProfileNotifier.value;
+    BackendBusinessProfile? backend = localBackendBusinessProfileNotifier.value;
+    try {
+      backend = await fetchBackendBusinessProfile();
+    } catch (_) {
+      // Keep local fallback only.
+    }
+
+    final primary = _normalizePostcode(
+      (company?.postalCode ?? '').trim().isNotEmpty
+          ? company!.postalCode
+          : (backend?.postcode ?? ''),
+    );
+    final country = _normalizeCountry(
+      (company?.countryCode ?? '').trim().isNotEmpty
+          ? company!.countryCode
+          : (backend?.country ?? 'BE'),
+    );
+    final city = (company?.city ?? '').trim().isNotEmpty
+        ? company!.city.trim()
+        : (backend?.city ?? '').trim();
+    final radius = (backend?.publicServiceRadiusKm ?? '').trim();
+    final served = _parseServedPostcodes(backend?.publicServedPostcodes ?? '');
+
+    final seen = <String>{};
+    final postcodes = <String>[];
+    if (primary.isNotEmpty) {
+      seen.add(primary);
+      postcodes.add(primary);
+    }
+    for (final code in served) {
+      if (seen.contains(code)) continue;
+      seen.add(code);
+      postcodes.add(code);
+    }
+    final limitedPostcodes = postcodes.take(50).toList(growable: false);
+
+    List<_BusinessRegionalDemandRow> rows =
+        const <_BusinessRegionalDemandRow>[];
+    if (limitedPostcodes.isNotEmpty) {
+      final fetched = await Future.wait(
+        limitedPostcodes.map(
+          (postcode) =>
+              _fetchPostcodeDemand(country: country, postcode: postcode),
+        ),
+      );
+      final indexed = fetched
+          .asMap()
+          .entries
+          .map((entry) => (idx: entry.key, row: entry.value))
+          .toList(growable: false);
+      indexed.sort((a, b) {
+        final byCount = b.row.count.compareTo(a.row.count);
+        if (byCount != 0) return byCount;
+        if (a.row.postcode == primary) return -1;
+        if (b.row.postcode == primary) return 1;
+        return a.idx.compareTo(b.idx);
+      });
+      rows = indexed.map((e) => e.row).toList(growable: false);
+    }
+    final total = rows.fold<int>(0, (sum, row) => sum + row.count);
+
+    if (!mounted) return;
+    setState(() {
+      _country = country;
+      _city = city;
+      _primaryPostcode = primary;
+      _serviceRadiusKm = radius;
+      _postcodes = limitedPostcodes;
+      _rows = rows;
+      _totalCount = total;
+      _loading = false;
+    });
+  }
+
+  Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Container(
+      padding: padding ?? const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF101010), Color(0xFF07080C), Color(0xFF07080C)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.17)),
+        boxShadow: [
+          BoxShadow(
+            color: kFluxidiYellow.withOpacity(0.07),
+            blurRadius: 12,
+            spreadRadius: 0.2,
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.36),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: const Color(0xFF07080C),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF07080C),
+          title: Text(
+            _t(
+              nl: 'Vraagradar',
+              en: 'Demand radar',
+              fr: 'Radar demande',
+              es: 'Radar demanda',
+            ),
+          ),
+          actions: [
+            IconButton(
+              tooltip: _t(
+                nl: 'Vernieuwen',
+                en: 'Refresh',
+                fr: 'Actualiser',
+                es: 'Actualizar',
+              ),
+              onPressed: _loading ? null : _loadDemand,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            children: [
+              _panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Vraag in jouw regio',
+                        en: 'Demand in your area',
+                        fr: 'Demande dans votre région',
+                        es: 'Demanda en tu zona',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFF15120A),
+                            border: Border.all(
+                              color: kFluxidiYellow.withOpacity(0.52),
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.radar_rounded,
+                            color: kFluxidiYellow.withOpacity(0.98),
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _loading ? '…' : _totalDisplayCount(),
+                                style: TextStyle(
+                                  color: kFluxidiYellow.withOpacity(0.98),
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 29,
+                                ),
+                              ),
+                              Text(
+                                _t(
+                                  nl: 'potentiële klanten',
+                                  en: 'potential customers',
+                                  fr: 'clients potentiels',
+                                  es: 'clientes potenciales',
+                                ),
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.84),
+                                  fontSize: 11.8,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kFluxidiYellow.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: kFluxidiYellow.withOpacity(0.44),
+                            ),
+                          ),
+                          child: Text(
+                            _locationLabel(),
+                            style: TextStyle(
+                              color: kFluxidiYellow.withOpacity(0.98),
+                              fontSize: 10.7,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_serviceRadiusKm.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _t(
+                          nl: 'Service radius: $_serviceRadiusKm km (context, geen postcode-generator).',
+                          en: 'Service radius: $_serviceRadiusKm km (context only, no postcode generator).',
+                          fr: 'Rayon de service : $_serviceRadiusKm km (contexte uniquement, sans générateur de codes postaux).',
+                          es: 'Radio de servicio: $_serviceRadiusKm km (solo contexto, sin generador de códigos postales).',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.62),
+                          fontSize: 10.8,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Text(
+                      _t(
+                        nl: 'Alleen geaggregeerde en anonieme regionale interesse wordt getoond.',
+                        en: 'Only aggregated and anonymous regional interest is shown.',
+                        fr: 'Seul l’intérêt régional agrégé et anonyme est affiché.',
+                        es: 'Solo se muestra interés regional agregado y anónimo.',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.58),
+                        fontSize: 10.9,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: kFluxidiYellow.withOpacity(0.96),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF34D29A),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _t(
+                              nl: 'Postcode-niveau vraag (geaggregeerd)',
+                              en: 'Postcode-level demand (aggregated)',
+                              fr: 'Demande par code postal (agrégée)',
+                              es: 'Demanda por código postal (agregada)',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13.1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (_postcodes.isEmpty)
+                      Text(
+                        _t(
+                          nl: 'Voeg je bedrijfsregio toe om lokale vraag te zien.',
+                          en: 'Add your business area to see local demand.',
+                          fr: 'Ajoutez votre région d’activité pour voir la demande locale.',
+                          es: 'Añade tu zona de actividad para ver la demanda local.',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.76),
+                          fontSize: 12.0,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else if (_rows.isEmpty && _loading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else
+                      Column(
+                        children: _rows
+                            .map(
+                              (row) => Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 9,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF111317),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: kFluxidiYellow.withOpacity(0.24),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.location_on_outlined,
+                                      color: kFluxidiYellow.withOpacity(0.95),
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        row.postcode,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13.1,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      row.displayCount,
+                                      style: TextStyle(
+                                        color: row.unavailable
+                                            ? Colors.white.withOpacity(0.66)
+                                            : kFluxidiYellow.withOpacity(0.98),
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 14.8,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                      ),
+                    if (_postcodes.length >= 50) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _t(
+                          nl: 'Toont de eerste 50 postcodes om requests beperkt te houden.',
+                          en: 'Showing the first 50 postcodes to keep requests bounded.',
+                          fr: 'Affiche les 50 premiers codes postaux pour limiter les requêtes.',
+                          es: 'Mostrando los primeros 50 códigos postales para limitar solicitudes.',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.55),
+                          fontSize: 10.8,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      _t(
+                        nl: 'Landcontext: $_country',
+                        en: 'Country context: $_country',
+                        fr: 'Contexte pays : $_country',
+                        es: 'Contexto de país: $_country',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 10.6,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BusinessRegionalDemandRow {
+  const _BusinessRegionalDemandRow({
+    required this.postcode,
+    required this.displayCount,
+    required this.count,
+    required this.status,
+    required this.unavailable,
+  });
+
+  final String postcode;
+  final String displayCount;
+  final int count;
+  final String status;
+  final bool unavailable;
 }
 
 class CompanyDriverManagementPage extends StatelessWidget {
