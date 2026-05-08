@@ -13071,6 +13071,7 @@ class _CustomerRegionRegistrationPageState
   String _profileEmail = '';
   String _profilePhone = '';
   String _profilePostcode = '';
+  String? _radarInterestDisplayCount;
 
   String _t({
     required String nl,
@@ -13101,6 +13102,7 @@ class _CustomerRegionRegistrationPageState
       _profilePhone = phone;
       _profilePostcode = postcode;
     });
+    unawaited(_refreshRegionInterestRadarCount());
   }
 
   String _latestKnownRegionPostcode({
@@ -13237,6 +13239,57 @@ class _CustomerRegionRegistrationPageState
     return false;
   }
 
+  String _regionInterestCountryCode() {
+    // Customer profile currently has no explicit country field in this flow.
+    return 'BE';
+  }
+
+  String _normalizedRegionInterestPostcode() {
+    return _profilePostcode.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  String _radarCountTileValue() {
+    final fromBackend = _radarInterestDisplayCount?.trim() ?? '';
+    if (fromBackend.isNotEmpty) return fromBackend;
+    return '24+';
+  }
+
+  int? _toSafeInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value == null) return null;
+    return int.tryParse(value.toString().trim());
+  }
+
+  Future<void> _refreshRegionInterestRadarCount() async {
+    final postcode = _normalizedRegionInterestPostcode();
+    if (postcode.isEmpty) return;
+    final country = _regionInterestCountryCode();
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/region-interest/radar?country=${Uri.encodeQueryComponent(country)}&postcode=${Uri.encodeQueryComponent(postcode)}',
+    );
+    try {
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) return;
+      final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map<String, dynamic>) return;
+      if (decoded['ok'] != true) return;
+      final count = _toSafeInt(decoded['count']);
+      final incomingDisplay = (decoded['display_count'] ?? '')
+          .toString()
+          .trim();
+      final display = incomingDisplay.isNotEmpty
+          ? incomingDisplay
+          : (count == null ? '' : '${count.clamp(0, 999999)}+');
+      if (!mounted) return;
+      setState(() {
+        _radarInterestDisplayCount = display.isEmpty ? null : display;
+      });
+    } catch (_) {
+      // Keep local/default display when backend aggregate is unavailable.
+    }
+  }
+
   Future<void> _shareRadar() async {
     await Share.share(
       _t(
@@ -13251,7 +13304,12 @@ class _CustomerRegionRegistrationPageState
   Future<void> _submit() async {
     final fullName = _profileName.trim();
     final email = _profileEmail.trim();
-    final postcode = _profilePostcode.trim();
+    final postcode = _normalizedRegionInterestPostcode();
+    final country = _regionInterestCountryCode();
+    final phone = _profilePhone.trim();
+    final locale = currentLanguageCode.trim().isEmpty
+        ? 'nl'
+        : currentLanguageCode.trim().toLowerCase();
     setState(() => _submitting = true);
 
     final parts = fullName
@@ -13261,16 +13319,57 @@ class _CustomerRegionRegistrationPageState
     final firstName = parts.isEmpty ? fullName : parts.first;
     final lastName = parts.length > 1 ? parts.skip(1).join(' ') : '';
 
-    // Temporary safe local capture until backend lead endpoint is introduced.
+    bool backendSynced = false;
+    String? backendDisplayCount;
+    try {
+      final uri = Uri.parse('$kBookingBaseUrl/region-interest');
+      final res = await http
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(<String, dynamic>{
+              'country': country,
+              'postcode': postcode,
+              'name': fullName,
+              'email': email,
+              'phone': phone,
+              'locale': locale,
+              'source': 'regio_radar',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
+          backendSynced = true;
+          final display = (decoded['display_count'] ?? '').toString().trim();
+          if (display.isNotEmpty) backendDisplayCount = display;
+        }
+      }
+    } catch (_) {
+      backendSynced = false;
+    }
+
+    // Keep a local cache entry as safe fallback when backend sync fails.
     _customerRegionLeadInbox.add(<String, dynamic>{
       'first_name': firstName,
       'last_name': lastName,
       'postal_code': postcode,
+      'country': country,
       'email': email,
-      'phone': _profilePhone.trim(),
+      'phone': phone,
+      'locale': locale,
+      'source': 'regio_radar',
       'notify_updates': _wantsUpdates,
       'created_at': DateTime.now().toIso8601String(),
     });
+
+    if (backendSynced && mounted) {
+      setState(() {
+        _radarInterestDisplayCount = backendDisplayCount;
+      });
+      await _refreshRegionInterestRadarCount();
+    }
 
     await Future<void>.delayed(const Duration(milliseconds: 220));
     if (!mounted) return;
@@ -13278,12 +13377,19 @@ class _CustomerRegionRegistrationPageState
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          _t(
-            nl: 'Bedankt! We hebben je regio geregistreerd.',
-            en: 'Thank you! We have registered your region.',
-            fr: 'Merci ! Nous avons enregistre votre region.',
-            es: 'Gracias. Hemos registrado tu region.',
-          ),
+          backendSynced
+              ? _t(
+                  nl: 'Je regio is geregistreerd. We houden je op de hoogte.',
+                  en: 'Your area is registered. We’ll keep you updated.',
+                  fr: 'Votre région est enregistrée. Nous vous tiendrons informé.',
+                  es: 'Tu zona está registrada. Te mantendremos informado.',
+                )
+              : _t(
+                  nl: 'Je interesse is lokaal bewaard. We proberen later opnieuw te synchroniseren.',
+                  en: 'Your interest was saved locally. We’ll try to sync it later.',
+                  fr: 'Votre intérêt a été enregistré localement. Nous réessaierons plus tard.',
+                  es: 'Tu interés se guardó localmente. Intentaremos sincronizarlo más tarde.',
+                ),
         ),
       ),
     );
@@ -13497,7 +13603,7 @@ class _CustomerRegionRegistrationPageState
                 children: [
                   Expanded(
                     child: _radarStatTile(
-                      value: '24+',
+                      value: _radarCountTileValue(),
                       icon: Icons.groups_rounded,
                       tooltip: _t(
                         nl: 'Geïnteresseerden',

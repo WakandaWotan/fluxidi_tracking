@@ -1938,6 +1938,199 @@ function pickFirstValidEmail(...candidates) {
   return "";
 }
 
+const REGION_INTEREST_CONTACT_PREFIX = "region_interest_v1/contact";
+
+function normalizeRegionInterestCountry(value) {
+  const raw = safeStr(value, 8).toUpperCase().replace(/[^A-Z]/g, "");
+  if (!raw) return "";
+  return raw.slice(0, 2);
+}
+
+function normalizeRegionInterestPostcode(value) {
+  return safeStr(value, 24).toUpperCase().replace(/\s+/g, "");
+}
+
+function normalizeRegionInterestEmail(value) {
+  return safeStr(value, 320).toLowerCase();
+}
+
+function normalizeRegionInterestName(value) {
+  return safeStr(value, 140);
+}
+
+function normalizeRegionInterestPhone(value) {
+  return safeStr(value, 64);
+}
+
+function normalizeRegionInterestLocale(value) {
+  const raw = safeStr(value, 24).toLowerCase();
+  return raw.replace(/[^a-z_-]/g, "").slice(0, 12);
+}
+
+function normalizeRegionInterestSource(value) {
+  const raw = safeStr(value, 40).toLowerCase();
+  return raw.replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "regio_radar";
+}
+
+function regionInterestContactKey({ country, postcode, emailHash }) {
+  if (!country || !postcode || !emailHash) return "";
+  return `${REGION_INTEREST_CONTACT_PREFIX}/${country}/${postcode}/${emailHash}`;
+}
+
+function regionInterestContactPrefix({ country, postcode }) {
+  if (!country || !postcode) return "";
+  return `${REGION_INTEREST_CONTACT_PREFIX}/${country}/${postcode}/`;
+}
+
+function toPublicDisplayCount(count) {
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  return `${n}+`;
+}
+
+function regionInterestStatusFromCount(_) {
+  return "partners_wanted";
+}
+
+function regionInterestInputTooLong(rawBody = {}) {
+  const limits = {
+    country: 16,
+    postcode: 64,
+    name: 220,
+    email: 400,
+    phone: 120,
+    locale: 40,
+    source: 80,
+  };
+  const pairs = [
+    ["country", rawBody?.country],
+    ["postcode", rawBody?.postcode ?? rawBody?.postal_code],
+    ["name", rawBody?.name],
+    ["email", rawBody?.email],
+    ["phone", rawBody?.phone],
+    ["locale", rawBody?.locale],
+    ["source", rawBody?.source],
+  ];
+  for (const [key, value] of pairs) {
+    if (value == null) continue;
+    const max = limits[key] || 200;
+    if (String(value).trim().length > max) return true;
+  }
+  return false;
+}
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(String(input || ""));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function countRegionInterestContacts(env, { country, postcode }) {
+  if (!env?.BOOKING_KV) return 0;
+  const prefix = regionInterestContactPrefix({ country, postcode });
+  if (!prefix) return 0;
+  let count = 0;
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    count += Array.isArray(listed?.keys) ? listed.keys.length : 0;
+    cursor = listed?.list_complete ? undefined : listed?.cursor;
+  } while (cursor);
+  return count;
+}
+
+async function handleRegionInterestPost(request, env) {
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
+  }
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > 8 * 1024) {
+    return json({ ok: false, error: "payload_too_large" }, 413);
+  }
+
+  const body = await safeJson(request);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (regionInterestInputTooLong(body)) {
+    return json({ ok: false, error: "invalid_field_length" }, 400);
+  }
+
+  const country = normalizeRegionInterestCountry(body.country);
+  const postcode = normalizeRegionInterestPostcode(body.postcode ?? body.postal_code);
+  const name = normalizeRegionInterestName(body.name);
+  const email = normalizeRegionInterestEmail(body.email);
+  const phone = normalizeRegionInterestPhone(body.phone);
+  const locale = normalizeRegionInterestLocale(body.locale);
+  const source = normalizeRegionInterestSource(body.source);
+
+  if (!country || !postcode || !name || !email || !isValidEmail(email)) {
+    return json({ ok: false, error: "invalid_region_interest_payload" }, 400);
+  }
+
+  const emailHash = await sha256Hex(`${email}|${country}|${postcode}`);
+  const key = regionInterestContactKey({ country, postcode, emailHash });
+  if (!key) return json({ ok: false, error: "invalid_region_interest_key" }, 400);
+
+  const nowIso = new Date().toISOString();
+  const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  const createdAt =
+    safeStr(existing?.created_at, 80) ||
+    safeStr(existing?.createdAt, 80) ||
+    nowIso;
+  const record = {
+    country,
+    postcode,
+    name,
+    email,
+    phone,
+    locale,
+    source,
+    consent: true,
+    created_at: createdAt,
+    updated_at: nowIso,
+    email_hash: emailHash,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+
+  const count = await countRegionInterestContacts(env, { country, postcode });
+  return json(
+    {
+      ok: true,
+      country,
+      postcode,
+      count,
+      display_count: toPublicDisplayCount(count),
+      status: regionInterestStatusFromCount(count),
+    },
+    200,
+  );
+}
+
+async function handleRegionInterestRadarGet(url, env) {
+  const country = normalizeRegionInterestCountry(url?.searchParams?.get("country") || "BE");
+  const postcode = normalizeRegionInterestPostcode(url?.searchParams?.get("postcode"));
+  if (!country || !postcode) {
+    return json({ ok: false, error: "missing_region_interest_query" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
+  }
+  const count = await countRegionInterestContacts(env, { country, postcode });
+  return json(
+    {
+      ok: true,
+      country,
+      postcode,
+      count,
+      display_count: toPublicDisplayCount(count),
+      status: regionInterestStatusFromCount(count),
+    },
+    200,
+  );
+}
+
 function safeBrandName(value, fallback = "Fluxidi Taxi") {
   const brand = sanitizeTenantString(value, 120);
   return brand || fallback;
@@ -3292,6 +3485,14 @@ GET /oauth/callback
 
       // LEAD
       if (url.pathname === "/lead" && request.method === "POST") return json({ ok: true });
+
+      // REGION INTEREST (privacy-safe aggregate)
+      if (url.pathname === "/region-interest" && request.method === "POST") {
+        return handleRegionInterestPost(request, env);
+      }
+      if (url.pathname === "/region-interest/radar" && request.method === "GET") {
+        return handleRegionInterestRadarGet(url, env);
+      }
 
       // AVAILABILITY
       if (url.pathname === "/availability" && request.method === "POST") {
