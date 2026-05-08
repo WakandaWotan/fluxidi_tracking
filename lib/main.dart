@@ -13087,7 +13087,9 @@ class _CustomerRegionRegistrationPageState
   }
 
   Future<void> _prefillFromProfile() async {
-    final profile = await _loadCachedCustomerProfileIfNeeded();
+    await _refreshCachedCustomerProfile();
+    final profile =
+        _cachedCustomerProfile ?? await _loadCachedCustomerProfileIfNeeded();
     if (!mounted) return;
     final name = profile?.name.trim() ?? '';
     final email = profile?.email.trim() ?? '';
@@ -13251,7 +13253,7 @@ class _CustomerRegionRegistrationPageState
   String _radarCountTileValue() {
     final fromBackend = _radarInterestDisplayCount?.trim() ?? '';
     if (fromBackend.isNotEmpty) return fromBackend;
-    return '24+';
+    return '0+';
   }
 
   int? _toSafeInt(dynamic value) {
@@ -13263,8 +13265,17 @@ class _CustomerRegionRegistrationPageState
 
   Future<void> _refreshRegionInterestRadarCount() async {
     final postcode = _normalizedRegionInterestPostcode();
-    if (postcode.isEmpty) return;
+    if (postcode.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _radarInterestDisplayCount = '0+';
+      });
+      return;
+    }
     final country = _regionInterestCountryCode();
+    debugPrint(
+      '[REGIO_RADAR] fetch aggregate postcode=$postcode country=$country',
+    );
     final uri = Uri.parse(
       '$kBookingBaseUrl/region-interest/radar?country=${Uri.encodeQueryComponent(country)}&postcode=${Uri.encodeQueryComponent(postcode)}',
     );
@@ -13281,12 +13292,18 @@ class _CustomerRegionRegistrationPageState
       final display = incomingDisplay.isNotEmpty
           ? incomingDisplay
           : (count == null ? '' : '${count.clamp(0, 999999)}+');
+      debugPrint(
+        '[REGIO_RADAR] aggregate display_count=${display.isEmpty ? 'n/a' : display}',
+      );
       if (!mounted) return;
       setState(() {
-        _radarInterestDisplayCount = display.isEmpty ? null : display;
+        _radarInterestDisplayCount = display.isEmpty ? '0+' : display;
       });
     } catch (_) {
-      // Keep local/default display when backend aggregate is unavailable.
+      if (!mounted) return;
+      setState(() {
+        _radarInterestDisplayCount = '0+';
+      });
     }
   }
 
