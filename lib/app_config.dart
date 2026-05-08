@@ -269,6 +269,10 @@ class BackendBusinessProfile {
   final String email;
   final String website;
   final String bookingEmail;
+  final String publicLogoUrl;
+  final String publicHeroPhotoUrl;
+  final String publicPartnerProfilePublishedAt;
+  final String publicPartnerProfilePublishStatus;
   final String invoiceEmail;
   final String iban;
   final String paymentReferencePrefix;
@@ -287,6 +291,10 @@ class BackendBusinessProfile {
     required this.email,
     required this.website,
     required this.bookingEmail,
+    this.publicLogoUrl = '',
+    this.publicHeroPhotoUrl = '',
+    this.publicPartnerProfilePublishedAt = '',
+    this.publicPartnerProfilePublishStatus = '',
     required this.invoiceEmail,
     required this.iban,
     required this.paymentReferencePrefix,
@@ -306,6 +314,10 @@ class BackendBusinessProfile {
     email: appConfig.supportEmail,
     website: '',
     bookingEmail: '',
+    publicLogoUrl: '',
+    publicHeroPhotoUrl: '',
+    publicPartnerProfilePublishedAt: '',
+    publicPartnerProfilePublishStatus: '',
     invoiceEmail: appConfig.supportEmail,
     iban: '',
     paymentReferencePrefix: 'FLX',
@@ -316,6 +328,16 @@ class BackendBusinessProfile {
     final fallback = BackendBusinessProfile.defaults();
     String text(String key, String fallbackValue) =>
         (json[key] ?? fallbackValue).toString();
+    String textAny(List<String> keys, String fallbackValue) {
+      for (final key in keys) {
+        final v = json[key];
+        if (v == null) continue;
+        final s = v.toString();
+        if (s.trim().isNotEmpty) return s;
+      }
+      return fallbackValue;
+    }
+
     return BackendBusinessProfile(
       companyName: text('companyName', fallback.companyName),
       legalName: text('legalName', fallback.legalName),
@@ -332,6 +354,22 @@ class BackendBusinessProfile {
       email: text('email', fallback.email),
       website: text('website', fallback.website),
       bookingEmail: text('bookingEmail', fallback.bookingEmail),
+      publicLogoUrl: textAny(const [
+        'publicLogoUrl',
+        'public_logo_url',
+      ], fallback.publicLogoUrl),
+      publicHeroPhotoUrl: textAny(const [
+        'publicHeroPhotoUrl',
+        'public_hero_photo_url',
+      ], fallback.publicHeroPhotoUrl),
+      publicPartnerProfilePublishedAt: textAny(const [
+        'publicPartnerProfilePublishedAt',
+        'public_partner_profile_published_at',
+      ], fallback.publicPartnerProfilePublishedAt),
+      publicPartnerProfilePublishStatus: textAny(const [
+        'publicPartnerProfilePublishStatus',
+        'public_partner_profile_publish_status',
+      ], fallback.publicPartnerProfilePublishStatus),
       invoiceEmail: text('invoiceEmail', fallback.invoiceEmail),
       iban: text('iban', fallback.iban),
       paymentReferencePrefix: text(
@@ -358,6 +396,14 @@ class BackendBusinessProfile {
     'email': email,
     'website': website,
     'bookingEmail': bookingEmail,
+    'publicLogoUrl': publicLogoUrl,
+    'public_logo_url': publicLogoUrl,
+    'publicHeroPhotoUrl': publicHeroPhotoUrl,
+    'public_hero_photo_url': publicHeroPhotoUrl,
+    'publicPartnerProfilePublishedAt': publicPartnerProfilePublishedAt,
+    'public_partner_profile_published_at': publicPartnerProfilePublishedAt,
+    'publicPartnerProfilePublishStatus': publicPartnerProfilePublishStatus,
+    'public_partner_profile_publish_status': publicPartnerProfilePublishStatus,
     'invoiceEmail': invoiceEmail,
     'iban': iban,
     'paymentReferencePrefix': paymentReferencePrefix,
@@ -653,6 +699,7 @@ class VehicleProfile {
   final String? companyId;
   final String primaryPhotoRef;
   final List<String> galleryPhotoRefs;
+  final String? publicPhotoUrl;
   // Backward-compatible alias for legacy UI/code paths.
   String get photoRef => primaryPhotoRef;
 
@@ -674,6 +721,7 @@ class VehicleProfile {
     this.companyId,
     required this.primaryPhotoRef,
     required this.galleryPhotoRefs,
+    this.publicPhotoUrl,
   });
 
   VehicleProfile copyWith({
@@ -692,6 +740,7 @@ class VehicleProfile {
     String? companyId,
     String? primaryPhotoRef,
     List<String>? galleryPhotoRefs,
+    String? publicPhotoUrl,
   }) {
     return VehicleProfile(
       id: id ?? this.id,
@@ -711,6 +760,7 @@ class VehicleProfile {
       companyId: companyId ?? this.companyId,
       primaryPhotoRef: primaryPhotoRef ?? this.primaryPhotoRef,
       galleryPhotoRefs: galleryPhotoRefs ?? this.galleryPhotoRefs,
+      publicPhotoUrl: publicPhotoUrl ?? this.publicPhotoUrl,
     );
   }
 }
@@ -727,6 +777,7 @@ class DriverProfile {
   final bool publicProfileEnabled;
   final bool publicPhotoEnabled;
   final String? publicDisplayName;
+  final String? publicPortraitUrl;
 
   /// See [VehicleProfile.companyId].
   final String? companyId;
@@ -745,6 +796,7 @@ class DriverProfile {
     this.publicProfileEnabled = false,
     this.publicPhotoEnabled = false,
     this.publicDisplayName,
+    this.publicPortraitUrl,
     this.companyId,
   });
 
@@ -760,6 +812,7 @@ class DriverProfile {
     bool? publicProfileEnabled,
     bool? publicPhotoEnabled,
     Object? publicDisplayName = _driverProfileUnset,
+    Object? publicPortraitUrl = _driverProfileUnset,
     String? companyId,
   }) {
     return DriverProfile(
@@ -778,6 +831,9 @@ class DriverProfile {
       publicDisplayName: identical(publicDisplayName, _driverProfileUnset)
           ? this.publicDisplayName
           : publicDisplayName as String?,
+      publicPortraitUrl: identical(publicPortraitUrl, _driverProfileUnset)
+          ? this.publicPortraitUrl
+          : publicPortraitUrl as String?,
       companyId: companyId ?? this.companyId,
     );
   }
@@ -1254,6 +1310,7 @@ Map<String, dynamic> _encodeVehicle(VehicleProfile v) {
     'companyId': v.companyId,
     'primaryPhotoRef': v.primaryPhotoRef,
     'galleryPhotoRefs': v.galleryPhotoRefs,
+    'publicPhotoUrl': v.publicPhotoUrl,
     // Keep legacy key for backward readability/debug
     'photoRef': v.primaryPhotoRef,
   };
@@ -1272,6 +1329,7 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'publicProfileEnabled': d.publicProfileEnabled,
     'publicPhotoEnabled': d.publicPhotoEnabled,
     'publicDisplayName': d.publicDisplayName,
+    'publicPortraitUrl': d.publicPortraitUrl,
     'companyId': d.companyId,
   };
 }
@@ -1301,6 +1359,12 @@ VehicleProfile _decodeVehicle(
   final legacyPhoto = (m['photoRef'] ?? fallback.primaryPhotoRef).toString();
   final primaryPhoto = (m['primaryPhotoRef'] ?? legacyPhoto).toString();
   final gallery = _toStringList(m['galleryPhotoRefs']);
+  final String? publicPhotoUrl = () {
+    final raw = m['publicPhotoUrl'];
+    if (raw == null) return null;
+    final text = raw.toString().trim();
+    return text.isEmpty ? null : text;
+  }();
 
   final cidRaw = m['companyId'] ?? m['tenantId'];
   final String? companyId = cidRaw == null
@@ -1335,6 +1399,7 @@ VehicleProfile _decodeVehicle(
     companyId: companyId,
     primaryPhotoRef: primaryPhoto,
     galleryPhotoRefs: gallery,
+    publicPhotoUrl: publicPhotoUrl,
   );
 }
 
@@ -1368,6 +1433,12 @@ DriverProfile _decodeDriver(
     final text = raw.toString().trim();
     return text.isEmpty ? null : text;
   }();
+  final String? publicPortraitUrl = () {
+    final raw = m['publicPortraitUrl'];
+    if (raw == null) return null;
+    final text = raw.toString().trim();
+    return text.isEmpty ? null : text;
+  }();
 
   return fallback.copyWith(
     id: (m['id'] ?? fallback.id).toString(),
@@ -1385,6 +1456,7 @@ DriverProfile _decodeDriver(
     publicProfileEnabled: publicProfileEnabled,
     publicPhotoEnabled: publicProfileEnabled ? publicPhotoEnabled : false,
     publicDisplayName: publicDisplayName,
+    publicPortraitUrl: publicPortraitUrl,
     companyId: companyId,
   );
 }

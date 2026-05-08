@@ -956,6 +956,10 @@ const DEFAULT_BUSINESS_PROFILE = {
   supportEmail: "",
   replyToEmail: "",
   website: "",
+  publicLogoUrl: "",
+  publicHeroPhotoUrl: "",
+  publicPartnerProfilePublishedAt: "",
+  publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
   billingEmail: "",
   notificationEmail: "",
@@ -1114,6 +1118,30 @@ function normalizeBusinessProfile(input = {}) {
     supportEmail: sanitizeTenantString(source.supportEmail ?? source.support_email ?? DEFAULT_BUSINESS_PROFILE.supportEmail, 160),
     replyToEmail: sanitizeTenantString(source.replyToEmail ?? source.reply_to_email ?? source.reply_to ?? DEFAULT_BUSINESS_PROFILE.replyToEmail, 160),
     website: sanitizeTenantString(source.website ?? DEFAULT_BUSINESS_PROFILE.website, 200),
+    publicLogoUrl: sanitizeTenantString(
+      source.publicLogoUrl ??
+      source.public_logo_url ??
+      DEFAULT_BUSINESS_PROFILE.publicLogoUrl,
+      600
+    ),
+    publicHeroPhotoUrl: sanitizeTenantString(
+      source.publicHeroPhotoUrl ??
+      source.public_hero_photo_url ??
+      DEFAULT_BUSINESS_PROFILE.publicHeroPhotoUrl,
+      600
+    ),
+    publicPartnerProfilePublishedAt: sanitizeTenantString(
+      source.publicPartnerProfilePublishedAt ??
+      source.public_partner_profile_published_at ??
+      DEFAULT_BUSINESS_PROFILE.publicPartnerProfilePublishedAt,
+      80
+    ),
+    publicPartnerProfilePublishStatus: sanitizeTenantString(
+      source.publicPartnerProfilePublishStatus ??
+      source.public_partner_profile_publish_status ??
+      DEFAULT_BUSINESS_PROFILE.publicPartnerProfilePublishStatus,
+      32
+    ).toLowerCase(),
     invoiceEmail: sanitizeTenantString(source.invoiceEmail ?? source.invoice_email ?? DEFAULT_BUSINESS_PROFILE.invoiceEmail, 160),
     billingEmail: sanitizeTenantString(source.billingEmail ?? source.billing_email ?? source.invoiceEmail ?? source.invoice_email ?? DEFAULT_BUSINESS_PROFILE.billingEmail, 160),
     notificationEmail: sanitizeTenantString(source.notificationEmail ?? source.notification_email ?? DEFAULT_BUSINESS_PROFILE.notificationEmail, 160),
@@ -9066,17 +9094,33 @@ async function listNearbyPartnersByPostcode(env, postcode) {
   const needle = _normalizePostcode(postcode);
   if (!needle) return [];
   const partners = await _loadPartnerDirectory(env);
+  const profiles = await _loadPublicPartnerProfiles(env);
+  const publicMediaByPartnerId = new Map(
+    profiles
+      .filter((profile) => _isPublicPartnerProfileVisible(profile))
+      .map((profile) => {
+        const media = profile && typeof profile.media === "object" ? profile.media : {};
+        const heroUrl = _safePublicHttpsUrl(media.hero_photo_url ?? media.heroPhotoUrl, 600);
+        const logoUrl = _safePublicHttpsUrl(media.logo_url ?? media.logoUrl, 600);
+        return [profile.partner_id, { hero_photo_url: heroUrl, logo_url: logoUrl }];
+      }),
+  );
   return partners
     .filter((p) => p.is_active === true)
     .filter((p) => _isSubscriptionActive(p.subscription_status))
     .filter((p) => p.supported_postcodes.includes(needle))
-    .map((p) => ({
-      partner_id: p.partner_id,
-      company_name: p.company_name,
-      is_active: true,
-      subscription_status: p.subscription_status,
-      supported_postcodes: p.supported_postcodes,
-    }));
+    .map((p) => {
+      const media = publicMediaByPartnerId.get(p.partner_id) || {};
+      return {
+        partner_id: p.partner_id,
+        company_name: p.company_name,
+        is_active: true,
+        subscription_status: p.subscription_status,
+        supported_postcodes: p.supported_postcodes,
+        hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
+        logo_url: _safePublicHttpsUrl(media.logo_url, 600),
+      };
+    });
 }
 
 function _safePublicText(value, maxLen = 240) {

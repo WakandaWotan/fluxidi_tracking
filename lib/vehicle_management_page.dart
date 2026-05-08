@@ -597,6 +597,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     var galleryPhotoRefs = List<String>.from(
       existing?.galleryPhotoRefs ?? const <String>[],
     );
+    final publicPhotoUrlCtrl = TextEditingController(
+      text: existing?.publicPhotoUrl ?? '',
+    );
     final paxCtrl = TextEditingController(
       text: (existing?.passengerCapacity ?? 3).toString(),
     );
@@ -1274,6 +1277,48 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                         fontSize: 12,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    _txt(
+                      publicPhotoUrlCtrl,
+                      _t(
+                        nl: 'Publieke voertuigfoto-URL',
+                        en: 'Public vehicle photo URL',
+                        fr: 'URL photo véhicule publique',
+                        es: 'URL pública de foto del vehículo',
+                      ),
+                      onChanged: () => setLocalState(() {}),
+                    ),
+                    Text(
+                      _t(
+                        nl: 'Deze foto kan op het publieke partnerprofiel verschijnen. Alleen HTTPS-links worden gepubliceerd.',
+                        en: 'This photo can appear on the public partner profile. Only HTTPS links are published.',
+                        fr: 'Cette photo peut apparaître sur le profil partenaire public. Seuls les liens HTTPS sont publiés.',
+                        es: 'Esta foto puede aparecer en el perfil público del socio. Solo se publican enlaces HTTPS.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (publicPhotoUrlCtrl.text.trim().isNotEmpty &&
+                        !publicPhotoUrlCtrl.text
+                            .trim()
+                            .toLowerCase()
+                            .startsWith('https://')) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        _t(
+                          nl: 'Waarschuwing: enkel URLs die met https:// starten worden gepubliceerd.',
+                          en: 'Warning: only URLs starting with https:// are published.',
+                          fr: 'Avertissement : seules les URLs commençant par https:// sont publiées.',
+                          es: 'Advertencia: solo se publican URLs que empiezan por https://.',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 14),
                     Row(
                       children: [
@@ -1346,6 +1391,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     .where((e) => e.trim().isNotEmpty)
                                     .take(_maxPhotosPerVehicle)
                                     .toList(growable: false),
+                                publicPhotoUrl:
+                                    publicPhotoUrlCtrl.text.trim().isEmpty
+                                    ? null
+                                    : publicPhotoUrlCtrl.text.trim(),
                               );
                               if (existing == null) {
                                 addVehicle(vehicle);

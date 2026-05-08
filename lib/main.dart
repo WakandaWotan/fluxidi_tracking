@@ -5131,6 +5131,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
     final publicDisplayNameCtrl = TextEditingController(
       text: existing.publicDisplayName ?? '',
     );
+    final publicPortraitUrlCtrl = TextEditingController(
+      text: existing.publicPortraitUrl ?? '',
+    );
     var profilePhotoPath = existing.profilePhotoPath?.trim() ?? '';
     var publicProfileEnabled = existing.publicProfileEnabled;
     var publicPhotoEnabled = existing.publicPhotoEnabled;
@@ -5471,6 +5474,47 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Nombre público',
                           ),
                         ),
+                        _driverField(
+                          publicPortraitUrlCtrl,
+                          _t(
+                            nl: 'Publieke foto-URL',
+                            en: 'Public photo URL',
+                            fr: 'URL photo publique',
+                            es: 'URL pública de foto',
+                          ),
+                          enabled: publicProfileEnabled && publicPhotoEnabled,
+                        ),
+                        Text(
+                          _t(
+                            nl: 'Deze URL wordt later gebruikt voor het publieke profiel. De interne pasfoto blijft lokaal.',
+                            en: 'This URL will be used later for the public profile. The internal profile photo remains local.',
+                            fr: 'Cette URL sera utilisée plus tard pour le profil public. La photo interne reste locale.',
+                            es: 'Esta URL se usará más adelante para el perfil público. La foto interna permanece local.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.58),
+                            fontSize: 11.1,
+                          ),
+                        ),
+                        if (publicPortraitUrlCtrl.text.trim().isNotEmpty &&
+                            !publicPortraitUrlCtrl.text
+                                .trim()
+                                .toLowerCase()
+                                .startsWith('https://')) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _t(
+                              nl: 'Waarschuwing: enkel URLs die met https:// starten worden gepubliceerd.',
+                              en: 'Warning: only URLs starting with https:// are published.',
+                              fr: 'Avertissement : seules les URLs commençant par https:// sont publiées.',
+                              es: 'Advertencia: solo se publican URLs que empiezan por https://.',
+                            ),
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 2),
                         Text(
                           _t(
@@ -5577,6 +5621,10 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                   publicDisplayNameCtrl.text.trim().isEmpty
                                   ? null
                                   : publicDisplayNameCtrl.text.trim(),
+                              publicPortraitUrl:
+                                  publicPortraitUrlCtrl.text.trim().isEmpty
+                                  ? null
+                                  : publicPortraitUrlCtrl.text.trim(),
                             );
                             updateDriver(existing.id, updated);
                             Navigator.pop(ctx);
@@ -13408,6 +13456,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   String _mapText(Map<String, dynamic> p, String key) =>
       (p[key] ?? '').toString().trim();
 
+  String _mapTextAny(Map<String, dynamic> p, List<String> keys) {
+    for (final key in keys) {
+      final text = _mapText(p, key);
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
   List<String> _mapTextList(Map<String, dynamic> p, String key) {
     final raw = p[key];
     if (raw is List) {
@@ -13419,9 +13475,22 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     return const <String>[];
   }
 
+  List<String> _mapTextListAny(Map<String, dynamic> p, List<String> keys) {
+    for (final key in keys) {
+      final items = _mapTextList(p, key);
+      if (items.isNotEmpty) return items;
+    }
+    return const <String>[];
+  }
+
+  bool _isPublicHttpsUrl(String value) {
+    final clean = value.trim().toLowerCase();
+    return clean.startsWith('https://');
+  }
+
   void _openPartnerProfile(Map<String, dynamic> p) {
-    final partnerId = _mapText(p, 'partner_id');
-    final companyName = _mapText(p, 'company_name');
+    final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
     if (partnerId.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -13434,17 +13503,76 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   Widget _partnerCard(Map<String, dynamic> p) {
-    final company = _mapText(p, 'company_name');
-    final partnerId = _mapText(p, 'partner_id');
-    final isActive = p['is_active'] == true;
-    final supported = _mapTextList(p, 'supported_postcodes');
-    final logoUrl = _mapText(p, 'logo_url');
-    final heroUrl = _mapText(p, 'hero_photo_url');
-    final badgeList = _mapTextList(p, 'service_badges');
-    final vehiclePhotos = _mapTextList(p, 'vehicle_photos');
+    final company = _mapTextAny(p, const ['company_name', 'companyName']);
+    final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    final isActive = p['is_active'] == true || p['isActive'] == true;
+    final supported = _mapTextListAny(p, const [
+      'supported_postcodes',
+      'supportedPostcodes',
+    ]);
+    final logoCandidate = _mapTextAny(p, const ['logo_url', 'logoUrl']);
+    final heroCandidate = _mapTextAny(p, const [
+      'hero_photo_url',
+      'heroPhotoUrl',
+    ]);
+    final logoUrl = _isPublicHttpsUrl(logoCandidate) ? logoCandidate : '';
+    final heroUrl = _isPublicHttpsUrl(heroCandidate) ? heroCandidate : '';
+    final badgeList = _mapTextListAny(p, const [
+      'service_badges',
+      'serviceBadges',
+    ]);
 
-    final showImage = logoUrl.isNotEmpty || heroUrl.isNotEmpty;
-    final imageRef = heroUrl.isNotEmpty ? heroUrl : logoUrl;
+    Widget fallbackStrip({double height = 66}) {
+      return Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 11),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF15100A),
+              const Color(0xFF0E0F11),
+              _gold.withOpacity(0.20),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _gold.withOpacity(0.16),
+                border: Border.all(color: _gold.withOpacity(0.5)),
+              ),
+              child: Icon(
+                Icons.local_taxi_outlined,
+                size: 17,
+                color: _gold.withOpacity(0.96),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Fluxidi partner',
+                  en: 'Fluxidi partner',
+                  fr: 'Partenaire Fluxidi',
+                  es: 'Socio Fluxidi',
+                ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.9),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -13460,41 +13588,49 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(11),
-                  child: showImage
-                      ? Image.network(
-                          imageRef,
+                  child: heroUrl.isNotEmpty
+                      ? Stack(
+                          children: [
+                            Image.network(
+                              heroUrl,
+                              height: 90,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  fallbackStrip(height: 90),
+                            ),
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Colors.black.withOpacity(0.12),
+                                      Colors.black.withOpacity(0.55),
+                                    ],
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (logoUrl.isNotEmpty)
+                              Positioned(
+                                left: 10,
+                                bottom: 8,
+                                child: CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: Colors.black.withOpacity(
+                                    0.82,
+                                  ),
+                                  foregroundImage: NetworkImage(logoUrl),
+                                ),
+                              ),
+                          ],
+                        )
+                      : logoUrl.isNotEmpty
+                      ? Container(
                           height: 90,
                           width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            height: 90,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  const Color(0xFF17110A),
-                                  const Color(0xFF111214),
-                                  _gold.withOpacity(0.20),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                            ),
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: _infoChip(
-                              _t(
-                                nl: 'Fluxidi partner',
-                                en: 'Fluxidi partner',
-                                fr: 'Partenaire Fluxidi',
-                                es: 'Socio Fluxidi',
-                              ),
-                              icon: Icons.verified_outlined,
-                            ),
-                          ),
-                        )
-                      : Container(
-                          height: 66,
-                          padding: const EdgeInsets.symmetric(horizontal: 11),
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
@@ -13506,43 +13642,17 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                               end: Alignment.bottomRight,
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: _gold.withOpacity(0.16),
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.5),
-                                  ),
-                                ),
-                                child: Icon(
-                                  Icons.local_taxi_outlined,
-                                  size: 17,
-                                  color: _gold.withOpacity(0.96),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  _t(
-                                    nl: 'Fluxidi partner',
-                                    en: 'Fluxidi partner',
-                                    fr: 'Partenaire Fluxidi',
-                                    es: 'Socio Fluxidi',
-                                  ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.9),
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          alignment: Alignment.center,
+                          child: Image.network(
+                            logoUrl,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                fallbackStrip(height: 90),
                           ),
-                        ),
+                        )
+                      : fallbackStrip(),
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -13645,7 +13755,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                 if (partnerId.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Text(
-                    'Ref: $partnerId',
+                    '${_t(nl: "Referentie", en: "Reference", fr: "Référence", es: "Referencia")}: $partnerId',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.32),
                       fontSize: 9.8,
@@ -13672,7 +13782,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             _t(
               nl: "Taxi's in de buurt",
               en: 'Taxis nearby',
-              fr: 'Taxis a proximite',
+              fr: 'Taxis à proximité',
               es: 'Taxis cercanos',
             ),
           ),
@@ -13705,8 +13815,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         _t(
                           nl: 'Zoek actieve Fluxidi-partners in jouw regio op basis van postcode.',
                           en: 'Search active Fluxidi partners in your area by postal code.',
-                          fr: 'Recherchez des partenaires Fluxidi actifs dans votre region par code postal.',
-                          es: 'Busca socios activos de Fluxidi en tu zona por codigo postal.',
+                          fr: 'Recherchez des partenaires Fluxidi actifs dans votre région par code postal.',
+                          es: 'Busca socios activos de Fluxidi en tu zona por código postal.',
                         ),
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.80),
@@ -13732,14 +13842,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           nl: 'Postcode',
                           en: 'Postal code',
                           fr: 'Code postal',
-                          es: 'Codigo postal',
+                          es: 'Código postal',
                         ),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintText: _t(
                           nl: 'Bijv. 2000',
                           en: 'e.g. 2000',
                           fr: 'ex. 2000',
-                          es: 'ej. 2000',
+                          es: 'p. ej. 2000',
                         ),
                         hintStyle: const TextStyle(color: Colors.white38),
                         filled: true,
@@ -13807,8 +13917,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       _t(
                         nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
                         en: 'Enter your postal code to check which partners are active.',
-                        fr: 'Saisissez votre code postal pour verifier quels partenaires sont actifs.',
-                        es: 'Ingresa tu codigo postal para verificar que socios estan activos.',
+                        fr: 'Saisissez votre code postal pour vérifier quels partenaires sont actifs.',
+                        es: 'Ingresa tu código postal para verificar qué socios están activos.',
                       ),
                     )
                   : _partners.isNotEmpty
@@ -13838,8 +13948,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       _t(
                         nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
                         en: 'No active partners found yet for postal code $_normalizedPostcode.',
-                        fr: 'Aucun partenaire actif trouve pour le code postal $_normalizedPostcode.',
-                        es: 'Aun no se encontraron socios activos para el codigo postal $_normalizedPostcode.',
+                        fr: 'Aucun partenaire actif trouvé pour le code postal $_normalizedPostcode.',
+                        es: 'Aún no se encontraron socios activos para el código postal $_normalizedPostcode.',
                       ),
                       action: OutlinedButton(
                         onPressed: () {
@@ -13862,8 +13972,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           _t(
                             nl: 'Registreer je regio',
                             en: 'Register your region',
-                            fr: 'Enregistrez votre region',
-                            es: 'Registra tu region',
+                            fr: 'Enregistrez votre région',
+                            es: 'Registra tu región',
                           ),
                         ),
                       ),
@@ -13926,10 +14036,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         throw Exception('HTTP ${res.statusCode}');
       }
       final decoded = jsonDecode(res.body);
-      final p = decoded is Map<String, dynamic> && decoded['profile'] is Map
-          ? Map<String, dynamic>.from(decoded['profile'] as Map)
-          : null;
-      if (p == null) throw Exception('invalid_profile_payload');
+      final root = _profileMap(decoded);
+      final p = _profileMap(root['profile']);
+      if (p.isEmpty) throw Exception('invalid_profile_payload');
       if (!mounted) return;
       setState(() {
         _profile = p;
@@ -13949,19 +14058,209 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
   }
 
-  String _txt(Map<String, dynamic>? map, String key) =>
-      (map?[key] ?? '').toString().trim();
+  Map<String, dynamic> _profileMap(dynamic value) {
+    if (value is Map) {
+      return value.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return <String, dynamic>{};
+  }
 
-  List<String> _list(Map<String, dynamic>? map, String key) {
-    final raw = map?[key];
-    if (raw is List) {
-      return raw
+  List<Map<String, dynamic>> _profileMapList(dynamic value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+          .toList(growable: false);
+    }
+    return <Map<String, dynamic>>[];
+  }
+
+  String _profileTextAny(dynamic source, List<String> keys) {
+    final map = _profileMap(source);
+    for (final key in keys) {
+      final value = map[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  String _profileHttpsUrl(dynamic source, List<String> keys) {
+    final text = _profileTextAny(source, keys);
+    if (text.toLowerCase().startsWith('https://')) return text;
+    return '';
+  }
+
+  List<String> _profileTextListAny(dynamic source, List<String> keys) {
+    final map = _profileMap(source);
+    for (final key in keys) {
+      final raw = map[key];
+      if (raw is! List) continue;
+      final out = raw
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
           .toList(growable: false);
+      if (out.isNotEmpty) return out;
     }
     return const <String>[];
   }
+
+  String _publicProfileLabel(String key) {
+    switch (key) {
+      case 'profile':
+        return _t(
+          nl: 'Partnerprofiel',
+          en: 'Partner profile',
+          fr: 'Profil partenaire',
+          es: 'Perfil del socio',
+        );
+      case 'reference':
+        return _t(
+          nl: 'Referentie',
+          en: 'Reference',
+          fr: 'Référence',
+          es: 'Referencia',
+        );
+      case 'about':
+        return _t(
+          nl: 'Over deze partner',
+          en: 'About this partner',
+          fr: 'À propos de ce partenaire',
+          es: 'Sobre este socio',
+        );
+      case 'vehicles':
+        return _t(
+          nl: 'Voertuigen',
+          en: 'Vehicles',
+          fr: 'Véhicules',
+          es: 'Vehículos',
+        );
+      case 'drivers':
+        return _t(
+          nl: 'Chauffeurs',
+          en: 'Drivers',
+          fr: 'Chauffeurs',
+          es: 'Conductores',
+        );
+      case 'coverage':
+        return _t(
+          nl: 'Bereikbaarheid & details',
+          en: 'Coverage & details',
+          fr: 'Couverture et détails',
+          es: 'Cobertura y detalles',
+        );
+      case 'region':
+        return _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región');
+      case 'website':
+        return _t(
+          nl: 'Website',
+          en: 'Website',
+          fr: 'Site web',
+          es: 'Sitio web',
+        );
+      case 'phone':
+        return _t(nl: 'Telefoon', en: 'Phone', fr: 'Téléphone', es: 'Teléfono');
+      case 'booking_email':
+        return _t(
+          nl: 'Boeking e-mail',
+          en: 'Booking email',
+          fr: 'E-mail de réservation',
+          es: 'Correo de reservas',
+        );
+      case 'passengers':
+        return _t(
+          nl: 'Passagiers',
+          en: 'Passengers',
+          fr: 'Passagers',
+          es: 'Pasajeros',
+        );
+      case 'luggage':
+        return _t(nl: 'Bagage', en: 'Luggage', fr: 'Bagages', es: 'Equipaje');
+      case 'public_vehicle':
+        return _t(
+          nl: 'Publiek voertuigprofiel',
+          en: 'Public vehicle profile',
+          fr: 'Profil véhicule public',
+          es: 'Perfil público de vehículo',
+        );
+      case 'public_partner':
+        return _t(
+          nl: 'Fluxidi partner',
+          en: 'Fluxidi partner',
+          fr: 'Partenaire Fluxidi',
+          es: 'Socio Fluxidi',
+        );
+      default:
+        return key;
+    }
+  }
+
+  String _localizePublicDefaultText(String value) {
+    final normalized = value.trim().toLowerCase();
+    const aboutShortDefaults = <String>{
+      'betrouwbare ritten voor particulieren en bedrijven.',
+      'reliable rides for private and business customers.',
+      'trayectos fiables para particulares y empresas.',
+      'des trajets fiables pour particuliers et entreprises.',
+    };
+    const aboutLongDefaults = <String>{
+      'dit publiek profiel bevat enkel veilige bedrijfsinformatie. gevoelige interne gegevens worden niet gepubliceerd.',
+      'dit publieke profiel bevat enkel veilige bedrijfsinformatie. gevoelige interne gegevens worden niet gepubliceerd.',
+      'this public profile only contains safe company information. sensitive internal data is not published.',
+      'este perfil público solo contiene información empresarial segura. los datos internos sensibles no se publican.',
+      'ce profil public contient uniquement des informations d’entreprise sûres. les données internes sensibles ne sont pas publiées.',
+      "ce profil public contient uniquement des informations d'entreprise sures. les donnees internes sensibles ne sont pas publiees.",
+    };
+    if (aboutShortDefaults.contains(normalized)) {
+      return _t(
+        nl: 'Betrouwbare ritten voor particulieren en bedrijven.',
+        en: 'Reliable rides for private and business customers.',
+        fr: 'Des trajets fiables pour particuliers et entreprises.',
+        es: 'Trayectos fiables para particulares y empresas.',
+      );
+    }
+    if (aboutLongDefaults.contains(normalized)) {
+      return _t(
+        nl: 'Dit publiek profiel bevat enkel veilige bedrijfsinformatie. Gevoelige interne gegevens worden niet gepubliceerd.',
+        en: 'This public profile only contains safe company information. Sensitive internal data is not published.',
+        fr: 'Ce profil public contient uniquement des informations professionnelles sûres. Les données internes sensibles ne sont pas publiées.',
+        es: 'Este perfil público solo contiene información segura de la empresa. Los datos internos sensibles no se publican.',
+      );
+    }
+    return value;
+  }
+
+  String _localizePublicDefaultTagline(String value) {
+    final normalized = value.trim().toLowerCase();
+    const defaults = <String>{
+      'premium mobiliteit in jouw regio',
+      'premium mobility in your region',
+      'mobilité premium dans votre région',
+      'movilidad premium en tu región',
+    };
+    if (!defaults.contains(normalized)) return value;
+    return _t(
+      nl: 'Premium mobiliteit in jouw regio',
+      en: 'Premium mobility in your region',
+      fr: 'Mobilité premium dans votre région',
+      es: 'Movilidad premium en tu región',
+    );
+  }
+
+  String _localizeVehicleName(String value) {
+    if (value.trim().toLowerCase() != 'hoofdwagen') return value;
+    return _t(
+      nl: 'Hoofdwagen',
+      en: 'Main vehicle',
+      fr: 'Véhicule principal',
+      es: 'Vehículo principal',
+    );
+  }
+
+  String _featureLabel(String id) => _serviceLabel(id);
+
+  String _badgeLabel(String id) => _serviceLabel(id);
 
   Widget _section(String title, Widget child) {
     return Container(
@@ -14033,43 +14332,43 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return _t(
           nl: 'Luchthavenvervoer',
           en: 'Airport transfer',
-          fr: 'Transfert aeroport',
+          fr: 'Transfert aéroport',
           es: 'Traslado aeropuerto',
         );
       case 'business_rides':
         return _t(
           nl: 'Zakelijke ritten',
           en: 'Business rides',
-          fr: 'Trajets affaires',
+          fr: 'Trajets professionnels',
           es: 'Viajes de negocios',
         );
       case 'hotel_bnb_pickup':
         return _t(
           nl: 'Hotels & B&B',
           en: 'Hotels & B&B',
-          fr: 'Hotels & B&B',
+          fr: 'Hôtels & B&B',
           es: 'Hoteles y B&B',
         );
       case 'event_mobility':
         return _t(
           nl: 'Evenementen',
           en: 'Event mobility',
-          fr: 'Evenements',
+          fr: 'Événements',
           es: 'Eventos',
         );
       case 'ev_available':
         return _t(
           nl: 'Elektrisch vervoer',
           en: 'Electric vehicle',
-          fr: 'Vehicule electrique',
-          es: 'Vehiculo electrico',
+          fr: 'Véhicule électrique',
+          es: 'Vehículo eléctrico',
         );
       case 'online_payments':
         return _t(
           nl: 'Online betalen',
           en: 'Online payments',
-          fr: 'Paiements en ligne',
-          es: 'Pagos en linea',
+          fr: 'Paiement en ligne',
+          es: 'Pagos en línea',
         );
       case 'comfort':
         return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
@@ -14077,7 +14376,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return _t(
           nl: 'Geverifieerde professional',
           en: 'Verified professional',
-          fr: 'Professionnel verifie',
+          fr: 'Professionnel vérifié',
           es: 'Profesional verificado',
         );
       default:
@@ -14088,7 +14387,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   String _paymentLabel(String id) {
     switch (id) {
       case 'cash':
-        return _t(nl: 'Cash', en: 'Cash', fr: 'Cash', es: 'Cash');
+        return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
       case 'qr':
         return _t(nl: 'QR', en: 'QR', fr: 'QR', es: 'QR');
       case 'online_payment':
@@ -14105,48 +14404,63 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    final p = _profile;
-    final companyName = _txt(p, 'company_name').isNotEmpty
-        ? _txt(p, 'company_name')
+    final p = _profileMap(_profile);
+    final companyName =
+        _profileTextAny(p, const ['company_name', 'companyName']).isNotEmpty
+        ? _profileTextAny(p, const ['company_name', 'companyName'])
         : widget.companyNameFallback;
-    final tagline = _txt(p, 'tagline');
-    final aboutShort = _txt(p, 'about_short');
-    final aboutLong = _txt(p, 'about_long');
-    final coverage = p?['coverage'] is Map
-        ? Map<String, dynamic>.from(p!['coverage'] as Map)
-        : const <String, dynamic>{};
-    final regionLabel = _txt(coverage, 'region_label');
-    final postcodes = _list(coverage, 'postcodes');
-    final contact = p?['public_contact'] is Map
-        ? Map<String, dynamic>.from(p!['public_contact'] as Map)
-        : const <String, dynamic>{};
-    final website = _txt(contact, 'website');
-    final publicPhone = _txt(contact, 'public_phone');
-    final bookingEmail = _txt(contact, 'booking_email');
-    final media = p?['media'] is Map
-        ? Map<String, dynamic>.from(p!['media'] as Map)
-        : const <String, dynamic>{};
-    final logoUrl = _txt(media, 'logo_url');
-    final heroUrl = _txt(media, 'hero_photo_url');
-    final gallery = _list(media, 'gallery');
-    final services = _list(p, 'services');
-    final paymentMethods = _list(p, 'payment_methods');
-    final trust = p?['trust'] is Map
-        ? Map<String, dynamic>.from(p!['trust'] as Map)
-        : const <String, dynamic>{};
-    final verified = trust['verified_partner'] == true;
-    final professionalBadge = trust['professional_badge'] == true;
-    final bookingCapabilities = p?['booking_capabilities'] is Map
-        ? Map<String, dynamic>.from(p!['booking_capabilities'] as Map)
-        : const <String, dynamic>{};
-    final onlinePayments = bookingCapabilities['online_payments'] == true;
-    final instantQuote = bookingCapabilities['instant_quote'] == true;
-    final vehiclesRaw = p?['vehicles'] is List
-        ? (p!['vehicles'] as List)
-        : const <dynamic>[];
-    final driversRaw = p?['drivers'] is List
-        ? (p!['drivers'] as List)
-        : const <dynamic>[];
+    final tagline = _localizePublicDefaultTagline(
+      _profileTextAny(p, const ['tagline']),
+    );
+    final aboutShort = _localizePublicDefaultText(
+      _profileTextAny(p, const ['about_short', 'aboutShort']),
+    );
+    final aboutLong = _localizePublicDefaultText(
+      _profileTextAny(p, const ['about_long', 'aboutLong']),
+    );
+    final coverage = _profileMap(p['coverage']);
+    final regionLabel = _profileTextAny(coverage, const [
+      'region_label',
+      'regionLabel',
+    ]);
+    final postcodes = _profileTextListAny(coverage, const ['postcodes']);
+    final contact = _profileMap(p['public_contact']);
+    final website = _profileTextAny(contact, const ['website']);
+    final publicPhone = _profileTextAny(contact, const [
+      'public_phone',
+      'publicPhone',
+    ]);
+    final bookingEmail = _profileTextAny(contact, const [
+      'booking_email',
+      'bookingEmail',
+    ]);
+    final media = _profileMap(p['media']);
+    final logoUrl = _profileHttpsUrl(media, const ['logo_url', 'logoUrl']);
+    final heroPhotoUrl = _profileHttpsUrl(media, const [
+      'hero_photo_url',
+      'heroPhotoUrl',
+    ]);
+    final gallery = _profileTextListAny(media, const ['gallery']);
+    final services = _profileTextListAny(p, const ['services']);
+    final paymentMethods = _profileTextListAny(p, const [
+      'payment_methods',
+      'paymentMethods',
+    ]);
+    final trust = _profileMap(p['trust']);
+    final verified =
+        trust['verified_partner'] == true || trust['verifiedPartner'] == true;
+    final professionalBadge =
+        trust['professional_badge'] == true ||
+        trust['professionalBadge'] == true;
+    final bookingCapabilities = _profileMap(p['booking_capabilities']);
+    final onlinePayments =
+        bookingCapabilities['online_payments'] == true ||
+        bookingCapabilities['onlinePayments'] == true;
+    final instantQuote =
+        bookingCapabilities['instant_quote'] == true ||
+        bookingCapabilities['instantQuote'] == true;
+    final vehicles = _profileMapList(p['vehicles']);
+    final drivers = _profileMapList(p['drivers']);
 
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
@@ -14154,14 +14468,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         backgroundColor: _bg,
         appBar: AppBar(
           backgroundColor: _bg,
-          title: Text(
-            _t(
-              nl: 'Partnerprofiel',
-              en: 'Partner profile',
-              fr: 'Profil partenaire',
-              es: 'Perfil del socio',
-            ),
-          ),
+          title: Text(_publicProfileLabel('profile')),
         ),
         body: SafeArea(
           child: _loading
@@ -14180,18 +14487,33 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    if (heroUrl.isNotEmpty)
+                    if (heroPhotoUrl.isNotEmpty)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(15),
                         child: Stack(
                           children: [
                             Image.network(
-                              heroUrl,
-                              height: 186,
+                              heroPhotoUrl,
+                              height: 232,
                               width: double.infinity,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
+                              errorBuilder: (_, __, ___) {
+                                return Container(
+                                  height: 232,
+                                  width: double.infinity,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        const Color(0xFF16110A),
+                                        const Color(0xFF101113),
+                                        _gold.withOpacity(0.18),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                             Positioned.fill(
                               child: DecoratedBox(
@@ -14345,7 +14667,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             _t(
                               nl: 'Geverifieerde partner',
                               en: 'Verified partner',
-                              fr: 'Partenaire verifie',
+                              fr: 'Partenaire vérifié',
                               es: 'Socio verificado',
                             ),
                             icon: Icons.verified_outlined,
@@ -14361,7 +14683,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                     if (widget.partnerId.trim().isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
-                        '${_t(nl: "Referentie", en: "Reference", fr: "Reference", es: "Referencia")}: ${widget.partnerId}',
+                        '${_publicProfileLabel("reference")}: ${widget.partnerId}',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.33),
                           fontSize: 9.7,
@@ -14371,12 +14693,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                     const SizedBox(height: 9),
                     if (aboutShort.isNotEmpty || aboutLong.isNotEmpty)
                       _section(
-                        _t(
-                          nl: 'Over deze partner',
-                          en: 'About this partner',
-                          fr: 'A propos de ce partenaire',
-                          es: 'Sobre este socio',
-                        ),
+                        _publicProfileLabel('about'),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -14427,24 +14744,34 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               .toList(growable: false),
                         ),
                       ),
-                    if (vehiclesRaw.isNotEmpty)
+                    if (vehicles.isNotEmpty)
                       _section(
                         _t(
                           nl: 'Voertuigen',
                           en: 'Vehicles',
-                          fr: 'Vehicules',
-                          es: 'Vehiculos',
+                          fr: 'Véhicules',
+                          es: 'Vehículos',
                         ),
                         Column(
-                          children: vehiclesRaw
-                              .whereType<Map>()
-                              .map((raw) {
-                                final v = Map<String, dynamic>.from(raw);
-                                final vName = _txt(v, 'name');
-                                final vBrand = _txt(v, 'brand_model');
-                                final vCategory = _txt(v, 'category');
-                                final vPhoto = _txt(v, 'photo_url');
-                                final vFeatures = _list(v, 'features');
+                          children: vehicles
+                              .map((v) {
+                                final vName = _localizeVehicleName(
+                                  _profileTextAny(v, const ['name']),
+                                );
+                                final vBrand = _profileTextAny(v, const [
+                                  'brand_model',
+                                  'brandModel',
+                                ]);
+                                final vCategory = _profileTextAny(v, const [
+                                  'category',
+                                ]);
+                                final vehiclePhotoUrl = _profileHttpsUrl(
+                                  v,
+                                  const ['photo_url', 'photoUrl'],
+                                );
+                                final vFeatures = _profileTextListAny(v, const [
+                                  'features',
+                                ]);
                                 final vPax = v['pax'];
                                 final vLuggage = v['luggage'];
                                 return Container(
@@ -14461,18 +14788,64 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      if (vPhoto.isNotEmpty)
+                                      if (vehiclePhotoUrl.isNotEmpty)
                                         ClipRRect(
                                           borderRadius: BorderRadius.circular(
                                             8,
                                           ),
                                           child: Image.network(
-                                            vPhoto,
-                                            height: 92,
+                                            vehiclePhotoUrl,
+                                            height: 168,
                                             width: double.infinity,
                                             fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) =>
-                                                const SizedBox.shrink(),
+                                            errorBuilder: (_, __, ___) {
+                                              return Container(
+                                                height: 168,
+                                                width: double.infinity,
+                                                decoration: BoxDecoration(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  gradient: LinearGradient(
+                                                    colors: [
+                                                      const Color(0xFF16100A),
+                                                      _gold.withOpacity(0.16),
+                                                    ],
+                                                  ),
+                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                    ),
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons
+                                                          .directions_car_outlined,
+                                                      color: _gold.withOpacity(
+                                                        0.95,
+                                                      ),
+                                                      size: 18,
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                      _t(
+                                                        nl: 'Publiek voertuigprofiel',
+                                                        en: 'Public vehicle profile',
+                                                        fr: 'Profil véhicule public',
+                                                        es: 'Perfil público de vehículo',
+                                                      ),
+                                                      style: TextStyle(
+                                                        color: Colors.white
+                                                            .withOpacity(0.82),
+                                                        fontSize: 11.3,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
                                           ),
                                         )
                                       else
@@ -14505,8 +14878,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                                 _t(
                                                   nl: 'Publiek voertuigprofiel',
                                                   en: 'Public vehicle profile',
-                                                  fr: 'Profil vehicule public',
-                                                  es: 'Perfil publico de vehiculo',
+                                                  fr: 'Profil véhicule public',
+                                                  es: 'Perfil público de vehículo',
                                                 ),
                                                 style: TextStyle(
                                                   color: Colors.white
@@ -14546,16 +14919,16 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                         children: [
                                           if (vPax != null)
                                             _chip(
-                                              '${_t(nl: "Pax", en: "Pax", fr: "Pax", es: "Pax")}: $vPax',
+                                              '${_publicProfileLabel("passengers")}: $vPax',
                                               icon: Icons.people_alt_outlined,
                                             ),
                                           if (vLuggage != null)
                                             _chip(
-                                              '${_t(nl: "Bagage", en: "Luggage", fr: "Bagages", es: "Equipaje")}: $vLuggage',
+                                              '${_publicProfileLabel("luggage")}: $vLuggage',
                                               icon: Icons.luggage_outlined,
                                             ),
                                           ...vFeatures.map(
-                                            (f) => _chip(_serviceLabel(f)),
+                                            (f) => _chip(_featureLabel(f)),
                                           ),
                                         ],
                                       ),
@@ -14566,7 +14939,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               .toList(growable: false),
                         ),
                       ),
-                    if (driversRaw.isNotEmpty)
+                    if (drivers.isNotEmpty)
                       _section(
                         _t(
                           nl: 'Chauffeurs',
@@ -14575,14 +14948,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           es: 'Conductores',
                         ),
                         Column(
-                          children: driversRaw
-                              .whereType<Map>()
-                              .map((raw) {
-                                final d = Map<String, dynamic>.from(raw);
-                                final displayName = _txt(d, 'display_name');
-                                final languages = _list(d, 'languages');
-                                final badges = _list(d, 'badges');
-                                final portrait = _txt(d, 'portrait_url');
+                          children: drivers
+                              .map((d) {
+                                final displayName = _profileTextAny(d, const [
+                                  'display_name',
+                                  'displayName',
+                                ]);
+                                final languages = _profileTextListAny(d, const [
+                                  'languages',
+                                ]);
+                                final badges = _profileTextListAny(d, const [
+                                  'badges',
+                                ]);
+                                final portrait = _profileHttpsUrl(d, const [
+                                  'portrait_url',
+                                  'portraitUrl',
+                                ]);
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 8),
                                   padding: const EdgeInsets.all(10),
@@ -14646,7 +15027,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                                 children: badges
                                                     .map(
                                                       (b) => _chip(
-                                                        _serviceLabel(b),
+                                                        _badgeLabel(b),
                                                         icon: Icons
                                                             .verified_outlined,
                                                       ),
@@ -14677,7 +15058,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         _t(
                           nl: 'Bereikbaarheid & details',
                           en: 'Coverage & details',
-                          fr: 'Couverture et details',
+                          fr: 'Couverture et détails',
                           es: 'Cobertura y detalles',
                         ),
                         Column(
@@ -14685,7 +15066,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           children: [
                             if (regionLabel.isNotEmpty)
                               Text(
-                                '${_t(nl: "Regio", en: "Region", fr: "Region", es: "Region")}: $regionLabel',
+                                '${_publicProfileLabel("region")}: $regionLabel',
                                 style: TextStyle(
                                   color: Colors.white.withOpacity(0.82),
                                   fontSize: 12.7,
@@ -14712,21 +15093,21 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               const SizedBox(height: 8),
                               if (website.isNotEmpty)
                                 Text(
-                                  'Website: $website',
+                                  '${_publicProfileLabel("website")}: $website',
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.75),
                                   ),
                                 ),
                               if (publicPhone.isNotEmpty)
                                 Text(
-                                  '${_t(nl: "Telefoon", en: "Phone", fr: "Telephone", es: "Telefono")}: $publicPhone',
+                                  '${_publicProfileLabel("phone")}: $publicPhone',
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.75),
                                   ),
                                 ),
                               if (bookingEmail.isNotEmpty)
                                 Text(
-                                  '${_t(nl: "Boeking e-mail", en: "Booking email", fr: "E-mail reservation", es: "Correo de reservas")}: $bookingEmail',
+                                  '${_publicProfileLabel("booking_email")}: $bookingEmail',
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.75),
                                   ),
@@ -14760,8 +15141,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                       _t(
                                         nl: 'Online betalen',
                                         en: 'Online payments',
-                                        fr: 'Paiements en ligne',
-                                        es: 'Pagos en linea',
+                                        fr: 'Paiement en ligne',
+                                        es: 'Pagos en línea',
                                       ),
                                       icon: Icons.credit_card_outlined,
                                     ),
@@ -14770,8 +15151,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                       _t(
                                         nl: 'Directe prijsindicatie',
                                         en: 'Instant quote',
-                                        fr: 'Devis instantane',
-                                        es: 'Presupuesto instantaneo',
+                                        fr: 'Devis instantané',
+                                        es: 'Presupuesto instantáneo',
                                       ),
                                       icon: Icons.flash_on_outlined,
                                     ),
@@ -14781,7 +15162,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                         nl: '${gallery.length} galerijfoto\'s',
                                         en: '${gallery.length} gallery photos',
                                         fr: '${gallery.length} photos de galerie',
-                                        es: '${gallery.length} fotos de galeria',
+                                        es: '${gallery.length} fotos de galería',
                                       ),
                                       icon: Icons.photo_library_outlined,
                                     ),

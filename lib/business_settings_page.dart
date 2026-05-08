@@ -73,6 +73,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _backendEmailCtrl = TextEditingController();
   final _backendWebsiteCtrl = TextEditingController();
   final _backendBookingEmailCtrl = TextEditingController();
+  final _publicLogoUrlCtrl = TextEditingController();
+  final _publicHeroPhotoUrlCtrl = TextEditingController();
   final _backendInvoiceEmailCtrl = TextEditingController();
   final _backendIbanCtrl = TextEditingController();
   final _backendPaymentPrefixCtrl = TextEditingController();
@@ -102,6 +104,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String? _backendProfilesStatus;
   String? _publicPartnerProfileStatus;
   String? _publicPartnerProfileError;
+  String _publicPartnerProfilePublishedAt = '';
+  String _publicPartnerProfilePublishStatus = '';
   String? _googleCalendarStatusError;
   Map<String, dynamic>? _googleCalendarStatus;
   bool _showAdvancedLogoPath = false;
@@ -210,6 +214,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendEmailCtrl.dispose();
     _backendWebsiteCtrl.dispose();
     _backendBookingEmailCtrl.dispose();
+    _publicLogoUrlCtrl.dispose();
+    _publicHeroPhotoUrlCtrl.dispose();
     _backendInvoiceEmailCtrl.dispose();
     _backendIbanCtrl.dispose();
     _backendPaymentPrefixCtrl.dispose();
@@ -276,6 +282,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _backendEmailCtrl.text = p.email;
     _backendWebsiteCtrl.text = p.website;
     _backendBookingEmailCtrl.text = p.bookingEmail;
+    _publicLogoUrlCtrl.text = p.publicLogoUrl;
+    _publicHeroPhotoUrlCtrl.text = p.publicHeroPhotoUrl;
+    _publicPartnerProfilePublishedAt = p.publicPartnerProfilePublishedAt;
+    _publicPartnerProfilePublishStatus = p.publicPartnerProfilePublishStatus;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
     _backendIbanCtrl.text = p.iban;
     _backendPaymentPrefixCtrl.text = p.paymentReferencePrefix;
@@ -386,6 +396,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       email: pick(local.email, server.email),
       website: pick(local.website, server.website),
       bookingEmail: pick(local.bookingEmail, server.bookingEmail),
+      publicLogoUrl: pick(local.publicLogoUrl, server.publicLogoUrl),
+      publicHeroPhotoUrl: pick(
+        local.publicHeroPhotoUrl,
+        server.publicHeroPhotoUrl,
+      ),
+      publicPartnerProfilePublishedAt: pick(
+        local.publicPartnerProfilePublishedAt,
+        server.publicPartnerProfilePublishedAt,
+      ),
+      publicPartnerProfilePublishStatus: pick(
+        local.publicPartnerProfilePublishStatus,
+        server.publicPartnerProfilePublishStatus,
+      ),
       invoiceEmail: pick(local.invoiceEmail, server.invoiceEmail),
       iban: pick(local.iban, server.iban),
       paymentReferencePrefix: pick(
@@ -1017,6 +1040,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       email: _backendEmailCtrl.text.trim(),
       website: _backendWebsiteCtrl.text.trim(),
       bookingEmail: _backendBookingEmailCtrl.text.trim(),
+      publicLogoUrl: _publicLogoUrlCtrl.text.trim(),
+      publicHeroPhotoUrl: _publicHeroPhotoUrlCtrl.text.trim(),
+      publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
+      publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
+          .trim(),
       invoiceEmail: _backendInvoiceEmailCtrl.text.trim(),
       iban: _backendIbanCtrl.text.trim(),
       paymentReferencePrefix: _backendPaymentPrefixCtrl.text.trim(),
@@ -1229,6 +1257,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 brand.toLowerCase().contains('ev'))
               'ev_available',
           };
+          final publicPhoto = v.publicPhotoUrl?.trim() ?? '';
           final photoRef = v.primaryPhotoRef.trim();
           return <String, dynamic>{
             'name': v.vehicleName.trim(),
@@ -1237,7 +1266,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
             'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
             'features': features.toList(growable: false),
-            'photo_url': _isPublicHttpsUrl(photoRef) ? photoRef : '',
+            'photo_url': _isPublicHttpsUrl(publicPhoto)
+                ? publicPhoto
+                : (_isPublicHttpsUrl(photoRef) ? photoRef : ''),
           };
         })
         .toList(growable: false);
@@ -1248,7 +1279,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         .where((d) => (d.companyId?.trim() ?? '') == companyId)
         .map((d) {
           final displayName = d.publicDisplayName?.trim() ?? '';
-          final candidatePortrait = d.profilePhotoPath?.trim() ?? '';
+          final candidatePortrait = d.publicPortraitUrl?.trim() ?? '';
           return <String, dynamic>{
             'display_name': displayName.isNotEmpty
                 ? displayName
@@ -1261,7 +1292,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'languages': const <String>[],
             'badges': const <String>['verified_professional'],
             'portrait_url':
-                d.publicPhotoEnabled && _isPublicHttpsUrl(candidatePortrait)
+                d.publicProfileEnabled &&
+                    d.publicPhotoEnabled &&
+                    _isPublicHttpsUrl(candidatePortrait)
                 ? candidatePortrait
                 : '',
           };
@@ -1302,8 +1335,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'booking_email': profileForm.bookingEmail.trim(),
       },
       'media': <String, dynamic>{
-        'logo_url': '',
-        'hero_photo_url': '',
+        'logo_url': _isPublicHttpsUrl(profileForm.publicLogoUrl)
+            ? profileForm.publicLogoUrl.trim()
+            : '',
+        'hero_photo_url': _isPublicHttpsUrl(profileForm.publicHeroPhotoUrl)
+            ? profileForm.publicHeroPhotoUrl.trim()
+            : '',
         'gallery': const <String>[],
       },
       'services': services,
@@ -1330,6 +1367,24 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     });
     try {
       final scope = _activeSettingsScope();
+      // Keep publish flow stateful: persist current business form values first
+      // so manual public media URLs survive page close/reopen even if the user
+      // uses "Publish public profile" without tapping "Save company details".
+      final formProfile = _backendBusinessProfileFromForm();
+      await updateLocalBackendBusinessProfileCache(formProfile);
+      final savedBusiness = await saveBackendBusinessProfile(
+        formProfile,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      final mergedBusiness = _mergeBackendBusinessProfile(
+        local: formProfile,
+        server: savedBusiness,
+      );
+      _hydrateBackendBusinessProfile(mergedBusiness);
+      unawaited(updateLocalBackendBusinessProfileCache(mergedBusiness));
+
       final payload = _buildPublicPartnerProfilePayload(
         companyId: scope.companyId,
       );
@@ -1339,7 +1394,42 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      final publishedAt = DateTime.now().toUtc().toIso8601String();
+      final publishedBusiness = BackendBusinessProfile(
+        companyName: mergedBusiness.companyName,
+        legalName: mergedBusiness.legalName,
+        vatNumber: mergedBusiness.vatNumber,
+        companyRegistrationNumber: mergedBusiness.companyRegistrationNumber,
+        address: mergedBusiness.address,
+        postcode: mergedBusiness.postcode,
+        city: mergedBusiness.city,
+        country: mergedBusiness.country,
+        phone: mergedBusiness.phone,
+        email: mergedBusiness.email,
+        website: mergedBusiness.website,
+        bookingEmail: mergedBusiness.bookingEmail,
+        publicLogoUrl: mergedBusiness.publicLogoUrl,
+        publicHeroPhotoUrl: mergedBusiness.publicHeroPhotoUrl,
+        publicPartnerProfilePublishedAt: publishedAt,
+        publicPartnerProfilePublishStatus: 'published',
+        invoiceEmail: mergedBusiness.invoiceEmail,
+        iban: mergedBusiness.iban,
+        paymentReferencePrefix: mergedBusiness.paymentReferencePrefix,
+        invoiceReceiptFooterText: mergedBusiness.invoiceReceiptFooterText,
+      );
+      await updateLocalBackendBusinessProfileCache(publishedBusiness);
+      final savedPublishedBusiness = await saveBackendBusinessProfile(
+        publishedBusiness,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      final mergedPublishedBusiness = _mergeBackendBusinessProfile(
+        local: publishedBusiness,
+        server: savedPublishedBusiness,
+      );
       setState(() {
+        _hydrateBackendBusinessProfile(mergedPublishedBusiness);
         _publicPartnerProfileStatus = _t(
           nl: 'Publiek partnerprofiel gepubliceerd.',
           en: 'Public partner profile published.',
@@ -1347,6 +1437,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Perfil publico del socio publicado.',
         );
       });
+      unawaited(
+        updateLocalBackendBusinessProfileCache(mergedPublishedBusiness),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1358,6 +1451,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         setState(() => _publicPartnerProfilePublishing = false);
       }
     }
+  }
+
+  bool _isPublicPartnerProfilePublished() {
+    final status = _publicPartnerProfilePublishStatus.trim().toLowerCase();
+    if (status == 'published') return true;
+    return _publicPartnerProfilePublishedAt.trim().isNotEmpty;
   }
 
   double _toMoney(String raw, double fallback) {
@@ -3320,7 +3419,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
               status: _publicPartnerProfileError != null
                   ? _SetupStatus.attention
-                  : (_publicPartnerProfileStatus != null
+                  : (_isPublicPartnerProfilePublished() ||
+                            _publicPartnerProfileStatus != null
                         ? _SetupStatus.complete
                         : _SetupStatus.incomplete),
               child: Column(
@@ -3338,6 +3438,59 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       fontSize: 12.5,
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  _txt(
+                    _publicLogoUrlCtrl,
+                    _t(
+                      nl: 'Publieke logo-URL',
+                      en: 'Public logo URL',
+                      fr: 'URL du logo public',
+                      es: 'URL del logo público',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  _txt(
+                    _publicHeroPhotoUrlCtrl,
+                    _t(
+                      nl: 'Publieke coverfoto-URL',
+                      en: 'Public cover photo URL',
+                      fr: 'URL de la photo de couverture publique',
+                      es: 'URL de la foto de portada pública',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  if (_publicLogoUrlCtrl.text.trim().isNotEmpty &&
+                      !_isPublicHttpsUrl(_publicLogoUrlCtrl.text)) ...[
+                    Text(
+                      _t(
+                        nl: 'Waarschuwing: logo-URL moet met https:// starten om gepubliceerd te worden.',
+                        en: 'Warning: logo URL must start with https:// to be published.',
+                        fr: 'Avertissement : l’URL du logo doit commencer par https:// pour être publiée.',
+                        es: 'Advertencia: la URL del logo debe empezar con https:// para publicarse.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  if (_publicHeroPhotoUrlCtrl.text.trim().isNotEmpty &&
+                      !_isPublicHttpsUrl(_publicHeroPhotoUrlCtrl.text)) ...[
+                    Text(
+                      _t(
+                        nl: 'Waarschuwing: coverfoto-URL moet met https:// starten om gepubliceerd te worden.',
+                        en: 'Warning: cover photo URL must start with https:// to be published.',
+                        fr: 'Avertissement : l’URL de couverture doit commencer par https:// pour être publiée.',
+                        es: 'Advertencia: la URL de portada debe empezar con https:// para publicarse.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
                   const SizedBox(height: 10),
                   FilledButton.icon(
                     onPressed: _publicPartnerProfilePublishing
@@ -3362,8 +3515,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 8),
                   Text(
                     _t(
-                      nl: 'Lokale foto’s worden nog niet gepubliceerd. Alleen publieke HTTPS-afbeeldingen worden meegenomen.',
-                      en: 'Local photos are not published yet. Only public HTTPS images are included.',
+                      nl: 'Gebruik alleen publieke HTTPS-links. Lokale foto’s worden niet gepubliceerd.',
+                      en: 'Use public HTTPS links only. Local photos are not published.',
                       fr: 'Les photos locales ne sont pas encore publiées. Seules les images HTTPS publiques sont incluses.',
                       es: 'Las fotos locales aún no se publican. Solo se incluyen imágenes HTTPS públicas.',
                     ),
@@ -3376,6 +3529,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       style: const TextStyle(
                         color: Color(0xFF34D29A),
                         fontSize: 11.8,
+                      ),
+                    ),
+                  ],
+                  if (_isPublicPartnerProfilePublished() &&
+                      _publicPartnerProfilePublishedAt.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _t(
+                        nl: 'Laatst gepubliceerd op: ${_publicPartnerProfilePublishedAt.trim()}',
+                        en: 'Last published at: ${_publicPartnerProfilePublishedAt.trim()}',
+                        fr: 'Derniere publication: ${_publicPartnerProfilePublishedAt.trim()}',
+                        es: 'Ultima publicacion: ${_publicPartnerProfilePublishedAt.trim()}',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 10.8,
                       ),
                     ),
                   ],
