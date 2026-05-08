@@ -14533,58 +14533,78 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               left: 12,
                               right: 12,
                               bottom: 10,
-                              child: Row(
-                                children: [
-                                  if (logoUrl.isNotEmpty)
-                                    CircleAvatar(
-                                      radius: 18,
-                                      backgroundColor: Colors.black,
-                                      foregroundImage: NetworkImage(logoUrl),
-                                    )
-                                  else
-                                    CircleAvatar(
-                                      radius: 18,
-                                      backgroundColor: _gold.withOpacity(0.2),
-                                      child: Icon(
-                                        Icons.business_outlined,
-                                        color: _gold.withOpacity(0.95),
-                                        size: 18,
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  left: logoUrl.isNotEmpty ? 84 : 0,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      companyName,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 17,
                                       ),
                                     ),
-                                  const SizedBox(width: 9),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          companyName,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 17,
-                                          ),
+                                    if (tagline.isNotEmpty)
+                                      Text(
+                                        tagline,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.86),
+                                          fontSize: 12,
                                         ),
-                                        if (tagline.isNotEmpty)
-                                          Text(
-                                            tagline,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.86,
-                                              ),
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
+                            if (logoUrl.isNotEmpty)
+                              Positioned(
+                                left: 12,
+                                bottom: 8,
+                                child: Container(
+                                  width: 72,
+                                  height: 72,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.72),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.62),
+                                      width: 1.2,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.30),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 5),
+                                      ),
+                                    ],
+                                  ),
+                                  padding: const EdgeInsets.all(6),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(11),
+                                    child: Image.network(
+                                      logoUrl,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: const Color(0xFF16120A),
+                                        alignment: Alignment.center,
+                                        child: Icon(
+                                          Icons.business_outlined,
+                                          color: _gold.withOpacity(0.95),
+                                          size: 28,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       )
