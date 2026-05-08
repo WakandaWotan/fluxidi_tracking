@@ -13305,8 +13305,11 @@ class NearbyPartnersPage extends StatefulWidget {
 class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   final TextEditingController _postalCodeCtrl = TextEditingController();
   bool _searching = false;
+  bool _searchingByLocation = false;
   bool _searched = false;
+  bool _lastSearchUsedLocation = false;
   String _normalizedPostcode = '';
+  String _locationSearchLabel = '';
   List<Map<String, dynamic>> _partners = const <Map<String, dynamic>>[];
   static const Color _bg = Color(0xFF07080C);
   static const Color _card = Color(0xFF101113);
@@ -13346,8 +13349,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final postcode = raw.toUpperCase().replaceAll(RegExp(r'\s+'), '');
     setState(() {
       _searching = true;
+      _searchingByLocation = false;
       _searched = false;
+      _lastSearchUsedLocation = false;
       _normalizedPostcode = postcode;
+      _locationSearchLabel = '';
       _partners = const <Map<String, dynamic>>[];
     });
     try {
@@ -13368,14 +13374,20 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       if (!mounted) return;
       setState(() {
         _searching = false;
+        _searchingByLocation = false;
         _searched = true;
+        _lastSearchUsedLocation = false;
+        _locationSearchLabel = '';
         _partners = partnersRaw;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _searching = false;
+        _searchingByLocation = false;
         _searched = true;
+        _lastSearchUsedLocation = false;
+        _locationSearchLabel = '';
         _partners = const <Map<String, dynamic>>[];
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -13386,6 +13398,99 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               en: 'Partner search is currently unavailable.',
               fr: 'La recherche de partenaires est actuellement indisponible.',
               es: 'La busqueda de socios no esta disponible actualmente.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<bool> _ensureNearbyLocationPermission() async {
+    final serviceEnabled = await geo.Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+    var permission = await geo.Geolocator.checkPermission();
+    if (permission == geo.LocationPermission.denied) {
+      permission = await geo.Geolocator.requestPermission();
+    }
+    return permission != geo.LocationPermission.denied &&
+        permission != geo.LocationPermission.deniedForever;
+  }
+
+  Future<void> _searchPartnersByCurrentLocation() async {
+    final hasPermission = await _ensureNearbyLocationPermission();
+    if (!hasPermission) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Locatietoegang is vereist voor zoeken op afstand.',
+              en: 'Location access is required for radius search.',
+              fr: 'L’accès à la localisation est requis pour la recherche par rayon.',
+              es: 'Se requiere acceso a la ubicación para la búsqueda por radio.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _searching = true;
+      _searchingByLocation = true;
+      _searched = false;
+      _lastSearchUsedLocation = true;
+      _normalizedPostcode = '';
+      _locationSearchLabel = '';
+      _partners = const <Map<String, dynamic>>[];
+    });
+    try {
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.high,
+      );
+      final lat = pos.latitude;
+      final lng = pos.longitude;
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/partners/nearby?lat=${Uri.encodeQueryComponent(lat.toStringAsFixed(6))}&lng=${Uri.encodeQueryComponent(lng.toStringAsFixed(6))}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+      final decoded = jsonDecode(res.body);
+      final partnersRaw =
+          decoded is Map<String, dynamic> && decoded['partners'] is List
+          ? (decoded['partners'] as List)
+                .whereType<Map<String, dynamic>>()
+                .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _searchingByLocation = false;
+        _searched = true;
+        _lastSearchUsedLocation = true;
+        _locationSearchLabel =
+            '${lat.toStringAsFixed(3)}, ${lng.toStringAsFixed(3)}';
+        _partners = partnersRaw;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _searchingByLocation = false;
+        _searched = true;
+        _lastSearchUsedLocation = true;
+        _locationSearchLabel = '';
+        _partners = const <Map<String, dynamic>>[];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Zoeken op huidige locatie is momenteel niet beschikbaar.',
+              en: 'Search by current location is currently unavailable.',
+              fr: 'La recherche par position actuelle est momentanément indisponible.',
+              es: 'La búsqueda por ubicación actual no está disponible en este momento.',
             ),
           ),
         ),
@@ -13483,6 +13588,17 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     return const <String>[];
   }
 
+  double? _mapDoubleAny(Map<String, dynamic> p, List<String> keys) {
+    for (final key in keys) {
+      final raw = p[key];
+      if (raw == null) continue;
+      if (raw is num) return raw.toDouble();
+      final parsed = double.tryParse(raw.toString().trim());
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+    return null;
+  }
+
   bool _isPublicHttpsUrl(String value) {
     final clean = value.trim().toLowerCase();
     return clean.startsWith('https://');
@@ -13544,6 +13660,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       'service_badges',
       'serviceBadges',
     ]);
+    final distanceKm = _mapDoubleAny(p, const ['distance_km', 'distanceKm']);
 
     Widget fallbackStrip({double height = 66}) {
       return Container(
@@ -13737,6 +13854,12 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         ),
                         icon: Icons.local_offer_outlined,
                       ),
+                    if (distanceKm != null)
+                      _infoChip(
+                        '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)} km',
+                        icon: Icons.near_me_outlined,
+                        color: const Color(0xFF6CCBFF),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 7),
@@ -13871,10 +13994,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     Expanded(
                       child: Text(
                         _t(
-                          nl: 'Zoek actieve Fluxidi-partners in jouw regio op basis van postcode.',
-                          en: 'Search active Fluxidi partners in your area by postal code.',
-                          fr: 'Recherchez des partenaires Fluxidi actifs dans votre région par code postal.',
-                          es: 'Busca socios activos de Fluxidi en tu zona por código postal.',
+                          nl: 'Zoek actieve Fluxidi-partners op postcode of op basis van je huidige locatie.',
+                          en: 'Search active Fluxidi partners by postal code or by your current location.',
+                          fr: 'Recherchez des partenaires Fluxidi actifs par code postal ou via votre position actuelle.',
+                          es: 'Busca socios activos de Fluxidi por código postal o con tu ubicación actual.',
                         ),
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.80),
@@ -13966,6 +14089,41 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _searching
+                            ? null
+                            : _searchPartnersByCurrentLocation,
+                        icon: _searchingByLocation
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.my_location_outlined),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _gold.withOpacity(0.98),
+                          side: BorderSide(color: _gold.withOpacity(0.42)),
+                          backgroundColor: _panel,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        label: Text(
+                          _t(
+                            nl: 'Gebruik mijn locatie',
+                            en: 'Use my location',
+                            fr: 'Utiliser ma position',
+                            es: 'Usar mi ubicación',
+                          ),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -13973,10 +14131,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               !_searched
                   ? _emptyStateCard(
                       _t(
-                        nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
-                        en: 'Enter your postal code to check which partners are active.',
-                        fr: 'Saisissez votre code postal pour vérifier quels partenaires sont actifs.',
-                        es: 'Ingresa tu código postal para verificar qué socios están activos.',
+                        nl: 'Voer je postcode in of gebruik je locatie om te controleren welke partners actief zijn.',
+                        en: 'Enter your postal code or use your location to check which partners are active.',
+                        fr: 'Saisissez votre code postal ou utilisez votre position pour vérifier quels partenaires sont actifs.',
+                        es: 'Ingresa tu código postal o usa tu ubicación para comprobar qué socios están activos.',
                       ),
                     )
                   : _partners.isNotEmpty
@@ -13986,10 +14144,18 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         children: [
                           Text(
                             _t(
-                              nl: 'Actieve partners in $_normalizedPostcode',
-                              en: 'Active partners in $_normalizedPostcode',
-                              fr: 'Partenaires actifs dans $_normalizedPostcode',
-                              es: 'Socios activos en $_normalizedPostcode',
+                              nl: _lastSearchUsedLocation
+                                  ? 'Actieve partners in de buurt van je locatie'
+                                  : 'Actieve partners in $_normalizedPostcode',
+                              en: _lastSearchUsedLocation
+                                  ? 'Active partners near your location'
+                                  : 'Active partners in $_normalizedPostcode',
+                              fr: _lastSearchUsedLocation
+                                  ? 'Partenaires actifs à proximité de votre position'
+                                  : 'Partenaires actifs dans $_normalizedPostcode',
+                              es: _lastSearchUsedLocation
+                                  ? 'Socios activos cerca de tu ubicación'
+                                  : 'Socios activos en $_normalizedPostcode',
                             ),
                             style: const TextStyle(
                               color: Colors.white,
@@ -13997,6 +14163,17 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                               fontSize: 13.5,
                             ),
                           ),
+                          if (_lastSearchUsedLocation &&
+                              _locationSearchLabel.trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              _locationSearchLabel,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.58),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           ..._partners.map(_partnerCard),
                         ],
@@ -14004,10 +14181,18 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     )
                   : _emptyStateCard(
                       _t(
-                        nl: 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.',
-                        en: 'No partners found for postcode or service area $_normalizedPostcode.',
-                        fr: 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.',
-                        es: 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.',
+                        nl: _lastSearchUsedLocation
+                            ? 'Geen partners gevonden voor je huidige locatie of servicegebied.'
+                            : 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.',
+                        en: _lastSearchUsedLocation
+                            ? 'No partners found for your current location or service area.'
+                            : 'No partners found for postcode or service area $_normalizedPostcode.',
+                        fr: _lastSearchUsedLocation
+                            ? 'Aucun partenaire trouvé pour votre position actuelle ou zone de service.'
+                            : 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.',
+                        es: _lastSearchUsedLocation
+                            ? 'No se encontraron socios para tu ubicación actual o zona de servicio.'
+                            : 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.',
                       ),
                       action: OutlinedButton(
                         onPressed: () {

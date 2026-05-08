@@ -274,6 +274,9 @@ class BackendBusinessProfile {
   final String publicLogoUrl;
   final String publicHeroPhotoUrl;
   final String publicServedPostcodes;
+  final String publicCoverageLat;
+  final String publicCoverageLng;
+  final String publicServiceRadiusKm;
   final String publicPartnerProfilePublishedAt;
   final String publicPartnerProfilePublishStatus;
   final String invoiceEmail;
@@ -297,6 +300,9 @@ class BackendBusinessProfile {
     this.publicLogoUrl = '',
     this.publicHeroPhotoUrl = '',
     this.publicServedPostcodes = '',
+    this.publicCoverageLat = '',
+    this.publicCoverageLng = '',
+    this.publicServiceRadiusKm = '',
     this.publicPartnerProfilePublishedAt = '',
     this.publicPartnerProfilePublishStatus = '',
     required this.invoiceEmail,
@@ -321,6 +327,9 @@ class BackendBusinessProfile {
     publicLogoUrl: '',
     publicHeroPhotoUrl: '',
     publicServedPostcodes: '',
+    publicCoverageLat: '',
+    publicCoverageLng: '',
+    publicServiceRadiusKm: '',
     publicPartnerProfilePublishedAt: '',
     publicPartnerProfilePublishStatus: '',
     invoiceEmail: appConfig.supportEmail,
@@ -371,6 +380,18 @@ class BackendBusinessProfile {
         'publicServedPostcodes',
         'public_served_postcodes',
       ], fallback.publicServedPostcodes),
+      publicCoverageLat: textAny(const [
+        'publicCoverageLat',
+        'public_coverage_lat',
+      ], fallback.publicCoverageLat),
+      publicCoverageLng: textAny(const [
+        'publicCoverageLng',
+        'public_coverage_lng',
+      ], fallback.publicCoverageLng),
+      publicServiceRadiusKm: textAny(const [
+        'publicServiceRadiusKm',
+        'public_service_radius_km',
+      ], fallback.publicServiceRadiusKm),
       publicPartnerProfilePublishedAt: textAny(const [
         'publicPartnerProfilePublishedAt',
         'public_partner_profile_published_at',
@@ -411,6 +432,12 @@ class BackendBusinessProfile {
     'public_hero_photo_url': publicHeroPhotoUrl,
     'publicServedPostcodes': publicServedPostcodes,
     'public_served_postcodes': publicServedPostcodes,
+    'publicCoverageLat': publicCoverageLat,
+    'public_coverage_lat': publicCoverageLat,
+    'publicCoverageLng': publicCoverageLng,
+    'public_coverage_lng': publicCoverageLng,
+    'publicServiceRadiusKm': publicServiceRadiusKm,
+    'public_service_radius_km': publicServiceRadiusKm,
     'publicPartnerProfilePublishedAt': publicPartnerProfilePublishedAt,
     'public_partner_profile_published_at': publicPartnerProfilePublishedAt,
     'publicPartnerProfilePublishStatus': publicPartnerProfilePublishStatus,

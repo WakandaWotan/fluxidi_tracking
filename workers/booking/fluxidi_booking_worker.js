@@ -959,6 +959,9 @@ const DEFAULT_BUSINESS_PROFILE = {
   publicLogoUrl: "",
   publicHeroPhotoUrl: "",
   publicServedPostcodes: "",
+  publicCoverageLat: "",
+  publicCoverageLng: "",
+  publicServiceRadiusKm: "",
   publicPartnerProfilePublishedAt: "",
   publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
@@ -1136,6 +1139,24 @@ function normalizeBusinessProfile(input = {}) {
       source.public_served_postcodes ??
       DEFAULT_BUSINESS_PROFILE.publicServedPostcodes,
       1200
+    ),
+    publicCoverageLat: sanitizeTenantString(
+      source.publicCoverageLat ??
+      source.public_coverage_lat ??
+      DEFAULT_BUSINESS_PROFILE.publicCoverageLat,
+      40
+    ),
+    publicCoverageLng: sanitizeTenantString(
+      source.publicCoverageLng ??
+      source.public_coverage_lng ??
+      DEFAULT_BUSINESS_PROFILE.publicCoverageLng,
+      40
+    ),
+    publicServiceRadiusKm: sanitizeTenantString(
+      source.publicServiceRadiusKm ??
+      source.public_service_radius_km ??
+      DEFAULT_BUSINESS_PROFILE.publicServiceRadiusKm,
+      16
     ),
     publicPartnerProfilePublishedAt: sanitizeTenantString(
       source.publicPartnerProfilePublishedAt ??
@@ -3416,16 +3437,32 @@ GET /oauth/callback
         return json(out, 200);
       }
 
-      // GET /partners/nearby?postcode=...
+      // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
-        if (!postcode) {
-          return json({ ok: false, error: "postcode is required" }, 400);
+        const latRaw = url.searchParams.get("lat");
+        const lngRaw = url.searchParams.get("lng");
+        const hasGeoInput = latRaw != null || lngRaw != null;
+        const lat = _safePublicNumber(latRaw, { min: -90, max: 90 });
+        const lng = _safePublicNumber(lngRaw, { min: -180, max: 180 });
+        const radiusKm = _normalizeNearbyRadiusKm(url.searchParams.get("radius_km"));
+        if (hasGeoInput && (lat == null || lng == null)) {
+          return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
-        const partners = await listNearbyPartnersByPostcode(env, postcode);
+        if (!hasGeoInput && !postcode) {
+          return json({ ok: false, error: "postcode or lat/lng is required" }, 400);
+        }
+        const partners = await listNearbyPartners(env, {
+          postcode,
+          lat,
+          lng,
+          radiusKm,
+        });
         return json({
           ok: true,
           postcode,
+          ...(lat != null && lng != null ? { lat, lng } : {}),
+          ...(radiusKm != null ? { radius_km: radiusKm } : {}),
           count: partners.length,
           partners,
         }, 200);
@@ -9340,14 +9377,38 @@ async function _loadPartnerDirectory(env) {
   return normalized.length > 0 ? normalized : fallback;
 }
 
-async function listNearbyPartnersByPostcode(env, postcode) {
+function _normalizeNearbyRadiusKm(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n <= 0) return null;
+  return Math.max(1, Math.min(100, n));
+}
+
+function _haversineDistanceKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
+}
+
+async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null } = {}) {
   const needle = _normalizePostcode(postcode);
-  if (!needle) return [];
+  const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
+  if (!hasGeoQuery && !needle) return [];
+  const normalizedQueryRadiusKm = _normalizeNearbyRadiusKm(radiusKm);
   const partners = await _loadPartnerDirectory(env);
   const profiles = await _loadPublicPartnerProfiles(env);
+  const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
   const publicMediaByPartnerId = new Map(
-    profiles
-      .filter((profile) => _isPublicPartnerProfileVisible(profile))
+    visibleProfiles
       .map((profile) => {
         const media = profile && typeof profile.media === "object" ? profile.media : {};
         const heroUrl = _safePublicHttpsUrl(media.hero_photo_url ?? media.heroPhotoUrl, 600);
@@ -9356,8 +9417,7 @@ async function listNearbyPartnersByPostcode(env, postcode) {
       }),
   );
   const coverageByPartnerId = new Map(
-    profiles
-      .filter((profile) => _isPublicPartnerProfileVisible(profile))
+    visibleProfiles
       .map((profile) => {
         const coverage = profile && typeof profile.coverage === "object" ? profile.coverage : {};
         const profilePostcodes = Array.isArray(coverage.postcodes) ? coverage.postcodes : [];
@@ -9374,6 +9434,11 @@ async function listNearbyPartnersByPostcode(env, postcode) {
           {
             primary_postcode: profilePrimary,
             postcodes: normalizedPostcodes,
+            lat: _safePublicNumber(coverage.lat, { min: -90, max: 90 }),
+            lng: _safePublicNumber(coverage.lng, { min: -180, max: 180 }),
+            service_radius_km: _normalizeNearbyRadiusKm(
+              coverage.service_radius_km ?? coverage.serviceRadiusKm,
+            ),
           },
         ];
       }),
@@ -9400,11 +9465,46 @@ async function listNearbyPartnersByPostcode(env, postcode) {
         idx,
         supportedPostcodes,
         primaryPostcode,
-        matches: supportedPostcodes.includes(needle),
+        coverageLat: _safePublicNumber(profileCoverage.lat, { min: -90, max: 90 }),
+        coverageLng: _safePublicNumber(profileCoverage.lng, { min: -180, max: 180 }),
+        coverageRadiusKm: _normalizeNearbyRadiusKm(profileCoverage.service_radius_km),
+      };
+    })
+    .map((entry) => {
+      if (hasGeoQuery) {
+        const hasPartnerCoverage =
+          Number.isFinite(entry.coverageLat) &&
+          Number.isFinite(entry.coverageLng) &&
+          Number.isFinite(entry.coverageRadiusKm);
+        if (!hasPartnerCoverage) {
+          return { ...entry, matches: false, distanceKm: null };
+        }
+        const distanceKm = _haversineDistanceKm(
+          lat,
+          lng,
+          entry.coverageLat,
+          entry.coverageLng,
+        );
+        const withinPartnerRadius = distanceKm <= entry.coverageRadiusKm;
+        const withinQueryRadius =
+          normalizedQueryRadiusKm == null || distanceKm <= normalizedQueryRadiusKm;
+        return {
+          ...entry,
+          distanceKm,
+          matches: withinPartnerRadius && withinQueryRadius,
+        };
+      }
+      return {
+        ...entry,
+        distanceKm: null,
+        matches: supportedPostcodesIncludes(entry.supportedPostcodes, needle),
       };
     })
     .filter((entry) => entry.matches)
     .sort((a, b) => {
+      if (hasGeoQuery) {
+        return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
+      }
       const aRank = a.primaryPostcode && a.primaryPostcode === needle ? 0 : 1;
       const bRank = b.primaryPostcode && b.primaryPostcode === needle ? 0 : 1;
       if (aRank !== bRank) return aRank - bRank;
@@ -9419,10 +9519,18 @@ async function listNearbyPartnersByPostcode(env, postcode) {
         is_active: true,
         subscription_status: p.subscription_status,
         supported_postcodes: entry.supportedPostcodes,
+        ...(entry.distanceKm != null
+          ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
+          : {}),
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
       };
     });
+}
+
+function supportedPostcodesIncludes(postcodes, needle) {
+  if (!needle) return false;
+  return Array.isArray(postcodes) && postcodes.includes(needle);
 }
 
 function _extractRequestedPublicPartnerId({ url, body = null } = {}) {
@@ -9645,6 +9753,13 @@ function _safePublicInt(value, fallback = 0, min = 0, max = 99) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
+function _safePublicNumber(value, { min = -Infinity, max = Infinity } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n < min || n > max) return null;
+  return n;
+}
+
 function _safePublicStringList(value, { maxItems = 20, maxItemLen = 80 } = {}) {
   if (!Array.isArray(value)) return [];
   const out = [];
@@ -9678,10 +9793,18 @@ function _normalizePublicCoverage(raw) {
       .filter((v) => !!v),
   );
   if (primaryPostcode) supportedSet.add(primaryPostcode);
+  const lat = _safePublicNumber(src.lat, { min: -90, max: 90 });
+  const lng = _safePublicNumber(src.lng, { min: -180, max: 180 });
+  const serviceRadiusKm = _safePublicNumber(
+    src.service_radius_km ?? src.serviceRadiusKm,
+    { min: 1, max: 100 },
+  );
   return {
     region_label: _safePublicText(src.region_label ?? src.regionLabel, 120),
     primary_postcode: primaryPostcode,
     postcodes: Array.from(supportedSet),
+    ...(lat != null && lng != null ? { lat, lng } : {}),
+    ...(serviceRadiusKm != null ? { service_radius_km: serviceRadiusKm } : {}),
   };
 }
 
