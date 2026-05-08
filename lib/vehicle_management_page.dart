@@ -78,6 +78,135 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   bool _isPublicHttpsUrl(String value) =>
       value.trim().toLowerCase().startsWith('https://');
 
+  String _publicVehicleUploadFailureMessage() {
+    return _t(
+      nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
+      en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
+      fr: 'Échec de l’importation. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
+      es: 'Error al subir. Comprueba que sea una imagen JPG, PNG o WEBP.',
+    );
+  }
+
+  String _vehicleMediaScopeId(VehicleProfile? existing) {
+    final cid = _scopedVehicleCompanyId(existing);
+    return (cid?.trim().isNotEmpty ?? false)
+        ? cid!.trim()
+        : (resolvedCompanyId.trim().isNotEmpty
+              ? resolvedCompanyId.trim()
+              : kTenantId);
+  }
+
+  Future<void> _useExistingVehiclePhotoAsPublic({
+    required String photoRef,
+    required String vehicleId,
+    required VehicleProfile? existing,
+    required TextEditingController publicPhotoUrlCtrl,
+    required StateSetter setLocalState,
+  }) async {
+    final clean = photoRef.trim();
+    if (clean.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Selecteer eerst een voertuigfoto.',
+              en: 'Select a vehicle photo first.',
+              fr: 'Sélectionnez d’abord une photo du véhicule.',
+              es: 'Primero selecciona una foto del vehículo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (_isAssetRef(clean)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Deze lokale app-afbeelding kan niet als publieke voertuigfoto worden gebruikt.',
+              en: 'This local app asset cannot be used as a public vehicle photo.',
+              fr: 'Cette ressource locale de l’application ne peut pas être utilisée comme photo publique du véhicule.',
+              es: 'Este recurso local de la aplicación no se puede usar como foto pública del vehículo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Gebruik op web de uploadknop voor publieke voertuigfoto.',
+              en: 'On web, use the upload public vehicle photo button.',
+              fr: 'Sur le web, utilisez le bouton d’importation de photo publique du véhicule.',
+              es: 'En web, usa el botón de subir foto pública del vehículo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final source = File(clean);
+    if (!await source.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'De geselecteerde lokale foto is niet beschikbaar.',
+              en: 'The selected local photo is not available.',
+              fr: 'La photo locale sélectionnée n’est pas disponible.',
+              es: 'La foto local seleccionada no está disponible.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final scopeId = _vehicleMediaScopeId(existing);
+    try {
+      final uploaded = await uploadPublicPartnerMedia(
+        tenantId: scopeId,
+        companyId: scopeId,
+        mediaType: 'vehicle_photo',
+        entityId: vehicleId,
+        filePath: clean,
+      );
+      final url = (uploaded['url'] ?? '').toString().trim();
+      if (!_isPublicHttpsUrl(url)) {
+        throw Exception('Upload did not return a valid HTTPS URL');
+      }
+      setLocalState(() {
+        publicPhotoUrlCtrl.text = url;
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Publieke voertuigfoto bijgewerkt.',
+              en: 'Public vehicle photo updated.',
+              fr: 'Photo publique du véhicule mise à jour.',
+              es: 'Foto pública del vehículo actualizada.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_publicVehicleUploadFailureMessage())),
+      );
+    }
+  }
+
   /// Vehicle row scoped to current local tenant when present; preserves stored id on edit.
   String? _scopedVehicleCompanyId(VehicleProfile? existing) {
     if (existing != null) {
@@ -1129,6 +1258,39 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed:
+                          publicPhotoUploading || primaryPhotoRef.trim().isEmpty
+                          ? null
+                          : () async {
+                              setLocalState(() => publicPhotoUploading = true);
+                              try {
+                                await _useExistingVehiclePhotoAsPublic(
+                                  photoRef: primaryPhotoRef,
+                                  vehicleId: vehicleId,
+                                  existing: existing,
+                                  publicPhotoUrlCtrl: publicPhotoUrlCtrl,
+                                  setLocalState: setLocalState,
+                                );
+                              } finally {
+                                setLocalState(
+                                  () => publicPhotoUploading = false,
+                                );
+                              }
+                            },
+                      icon: const Icon(Icons.public_outlined, size: 16),
+                      label: Text(
+                        _t(
+                          nl: 'Gebruik als publieke foto',
+                          en: 'Use as public photo',
+                          fr: 'Utiliser comme photo publique',
+                          es: 'Usar como foto pública',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     if (galleryPhotoRefs.isNotEmpty) ...[
                       Text(
                         _t(
@@ -1175,6 +1337,70 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                         en: 'No photo',
                                         fr: 'Pas de photo',
                                         es: 'Sin foto',
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  left: 3,
+                                  top: 3,
+                                  child: InkWell(
+                                    onTap: publicPhotoUploading
+                                        ? null
+                                        : () async {
+                                            setLocalState(
+                                              () => publicPhotoUploading = true,
+                                            );
+                                            try {
+                                              await _useExistingVehiclePhotoAsPublic(
+                                                photoRef: ref,
+                                                vehicleId: vehicleId,
+                                                existing: existing,
+                                                publicPhotoUrlCtrl:
+                                                    publicPhotoUrlCtrl,
+                                                setLocalState: setLocalState,
+                                              );
+                                            } finally {
+                                              setLocalState(
+                                                () => publicPhotoUploading =
+                                                    false,
+                                              );
+                                            }
+                                          },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.72),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: _gold.withOpacity(0.65),
+                                        ),
+                                      ),
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 48,
+                                        ),
+                                        child: Text(
+                                          _t(
+                                            nl: 'Publiek',
+                                            en: 'Public',
+                                            fr: 'Public',
+                                            es: 'Pública',
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.white,
+                                            height: 1.0,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1398,13 +1624,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                   imageQuality: 82,
                                 );
                                 if (picked == null) return;
-                                final cid = _scopedVehicleCompanyId(existing);
-                                final scopeId =
-                                    (cid?.trim().isNotEmpty ?? false)
-                                    ? cid!.trim()
-                                    : (resolvedCompanyId.trim().isNotEmpty
-                                          ? resolvedCompanyId.trim()
-                                          : kTenantId);
+                                final scopeId = _vehicleMediaScopeId(existing);
                                 final bytes = kIsWeb
                                     ? await picked.readAsBytes()
                                     : null;
@@ -1446,12 +1666,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      _t(
-                                        nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
-                                        en: 'Upload failed. Please check that this is a JPG, PNG, or WEBP image.',
-                                        fr: 'Échec de l’importation. Vérifiez qu’il s’agit d’une image JPG, PNG ou WEBP.',
-                                        es: 'Error al subir. Comprueba que sea una imagen JPG, PNG o WEBP.',
-                                      ),
+                                      _publicVehicleUploadFailureMessage(),
                                     ),
                                   ),
                                 );
