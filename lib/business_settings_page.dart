@@ -36,6 +36,22 @@ class BusinessSettingsPage extends StatefulWidget {
 }
 
 class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
+  static const List<String> _publicPaymentOptionCatalog = <String>[
+    'cash',
+    'qr_code',
+    'tikkie',
+    'bancontact',
+    'payconiq_wero',
+    'ideal',
+    'cartes_bancaires',
+    'card_payment',
+    'apple_pay',
+    'google_pay',
+    'paypal',
+    'online_payment',
+    'bank_transfer_bacs',
+  ];
+
   final _companyCtrl = TextEditingController();
   final _supportEmailCtrl = TextEditingController();
   final _supportPhoneCtrl = TextEditingController();
@@ -121,6 +137,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Set<String> _serviceIds = <String>{};
   Set<String> _tierIds = <String>{};
   Set<String> _extraIds = <String>{};
+  Set<String> _publicPaymentOptionIds = <String>{
+    'cash',
+    'qr_code',
+    'online_payment',
+  };
   final Set<String> _expandedSections = <String>{};
 
   void _onLogoSanitizationListeners() {
@@ -300,6 +321,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _publicCoverageLatCtrl.text = p.publicCoverageLat;
     _publicCoverageLngCtrl.text = p.publicCoverageLng;
     _publicServiceRadiusKmCtrl.text = p.publicServiceRadiusKm;
+    _publicPaymentOptionIds = _sanitizePublicPaymentOptionIds(
+      p.publicPaymentOptions,
+    );
     _publicPartnerProfilePublishedAt = p.publicPartnerProfilePublishedAt;
     _publicPartnerProfilePublishStatus = p.publicPartnerProfilePublishStatus;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
@@ -396,6 +420,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }) {
     String pick(String localValue, String serverValue) =>
         _backendFieldHasValue(serverValue) ? serverValue : localValue;
+    List<String> pickList(List<String> localValue, List<String> serverValue) {
+      final normalizedServer = _sanitizePublicPaymentOptionIds(serverValue);
+      if (normalizedServer.isNotEmpty) return normalizedServer.toList();
+      final normalizedLocal = _sanitizePublicPaymentOptionIds(localValue);
+      return normalizedLocal.toList();
+    }
+
     return BackendBusinessProfile(
       companyName: pick(local.companyName, server.companyName),
       legalName: pick(local.legalName, server.legalName),
@@ -432,6 +463,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicServiceRadiusKm: pick(
         local.publicServiceRadiusKm,
         server.publicServiceRadiusKm,
+      ),
+      publicPaymentOptions: pickList(
+        local.publicPaymentOptions,
+        server.publicPaymentOptions,
       ),
       publicPartnerProfilePublishedAt: pick(
         local.publicPartnerProfilePublishedAt,
@@ -1078,6 +1113,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicCoverageLat: _publicCoverageLatCtrl.text.trim(),
       publicCoverageLng: _publicCoverageLngCtrl.text.trim(),
       publicServiceRadiusKm: _publicServiceRadiusKmCtrl.text.trim(),
+      publicPaymentOptions: _sanitizePublicPaymentOptionIds(
+        _publicPaymentOptionIds,
+      ).toList(growable: false),
       publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
       publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
           .trim(),
@@ -1613,6 +1651,70 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return out;
   }
 
+  Set<String> _sanitizePublicPaymentOptionIds(Iterable<String> values) {
+    final allowed = _publicPaymentOptionCatalog.toSet();
+    final out = <String>{};
+    for (final value in values) {
+      final raw = value.trim().toLowerCase();
+      final id = switch (raw) {
+        'qr' => 'qr_code',
+        'online_payments' => 'online_payment',
+        _ => raw,
+      };
+      if (id.isEmpty || !allowed.contains(id)) continue;
+      out.add(id);
+    }
+    return out;
+  }
+
+  String _publicPaymentOptionLabel(String id) {
+    switch (id.trim().toLowerCase()) {
+      case 'cash':
+        return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+      case 'qr_code':
+        return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
+      case 'tikkie':
+        return 'Tikkie';
+      case 'bancontact':
+        return 'Bancontact';
+      case 'payconiq_wero':
+        return 'Payconiq / Wero';
+      case 'ideal':
+        return 'iDEAL';
+      case 'cartes_bancaires':
+        return 'Carte Bancaire / CB';
+      case 'card_payment':
+        return _t(
+          nl: 'Kaartbetaling',
+          en: 'Card payment',
+          fr: 'Paiement par carte',
+          es: 'Pago con tarjeta',
+        );
+      case 'apple_pay':
+        return 'Apple Pay';
+      case 'google_pay':
+        return 'Google Pay';
+      case 'paypal':
+        return 'PayPal';
+      case 'online_payment':
+        return _t(
+          nl: 'Online betaling',
+          en: 'Online payment',
+          fr: 'Paiement en ligne',
+          es: 'Pago online',
+        );
+      case 'bank_transfer_bacs':
+        return _t(
+          nl: 'Bankoverschrijving',
+          en: 'Bank transfer',
+          fr: 'Virement bancaire',
+          es: 'Transferencia bancaria',
+        );
+      default:
+        return id.replaceAll('_', ' ');
+    }
+  }
+
   double? _tryParsePublicLat(String value) {
     final n = double.tryParse(value.replaceAll(',', '.').trim());
     if (n == null || !n.isFinite) return null;
@@ -1778,6 +1880,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ? profileForm.phone.trim()
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
+    final publicPaymentMethods = _sanitizePublicPaymentOptionIds(
+      _publicPaymentOptionIds,
+    ).toList(growable: false);
     final coverageLat = _tryParsePublicLat(profileForm.publicCoverageLat);
     final coverageLng = _tryParsePublicLng(profileForm.publicCoverageLng);
     final serviceRadiusKm = _tryParsePublicServiceRadiusKm(
@@ -1889,7 +1994,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'gallery': const <String>[],
       },
       'services': services,
-      'payment_methods': const <String>['cash', 'qr', 'online_payment'],
+      'payment_methods': publicPaymentMethods,
       'vehicles': vehicles,
       'drivers': drivers,
       'trust': const <String, dynamic>{
@@ -1959,6 +2064,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         publicCoverageLat: mergedBusiness.publicCoverageLat,
         publicCoverageLng: mergedBusiness.publicCoverageLng,
         publicServiceRadiusKm: mergedBusiness.publicServiceRadiusKm,
+        publicPaymentOptions: mergedBusiness.publicPaymentOptions,
         publicPartnerProfilePublishedAt: publishedAt,
         publicPartnerProfilePublishStatus: 'published',
         invoiceEmail: mergedBusiness.invoiceEmail,
@@ -4139,6 +4245,60 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       fr: '1 à 100',
                       es: '1 a 100',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(
+                      nl: 'Betaalopties zichtbaar voor klanten',
+                      en: 'Payment options visible to customers',
+                      fr: 'Moyens de paiement visibles par les clients',
+                      es: 'Opciones de pago visibles para clientes',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.6,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _publicPaymentOptionCatalog
+                        .map((id) {
+                          final selected = _publicPaymentOptionIds.contains(id);
+                          return FilterChip(
+                            label: Text(_publicPaymentOptionLabel(id)),
+                            selected: selected,
+                            onSelected: (value) {
+                              setState(() {
+                                if (value) {
+                                  _publicPaymentOptionIds.add(id);
+                                } else {
+                                  _publicPaymentOptionIds.remove(id);
+                                }
+                              });
+                            },
+                            selectedColor: const Color(
+                              0xFFE5B641,
+                            ).withOpacity(0.22),
+                            checkmarkColor: const Color(0xFFE5B641),
+                            backgroundColor: const Color(0xFF111315),
+                            side: BorderSide(
+                              color: selected
+                                  ? const Color(0xFFE5B641).withOpacity(0.75)
+                                  : Colors.white.withOpacity(0.18),
+                            ),
+                            labelStyle: TextStyle(
+                              color: selected
+                                  ? const Color(0xFFFFF2CC)
+                                  : Colors.white.withOpacity(0.86),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11.6,
+                            ),
+                          );
+                        })
+                        .toList(growable: false),
                   ),
                   const SizedBox(height: 10),
                   _publicMediaPreview(),

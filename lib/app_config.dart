@@ -277,6 +277,7 @@ class BackendBusinessProfile {
   final String publicCoverageLat;
   final String publicCoverageLng;
   final String publicServiceRadiusKm;
+  final List<String> publicPaymentOptions;
   final String publicPartnerProfilePublishedAt;
   final String publicPartnerProfilePublishStatus;
   final String invoiceEmail;
@@ -303,6 +304,7 @@ class BackendBusinessProfile {
     this.publicCoverageLat = '',
     this.publicCoverageLng = '',
     this.publicServiceRadiusKm = '',
+    this.publicPaymentOptions = const <String>[],
     this.publicPartnerProfilePublishedAt = '',
     this.publicPartnerProfilePublishStatus = '',
     required this.invoiceEmail,
@@ -330,6 +332,7 @@ class BackendBusinessProfile {
     publicCoverageLat: '',
     publicCoverageLng: '',
     publicServiceRadiusKm: '',
+    publicPaymentOptions: const <String>[],
     publicPartnerProfilePublishedAt: '',
     publicPartnerProfilePublishStatus: '',
     invoiceEmail: appConfig.supportEmail,
@@ -348,6 +351,31 @@ class BackendBusinessProfile {
         if (v == null) continue;
         final s = v.toString();
         if (s.trim().isNotEmpty) return s;
+      }
+      return fallbackValue;
+    }
+
+    List<String> textListAny(List<String> keys, List<String> fallbackValue) {
+      for (final key in keys) {
+        final raw = json[key];
+        if (raw is List) {
+          final out = raw
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toSet()
+              .toList(growable: false);
+          if (out.isNotEmpty) return out;
+          continue;
+        }
+        final text = raw?.toString().trim() ?? '';
+        if (text.isEmpty) continue;
+        final out = text
+            .split(RegExp(r'[\s,;]+'))
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList(growable: false);
+        if (out.isNotEmpty) return out;
       }
       return fallbackValue;
     }
@@ -392,6 +420,10 @@ class BackendBusinessProfile {
         'publicServiceRadiusKm',
         'public_service_radius_km',
       ], fallback.publicServiceRadiusKm),
+      publicPaymentOptions: textListAny(const [
+        'publicPaymentOptions',
+        'public_payment_options',
+      ], fallback.publicPaymentOptions),
       publicPartnerProfilePublishedAt: textAny(const [
         'publicPartnerProfilePublishedAt',
         'public_partner_profile_published_at',
@@ -438,6 +470,8 @@ class BackendBusinessProfile {
     'public_coverage_lng': publicCoverageLng,
     'publicServiceRadiusKm': publicServiceRadiusKm,
     'public_service_radius_km': publicServiceRadiusKm,
+    'publicPaymentOptions': publicPaymentOptions,
+    'public_payment_options': publicPaymentOptions,
     'publicPartnerProfilePublishedAt': publicPartnerProfilePublishedAt,
     'public_partner_profile_published_at': publicPartnerProfilePublishedAt,
     'publicPartnerProfilePublishStatus': publicPartnerProfilePublishStatus,

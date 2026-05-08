@@ -962,6 +962,7 @@ const DEFAULT_BUSINESS_PROFILE = {
   publicCoverageLat: "",
   publicCoverageLng: "",
   publicServiceRadiusKm: "",
+  publicPaymentOptions: ["cash", "qr_code", "online_payment"],
   publicPartnerProfilePublishedAt: "",
   publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
@@ -1086,6 +1087,44 @@ function sanitizeTenantString(value, maxLength = 240) {
   return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
+const PUBLIC_PAYMENT_OPTION_IDS = new Set([
+  "cash",
+  "qr_code",
+  "tikkie",
+  "bancontact",
+  "payconiq_wero",
+  "ideal",
+  "cartes_bancaires",
+  "card_payment",
+  "apple_pay",
+  "google_pay",
+  "paypal",
+  "online_payment",
+  "bank_transfer_bacs",
+]);
+
+function normalizePublicPaymentOptions(input) {
+  const list = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[\s,;]+/)
+      : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const raw = sanitizeTenantString(item, 64).toLowerCase();
+    if (!raw) continue;
+    const id = raw === "qr"
+      ? "qr_code"
+      : (raw === "online_payments" ? "online_payment" : raw);
+    if (!PUBLIC_PAYMENT_OPTION_IDS.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 function normalizeBusinessProfile(input = {}) {
   const source = input && typeof input === "object" ? input : {};
   const companyEmail = sanitizeTenantString(
@@ -1157,6 +1196,11 @@ function normalizeBusinessProfile(input = {}) {
       source.public_service_radius_km ??
       DEFAULT_BUSINESS_PROFILE.publicServiceRadiusKm,
       16
+    ),
+    publicPaymentOptions: normalizePublicPaymentOptions(
+      source.publicPaymentOptions ??
+      source.public_payment_options ??
+      DEFAULT_BUSINESS_PROFILE.publicPaymentOptions
     ),
     publicPartnerProfilePublishedAt: sanitizeTenantString(
       source.publicPartnerProfilePublishedAt ??

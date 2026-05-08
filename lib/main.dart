@@ -14707,11 +14707,34 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   }
 
   String _paymentLabel(String id) {
-    switch (id) {
+    switch (_normalizePublicPaymentMethodId(id)) {
       case 'cash':
         return _t(nl: 'Cash', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
-      case 'qr':
-        return _t(nl: 'QR', en: 'QR', fr: 'QR', es: 'QR');
+      case 'qr_code':
+        return _t(nl: 'QR-code', en: 'QR code', fr: 'Code QR', es: 'Código QR');
+      case 'tikkie':
+        return 'Tikkie';
+      case 'bancontact':
+        return 'Bancontact';
+      case 'payconiq_wero':
+        return 'Payconiq / Wero';
+      case 'ideal':
+        return 'iDEAL';
+      case 'cartes_bancaires':
+        return 'Carte Bancaire / CB';
+      case 'card_payment':
+        return _t(
+          nl: 'Kaartbetaling',
+          en: 'Card payment',
+          fr: 'Paiement par carte',
+          es: 'Pago con tarjeta',
+        );
+      case 'apple_pay':
+        return 'Apple Pay';
+      case 'google_pay':
+        return 'Google Pay';
+      case 'paypal':
+        return 'PayPal';
       case 'online_payment':
         return _t(
           nl: 'Online betaling',
@@ -14719,9 +14742,40 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           fr: 'Paiement en ligne',
           es: 'Pago online',
         );
+      case 'bank_transfer_bacs':
+        return _t(
+          nl: 'Bankoverschrijving',
+          en: 'Bank transfer',
+          fr: 'Virement bancaire',
+          es: 'Transferencia bancaria',
+        );
       default:
         return _serviceLabel(id);
     }
+  }
+
+  String _normalizePublicPaymentMethodId(String id) {
+    final raw = id.trim().toLowerCase();
+    switch (raw) {
+      case 'qr':
+        return 'qr_code';
+      case 'online_payments':
+        return 'online_payment';
+      default:
+        return raw;
+    }
+  }
+
+  List<String> _normalizedPublicPaymentMethods(List<String> methods) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final method in methods) {
+      final id = _normalizePublicPaymentMethodId(method);
+      if (id.isEmpty || seen.contains(id)) continue;
+      seen.add(id);
+      out.add(id);
+    }
+    return out;
   }
 
   @override
@@ -14764,10 +14818,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     ]);
     final gallery = _profileTextListAny(media, const ['gallery']);
     final services = _profileTextListAny(p, const ['services']);
-    final paymentMethods = _profileTextListAny(p, const [
-      'payment_methods',
-      'paymentMethods',
-    ]);
+    final paymentMethods = _normalizedPublicPaymentMethods(
+      _profileTextListAny(p, const ['payment_methods', 'paymentMethods']),
+    );
     final trust = _profileMap(p['trust']);
     final verified =
         trust['verified_partner'] == true || trust['verifiedPartner'] == true;
@@ -14778,6 +14831,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     final onlinePayments =
         bookingCapabilities['online_payments'] == true ||
         bookingCapabilities['onlinePayments'] == true;
+    final hasExplicitOnlinePaymentMethod = paymentMethods.any(
+      (m) =>
+          m == 'online_payment' ||
+          m == 'card_payment' ||
+          m == 'apple_pay' ||
+          m == 'google_pay' ||
+          m == 'paypal' ||
+          m == 'tikkie' ||
+          m == 'bancontact' ||
+          m == 'payconiq_wero' ||
+          m == 'ideal' ||
+          m == 'cartes_bancaires',
+    );
     final instantQuote =
         bookingCapabilities['instant_quote'] == true ||
         bookingCapabilities['instantQuote'] == true;
@@ -15507,15 +15573,16 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 runSpacing: 6,
                                 children: [
                                   if (onlinePayments)
-                                    _chip(
-                                      _t(
-                                        nl: 'Online betalen',
-                                        en: 'Online payments',
-                                        fr: 'Paiement en ligne',
-                                        es: 'Pagos en línea',
+                                    if (!hasExplicitOnlinePaymentMethod)
+                                      _chip(
+                                        _t(
+                                          nl: 'Online betalen',
+                                          en: 'Online payments',
+                                          fr: 'Paiement en ligne',
+                                          es: 'Pagos en línea',
+                                        ),
+                                        icon: Icons.credit_card_outlined,
                                       ),
-                                      icon: Icons.credit_card_outlined,
-                                    ),
                                   if (instantQuote)
                                     _chip(
                                       _t(
