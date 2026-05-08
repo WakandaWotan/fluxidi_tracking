@@ -14308,6 +14308,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   bool _loading = true;
   String? _error;
   Map<String, dynamic>? _profile;
+  bool _showAllCoveragePostcodes = false;
 
   String _t({
     required String nl,
@@ -14469,7 +14470,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return _t(
           nl: 'Bereikbaarheid & details',
           en: 'Coverage & details',
-          fr: 'Couverture et détails',
+          fr: 'Zone desservie & détails',
           es: 'Cobertura y detalles',
         );
       case 'region':
@@ -14570,6 +14571,102 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
+  String _verifiedPartnerTrustLabel() {
+    return _t(
+      nl: 'Geverifieerde Fluxidi-partner',
+      en: 'Verified Fluxidi partner',
+      fr: 'Partenaire Fluxidi vérifié',
+      es: 'Socio Fluxidi verificado',
+    );
+  }
+
+  String _friendlyPartnerAboutFallback() {
+    return _t(
+      nl: 'Betrouwbare ritten voor particulieren, bedrijven en geplande verplaatsingen in jouw regio.',
+      en: 'Reliable rides for private customers, businesses and planned trips in your region.',
+      fr: 'Des trajets fiables pour particuliers, entreprises et déplacements planifiés dans votre région.',
+      es: 'Viajes fiables para particulares, empresas y traslados planificados en tu región.',
+    );
+  }
+
+  bool _isTechnicalDefaultAbout(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    const technicalDefaults = <String>{
+      'dit publiek profiel bevat enkel veilige bedrijfsinformatie. gevoelige interne gegevens worden niet gepubliceerd.',
+      'dit publieke profiel bevat enkel veilige bedrijfsinformatie. gevoelige interne gegevens worden niet gepubliceerd.',
+      'this public profile only contains safe company information. sensitive internal data is not published.',
+      'ce profil public contient uniquement des informations professionnelles sûres. les données internes sensibles ne sont pas publiées.',
+      'ce profil public contient uniquement des informations d’entreprise sûres. les données internes sensibles ne sont pas publiées.',
+      "ce profil public contient uniquement des informations d'entreprise sures. les donnees internes sensibles ne sont pas publiees.",
+      'este perfil público solo contiene información segura de la empresa. los datos internos sensibles no se publican.',
+      'este perfil público solo contiene información empresarial segura. los datos internos sensibles no se publican.',
+    };
+    return technicalDefaults.contains(normalized);
+  }
+
+  String _resolvedAboutCopy({
+    required String aboutShort,
+    required String aboutLong,
+  }) {
+    final shortText = aboutShort.trim();
+    final longText = aboutLong.trim();
+    if (shortText.isNotEmpty && !_isTechnicalDefaultAbout(shortText)) {
+      return shortText;
+    }
+    if (longText.isNotEmpty && !_isTechnicalDefaultAbout(longText)) {
+      return longText;
+    }
+    return _friendlyPartnerAboutFallback();
+  }
+
+  Future<void> _launchWebsiteUrl(String website) async {
+    final text = website.trim();
+    if (text.isEmpty) return;
+    final prefixed = text.toLowerCase().startsWith('http')
+        ? text
+        : 'https://$text';
+    final uri = Uri.tryParse(prefixed);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _launchPublicPhone(String phone) async {
+    final text = phone.trim();
+    if (text.isEmpty) return;
+    final uri = Uri.parse('tel:${Uri.encodeComponent(text)}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _launchBookingEmail(String email) async {
+    final text = email.trim();
+    if (text.isEmpty) return;
+    final uri = Uri(scheme: 'mailto', path: text);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _contactActionButton({
+    required String label,
+    required IconData icon,
+    required Future<void> Function() onPressed,
+  }) {
+    return FilledButton.tonalIcon(
+      onPressed: () => unawaited(onPressed()),
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF15171B),
+        foregroundColor: Colors.white,
+        side: BorderSide(color: _gold.withOpacity(0.26)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+      ),
+      icon: Icon(icon, size: 16, color: _gold.withOpacity(0.95)),
+      label: Text(
+        label,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
   String _localizeVehicleName(String value) {
     if (value.trim().toLowerCase() != 'hoofdwagen') return value;
     return _t(
@@ -14612,7 +14709,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
-  Widget _chip(String text, {IconData? icon, Color? color}) {
+  Widget _chip(String text, {IconData? icon, Color? color, Widget? leading}) {
     final accent = color ?? _gold;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -14624,7 +14721,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[
+          if (leading != null) ...[
+            leading,
+            const SizedBox(width: 5),
+          ] else if (icon != null) ...[
             Icon(icon, size: 12, color: accent),
             const SizedBox(width: 5),
           ],
@@ -14766,6 +14866,78 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
   }
 
+  String? _paymentOptionAssetPath(String id) {
+    switch (id.trim().toLowerCase()) {
+      case 'cash':
+      case 'qr_code':
+      case 'bancontact':
+      case 'payconiq_wero':
+      case 'ideal':
+      case 'tikkie':
+      case 'cartes_bancaires':
+      case 'card_payment':
+      case 'apple_pay':
+      case 'google_pay':
+      case 'paypal':
+      case 'online_payment':
+      case 'bank_transfer_bacs':
+        return 'assets/payment/png/$id.png';
+      default:
+        return null;
+    }
+  }
+
+  Widget _paymentOptionLogoTile({
+    required String paymentId,
+    required String semanticLabel,
+  }) {
+    final assetPath = _paymentOptionAssetPath(paymentId);
+    return Tooltip(
+      message: semanticLabel,
+      child: Semantics(
+        label: semanticLabel,
+        button: false,
+        child: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: const Color(0xFF13161A),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: _gold.withOpacity(0.32)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.28),
+                blurRadius: 9,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: assetPath == null
+              ? Icon(
+                  Icons.payments_outlined,
+                  color: _gold.withOpacity(0.95),
+                  size: 24,
+                )
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    assetPath,
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.payments_outlined,
+                      color: _gold.withOpacity(0.95),
+                      size: 24,
+                    ),
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
   List<String> _normalizedPublicPaymentMethods(List<String> methods) {
     final seen = <String>{};
     final out = <String>[];
@@ -14821,6 +14993,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     final paymentMethods = _normalizedPublicPaymentMethods(
       _profileTextListAny(p, const ['payment_methods', 'paymentMethods']),
     );
+    final aboutCopy = _resolvedAboutCopy(
+      aboutShort: aboutShort,
+      aboutLong: aboutLong,
+    );
     final trust = _profileMap(p['trust']);
     final verified =
         trust['verified_partner'] == true || trust['verifiedPartner'] == true;
@@ -14848,7 +15024,39 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         bookingCapabilities['instant_quote'] == true ||
         bookingCapabilities['instantQuote'] == true;
     final vehicles = _profileMapList(p['vehicles']);
-    final drivers = _profileMapList(p['drivers']);
+    final drivers = _profileMapList(p['drivers'])
+        .where((d) {
+          final displayName = _profileTextAny(d, const [
+            'display_name',
+            'displayName',
+          ]);
+          final languages = _profileTextListAny(d, const ['languages']);
+          final badges = _profileTextListAny(d, const ['badges']);
+          final portrait = _profileHttpsUrl(d, const [
+            'portrait_url',
+            'portraitUrl',
+          ]);
+          return displayName.trim().isNotEmpty ||
+              languages.isNotEmpty ||
+              badges.isNotEmpty ||
+              portrait.isNotEmpty;
+        })
+        .toList(growable: false);
+    final hasBookCta = widget.partnerId.trim().isNotEmpty;
+    const int postcodePreviewLimit = 8;
+    final visiblePostcodes =
+        _showAllCoveragePostcodes || postcodes.length <= postcodePreviewLimit
+        ? postcodes
+        : postcodes.take(postcodePreviewLimit).toList(growable: false);
+    final hiddenPostcodeCount = postcodes.length - visiblePostcodes.length;
+    final showContactSection =
+        regionLabel.isNotEmpty ||
+        postcodes.isNotEmpty ||
+        website.isNotEmpty ||
+        publicPhone.isNotEmpty ||
+        bookingEmail.isNotEmpty ||
+        instantQuote ||
+        gallery.isNotEmpty;
 
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
@@ -14858,6 +15066,33 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           backgroundColor: _bg,
           title: Text(_publicProfileLabel('profile')),
         ),
+        bottomNavigationBar: !_loading && _error == null && hasBookCta
+            ? SafeArea(
+                minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                child: FilledButton.icon(
+                  onPressed: () =>
+                      _openPartnerBooking(companyName: companyName),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _gold,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.local_taxi_outlined, size: 19),
+                  label: Text(
+                    _t(
+                      nl: 'Boek rit',
+                      en: 'Book ride',
+                      fr: 'Réserver une course',
+                      es: 'Reservar viaje',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              )
+            : null,
         body: SafeArea(
           child: _loading
               ? const Center(child: CircularProgressIndicator())
@@ -14873,21 +15108,21 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                   ),
                 )
               : ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
                   children: [
                     if (heroPhotoUrl.isNotEmpty)
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(15),
+                        borderRadius: BorderRadius.circular(18),
                         child: Stack(
                           children: [
                             Image.network(
                               heroPhotoUrl,
-                              height: 232,
+                              height: 244,
                               width: double.infinity,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) {
                                 return Container(
-                                  height: 232,
+                                  height: 244,
                                   width: double.infinity,
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
@@ -14908,8 +15143,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
-                                      Colors.black.withOpacity(0.1),
-                                      Colors.black.withOpacity(0.7),
+                                      Colors.black.withOpacity(0.06),
+                                      Colors.black.withOpacity(0.74),
                                     ],
                                     begin: Alignment.topCenter,
                                     end: Alignment.bottomCenter,
@@ -14920,22 +15155,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             Positioned(
                               left: 12,
                               right: 12,
-                              bottom: 10,
+                              bottom: 12,
                               child: Padding(
                                 padding: EdgeInsets.only(
-                                  left: logoUrl.isNotEmpty ? 84 : 0,
+                                  left: logoUrl.isNotEmpty ? 94 : 0,
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       companyName,
-                                      maxLines: 2,
+                                      maxLines: 3,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w800,
-                                        fontSize: 17,
+                                        fontSize: 18,
                                       ),
                                     ),
                                     if (tagline.isNotEmpty)
@@ -14945,9 +15180,15 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                           color: Colors.white.withOpacity(0.86),
-                                          fontSize: 12,
+                                          fontSize: 12.5,
                                         ),
                                       ),
+                                    const SizedBox(height: 5),
+                                    _chip(
+                                      _verifiedPartnerTrustLabel(),
+                                      icon: Icons.verified_outlined,
+                                      color: const Color(0xFF34D29A),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -14955,10 +15196,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             if (logoUrl.isNotEmpty)
                               Positioned(
                                 left: 12,
-                                bottom: 8,
+                                bottom: 10,
                                 child: Container(
-                                  width: 72,
-                                  height: 72,
+                                  width: 82,
+                                  height: 82,
                                   decoration: BoxDecoration(
                                     color: Colors.black.withOpacity(0.72),
                                     borderRadius: BorderRadius.circular(16),
@@ -14974,9 +15215,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                       ),
                                     ],
                                   ),
-                                  padding: const EdgeInsets.all(6),
+                                  padding: const EdgeInsets.all(7),
                                   child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(11),
+                                    borderRadius: BorderRadius.circular(12),
                                     child: Image.network(
                                       logoUrl,
                                       fit: BoxFit.cover,
@@ -15070,14 +15311,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                       spacing: 6,
                       runSpacing: 6,
                       children: [
-                        if (verified)
+                        if (verified || professionalBadge)
                           _chip(
-                            _t(
-                              nl: 'Geverifieerde partner',
-                              en: 'Verified partner',
-                              fr: 'Partenaire vérifié',
-                              es: 'Socio verificado',
-                            ),
+                            _verifiedPartnerTrustLabel(),
                             icon: Icons.verified_outlined,
                             color: const Color(0xFF34D29A),
                           ),
@@ -15088,77 +15324,49 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           ),
                       ],
                     ),
-                    if (widget.partnerId.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '${_publicProfileLabel("reference")}: ${widget.partnerId}',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.33),
-                          fontSize: 9.7,
+                    const SizedBox(height: 8),
+                    if (hasBookCta)
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () =>
+                              _openPartnerBooking(companyName: companyName),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: Colors.black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                          ),
+                          icon: const Icon(Icons.local_taxi_outlined, size: 18),
+                          label: Text(
+                            _t(
+                              nl: 'Boek rit bij deze partner',
+                              en: 'Book a ride with this partner',
+                              fr: 'Réserver une course avec ce partenaire',
+                              es: 'Reservar un viaje con este socio',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: () =>
-                            _openPartnerBooking(companyName: companyName),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                    const SizedBox(height: 9),
+                    _section(
+                      _publicProfileLabel('about'),
+                      Text(
+                        aboutCopy,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.84),
+                          fontSize: 12.5,
+                          height: 1.35,
                         ),
-                        icon: const Icon(Icons.local_taxi_outlined, size: 18),
-                        label: Text(
-                          _t(
-                            nl: 'Boek rit bij deze partner',
-                            en: 'Book with this partner',
-                            fr: 'Réserver avec ce partenaire',
-                            es: 'Reservar con este socio',
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(height: 9),
-                    if (aboutShort.isNotEmpty || aboutLong.isNotEmpty)
-                      _section(
-                        _publicProfileLabel('about'),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (aboutShort.isNotEmpty)
-                              Text(
-                                aboutShort,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.84),
-                                  fontSize: 12.4,
-                                ),
-                                maxLines: 4,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            if (aboutShort.isNotEmpty && aboutLong.isNotEmpty)
-                              const SizedBox(height: 6),
-                            if (aboutLong.isNotEmpty)
-                              Text(
-                                aboutLong,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.74),
-                                  fontSize: 11.7,
-                                  height: 1.3,
-                                ),
-                                maxLines: 6,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                          ],
-                        ),
-                      ),
                     if (services.isNotEmpty)
                       _section(
                         _t(
@@ -15175,6 +15383,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 (s) => _chip(
                                   _serviceLabel(s),
                                   icon: Icons.check_circle_outline,
+                                  color: const Color(0xFFDFC16A),
                                 ),
                               )
                               .toList(growable: false),
@@ -15377,12 +15586,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                       ),
                     if (drivers.isNotEmpty)
                       _section(
-                        _t(
-                          nl: 'Chauffeurs',
-                          en: 'Drivers',
-                          fr: 'Chauffeurs',
-                          es: 'Conductores',
-                        ),
+                        _publicProfileLabel('drivers'),
                         Column(
                           children: drivers
                               .map((d) {
@@ -15471,6 +15675,15 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                                     .toList(growable: false),
                                               ),
                                             ],
+                                            if (badges.isEmpty) ...[
+                                              const SizedBox(height: 5),
+                                              _chip(
+                                                _serviceLabel(
+                                                  'verified_professional',
+                                                ),
+                                                icon: Icons.verified_outlined,
+                                              ),
+                                            ],
                                           ],
                                         ),
                                       ),
@@ -15481,22 +15694,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               .toList(growable: false),
                         ),
                       ),
-                    if (regionLabel.isNotEmpty ||
-                        postcodes.isNotEmpty ||
-                        website.isNotEmpty ||
-                        publicPhone.isNotEmpty ||
-                        bookingEmail.isNotEmpty ||
-                        paymentMethods.isNotEmpty ||
-                        onlinePayments ||
-                        instantQuote ||
-                        gallery.isNotEmpty)
+                    if (showContactSection)
                       _section(
-                        _t(
-                          nl: 'Bereikbaarheid & details',
-                          en: 'Coverage & details',
-                          fr: 'Couverture et détails',
-                          es: 'Cobertura y detalles',
-                        ),
+                        _publicProfileLabel('coverage'),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -15513,7 +15713,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               Wrap(
                                 spacing: 6,
                                 runSpacing: 6,
-                                children: postcodes
+                                children: visiblePostcodes
                                     .map(
                                       (z) => _chip(
                                         z,
@@ -15522,10 +15722,93 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     )
                                     .toList(growable: false),
                               ),
+                              if (hiddenPostcodeCount > 0) ...[
+                                const SizedBox(height: 7),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      _showAllCoveragePostcodes =
+                                          !_showAllCoveragePostcodes;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showAllCoveragePostcodes
+                                        ? Icons.expand_less_rounded
+                                        : Icons.expand_more_rounded,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _showAllCoveragePostcodes
+                                        ? _t(
+                                            nl: 'Minder tonen',
+                                            en: 'Show less',
+                                            fr: 'Afficher moins',
+                                            es: 'Mostrar menos',
+                                          )
+                                        : _t(
+                                            nl: 'Toon alle regio’s (+$hiddenPostcodeCount)',
+                                            en: 'Show all areas (+$hiddenPostcodeCount)',
+                                            fr: 'Afficher toutes les zones (+$hiddenPostcodeCount)',
+                                            es: 'Mostrar todas las zonas (+$hiddenPostcodeCount)',
+                                          ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: _gold.withOpacity(0.96),
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                      vertical: 0,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                             if (website.isNotEmpty ||
                                 publicPhone.isNotEmpty ||
                                 bookingEmail.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  if (website.isNotEmpty)
+                                    _contactActionButton(
+                                      label: _t(
+                                        nl: 'Website',
+                                        en: 'Website',
+                                        fr: 'Site web',
+                                        es: 'Sitio web',
+                                      ),
+                                      icon: Icons.language_outlined,
+                                      onPressed: () =>
+                                          _launchWebsiteUrl(website),
+                                    ),
+                                  if (publicPhone.isNotEmpty)
+                                    _contactActionButton(
+                                      label: _t(
+                                        nl: 'Bel',
+                                        en: 'Call',
+                                        fr: 'Appeler',
+                                        es: 'Llamar',
+                                      ),
+                                      icon: Icons.call_outlined,
+                                      onPressed: () =>
+                                          _launchPublicPhone(publicPhone),
+                                    ),
+                                  if (bookingEmail.isNotEmpty)
+                                    _contactActionButton(
+                                      label: _t(
+                                        nl: 'E-mail',
+                                        en: 'Email',
+                                        fr: 'E-mail',
+                                        es: 'E-mail',
+                                      ),
+                                      icon: Icons.email_outlined,
+                                      onPressed: () =>
+                                          _launchBookingEmail(bookingEmail),
+                                    ),
+                                ],
+                              ),
                               const SizedBox(height: 8),
                               if (website.isNotEmpty)
                                 Text(
@@ -15548,21 +15831,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     color: Colors.white.withOpacity(0.75),
                                   ),
                                 ),
-                            ],
-                            if (paymentMethods.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: paymentMethods
-                                    .map(
-                                      (m) => _chip(
-                                        _paymentLabel(m),
-                                        icon: Icons.payments_outlined,
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                              ),
                             ],
                             if (onlinePayments ||
                                 instantQuote ||
@@ -15607,6 +15875,27 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               ),
                             ],
                           ],
+                        ),
+                      ),
+                    if (paymentMethods.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Betaalopties',
+                          en: 'Payment options',
+                          fr: 'Moyens de paiement',
+                          es: 'Opciones de pago',
+                        ),
+                        Wrap(
+                          spacing: 9,
+                          runSpacing: 9,
+                          children: paymentMethods
+                              .map(
+                                (m) => _paymentOptionLogoTile(
+                                  paymentId: _normalizePublicPaymentMethodId(m),
+                                  semanticLabel: _paymentLabel(m),
+                                ),
+                              )
+                              .toList(growable: false),
                         ),
                       ),
                   ],

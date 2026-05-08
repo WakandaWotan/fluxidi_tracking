@@ -44,4 +44,5 @@ flutter:
 
   assets:
     - assets/fluxidi/
+    - assets/payment/png/
 
