@@ -3309,6 +3309,21 @@ GET /oauth/callback
         }, 200);
       }
 
+      // GET /partners/profile?partner_id=...
+      if (url.pathname === "/partners/profile" && request.method === "GET") {
+        const partnerId = String(
+          url.searchParams.get("partner_id") || url.searchParams.get("partnerId") || "",
+        ).trim();
+        if (!partnerId) {
+          return json({ ok: false, error: "partner_id is required" }, 400);
+        }
+        const profile = await getPublicPartnerProfileById(env, partnerId);
+        if (!profile) {
+          return json({ ok: false, error: "partner profile not found" }, 404);
+        }
+        return json({ ok: true, profile }, 200);
+      }
+
       // POST /bookings/availability-check (alias for existing /availability)
       if (url.pathname === "/bookings/availability-check" && request.method === "POST") {
         const body = await safeJson(request);
@@ -8829,6 +8844,7 @@ function _flattenBookingForRidesList(bookingId, rec) {
 
 const VEHICLE_INVENTORY_KEY = "fleet:vehicles:v1";
 const PARTNER_DIRECTORY_KEY = "partners:directory:v1";
+const PARTNER_PROFILES_KEY = "partners:profiles:v1";
 const PARTNER_DIRECTORY_SEED = [
   {
     partner_id: "partner_fluxidi_antwerp",
@@ -8850,6 +8866,69 @@ const PARTNER_DIRECTORY_SEED = [
     is_active: false,
     subscription_status: "active",
     supported_postcodes: ["9000"],
+  },
+];
+const PARTNER_PROFILES_SEED = [
+  {
+    partner_id: "partner_fluxidi_taxi_9688",
+    company_name: "Fluxidi Taxi",
+    profile_enabled: true,
+    is_active: true,
+    subscription_status: "active",
+    tagline: "Premium mobiliteit in jouw regio",
+    about_short: "Comfortabele en professionele ritten voor particulieren en bedrijven.",
+    about_long:
+      "Fluxidi Taxi biedt betrouwbare deur-tot-deur mobiliteit met professionele chauffeurs, premium voertuigen en heldere communicatie.",
+    coverage: {
+      region_label: "Belgie",
+      postcodes: ["9688"],
+    },
+    public_contact: {
+      website: "https://fluxidi.com",
+      public_phone: "",
+      booking_email: "",
+    },
+    media: {
+      logo_url: "",
+      hero_photo_url: "",
+      gallery: [],
+    },
+    services: [
+      "taxi_vvb",
+      "airport_transfer",
+      "business_rides",
+      "hotel_bnb_pickup",
+      "event_mobility",
+      "online_payments",
+    ],
+    payment_methods: ["cash", "qr", "online_payment"],
+    vehicles: [
+      {
+        name: "Premium sedan",
+        brand_model: "Tesla Model 3",
+        category: "Premium",
+        pax: 3,
+        luggage: 3,
+        features: ["comfort", "ev_available"],
+        photo_url: "",
+      },
+    ],
+    drivers: [
+      {
+        display_name: "Professionele chauffeur",
+        languages: ["NL", "FR", "EN"],
+        badges: ["verified_professional"],
+      },
+    ],
+    trust: {
+      verified_partner: true,
+      professional_badge: true,
+    },
+    booking_capabilities: {
+      online_payments: true,
+      instant_quote: false,
+      profile_enabled: true,
+    },
   },
 ];
 
@@ -8916,6 +8995,197 @@ async function listNearbyPartnersByPostcode(env, postcode) {
       subscription_status: p.subscription_status,
       supported_postcodes: p.supported_postcodes,
     }));
+}
+
+function _safePublicText(value, maxLen = 240) {
+  return sanitizeTenantString(value, maxLen);
+}
+
+function _safePublicBool(value, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function _safePublicInt(value, fallback = 0, min = 0, max = 99) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function _safePublicStringList(value, { maxItems = 20, maxItemLen = 80 } = {}) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (out.length >= maxItems) break;
+    const text = _safePublicText(item, maxItemLen);
+    if (!text) continue;
+    out.push(text);
+  }
+  return out;
+}
+
+function _normalizePublicCoverage(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    region_label: _safePublicText(src.region_label ?? src.regionLabel, 120),
+    postcodes: _safePublicStringList(src.postcodes, { maxItems: 40, maxItemLen: 24 })
+      .map(_normalizePostcode)
+      .filter((v) => !!v),
+  };
+}
+
+function _normalizePublicContact(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    website: _safePublicText(src.website, 240),
+    public_phone: _safePublicText(src.public_phone ?? src.publicPhone, 64),
+    booking_email: _safePublicText(src.booking_email ?? src.bookingEmail, 160),
+  };
+}
+
+function _normalizePublicMedia(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    logo_url: _safePublicText(src.logo_url ?? src.logoUrl, 600),
+    hero_photo_url: _safePublicText(src.hero_photo_url ?? src.heroPhotoUrl, 600),
+    gallery: _safePublicStringList(src.gallery, { maxItems: 12, maxItemLen: 600 }),
+  };
+}
+
+function _normalizePublicVehicles(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    out.push({
+      name: _safePublicText(row.name, 120),
+      brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
+      category: _safePublicText(row.category, 80),
+      pax: _safePublicInt(row.pax, 0, 0, 99),
+      luggage: _safePublicInt(row.luggage, 0, 0, 99),
+      features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
+      photo_url: _safePublicText(row.photo_url ?? row.photoUrl, 600),
+    });
+  }
+  return out;
+}
+
+function _normalizePublicDrivers(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    out.push({
+      display_name: _safePublicText(row.display_name ?? row.displayName, 120),
+      languages: _safePublicStringList(row.languages, { maxItems: 8, maxItemLen: 12 }),
+      badges: _safePublicStringList(row.badges, { maxItems: 8, maxItemLen: 64 }),
+      portrait_url: _safePublicText(row.portrait_url ?? row.portraitUrl, 600),
+    });
+  }
+  return out;
+}
+
+function _normalizePublicTrust(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    verified_partner: _safePublicBool(src.verified_partner ?? src.verifiedPartner, false),
+    professional_badge: _safePublicBool(src.professional_badge ?? src.professionalBadge, false),
+  };
+}
+
+function _normalizePublicBookingCapabilities(raw, profileEnabled) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    online_payments: _safePublicBool(src.online_payments ?? src.onlinePayments, false),
+    instant_quote: _safePublicBool(src.instant_quote ?? src.instantQuote, false),
+    profile_enabled: !!profileEnabled,
+  };
+}
+
+function _normalizePublicPartnerProfileEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
+  const companyName = _safePublicText(raw.company_name ?? raw.companyName, 160);
+  const profileEnabled = _safePublicBool(raw.profile_enabled ?? raw.profileEnabled, false);
+  const isActive = raw.is_active === true;
+  const subscriptionStatus = _safePublicText(raw.subscription_status ?? raw.subscriptionStatus, 32)
+    .toLowerCase();
+  if (!partnerId || !companyName) return null;
+  return {
+    partner_id: partnerId,
+    company_name: companyName,
+    profile_enabled: profileEnabled,
+    is_active: isActive,
+    subscription_status: subscriptionStatus,
+    tagline: _safePublicText(raw.tagline, 180),
+    about_short: _safePublicText(raw.about_short ?? raw.aboutShort, 400),
+    about_long: _safePublicText(raw.about_long ?? raw.aboutLong, 2000),
+    coverage: _normalizePublicCoverage(raw.coverage),
+    public_contact: _normalizePublicContact(raw.public_contact ?? raw.publicContact),
+    media: _normalizePublicMedia(raw.media),
+    services: _safePublicStringList(raw.services, { maxItems: 24, maxItemLen: 64 }),
+    payment_methods: _safePublicStringList(raw.payment_methods ?? raw.paymentMethods, {
+      maxItems: 12,
+      maxItemLen: 40,
+    }),
+    vehicles: _normalizePublicVehicles(raw.vehicles),
+    drivers: _normalizePublicDrivers(raw.drivers),
+    trust: _normalizePublicTrust(raw.trust),
+    booking_capabilities: _normalizePublicBookingCapabilities(
+      raw.booking_capabilities ?? raw.bookingCapabilities,
+      profileEnabled,
+    ),
+  };
+}
+
+function _isPublicPartnerProfileVisible(profile) {
+  if (!profile || typeof profile !== "object") return false;
+  if (profile.profile_enabled !== true) return false;
+  if (profile.is_active !== true) return false;
+  return _isSubscriptionActive(profile.subscription_status);
+}
+
+async function _loadPublicPartnerProfiles(env) {
+  const fallback = PARTNER_PROFILES_SEED
+    .map(_normalizePublicPartnerProfileEntry)
+    .filter((p) => p !== null);
+  if (!env?.BOOKING_KV) return fallback;
+  const raw = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
+  const incoming = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === "object" && Array.isArray(raw.profiles) ? raw.profiles : null);
+  if (!Array.isArray(incoming)) return fallback;
+  const normalized = incoming
+    .map(_normalizePublicPartnerProfileEntry)
+    .filter((p) => p !== null);
+  return normalized;
+}
+
+async function getPublicPartnerProfileById(env, partnerId) {
+  const needle = _safePublicText(partnerId, 120);
+  if (!needle) return null;
+  const profiles = await _loadPublicPartnerProfiles(env);
+  const profile = profiles.find((p) => p.partner_id === needle);
+  if (!profile) return null;
+  if (!_isPublicPartnerProfileVisible(profile)) return null;
+  return {
+    partner_id: profile.partner_id,
+    company_name: profile.company_name,
+    profile_enabled: true,
+    is_active: true,
+    subscription_status: profile.subscription_status,
+    tagline: profile.tagline,
+    about_short: profile.about_short,
+    about_long: profile.about_long,
+    coverage: profile.coverage,
+    public_contact: profile.public_contact,
+    media: profile.media,
+    services: profile.services,
+    payment_methods: profile.payment_methods,
+    vehicles: profile.vehicles,
+    drivers: profile.drivers,
+    trust: profile.trust,
+    booking_capabilities: profile.booking_capabilities,
+  };
 }
 
 function _normTierForVehicleMatch(v) {

@@ -20,6 +20,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -4977,6 +4978,143 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
+  String _photoExtension(String path) {
+    final lower = path.toLowerCase();
+    final slash = lower.lastIndexOf(Platform.pathSeparator);
+    final altSlash = lower.lastIndexOf('/');
+    final base = lower.substring((slash > altSlash ? slash : altSlash) + 1);
+    final dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot == base.length - 1) return '';
+    const allowed = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'heic',
+    };
+    final ext = base.substring(dot + 1);
+    return allowed.contains(ext) ? ext : '';
+  }
+
+  String _safePhotoSegment(String raw, {String fallback = '_'}) {
+    final text = raw.trim();
+    if (text.isEmpty) return fallback;
+    final sanitized = text.replaceAll(RegExp(r'[^a-zA-Z0-9_.-]'), '_');
+    if (sanitized.isEmpty) return fallback;
+    return sanitized.length <= 80 ? sanitized : sanitized.substring(0, 80);
+  }
+
+  bool _driverPhotoExists(String? path) {
+    final clean = path?.trim() ?? '';
+    if (clean.isEmpty || kIsWeb) return false;
+    try {
+      return File(clean).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _initialsFromName(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return 'D';
+    final parts = trimmed
+        .split(RegExp(r'\s+'))
+        .where((p) => p.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    }
+    return trimmed[0].toUpperCase();
+  }
+
+  Future<String?> _persistPickedDriverPhoto({
+    required String sourcePath,
+    required DriverProfile driver,
+  }) async {
+    try {
+      if (kIsWeb) return null;
+      final source = sourcePath.trim();
+      if (source.isEmpty) return null;
+      final src = File(source);
+      if (!await src.exists()) return null;
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        '${base.path}${Platform.pathSeparator}driver_profile_photos',
+      );
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final ext = _photoExtension(source);
+      final companySeg = _safePhotoSegment(
+        driver.companyId?.trim().isNotEmpty == true
+            ? driver.companyId!.trim()
+            : resolvedCompanyId.trim(),
+        fallback: 'company',
+      );
+      final driverSeg = _safePhotoSegment(driver.id, fallback: 'driver');
+      final fileName =
+          'driver_${companySeg}_${driverSeg}_${DateTime.now().millisecondsSinceEpoch}'
+          '${ext.isEmpty ? '' : '.$ext'}';
+      final target = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await src.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<ImageSource?> _askProfilePhotoSource(BuildContext context) {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: const Color(0xFF141B2F),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(
+                _t(
+                  nl: 'Foto kiezen',
+                  en: 'Choose photo',
+                  fr: 'Choisir une photo',
+                  es: 'Elegir foto',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: Text(
+                _t(
+                  nl: 'Foto nemen',
+                  en: 'Take photo',
+                  fr: 'Prendre une photo',
+                  es: 'Tomar foto',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _openEditDriverDialog(
     BuildContext context,
     DriverProfile existing,
@@ -4990,6 +5128,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
     final taxiCardExpiryCtrl = TextEditingController(
       text: existing.taxiDriverCardExpiry,
     );
+    var profilePhotoPath = existing.profilePhotoPath?.trim() ?? '';
     var active = existing.isActive;
 
     await showDialog<void>(
@@ -5017,6 +5156,210 @@ class CompanyDriverManagementPage extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F1322),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _gold.withOpacity(0.34)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF17120A),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _gold.withOpacity(0.46),
+                              ),
+                            ),
+                            child: ClipOval(
+                              child: _driverPhotoExists(profilePhotoPath)
+                                  ? Image.file(
+                                      File(profilePhotoPath),
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Center(
+                                        child: Text(
+                                          _initialsFromName(nameCtrl.text),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Text(
+                                        _initialsFromName(nameCtrl.text),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _t(
+                                    nl: 'Pasfoto',
+                                    en: 'Profile photo',
+                                    fr: 'Photo de profil',
+                                    es: 'Foto de perfil',
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13.6,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _driverPhotoExists(profilePhotoPath)
+                                      ? _t(
+                                          nl: 'Foto aanwezig',
+                                          en: 'Photo available',
+                                          fr: 'Photo disponible',
+                                          es: 'Foto disponible',
+                                        )
+                                      : _t(
+                                          nl: 'Nog geen pasfoto',
+                                          en: 'No profile photo yet',
+                                          fr: 'Pas encore de photo',
+                                          es: 'Aún sin foto',
+                                        ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.64),
+                                    fontSize: 11.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _t(
+                          nl: 'Deze foto is enkel zichtbaar binnen het bedrijf.',
+                          en: 'This photo is only visible inside the company.',
+                          fr: 'Cette photo est uniquement visible dans l’entreprise.',
+                          es: 'Esta foto solo es visible dentro de la empresa.',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.58),
+                          fontSize: 11.1,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _gold.withOpacity(0.98),
+                              side: BorderSide(color: _gold.withOpacity(0.45)),
+                              backgroundColor: const Color(0xFF16120A),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              minimumSize: const Size(0, 36),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                            onPressed: () async {
+                              final source = await _askProfilePhotoSource(ctx);
+                              if (source == null) return;
+                              try {
+                                final picked = await ImagePicker().pickImage(
+                                  source: source,
+                                  imageQuality: 90,
+                                );
+                                if (picked == null) return;
+                                final persisted =
+                                    await _persistPickedDriverPhoto(
+                                      sourcePath: picked.path,
+                                      driver: existing,
+                                    );
+                                final nextPath = (persisted ?? '').trim();
+                                if (nextPath.isEmpty) return;
+                                setDialogState(
+                                  () => profilePhotoPath = nextPath,
+                                );
+                              } catch (_) {}
+                            },
+                            icon: Icon(
+                              _driverPhotoExists(profilePhotoPath)
+                                  ? Icons.photo_camera_outlined
+                                  : Icons.add_a_photo_outlined,
+                              size: 16,
+                            ),
+                            label: Text(
+                              _driverPhotoExists(profilePhotoPath)
+                                  ? _t(
+                                      nl: 'Pasfoto wijzigen',
+                                      en: 'Change profile photo',
+                                      fr: 'Modifier la photo',
+                                      es: 'Cambiar foto',
+                                    )
+                                  : _t(
+                                      nl: 'Pasfoto toevoegen',
+                                      en: 'Add profile photo',
+                                      fr: 'Ajouter une photo',
+                                      es: 'Añadir foto de perfil',
+                                    ),
+                            ),
+                          ),
+                          if (_driverPhotoExists(profilePhotoPath))
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.redAccent,
+                                side: BorderSide(
+                                  color: Colors.redAccent.withOpacity(0.45),
+                                ),
+                                backgroundColor: const Color(0xFF2A1518),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                minimumSize: const Size(0, 36),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                              ),
+                              onPressed: () =>
+                                  setDialogState(() => profilePhotoPath = ''),
+                              icon: const Icon(Icons.delete_outline, size: 16),
+                              label: Text(
+                                _t(
+                                  nl: 'Pasfoto verwijderen',
+                                  en: 'Remove profile photo',
+                                  fr: 'Supprimer la photo',
+                                  es: 'Eliminar foto',
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
                 _driverField(
                   nameCtrl,
                   _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
@@ -5095,6 +5438,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             taxiDriverCardExpiry: taxiCardExpiryCtrl.text
                                 .trim(),
                             isActive: active,
+                            profilePhotoPath: profilePhotoPath.trim().isEmpty
+                                ? null
+                                : profilePhotoPath.trim(),
                           );
                           updateDriver(existing.id, updated);
                           Navigator.pop(ctx);
@@ -12777,6 +13123,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   bool _searched = false;
   String _normalizedPostcode = '';
   List<Map<String, dynamic>> _partners = const <Map<String, dynamic>>[];
+  static const Color _bg = Color(0xFF07080C);
+  static const Color _card = Color(0xFF101113);
+  static const Color _panel = Color(0xFF16120A);
+  static const Color _gold = Color(0xFFE5B641);
 
   String _t({
     required String nl,
@@ -12858,14 +13208,329 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     }
   }
 
+  Widget _premiumCard({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Container(
+      width: double.infinity,
+      padding: padding ?? const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.28)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _infoChip(String label, {IconData? icon, Color? color}) {
+    final accent = color ?? _gold;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(0.13),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withOpacity(0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: accent),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: accent,
+              fontSize: 11.2,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyStateCard(String text, {Widget? action}) {
+    return _premiumCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.78),
+              fontSize: 13,
+            ),
+          ),
+          if (action != null) ...[const SizedBox(height: 10), action],
+        ],
+      ),
+    );
+  }
+
+  String _mapText(Map<String, dynamic> p, String key) =>
+      (p[key] ?? '').toString().trim();
+
+  List<String> _mapTextList(Map<String, dynamic> p, String key) {
+    final raw = p[key];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+    return const <String>[];
+  }
+
+  void _openPartnerProfile(Map<String, dynamic> p) {
+    final partnerId = _mapText(p, 'partner_id');
+    final companyName = _mapText(p, 'company_name');
+    if (partnerId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PartnerPublicProfilePage(
+          partnerId: partnerId,
+          companyNameFallback: companyName,
+        ),
+      ),
+    );
+  }
+
+  Widget _partnerCard(Map<String, dynamic> p) {
+    final company = _mapText(p, 'company_name');
+    final partnerId = _mapText(p, 'partner_id');
+    final isActive = p['is_active'] == true;
+    final supported = _mapTextList(p, 'supported_postcodes');
+    final logoUrl = _mapText(p, 'logo_url');
+    final heroUrl = _mapText(p, 'hero_photo_url');
+    final badgeList = _mapTextList(p, 'service_badges');
+    final vehiclePhotos = _mapTextList(p, 'vehicle_photos');
+
+    final showImage = logoUrl.isNotEmpty || heroUrl.isNotEmpty;
+    final imageRef = heroUrl.isNotEmpty ? heroUrl : logoUrl;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openPartnerProfile(p),
+          borderRadius: BorderRadius.circular(14),
+          child: _premiumCard(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(11),
+                  child: showImage
+                      ? Image.network(
+                          imageRef,
+                          height: 90,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            height: 90,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  const Color(0xFF17110A),
+                                  const Color(0xFF111214),
+                                  _gold.withOpacity(0.20),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: _infoChip(
+                              _t(
+                                nl: 'Fluxidi partner',
+                                en: 'Fluxidi partner',
+                                fr: 'Partenaire Fluxidi',
+                                es: 'Socio Fluxidi',
+                              ),
+                              icon: Icons.verified_outlined,
+                            ),
+                          ),
+                        )
+                      : Container(
+                          height: 66,
+                          padding: const EdgeInsets.symmetric(horizontal: 11),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                const Color(0xFF15100A),
+                                const Color(0xFF0E0F11),
+                                _gold.withOpacity(0.20),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _gold.withOpacity(0.16),
+                                  border: Border.all(
+                                    color: _gold.withOpacity(0.5),
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.local_taxi_outlined,
+                                  size: 17,
+                                  color: _gold.withOpacity(0.96),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _t(
+                                    nl: 'Fluxidi partner',
+                                    en: 'Fluxidi partner',
+                                    fr: 'Partenaire Fluxidi',
+                                    es: 'Socio Fluxidi',
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.business_outlined,
+                      color: _gold.withOpacity(0.95),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        company.isEmpty ? partnerId : company,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (isActive)
+                      _infoChip(
+                        _t(
+                          nl: 'Actieve partner',
+                          en: 'Active partner',
+                          fr: 'Partenaire actif',
+                          es: 'Socio activo',
+                        ),
+                        icon: Icons.verified_outlined,
+                        color: const Color(0xFF34D29A),
+                      ),
+                    if (supported.isNotEmpty)
+                      _infoChip(
+                        _t(
+                          nl: supported.take(4).join(", "),
+                          en: supported.take(4).join(", "),
+                          fr: supported.take(4).join(", "),
+                          es: supported.take(4).join(", "),
+                        ),
+                        icon: Icons.location_on_outlined,
+                      ),
+                    if (badgeList.isNotEmpty)
+                      _infoChip(
+                        _t(
+                          nl: '${badgeList.length} services',
+                          en: '${badgeList.length} services',
+                          fr: '${badgeList.length} services',
+                          es: '${badgeList.length} servicios',
+                        ),
+                        icon: Icons.local_offer_outlined,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: _gold.withOpacity(0.34)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _t(
+                            nl: 'Bekijk profiel',
+                            en: 'View profile',
+                            fr: 'Voir le profil',
+                            es: 'Ver perfil',
+                          ),
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.98),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.1,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_forward_rounded,
+                        color: _gold.withOpacity(0.98),
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ),
+                if (partnerId.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    'Ref: $partnerId',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.32),
+                      fontSize: 9.8,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
+        backgroundColor: _bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF0B1020),
+          backgroundColor: _bg,
           title: Text(
             _t(
               nl: "Taxi's in de buurt",
@@ -12879,86 +13544,139 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(
-                _t(
-                  nl: 'Zoek actieve Fluxidi-partners in jouw regio op basis van postcode.',
-                  en: 'Search active Fluxidi partners in your area by postal code.',
-                  fr: 'Recherchez des partenaires Fluxidi actifs dans votre region par code postal.',
-                  es: 'Busca socios activos de Fluxidi en tu zona por codigo postal.',
+              _premiumCard(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _gold.withOpacity(0.14),
+                        border: Border.all(color: _gold.withOpacity(0.48)),
+                      ),
+                      child: Icon(
+                        Icons.location_searching_outlined,
+                        size: 18,
+                        color: _gold.withOpacity(0.95),
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        _t(
+                          nl: 'Zoek actieve Fluxidi-partners in jouw regio op basis van postcode.',
+                          en: 'Search active Fluxidi partners in your area by postal code.',
+                          fr: 'Recherchez des partenaires Fluxidi actifs dans votre region par code postal.',
+                          es: 'Busca socios activos de Fluxidi en tu zona por codigo postal.',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.80),
+                          fontSize: 13,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                style: TextStyle(color: Colors.white.withOpacity(0.78)),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _postalCodeCtrl,
-                style: const TextStyle(color: Colors.white),
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _searchPartners(),
-                decoration: InputDecoration(
-                  labelText: _t(
-                    nl: 'Postcode',
-                    en: 'Postal code',
-                    fr: 'Code postal',
-                    es: 'Codigo postal',
-                  ),
-                  labelStyle: const TextStyle(color: Colors.white70),
-                  hintText: _t(
-                    nl: 'Bijv. 2000',
-                    en: 'e.g. 2000',
-                    fr: 'ex. 2000',
-                    es: 'ej. 2000',
-                  ),
-                  hintStyle: const TextStyle(color: Colors.white38),
-                  filled: true,
-                  fillColor: const Color(0xFF141B2F),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              FilledButton(
-                onPressed: _searching ? null : _searchPartners,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    _searching
-                        ? _t(
-                            nl: 'Zoeken...',
-                            en: 'Searching...',
-                            fr: 'Recherche...',
-                            es: 'Buscando...',
-                          )
-                        : _t(
-                            nl: 'Zoek actieve partners',
-                            en: 'Search active partners',
-                            fr: 'Rechercher des partenaires actifs',
-                            es: 'Buscar socios activos',
+              _premiumCard(
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _postalCodeCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => _searchPartners(),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Postcode',
+                          en: 'Postal code',
+                          fr: 'Code postal',
+                          es: 'Codigo postal',
+                        ),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        hintText: _t(
+                          nl: 'Bijv. 2000',
+                          en: 'e.g. 2000',
+                          fr: 'ex. 2000',
+                          es: 'ej. 2000',
+                        ),
+                        hintStyle: const TextStyle(color: Colors.white38),
+                        filled: true,
+                        fillColor: _panel,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: _gold.withOpacity(0.28),
                           ),
-                  ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: _gold.withOpacity(0.78),
+                            width: 1.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _searching ? null : _searchPartners,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _gold,
+                          foregroundColor: Colors.black,
+                          disabledBackgroundColor: _gold.withOpacity(0.45),
+                          disabledForegroundColor: Colors.black87,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            _searching
+                                ? _t(
+                                    nl: 'Zoeken...',
+                                    en: 'Searching...',
+                                    fr: 'Recherche...',
+                                    es: 'Buscando...',
+                                  )
+                                : _t(
+                                    nl: 'Zoek actieve partners',
+                                    en: 'Search active partners',
+                                    fr: 'Rechercher des partenaires actifs',
+                                    es: 'Buscar socios activos',
+                                  ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF141B2F),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: !_searched
-                    ? Text(
-                        _t(
-                          nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
-                          en: 'Enter your postal code to check which partners are active.',
-                          fr: 'Saisissez votre code postal pour verifier quels partenaires sont actifs.',
-                          es: 'Ingresa tu codigo postal para verificar que socios estan activos.',
-                        ),
-                        style: TextStyle(color: Colors.white.withOpacity(0.75)),
-                      )
-                    : _partners.isNotEmpty
-                    ? Column(
+              !_searched
+                  ? _emptyStateCard(
+                      _t(
+                        nl: 'Voer je postcode in om te controleren welke partners actief zijn.',
+                        en: 'Enter your postal code to check which partners are active.',
+                        fr: 'Saisissez votre code postal pour verifier quels partenaires sont actifs.',
+                        es: 'Ingresa tu codigo postal para verificar que socios estan activos.',
+                      ),
+                    )
+                  : _partners.isNotEmpty
+                  ? _premiumCard(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
@@ -12971,49 +13689,433 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
+                              fontSize: 13.5,
                             ),
                           ),
                           const SizedBox(height: 10),
-                          ..._partners.map((p) {
-                            final company = (p['company_name'] ?? '')
-                                .toString()
-                                .trim();
-                            final partnerId = (p['partner_id'] ?? '')
-                                .toString()
-                                .trim();
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0F1628),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: Colors.white12),
+                          ..._partners.map(_partnerCard),
+                        ],
+                      ),
+                    )
+                  : _emptyStateCard(
+                      _t(
+                        nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
+                        en: 'No active partners found yet for postal code $_normalizedPostcode.',
+                        fr: 'Aucun partenaire actif trouve pour le code postal $_normalizedPostcode.',
+                        es: 'Aun no se encontraron socios activos para el codigo postal $_normalizedPostcode.',
+                      ),
+                      action: OutlinedButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const CustomerRegionRegistrationPage(),
+                            ),
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _gold.withOpacity(0.97),
+                          side: BorderSide(color: _gold.withOpacity(0.45)),
+                          backgroundColor: _panel,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Registreer je regio',
+                            en: 'Register your region',
+                            fr: 'Enregistrez votre region',
+                            es: 'Registra tu region',
+                          ),
+                        ),
+                      ),
+                    ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PartnerPublicProfilePage extends StatefulWidget {
+  final String partnerId;
+  final String companyNameFallback;
+
+  const PartnerPublicProfilePage({
+    super.key,
+    required this.partnerId,
+    required this.companyNameFallback,
+  });
+
+  @override
+  State<PartnerPublicProfilePage> createState() =>
+      _PartnerPublicProfilePageState();
+}
+
+class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
+  static const Color _bg = Color(0xFF07080C);
+  static const Color _card = Color(0xFF101113);
+  static const Color _gold = Color(0xFFE5B641);
+  bool _loading = true;
+  String? _error;
+  Map<String, dynamic>? _profile;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/partners/profile?partner_id=${Uri.encodeQueryComponent(widget.partnerId)}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+      final decoded = jsonDecode(res.body);
+      final p = decoded is Map<String, dynamic> && decoded['profile'] is Map
+          ? Map<String, dynamic>.from(decoded['profile'] as Map)
+          : null;
+      if (p == null) throw Exception('invalid_profile_payload');
+      if (!mounted) return;
+      setState(() {
+        _profile = p;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = _t(
+          nl: 'Publiek partnerprofiel is momenteel niet beschikbaar.',
+          en: 'Public partner profile is currently unavailable.',
+          fr: 'Le profil public du partenaire est actuellement indisponible.',
+          es: 'El perfil publico del socio no esta disponible actualmente.',
+        );
+      });
+    }
+  }
+
+  String _txt(Map<String, dynamic>? map, String key) =>
+      (map?[key] ?? '').toString().trim();
+
+  List<String> _list(Map<String, dynamic>? map, String key) {
+    final raw = map?[key];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+    return const <String>[];
+  }
+
+  Widget _section(String title, Widget child) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: _gold.withOpacity(0.24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: _gold.withOpacity(0.95),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 7),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(String text, {IconData? icon, Color? color}) {
+    final accent = color ?? _gold;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withOpacity(0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: accent),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            text,
+            style: TextStyle(
+              color: accent,
+              fontSize: 10.8,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _serviceLabel(String id) {
+    switch (id) {
+      case 'taxi_vvb':
+        return _t(
+          nl: 'Taxi & VVB',
+          en: 'Taxi & VVB',
+          fr: 'Taxi & VVB',
+          es: 'Taxi y VVB',
+        );
+      case 'airport_transfer':
+        return _t(
+          nl: 'Luchthavenvervoer',
+          en: 'Airport transfer',
+          fr: 'Transfert aeroport',
+          es: 'Traslado aeropuerto',
+        );
+      case 'business_rides':
+        return _t(
+          nl: 'Zakelijke ritten',
+          en: 'Business rides',
+          fr: 'Trajets affaires',
+          es: 'Viajes de negocios',
+        );
+      case 'hotel_bnb_pickup':
+        return _t(
+          nl: 'Hotels & B&B',
+          en: 'Hotels & B&B',
+          fr: 'Hotels & B&B',
+          es: 'Hoteles y B&B',
+        );
+      case 'event_mobility':
+        return _t(
+          nl: 'Evenementen',
+          en: 'Event mobility',
+          fr: 'Evenements',
+          es: 'Eventos',
+        );
+      case 'ev_available':
+        return _t(
+          nl: 'Elektrisch vervoer',
+          en: 'Electric vehicle',
+          fr: 'Vehicule electrique',
+          es: 'Vehiculo electrico',
+        );
+      case 'online_payments':
+        return _t(
+          nl: 'Online betalen',
+          en: 'Online payments',
+          fr: 'Paiements en ligne',
+          es: 'Pagos en linea',
+        );
+      case 'comfort':
+        return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
+      case 'verified_professional':
+        return _t(
+          nl: 'Geverifieerde professional',
+          en: 'Verified professional',
+          fr: 'Professionnel verifie',
+          es: 'Profesional verificado',
+        );
+      default:
+        return id.replaceAll('_', ' ');
+    }
+  }
+
+  String _paymentLabel(String id) {
+    switch (id) {
+      case 'cash':
+        return _t(nl: 'Cash', en: 'Cash', fr: 'Cash', es: 'Cash');
+      case 'qr':
+        return _t(nl: 'QR', en: 'QR', fr: 'QR', es: 'QR');
+      case 'online_payment':
+        return _t(
+          nl: 'Online betaling',
+          en: 'Online payment',
+          fr: 'Paiement en ligne',
+          es: 'Pago online',
+        );
+      default:
+        return _serviceLabel(id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _profile;
+    final companyName = _txt(p, 'company_name').isNotEmpty
+        ? _txt(p, 'company_name')
+        : widget.companyNameFallback;
+    final tagline = _txt(p, 'tagline');
+    final aboutShort = _txt(p, 'about_short');
+    final aboutLong = _txt(p, 'about_long');
+    final coverage = p?['coverage'] is Map
+        ? Map<String, dynamic>.from(p!['coverage'] as Map)
+        : const <String, dynamic>{};
+    final regionLabel = _txt(coverage, 'region_label');
+    final postcodes = _list(coverage, 'postcodes');
+    final contact = p?['public_contact'] is Map
+        ? Map<String, dynamic>.from(p!['public_contact'] as Map)
+        : const <String, dynamic>{};
+    final website = _txt(contact, 'website');
+    final publicPhone = _txt(contact, 'public_phone');
+    final bookingEmail = _txt(contact, 'booking_email');
+    final media = p?['media'] is Map
+        ? Map<String, dynamic>.from(p!['media'] as Map)
+        : const <String, dynamic>{};
+    final logoUrl = _txt(media, 'logo_url');
+    final heroUrl = _txt(media, 'hero_photo_url');
+    final gallery = _list(media, 'gallery');
+    final services = _list(p, 'services');
+    final paymentMethods = _list(p, 'payment_methods');
+    final trust = p?['trust'] is Map
+        ? Map<String, dynamic>.from(p!['trust'] as Map)
+        : const <String, dynamic>{};
+    final verified = trust['verified_partner'] == true;
+    final professionalBadge = trust['professional_badge'] == true;
+    final bookingCapabilities = p?['booking_capabilities'] is Map
+        ? Map<String, dynamic>.from(p!['booking_capabilities'] as Map)
+        : const <String, dynamic>{};
+    final onlinePayments = bookingCapabilities['online_payments'] == true;
+    final instantQuote = bookingCapabilities['instant_quote'] == true;
+    final vehiclesRaw = p?['vehicles'] is List
+        ? (p!['vehicles'] as List)
+        : const <dynamic>[];
+    final driversRaw = p?['drivers'] is List
+        ? (p!['drivers'] as List)
+        : const <dynamic>[];
+
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          title: Text(
+            _t(
+              nl: 'Partnerprofiel',
+              en: 'Partner profile',
+              fr: 'Profil partenaire',
+              es: 'Perfil del socio',
+            ),
+          ),
+        ),
+        body: SafeArea(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                    ),
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    if (heroUrl.isNotEmpty)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(15),
+                        child: Stack(
+                          children: [
+                            Image.network(
+                              heroUrl,
+                              height: 186,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Colors.black.withOpacity(0.1),
+                                      Colors.black.withOpacity(0.7),
+                                    ],
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                  ),
+                                ),
                               ),
+                            ),
+                            Positioned(
+                              left: 12,
+                              right: 12,
+                              bottom: 10,
                               child: Row(
                                 children: [
-                                  const Icon(
-                                    Icons.business_outlined,
-                                    color: Color(0xFFE5B641),
-                                  ),
-                                  const SizedBox(width: 10),
+                                  if (logoUrl.isNotEmpty)
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundColor: Colors.black,
+                                      foregroundImage: NetworkImage(logoUrl),
+                                    )
+                                  else
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundColor: _gold.withOpacity(0.2),
+                                      child: Icon(
+                                        Icons.business_outlined,
+                                        color: _gold.withOpacity(0.95),
+                                        size: 18,
+                                      ),
+                                    ),
+                                  const SizedBox(width: 9),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          company.isEmpty ? partnerId : company,
+                                          companyName,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                             color: Colors.white,
-                                            fontWeight: FontWeight.w700,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 17,
                                           ),
                                         ),
-                                        if (partnerId.isNotEmpty)
+                                        if (tagline.isNotEmpty)
                                           Text(
-                                            partnerId,
+                                            tagline,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               color: Colors.white.withOpacity(
-                                                0.58,
+                                                0.86,
                                               ),
                                               fontSize: 12,
                                             ),
@@ -13023,46 +14125,537 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                                   ),
                                 ],
                               ),
-                            );
-                          }),
-                        ],
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _t(
-                              nl: 'Voor postcode $_normalizedPostcode hebben we nog geen actieve partners gevonden.',
-                              en: 'No active partners found yet for postal code $_normalizedPostcode.',
-                              fr: 'Aucun partenaire actif trouve pour le code postal $_normalizedPostcode.',
-                              es: 'Aun no se encontraron socios activos para el codigo postal $_normalizedPostcode.',
                             ),
-                            style: const TextStyle(color: Colors.white),
+                          ],
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(15),
+                          gradient: LinearGradient(
+                            colors: [
+                              const Color(0xFF16110A),
+                              const Color(0xFF101113),
+                              _gold.withOpacity(0.18),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                          const SizedBox(height: 10),
-                          OutlinedButton(
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      const CustomerRegionRegistrationPage(),
+                          border: Border.all(color: _gold.withOpacity(0.24)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _gold.withOpacity(0.08),
+                              blurRadius: 16,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            if (logoUrl.isNotEmpty)
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: Colors.black,
+                                foregroundImage: NetworkImage(logoUrl),
+                              )
+                            else
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: _gold.withOpacity(0.2),
+                                child: Icon(
+                                  Icons.local_taxi_outlined,
+                                  color: _gold.withOpacity(0.95),
                                 ),
-                              );
-                            },
-                            child: Text(
-                              _t(
-                                nl: 'Registreer je regio',
-                                en: 'Register your region',
-                                fr: 'Enregistrez votre region',
-                                es: 'Registra tu region',
+                              ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    companyName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 17,
+                                    ),
+                                  ),
+                                  if (tagline.isNotEmpty)
+                                    Text(
+                                      tagline,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.82),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-              ),
-            ],
-          ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        if (verified)
+                          _chip(
+                            _t(
+                              nl: 'Geverifieerde partner',
+                              en: 'Verified partner',
+                              fr: 'Partenaire verifie',
+                              es: 'Socio verificado',
+                            ),
+                            icon: Icons.verified_outlined,
+                            color: const Color(0xFF34D29A),
+                          ),
+                        if (professionalBadge)
+                          _chip(
+                            _serviceLabel('verified_professional'),
+                            icon: Icons.workspace_premium_outlined,
+                          ),
+                      ],
+                    ),
+                    if (widget.partnerId.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_t(nl: "Referentie", en: "Reference", fr: "Reference", es: "Referencia")}: ${widget.partnerId}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.33),
+                          fontSize: 9.7,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 9),
+                    if (aboutShort.isNotEmpty || aboutLong.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Over deze partner',
+                          en: 'About this partner',
+                          fr: 'A propos de ce partenaire',
+                          es: 'Sobre este socio',
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (aboutShort.isNotEmpty)
+                              Text(
+                                aboutShort,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.84),
+                                  fontSize: 12.4,
+                                ),
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            if (aboutShort.isNotEmpty && aboutLong.isNotEmpty)
+                              const SizedBox(height: 6),
+                            if (aboutLong.isNotEmpty)
+                              Text(
+                                aboutLong,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.74),
+                                  fontSize: 11.7,
+                                  height: 1.3,
+                                ),
+                                maxLines: 6,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    if (services.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Services',
+                          en: 'Services',
+                          fr: 'Services',
+                          es: 'Servicios',
+                        ),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: services
+                              .map(
+                                (s) => _chip(
+                                  _serviceLabel(s),
+                                  icon: Icons.check_circle_outline,
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      ),
+                    if (vehiclesRaw.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Voertuigen',
+                          en: 'Vehicles',
+                          fr: 'Vehicules',
+                          es: 'Vehiculos',
+                        ),
+                        Column(
+                          children: vehiclesRaw
+                              .whereType<Map>()
+                              .map((raw) {
+                                final v = Map<String, dynamic>.from(raw);
+                                final vName = _txt(v, 'name');
+                                final vBrand = _txt(v, 'brand_model');
+                                final vCategory = _txt(v, 'category');
+                                final vPhoto = _txt(v, 'photo_url');
+                                final vFeatures = _list(v, 'features');
+                                final vPax = v['pax'];
+                                final vLuggage = v['luggage'];
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF141517),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (vPhoto.isNotEmpty)
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Image.network(
+                                            vPhoto,
+                                            height: 92,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) =>
+                                                const SizedBox.shrink(),
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          height: 54,
+                                          width: double.infinity,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                const Color(0xFF16100A),
+                                                _gold.withOpacity(0.16),
+                                              ],
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.directions_car_outlined,
+                                                color: _gold.withOpacity(0.95),
+                                                size: 18,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                _t(
+                                                  nl: 'Publiek voertuigprofiel',
+                                                  en: 'Public vehicle profile',
+                                                  fr: 'Profil vehicule public',
+                                                  es: 'Perfil publico de vehiculo',
+                                                ),
+                                                style: TextStyle(
+                                                  color: Colors.white
+                                                      .withOpacity(0.82),
+                                                  fontSize: 11.3,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      const SizedBox(height: 7),
+                                      Text(
+                                        vName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      if (vBrand.isNotEmpty ||
+                                          vCategory.isNotEmpty)
+                                        Text(
+                                          [vBrand, vCategory]
+                                              .where((e) => e.trim().isNotEmpty)
+                                              .join(' • '),
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.7,
+                                            ),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: [
+                                          if (vPax != null)
+                                            _chip(
+                                              '${_t(nl: "Pax", en: "Pax", fr: "Pax", es: "Pax")}: $vPax',
+                                              icon: Icons.people_alt_outlined,
+                                            ),
+                                          if (vLuggage != null)
+                                            _chip(
+                                              '${_t(nl: "Bagage", en: "Luggage", fr: "Bagages", es: "Equipaje")}: $vLuggage',
+                                              icon: Icons.luggage_outlined,
+                                            ),
+                                          ...vFeatures.map(
+                                            (f) => _chip(_serviceLabel(f)),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              })
+                              .toList(growable: false),
+                        ),
+                      ),
+                    if (driversRaw.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Chauffeurs',
+                          en: 'Drivers',
+                          fr: 'Chauffeurs',
+                          es: 'Conductores',
+                        ),
+                        Column(
+                          children: driversRaw
+                              .whereType<Map>()
+                              .map((raw) {
+                                final d = Map<String, dynamic>.from(raw);
+                                final displayName = _txt(d, 'display_name');
+                                final languages = _list(d, 'languages');
+                                final badges = _list(d, 'badges');
+                                final portrait = _txt(d, 'portrait_url');
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF141517),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: _gold.withOpacity(0.2),
+                                        foregroundImage: portrait.isNotEmpty
+                                            ? NetworkImage(portrait)
+                                            : null,
+                                        child: portrait.isEmpty
+                                            ? Icon(
+                                                Icons.person_outline_rounded,
+                                                color: _gold.withOpacity(0.96),
+                                              )
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              displayName,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            if (languages.isNotEmpty)
+                                              Wrap(
+                                                spacing: 6,
+                                                runSpacing: 6,
+                                                children: languages
+                                                    .map(
+                                                      (l) => _chip(
+                                                        l,
+                                                        icon: Icons
+                                                            .translate_rounded,
+                                                      ),
+                                                    )
+                                                    .toList(growable: false),
+                                              ),
+                                            if (badges.isNotEmpty) ...[
+                                              const SizedBox(height: 5),
+                                              Wrap(
+                                                spacing: 6,
+                                                runSpacing: 6,
+                                                children: badges
+                                                    .map(
+                                                      (b) => _chip(
+                                                        _serviceLabel(b),
+                                                        icon: Icons
+                                                            .verified_outlined,
+                                                      ),
+                                                    )
+                                                    .toList(growable: false),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              })
+                              .toList(growable: false),
+                        ),
+                      ),
+                    if (regionLabel.isNotEmpty ||
+                        postcodes.isNotEmpty ||
+                        website.isNotEmpty ||
+                        publicPhone.isNotEmpty ||
+                        bookingEmail.isNotEmpty ||
+                        paymentMethods.isNotEmpty ||
+                        onlinePayments ||
+                        instantQuote ||
+                        gallery.isNotEmpty)
+                      _section(
+                        _t(
+                          nl: 'Bereikbaarheid & details',
+                          en: 'Coverage & details',
+                          fr: 'Couverture et details',
+                          es: 'Cobertura y detalles',
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (regionLabel.isNotEmpty)
+                              Text(
+                                '${_t(nl: "Regio", en: "Region", fr: "Region", es: "Region")}: $regionLabel',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.82),
+                                  fontSize: 12.7,
+                                ),
+                              ),
+                            if (postcodes.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: postcodes
+                                    .map(
+                                      (z) => _chip(
+                                        z,
+                                        icon: Icons.location_on_outlined,
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                              ),
+                            ],
+                            if (website.isNotEmpty ||
+                                publicPhone.isNotEmpty ||
+                                bookingEmail.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              if (website.isNotEmpty)
+                                Text(
+                                  'Website: $website',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.75),
+                                  ),
+                                ),
+                              if (publicPhone.isNotEmpty)
+                                Text(
+                                  '${_t(nl: "Telefoon", en: "Phone", fr: "Telephone", es: "Telefono")}: $publicPhone',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.75),
+                                  ),
+                                ),
+                              if (bookingEmail.isNotEmpty)
+                                Text(
+                                  '${_t(nl: "Boeking e-mail", en: "Booking email", fr: "E-mail reservation", es: "Correo de reservas")}: $bookingEmail',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.75),
+                                  ),
+                                ),
+                            ],
+                            if (paymentMethods.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: paymentMethods
+                                    .map(
+                                      (m) => _chip(
+                                        _paymentLabel(m),
+                                        icon: Icons.payments_outlined,
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                              ),
+                            ],
+                            if (onlinePayments ||
+                                instantQuote ||
+                                gallery.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  if (onlinePayments)
+                                    _chip(
+                                      _t(
+                                        nl: 'Online betalen',
+                                        en: 'Online payments',
+                                        fr: 'Paiements en ligne',
+                                        es: 'Pagos en linea',
+                                      ),
+                                      icon: Icons.credit_card_outlined,
+                                    ),
+                                  if (instantQuote)
+                                    _chip(
+                                      _t(
+                                        nl: 'Directe prijsindicatie',
+                                        en: 'Instant quote',
+                                        fr: 'Devis instantane',
+                                        es: 'Presupuesto instantaneo',
+                                      ),
+                                      icon: Icons.flash_on_outlined,
+                                    ),
+                                  if (gallery.isNotEmpty)
+                                    _chip(
+                                      _t(
+                                        nl: '${gallery.length} galerijfoto\'s',
+                                        en: '${gallery.length} gallery photos',
+                                        fr: '${gallery.length} photos de galerie',
+                                        es: '${gallery.length} fotos de galeria',
+                                      ),
+                                      icon: Icons.photo_library_outlined,
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
         ),
       ),
     );
