@@ -209,6 +209,8 @@ class CalculatorPage extends StatefulWidget {
     required this.mapboxToken,
     this.persistToCustomerBookings = false,
     this.onGoToStartPage,
+    this.publicPartnerId,
+    this.publicPartnerName,
   });
 
   final String
@@ -216,6 +218,8 @@ class CalculatorPage extends StatefulWidget {
   final String mapboxToken; // public pk...
   final bool persistToCustomerBookings;
   final VoidCallback? onGoToStartPage;
+  final String? publicPartnerId;
+  final String? publicPartnerName;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
@@ -287,6 +291,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
   List<AppOption> get _tiers => appConfig.enabledTiers;
   List<AppOption> get _extras => appConfig.enabledExtraOptions;
   bool get _isPremiumTier => _tier == 'premium';
+  String get _publicPartnerId => (widget.publicPartnerId ?? '').trim();
+  String get _publicPartnerName => (widget.publicPartnerName ?? '').trim();
+  bool get _hasPublicPartnerContext => _publicPartnerId.isNotEmpty;
+  String get _publicPartnerLabel =>
+      _publicPartnerName.isNotEmpty ? _publicPartnerName : _publicPartnerId;
 
   String _payloadValueFor(
     List<AppOption> options,
@@ -669,6 +678,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "company_id": tenantCompanyId,
       "tenantId": tenantCompanyId,
       "companyId": tenantCompanyId,
+      if (_hasPublicPartnerContext) ...{
+        "public_partner_id": _publicPartnerId,
+        "publicPartnerId": _publicPartnerId,
+        "partner_id": _publicPartnerId,
+        "partnerId": _publicPartnerId,
+        if (_publicPartnerName.isNotEmpty)
+          "public_partner_name": _publicPartnerName,
+        if (_publicPartnerName.isNotEmpty)
+          "publicPartnerName": _publicPartnerName,
+      },
       ...businessPayload,
     };
   }
@@ -694,6 +713,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           quote: quote,
           payload: payload,
           persistToCustomerBookings: widget.persistToCustomerBookings,
+          onGoToStartPage: widget.onGoToStartPage,
           currencySymbol: _currencySymbol,
           distanceUnitLabel: appConfig.distanceUnitLabel,
           durationUnitLabel: appConfig.durationUnitLabel,
@@ -1779,6 +1799,48 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 ],
               ),
             ),
+            if (_hasPublicPartnerContext) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.34),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accent.withOpacity(0.34)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.storefront_outlined,
+                      size: 15,
+                      color: accent.withOpacity(0.95),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        _labelFor(
+                          nl: 'Boeking bij $_publicPartnerLabel',
+                          en: 'Booking with $_publicPartnerLabel',
+                          fr: 'Réservation avec $_publicPartnerLabel',
+                          es: 'Reserva con $_publicPartnerLabel',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: accent.withOpacity(0.96),
+                          fontSize: 12.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             _zoneCard(
               child: Column(
@@ -2378,6 +2440,7 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.quote,
     required this.payload,
     required this.persistToCustomerBookings,
+    this.onGoToStartPage,
     required this.currencySymbol,
     required this.distanceUnitLabel,
     required this.durationUnitLabel,
@@ -2390,6 +2453,7 @@ class _BookingConfirmationPage extends StatefulWidget {
   final Map<String, dynamic> quote;
   final Map<String, dynamic> payload;
   final bool persistToCustomerBookings;
+  final VoidCallback? onGoToStartPage;
   final String currencySymbol;
   final String distanceUnitLabel;
   final String durationUnitLabel;
@@ -2416,6 +2480,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   String? _ownPaymentBookingId;
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
+
+  void _goToCustomerStartHome() {
+    if (!mounted) return;
+    if (widget.onGoToStartPage != null) {
+      widget.onGoToStartPage!.call();
+    }
+  }
 
   @override
   void initState() {
@@ -2479,7 +2550,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       if (!_postPaymentNavigated) {
         _postPaymentNavigated = true;
         final messenger = ScaffoldMessenger.maybeOf(context);
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        _goToCustomerStartHome();
         final lang = widget.language;
         final confirmation = lang == AppLanguage.en
             ? 'Payment confirmed. Your booking is in My bookings.'
@@ -2985,6 +3056,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(successMessage)));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      _goToCustomerStartHome();
     }
   }
 
@@ -3036,6 +3109,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final tenantCompanyId = localCompanyId.isNotEmpty
         ? localCompanyId
         : (resolvedCompany.isNotEmpty ? resolvedCompany : kTenantId);
+    final publicPartnerId = _calcBusinessText(
+      widget.payload['public_partner_id'] ??
+          widget.payload['publicPartnerId'] ??
+          widget.payload['partner_id'] ??
+          widget.payload['partnerId'],
+    );
+    final publicPartnerName = _calcBusinessText(
+      widget.payload['public_partner_name'] ??
+          widget.payload['publicPartnerName'],
+    );
     if (name.isEmpty ||
         phone.isEmpty ||
         email.isEmpty ||
@@ -3054,6 +3137,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ...widget.payload, // keep quote payload keys unchanged
       'tenant_id': tenantCompanyId,
       'company_id': tenantCompanyId,
+      if (publicPartnerId.isNotEmpty) ...{
+        'public_partner_id': publicPartnerId,
+        'publicPartnerId': publicPartnerId,
+        'partner_id': publicPartnerId,
+        'partnerId': publicPartnerId,
+        if (publicPartnerName.isNotEmpty)
+          'public_partner_name': publicPartnerName,
+        if (publicPartnerName.isNotEmpty)
+          'publicPartnerName': publicPartnerName,
+      },
       'booking_source': 'flutter_app',
       'entry_channel': 'flutter_calculator',
       'source_context': <String, dynamic>{

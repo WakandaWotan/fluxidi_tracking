@@ -7998,7 +7998,7 @@ class CustomerHomePage extends StatelessWidget {
           persistToCustomerBookings: true,
           onGoToStartPage: () {
             Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+              MaterialPageRoute(builder: (_) => const CustomerHomePage()),
               (route) => false,
             );
           },
@@ -13502,6 +13502,29 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     );
   }
 
+  void _openPartnerBooking(Map<String, dynamic> p) {
+    final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    if (partnerId.isEmpty) return;
+    final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
+          persistToCustomerBookings: true,
+          onGoToStartPage: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+              (route) => false,
+            );
+          },
+          publicPartnerId: partnerId,
+          publicPartnerName: companyName,
+        ),
+      ),
+    );
+  }
+
   Widget _partnerCard(Map<String, dynamic> p) {
     final company = _mapTextAny(p, const ['company_name', 'companyName']);
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
@@ -13717,40 +13740,75 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   ],
                 ),
                 const SizedBox(height: 7),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _gold.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: _gold.withOpacity(0.34)),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => _openPartnerBooking(p),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _gold,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 9),
+                        ),
                         child: Text(
                           _t(
-                            nl: 'Bekijk profiel',
-                            en: 'View profile',
-                            fr: 'Voir le profil',
-                            es: 'Ver perfil',
+                            nl: 'Boek rit',
+                            en: 'Book ride',
+                            fr: 'Réserver un trajet',
+                            es: 'Reservar viaje',
                           ),
-                          style: TextStyle(
-                            color: _gold.withOpacity(0.98),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12.1,
-                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
-                      Icon(
-                        Icons.arrow_forward_rounded,
-                        color: _gold.withOpacity(0.98),
-                        size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _openPartnerProfile(p),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _gold.withOpacity(0.98),
+                          side: BorderSide(color: _gold.withOpacity(0.34)),
+                          backgroundColor: _gold.withOpacity(0.10),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 9),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                _t(
+                                  nl: 'Bekijk profiel',
+                                  en: 'View profile',
+                                  fr: 'Voir le profil',
+                                  es: 'Ver perfil',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.1,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              color: _gold.withOpacity(0.98),
+                              size: 16,
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 if (partnerId.isNotEmpty) ...[
                   const SizedBox(height: 5),
@@ -14056,6 +14114,28 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         );
       });
     }
+  }
+
+  void _openPartnerBooking({required String companyName}) {
+    final partnerId = widget.partnerId.trim();
+    if (partnerId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
+          persistToCustomerBookings: true,
+          onGoToStartPage: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+              (route) => false,
+            );
+          },
+          publicPartnerId: partnerId,
+          publicPartnerName: companyName,
+        ),
+      ),
+    );
   }
 
   Map<String, dynamic> _profileMap(dynamic value) {
@@ -14710,6 +14790,34 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () =>
+                            _openPartnerBooking(companyName: companyName),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _gold,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        icon: const Icon(Icons.local_taxi_outlined, size: 18),
+                        label: Text(
+                          _t(
+                            nl: 'Boek rit bij deze partner',
+                            en: 'Book with this partner',
+                            fr: 'Réserver avec ce partenaire',
+                            es: 'Reservar con este socio',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 9),
                     if (aboutShort.isNotEmpty || aboutLong.isNotEmpty)
                       _section(

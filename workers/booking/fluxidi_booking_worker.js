@@ -3022,13 +3022,31 @@ GET /oauth/callback
           return json({ ok: false, error: "Missing fields: from, to, date, time" }, 400);
         }
 
-        const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
-        const quoteScope = resolveExplicitBookingRequestScope({
-          request,
-          url,
-          body,
-          allowLegacyFallback: allowLegacyScopeFallback,
-        });
+        const requestedPublicPartnerId = _extractRequestedPublicPartnerId({ url, body });
+        let quoteScope = null;
+        let routedPublicPartner = null;
+        if (requestedPublicPartnerId) {
+          routedPublicPartner = await resolvePublicPartnerBookingScope(
+            env,
+            requestedPublicPartnerId,
+          );
+          if (!routedPublicPartner?.ok) {
+            return json({ ok: false, error: routedPublicPartner?.error || "invalid public partner" }, routedPublicPartner?.status || 400);
+          }
+          quoteScope = {
+            tenant_id: routedPublicPartner.tenant_id,
+            company_id: routedPublicPartner.company_id,
+            hasScope: true,
+          };
+        } else {
+          const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+          quoteScope = resolveExplicitBookingRequestScope({
+            request,
+            url,
+            body,
+            allowLegacyFallback: allowLegacyScopeFallback,
+          });
+        }
         if (!quoteScope?.hasScope) {
           return json(
             quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
@@ -3041,6 +3059,14 @@ GET /oauth/callback
           tenantId: quoteScope.tenant_id,
           company_id: quoteScope.company_id,
           companyId: quoteScope.company_id,
+          ...(routedPublicPartner?.ok
+            ? {
+                public_partner_id: routedPublicPartner.partner_id,
+                publicPartnerId: routedPublicPartner.partner_id,
+                partner_id: routedPublicPartner.partner_id,
+                partnerId: routedPublicPartner.partner_id,
+              }
+            : {}),
         };
         const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
         const vat_rate = clampNumber(
@@ -3244,13 +3270,37 @@ GET /oauth/callback
       // BOOK
       if (url.pathname === "/book" && request.method === "POST") {
         const body = await safeJson(request);
-        const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
-        const requestScope = resolveExplicitBookingRequestScope({
-          request,
+        const requestedPublicPartnerId = _extractRequestedPublicPartnerId({
           url,
           body,
-          allowLegacyFallback: allowLegacyScopeFallback,
         });
+        let requestScope = null;
+        let routedPublicPartner = null;
+        if (requestedPublicPartnerId) {
+          routedPublicPartner = await resolvePublicPartnerBookingScope(
+            env,
+            requestedPublicPartnerId,
+          );
+          if (!routedPublicPartner?.ok) {
+            return json(
+              { ok: false, error: routedPublicPartner?.error || "invalid public partner" },
+              routedPublicPartner?.status || 400,
+            );
+          }
+          requestScope = {
+            tenant_id: routedPublicPartner.tenant_id,
+            company_id: routedPublicPartner.company_id,
+            hasScope: true,
+          };
+        } else {
+          const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+          requestScope = resolveExplicitBookingRequestScope({
+            request,
+            url,
+            body,
+            allowLegacyFallback: allowLegacyScopeFallback,
+          });
+        }
         if (!requestScope?.hasScope) {
           return json(
             requestScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
@@ -3263,6 +3313,14 @@ GET /oauth/callback
           tenantId: requestScope.tenant_id,
           company_id: requestScope.company_id,
           companyId: requestScope.company_id,
+          ...(routedPublicPartner?.ok
+            ? {
+                public_partner_id: routedPublicPartner.partner_id,
+                publicPartnerId: routedPublicPartner.partner_id,
+                partner_id: routedPublicPartner.partner_id,
+                partnerId: routedPublicPartner.partner_id,
+              }
+            : {}),
         };
         const out = await handleBooking(normalizedBody, env, request);
         // Build tag helps verify correct deployment
@@ -3725,10 +3783,42 @@ GET /oauth/callback
           JSON.stringify({ partners: nextDirectory }),
         );
 
+        const partnerRouteEntry = _normalizePartnerBookingRouteEntry({
+          partner_id: normalizedProfile.partner_id,
+          tenant_id: explicitScope.tenant_id,
+          company_id: explicitScope.company_id,
+          company_name: normalizedProfile.company_name,
+          is_active: normalizedProfile.is_active === true,
+          subscription_status: normalizedProfile.subscription_status,
+          updated_at: new Date().toISOString(),
+        });
+        if (!partnerRouteEntry) {
+          return json({ ok: false, error: "invalid partner booking route projection" }, 400);
+        }
+        const rawRoutes = await env.BOOKING_KV.get(PARTNER_BOOKING_ROUTE_KEY, {
+          type: "json",
+        });
+        const currentRoutes = Array.isArray(rawRoutes)
+          ? rawRoutes
+          : (rawRoutes && typeof rawRoutes === "object" && Array.isArray(rawRoutes.routes)
+              ? rawRoutes.routes
+              : []);
+        const existingRoutes = currentRoutes
+          .map(_normalizePartnerBookingRouteEntry)
+          .filter((entry) => entry !== null);
+        const nextRoutes = existingRoutes
+          .filter((entry) => entry.partner_id !== partnerRouteEntry.partner_id)
+          .concat([partnerRouteEntry]);
+        await env.BOOKING_KV.put(
+          PARTNER_BOOKING_ROUTE_KEY,
+          JSON.stringify({ routes: nextRoutes }),
+        );
+
         return json({
           ok: true,
           profile: normalizedProfile,
           directory_entry: normalizedDirectoryEntry,
+          booking_route: partnerRouteEntry,
         }, 200);
       }
 
@@ -9065,6 +9155,7 @@ function _flattenBookingForRidesList(bookingId, rec) {
 const VEHICLE_INVENTORY_KEY = "fleet:vehicles:v1";
 const PARTNER_DIRECTORY_KEY = "partners:directory:v1";
 const PARTNER_PROFILES_KEY = "partners:profiles:v1";
+const PARTNER_BOOKING_ROUTE_KEY = "partners:booking-routes:v1";
 const PARTNER_DIRECTORY_SEED = [
   {
     partner_id: "partner_fluxidi_antwerp",
@@ -9151,6 +9242,40 @@ const PARTNER_PROFILES_SEED = [
     },
   },
 ];
+const PARTNER_BOOKING_ROUTE_SEED = [
+  {
+    partner_id: "partner_fluxidi_antwerp",
+    tenant_id: "fluxidi",
+    company_id: "fluxidi",
+    company_name: "Fluxidi Antwerp",
+    is_active: true,
+    subscription_status: "active",
+  },
+  {
+    partner_id: "partner_fluxidi_brussels",
+    tenant_id: "fluxidi",
+    company_id: "fluxidi",
+    company_name: "Fluxidi Brussels",
+    is_active: true,
+    subscription_status: "active",
+  },
+  {
+    partner_id: "partner_demo_inactive",
+    tenant_id: "fluxidi",
+    company_id: "fluxidi",
+    company_name: "Demo Partner Inactive",
+    is_active: false,
+    subscription_status: "active",
+  },
+  {
+    partner_id: "partner_fluxidi_taxi_9688",
+    tenant_id: "fluxidi",
+    company_id: "fluxidi",
+    company_name: "Fluxidi Taxi",
+    is_active: true,
+    subscription_status: "active",
+  },
+];
 
 function _normalizePostcode(v) {
   return String(v || "")
@@ -9231,6 +9356,93 @@ async function listNearbyPartnersByPostcode(env, postcode) {
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
       };
     });
+}
+
+function _extractRequestedPublicPartnerId({ url, body = null } = {}) {
+  const search = url?.searchParams;
+  return _safePublicText(
+    body?.public_partner_id ??
+      body?.publicPartnerId ??
+      body?.partner_id ??
+      body?.partnerId ??
+      search?.get("public_partner_id") ??
+      search?.get("publicPartnerId") ??
+      search?.get("partner_id") ??
+      search?.get("partnerId"),
+    120,
+  );
+}
+
+function _normalizePartnerBookingRouteEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
+  const tenantId = sanitizeTenantString(raw.tenant_id ?? raw.tenantId, 80);
+  const companyId =
+    sanitizeTenantString(raw.company_id ?? raw.companyId, 80) || tenantId;
+  if (!partnerId || !tenantId || !companyId) return null;
+  const updatedAt = _safePublicText(raw.updated_at ?? raw.updatedAt, 80);
+  return {
+    partner_id: partnerId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_name: _safePublicText(raw.company_name ?? raw.companyName, 160),
+    is_active: raw.is_active === true,
+    subscription_status: _safePublicText(
+      raw.subscription_status ?? raw.subscriptionStatus,
+      32,
+    ).toLowerCase(),
+    updated_at: updatedAt || new Date().toISOString(),
+  };
+}
+
+async function _loadPartnerBookingRoutes(env) {
+  const fallback = PARTNER_BOOKING_ROUTE_SEED
+    .map(_normalizePartnerBookingRouteEntry)
+    .filter((entry) => entry !== null);
+  if (!env?.BOOKING_KV) return fallback;
+  const raw = await env.BOOKING_KV.get(PARTNER_BOOKING_ROUTE_KEY, {
+    type: "json",
+  });
+  const incoming = Array.isArray(raw)
+    ? raw
+    : raw &&
+        typeof raw === "object" &&
+        Array.isArray(raw.routes)
+    ? raw.routes
+    : null;
+  if (!Array.isArray(incoming)) return fallback;
+  const normalized = incoming
+    .map(_normalizePartnerBookingRouteEntry)
+    .filter((entry) => entry !== null);
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function _isPartnerBookingRouteActive(entry) {
+  if (!entry || typeof entry !== "object") return false;
+  if (entry.is_active !== true) return false;
+  return _isSubscriptionActive(entry.subscription_status);
+}
+
+async function resolvePublicPartnerBookingScope(env, partnerId) {
+  const requestedPartnerId = _safePublicText(partnerId, 120);
+  if (!requestedPartnerId) {
+    return { ok: false, error: "public_partner_id is required", status: 400 };
+  }
+  const routes = await _loadPartnerBookingRoutes(env);
+  const match = routes.find((entry) => entry.partner_id === requestedPartnerId);
+  if (!match) {
+    return { ok: false, error: "public partner not found", status: 404 };
+  }
+  if (!_isPartnerBookingRouteActive(match)) {
+    return { ok: false, error: "public partner is inactive", status: 409 };
+  }
+  return {
+    ok: true,
+    partner_id: match.partner_id,
+    company_name: match.company_name,
+    tenant_id: match.tenant_id,
+    company_id: match.company_id,
+  };
 }
 
 function _isAllowedPublicImageContentType(contentType) {
