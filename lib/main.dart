@@ -13304,10 +13304,12 @@ class NearbyPartnersPage extends StatefulWidget {
 
 class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   final TextEditingController _postalCodeCtrl = TextEditingController();
+  static const List<int> _gpsRadiusOptionsKm = <int>[5, 10, 20, 30];
   bool _searching = false;
   bool _searchingByLocation = false;
   bool _searched = false;
   bool _lastSearchUsedLocation = false;
+  int _selectedGpsRadiusKm = 20;
   String _normalizedPostcode = '';
   String _locationSearchLabel = '';
   List<Map<String, dynamic>> _partners = const <Map<String, dynamic>>[];
@@ -13449,8 +13451,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       );
       final lat = pos.latitude;
       final lng = pos.longitude;
+      final radiusKm = _selectedGpsRadiusKm;
       final uri = Uri.parse(
-        '$kBookingBaseUrl/partners/nearby?lat=${Uri.encodeQueryComponent(lat.toStringAsFixed(6))}&lng=${Uri.encodeQueryComponent(lng.toStringAsFixed(6))}',
+        '$kBookingBaseUrl/partners/nearby?lat=${Uri.encodeQueryComponent(lat.toStringAsFixed(6))}&lng=${Uri.encodeQueryComponent(lng.toStringAsFixed(6))}&radius_km=$radiusKm',
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
@@ -13470,7 +13473,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         _searched = true;
         _lastSearchUsedLocation = true;
         _locationSearchLabel =
-            '${lat.toStringAsFixed(3)}, ${lng.toStringAsFixed(3)}';
+            '${lat.toStringAsFixed(3)}, ${lng.toStringAsFixed(3)} • $radiusKm km';
         _partners = partnersRaw;
       });
     } catch (_) {
@@ -14123,6 +14126,60 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _t(
+                          nl: 'Zoekstraal',
+                          en: 'Search radius',
+                          fr: 'Rayon de recherche',
+                          es: 'Radio de búsqueda',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.78),
+                          fontSize: 12.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _gpsRadiusOptionsKm
+                          .map((radiusKm) {
+                            final selected = _selectedGpsRadiusKm == radiusKm;
+                            return ChoiceChip(
+                              label: Text('$radiusKm km'),
+                              selected: selected,
+                              onSelected: _searching
+                                  ? null
+                                  : (_) => setState(() {
+                                      _selectedGpsRadiusKm = radiusKm;
+                                    }),
+                              labelStyle: TextStyle(
+                                color: selected
+                                    ? Colors.black
+                                    : _gold.withOpacity(0.98),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11.6,
+                              ),
+                              selectedColor: _gold,
+                              backgroundColor: _panel,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(999),
+                                side: BorderSide(
+                                  color: selected
+                                      ? _gold
+                                      : _gold.withOpacity(0.40),
+                                ),
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            );
+                          })
+                          .toList(growable: false),
                     ),
                   ],
                 ),
