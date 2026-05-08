@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -76,6 +77,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final _publicLogoUrlCtrl = TextEditingController();
   final _publicHeroPhotoUrlCtrl = TextEditingController();
   final _publicServedPostcodesCtrl = TextEditingController();
+  final _publicCoverageLatCtrl = TextEditingController();
+  final _publicCoverageLngCtrl = TextEditingController();
+  final _publicServiceRadiusKmCtrl = TextEditingController();
   final _backendInvoiceEmailCtrl = TextEditingController();
   final _backendIbanCtrl = TextEditingController();
   final _backendPaymentPrefixCtrl = TextEditingController();
@@ -221,6 +225,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _publicLogoUrlCtrl.dispose();
     _publicHeroPhotoUrlCtrl.dispose();
     _publicServedPostcodesCtrl.dispose();
+    _publicCoverageLatCtrl.dispose();
+    _publicCoverageLngCtrl.dispose();
+    _publicServiceRadiusKmCtrl.dispose();
     _backendInvoiceEmailCtrl.dispose();
     _backendIbanCtrl.dispose();
     _backendPaymentPrefixCtrl.dispose();
@@ -290,6 +297,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _publicLogoUrlCtrl.text = p.publicLogoUrl;
     _publicHeroPhotoUrlCtrl.text = p.publicHeroPhotoUrl;
     _publicServedPostcodesCtrl.text = p.publicServedPostcodes;
+    _publicCoverageLatCtrl.text = p.publicCoverageLat;
+    _publicCoverageLngCtrl.text = p.publicCoverageLng;
+    _publicServiceRadiusKmCtrl.text = p.publicServiceRadiusKm;
     _publicPartnerProfilePublishedAt = p.publicPartnerProfilePublishedAt;
     _publicPartnerProfilePublishStatus = p.publicPartnerProfilePublishStatus;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
@@ -410,6 +420,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicServedPostcodes: pick(
         local.publicServedPostcodes,
         server.publicServedPostcodes,
+      ),
+      publicCoverageLat: pick(
+        local.publicCoverageLat,
+        server.publicCoverageLat,
+      ),
+      publicCoverageLng: pick(
+        local.publicCoverageLng,
+        server.publicCoverageLng,
+      ),
+      publicServiceRadiusKm: pick(
+        local.publicServiceRadiusKm,
+        server.publicServiceRadiusKm,
       ),
       publicPartnerProfilePublishedAt: pick(
         local.publicPartnerProfilePublishedAt,
@@ -1053,6 +1075,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicLogoUrl: _publicLogoUrlCtrl.text.trim(),
       publicHeroPhotoUrl: _publicHeroPhotoUrlCtrl.text.trim(),
       publicServedPostcodes: _publicServedPostcodesCtrl.text.trim(),
+      publicCoverageLat: _publicCoverageLatCtrl.text.trim(),
+      publicCoverageLng: _publicCoverageLngCtrl.text.trim(),
+      publicServiceRadiusKm: _publicServiceRadiusKmCtrl.text.trim(),
       publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
       publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
           .trim(),
@@ -1588,6 +1613,134 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return out;
   }
 
+  double? _tryParsePublicLat(String value) {
+    final n = double.tryParse(value.replaceAll(',', '.').trim());
+    if (n == null || !n.isFinite) return null;
+    if (n < -90 || n > 90) return null;
+    return n;
+  }
+
+  double? _tryParsePublicLng(String value) {
+    final n = double.tryParse(value.replaceAll(',', '.').trim());
+    if (n == null || !n.isFinite) return null;
+    if (n < -180 || n > 180) return null;
+    return n;
+  }
+
+  int? _tryParsePublicServiceRadiusKm(String value) {
+    final n = double.tryParse(value.replaceAll(',', '.').trim());
+    if (n == null || !n.isFinite) return null;
+    final rounded = n.round();
+    if (rounded < 1 || rounded > 100) return null;
+    return rounded;
+  }
+
+  bool _hasPublicCoverageLocationSet() {
+    return _tryParsePublicLat(_publicCoverageLatCtrl.text) != null &&
+        _tryParsePublicLng(_publicCoverageLngCtrl.text) != null;
+  }
+
+  String _publicCoverageCoordsLabel() {
+    final lat = _tryParsePublicLat(_publicCoverageLatCtrl.text);
+    final lng = _tryParsePublicLng(_publicCoverageLngCtrl.text);
+    if (lat == null || lng == null) return '';
+    return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+  }
+
+  Future<void> _useCurrentLocationAsBusinessLocation() async {
+    try {
+      final serviceEnabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatieservices zijn uitgeschakeld op dit toestel.',
+                en: 'Location services are disabled on this device.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      var permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied) {
+        permission = await geo.Geolocator.requestPermission();
+      }
+      if (permission == geo.LocationPermission.denied) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang geweigerd.',
+                en: 'Location access denied.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (permission == geo.LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang permanent geweigerd. Schakel toestemming in via instellingen.',
+                en: 'Location access is permanently denied. Enable permission in settings.',
+                fr: 'L’accès à la localisation est refusé définitivement. Activez l’autorisation dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Activa el permiso en la configuración.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.high,
+      );
+      if (!mounted) return;
+      setState(() {
+        _publicCoverageLatCtrl.text = pos.latitude.toStringAsFixed(6);
+        _publicCoverageLngCtrl.text = pos.longitude.toStringAsFixed(6);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bedrijfslocatie ingesteld. Sla op en publiceer je profiel opnieuw.',
+              en: 'Business location set. Save and publish your profile again.',
+              fr: 'Emplacement professionnel défini. Enregistrez et republiez votre profil.',
+              es: 'Ubicación de empresa configurada. Guarda y publica tu perfil de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Huidige locatie kon niet worden opgehaald.',
+              en: 'Could not fetch current location.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   Map<String, dynamic> _buildPublicPartnerProfilePayload({
     required String companyId,
   }) {
@@ -1625,6 +1778,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ? profileForm.phone.trim()
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
+    final coverageLat = _tryParsePublicLat(profileForm.publicCoverageLat);
+    final coverageLng = _tryParsePublicLng(profileForm.publicCoverageLng);
+    final serviceRadiusKm = _tryParsePublicServiceRadiusKm(
+      profileForm.publicServiceRadiusKm,
+    );
 
     final vehicles = vehiclesNotifier.value
         .where((v) => v.isActive)
@@ -1712,6 +1870,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'region_label': regionLabel,
         'primary_postcode': primaryPostcode,
         'postcodes': coveragePostcodes,
+        if (coverageLat != null && coverageLng != null) 'lat': coverageLat,
+        if (coverageLat != null && coverageLng != null) 'lng': coverageLng,
+        if (serviceRadiusKm != null) 'service_radius_km': serviceRadiusKm,
       },
       'public_contact': <String, dynamic>{
         'website': profileForm.website.trim(),
@@ -1795,6 +1956,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         publicLogoUrl: mergedBusiness.publicLogoUrl,
         publicHeroPhotoUrl: mergedBusiness.publicHeroPhotoUrl,
         publicServedPostcodes: mergedBusiness.publicServedPostcodes,
+        publicCoverageLat: mergedBusiness.publicCoverageLat,
+        publicCoverageLng: mergedBusiness.publicCoverageLng,
+        publicServiceRadiusKm: mergedBusiness.publicServiceRadiusKm,
         publicPartnerProfilePublishedAt: publishedAt,
         publicPartnerProfilePublishStatus: 'published',
         invoiceEmail: mergedBusiness.invoiceEmail,
@@ -3868,6 +4032,112 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     style: const TextStyle(
                       color: Colors.white60,
                       fontSize: 11.2,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _t(
+                      nl: 'Publieke dekking voor Taxi’s in de buurt (optioneel).',
+                      en: 'Public coverage for Taxis nearby (optional).',
+                      fr: 'Couverture publique pour Taxis à proximité (optionnel).',
+                      es: 'Cobertura pública para Taxis cercanos (opcional).',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _useCurrentLocationAsBusinessLocation,
+                      icon: const Icon(Icons.my_location_outlined),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFE5B641),
+                        side: BorderSide(
+                          color: const Color(0xFFE5B641).withOpacity(0.42),
+                        ),
+                        backgroundColor: const Color(0xFF0B0B0B),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      label: Text(
+                        _t(
+                          nl: 'Gebruik huidige locatie als bedrijfslocatie',
+                          en: 'Use current location as business location',
+                          fr: 'Utiliser ma position actuelle comme adresse professionnelle',
+                          es: 'Usar mi ubicación actual como ubicación de empresa',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0B0B0B),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white.withOpacity(0.14)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _hasPublicCoverageLocationSet()
+                              ? _t(
+                                  nl: 'Bedrijfslocatie ingesteld via GPS',
+                                  en: 'Business location set via GPS',
+                                  fr: 'Emplacement professionnel défini via GPS',
+                                  es: 'Ubicación de empresa configurada por GPS',
+                                )
+                              : _t(
+                                  nl: 'Nog geen bedrijfslocatie ingesteld.',
+                                  en: 'No business location set yet.',
+                                  fr: 'Aucun emplacement professionnel défini.',
+                                  es: 'Aún no se ha configurado la ubicación de empresa.',
+                                ),
+                          style: TextStyle(
+                            color: _hasPublicCoverageLocationSet()
+                                ? const Color(0xFF34D29A)
+                                : Colors.white70,
+                            fontSize: 12.2,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (_hasPublicCoverageLocationSet()) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _publicCoverageCoordsLabel(),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 10.8,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  _txt(
+                    _publicServiceRadiusKmCtrl,
+                    _t(
+                      nl: 'Service radius (km)',
+                      en: 'Service radius (km)',
+                      fr: 'Rayon de service (km)',
+                      es: 'Radio de servicio (km)',
+                    ),
+                    hint: _t(
+                      nl: '1 t/m 100',
+                      en: '1 to 100',
+                      fr: '1 à 100',
+                      es: '1 a 100',
                     ),
                   ),
                   const SizedBox(height: 10),
