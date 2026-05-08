@@ -724,6 +724,9 @@ class DriverProfile {
   final String taxiDriverCardExpiry;
   final bool isActive;
   final String? profilePhotoPath;
+  final bool publicProfileEnabled;
+  final bool publicPhotoEnabled;
+  final String? publicDisplayName;
 
   /// See [VehicleProfile.companyId].
   final String? companyId;
@@ -739,6 +742,9 @@ class DriverProfile {
     this.taxiDriverCardExpiry = '',
     required this.isActive,
     this.profilePhotoPath,
+    this.publicProfileEnabled = false,
+    this.publicPhotoEnabled = false,
+    this.publicDisplayName,
     this.companyId,
   });
 
@@ -751,6 +757,9 @@ class DriverProfile {
     String? taxiDriverCardExpiry,
     bool? isActive,
     Object? profilePhotoPath = _driverProfileUnset,
+    bool? publicProfileEnabled,
+    bool? publicPhotoEnabled,
+    Object? publicDisplayName = _driverProfileUnset,
     String? companyId,
   }) {
     return DriverProfile(
@@ -764,6 +773,11 @@ class DriverProfile {
       profilePhotoPath: identical(profilePhotoPath, _driverProfileUnset)
           ? this.profilePhotoPath
           : profilePhotoPath as String?,
+      publicProfileEnabled: publicProfileEnabled ?? this.publicProfileEnabled,
+      publicPhotoEnabled: publicPhotoEnabled ?? this.publicPhotoEnabled,
+      publicDisplayName: identical(publicDisplayName, _driverProfileUnset)
+          ? this.publicDisplayName
+          : publicDisplayName as String?,
       companyId: companyId ?? this.companyId,
     );
   }
@@ -1255,6 +1269,9 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'taxiDriverCardExpiry': d.taxiDriverCardExpiry,
     'isActive': d.isActive,
     'profilePhotoPath': d.profilePhotoPath,
+    'publicProfileEnabled': d.publicProfileEnabled,
+    'publicPhotoEnabled': d.publicPhotoEnabled,
+    'publicDisplayName': d.publicDisplayName,
     'companyId': d.companyId,
   };
 }
@@ -1339,6 +1356,18 @@ DriverProfile _decodeDriver(
           final text = profilePhotoRaw.toString().trim();
           return text.isEmpty ? null : text;
         }();
+  final bool publicProfileEnabled = (m['publicProfileEnabled'] is bool)
+      ? m['publicProfileEnabled'] as bool
+      : false;
+  final bool publicPhotoEnabled = (m['publicPhotoEnabled'] is bool)
+      ? m['publicPhotoEnabled'] as bool
+      : false;
+  final String? publicDisplayName = () {
+    final raw = m['publicDisplayName'];
+    if (raw == null) return null;
+    final text = raw.toString().trim();
+    return text.isEmpty ? null : text;
+  }();
 
   return fallback.copyWith(
     id: (m['id'] ?? fallback.id).toString(),
@@ -1353,6 +1382,9 @@ DriverProfile _decodeDriver(
         ? m['isActive'] as bool
         : fallback.isActive,
     profilePhotoPath: profilePhotoPath,
+    publicProfileEnabled: publicProfileEnabled,
+    publicPhotoEnabled: publicProfileEnabled ? publicPhotoEnabled : false,
+    publicDisplayName: publicDisplayName,
     companyId: companyId,
   );
 }

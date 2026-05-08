@@ -5128,64 +5128,81 @@ class CompanyDriverManagementPage extends StatelessWidget {
     final taxiCardExpiryCtrl = TextEditingController(
       text: existing.taxiDriverCardExpiry,
     );
+    final publicDisplayNameCtrl = TextEditingController(
+      text: existing.publicDisplayName ?? '',
+    );
     var profilePhotoPath = existing.profilePhotoPath?.trim() ?? '';
+    var publicProfileEnabled = existing.publicProfileEnabled;
+    var publicPhotoEnabled = existing.publicPhotoEnabled;
     var active = existing.isActive;
 
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 24,
-          ),
-          backgroundColor: const Color(0xFF141B2F),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Text(
-            _t(
-              nl: 'Chauffeur bewerken',
-              en: 'Edit driver',
-              fr: 'Modifier le chauffeur',
-              es: 'Editar conductor',
+        builder: (ctx, setDialogState) {
+          final hasInternalPhoto = _driverPhotoExists(profilePhotoPath);
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
             ),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F1322),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _gold.withOpacity(0.34)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF17120A),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _gold.withOpacity(0.46),
+            backgroundColor: const Color(0xFF141B2F),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Text(
+              _t(
+                nl: 'Chauffeur bewerken',
+                en: 'Edit driver',
+                fr: 'Modifier le chauffeur',
+                es: 'Editar conductor',
+              ),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F1322),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _gold.withOpacity(0.34)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF17120A),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: _gold.withOpacity(0.46),
+                                ),
                               ),
-                            ),
-                            child: ClipOval(
-                              child: _driverPhotoExists(profilePhotoPath)
-                                  ? Image.file(
-                                      File(profilePhotoPath),
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => Center(
+                              child: ClipOval(
+                                child: _driverPhotoExists(profilePhotoPath)
+                                    ? Image.file(
+                                        File(profilePhotoPath),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                          child: Text(
+                                            _initialsFromName(nameCtrl.text),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : Center(
                                         child: Text(
                                           _initialsFromName(nameCtrl.text),
                                           style: const TextStyle(
@@ -5194,145 +5211,76 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                           ),
                                         ),
                                       ),
-                                    )
-                                  : Center(
-                                      child: Text(
-                                        _initialsFromName(nameCtrl.text),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _t(
-                                    nl: 'Pasfoto',
-                                    en: 'Profile photo',
-                                    fr: 'Photo de profil',
-                                    es: 'Foto de perfil',
-                                  ),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 13.6,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  _driverPhotoExists(profilePhotoPath)
-                                      ? _t(
-                                          nl: 'Foto aanwezig',
-                                          en: 'Photo available',
-                                          fr: 'Photo disponible',
-                                          es: 'Foto disponible',
-                                        )
-                                      : _t(
-                                          nl: 'Nog geen pasfoto',
-                                          en: 'No profile photo yet',
-                                          fr: 'Pas encore de photo',
-                                          es: 'Aún sin foto',
-                                        ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.64),
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _t(
-                          nl: 'Deze foto is enkel zichtbaar binnen het bedrijf.',
-                          en: 'This photo is only visible inside the company.',
-                          fr: 'Cette photo est uniquement visible dans l’entreprise.',
-                          es: 'Esta foto solo es visible dentro de la empresa.',
-                        ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.58),
-                          fontSize: 11.1,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _gold.withOpacity(0.98),
-                              side: BorderSide(color: _gold.withOpacity(0.45)),
-                              backgroundColor: const Color(0xFF16120A),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              minimumSize: const Size(0, 36),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999),
                               ),
                             ),
-                            onPressed: () async {
-                              final source = await _askProfilePhotoSource(ctx);
-                              if (source == null) return;
-                              try {
-                                final picked = await ImagePicker().pickImage(
-                                  source: source,
-                                  imageQuality: 90,
-                                );
-                                if (picked == null) return;
-                                final persisted =
-                                    await _persistPickedDriverPhoto(
-                                      sourcePath: picked.path,
-                                      driver: existing,
-                                    );
-                                final nextPath = (persisted ?? '').trim();
-                                if (nextPath.isEmpty) return;
-                                setDialogState(
-                                  () => profilePhotoPath = nextPath,
-                                );
-                              } catch (_) {}
-                            },
-                            icon: Icon(
-                              _driverPhotoExists(profilePhotoPath)
-                                  ? Icons.photo_camera_outlined
-                                  : Icons.add_a_photo_outlined,
-                              size: 16,
-                            ),
-                            label: Text(
-                              _driverPhotoExists(profilePhotoPath)
-                                  ? _t(
-                                      nl: 'Pasfoto wijzigen',
-                                      en: 'Change profile photo',
-                                      fr: 'Modifier la photo',
-                                      es: 'Cambiar foto',
-                                    )
-                                  : _t(
-                                      nl: 'Pasfoto toevoegen',
-                                      en: 'Add profile photo',
-                                      fr: 'Ajouter une photo',
-                                      es: 'Añadir foto de perfil',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _t(
+                                      nl: 'Pasfoto',
+                                      en: 'Profile photo',
+                                      fr: 'Photo de profil',
+                                      es: 'Foto de perfil',
                                     ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13.6,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _driverPhotoExists(profilePhotoPath)
+                                        ? _t(
+                                            nl: 'Foto aanwezig',
+                                            en: 'Photo available',
+                                            fr: 'Photo disponible',
+                                            es: 'Foto disponible',
+                                          )
+                                        : _t(
+                                            nl: 'Nog geen pasfoto',
+                                            en: 'No profile photo yet',
+                                            fr: 'Pas encore de photo',
+                                            es: 'Aún sin foto',
+                                          ),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.64),
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _t(
+                            nl: 'Deze foto is enkel zichtbaar binnen het bedrijf.',
+                            en: 'This photo is only visible inside the company.',
+                            fr: 'Cette photo est uniquement visible dans l’entreprise.',
+                            es: 'Esta foto solo es visible dentro de la empresa.',
                           ),
-                          if (_driverPhotoExists(profilePhotoPath))
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.58),
+                            fontSize: 11.1,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
                             OutlinedButton.icon(
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.redAccent,
+                                foregroundColor: _gold.withOpacity(0.98),
                                 side: BorderSide(
-                                  color: Colors.redAccent.withOpacity(0.45),
+                                  color: _gold.withOpacity(0.45),
                                 ),
-                                backgroundColor: const Color(0xFF2A1518),
+                                backgroundColor: const Color(0xFF16120A),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 10,
                                   vertical: 8,
@@ -5343,124 +5291,313 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                               ),
-                              onPressed: () =>
-                                  setDialogState(() => profilePhotoPath = ''),
-                              icon: const Icon(Icons.delete_outline, size: 16),
+                              onPressed: () async {
+                                final source = await _askProfilePhotoSource(
+                                  ctx,
+                                );
+                                if (source == null) return;
+                                try {
+                                  final picked = await ImagePicker().pickImage(
+                                    source: source,
+                                    imageQuality: 90,
+                                  );
+                                  if (picked == null) return;
+                                  final persisted =
+                                      await _persistPickedDriverPhoto(
+                                        sourcePath: picked.path,
+                                        driver: existing,
+                                      );
+                                  final nextPath = (persisted ?? '').trim();
+                                  if (nextPath.isEmpty) return;
+                                  setDialogState(
+                                    () => profilePhotoPath = nextPath,
+                                  );
+                                } catch (_) {}
+                              },
+                              icon: Icon(
+                                hasInternalPhoto
+                                    ? Icons.photo_camera_outlined
+                                    : Icons.add_a_photo_outlined,
+                                size: 16,
+                              ),
                               label: Text(
-                                _t(
-                                  nl: 'Pasfoto verwijderen',
-                                  en: 'Remove profile photo',
-                                  fr: 'Supprimer la photo',
-                                  es: 'Eliminar foto',
-                                ),
+                                hasInternalPhoto
+                                    ? _t(
+                                        nl: 'Pasfoto wijzigen',
+                                        en: 'Change profile photo',
+                                        fr: 'Modifier la photo',
+                                        es: 'Cambiar foto',
+                                      )
+                                    : _t(
+                                        nl: 'Pasfoto toevoegen',
+                                        en: 'Add profile photo',
+                                        fr: 'Ajouter une photo',
+                                        es: 'Añadir foto de perfil',
+                                      ),
                               ),
                             ),
-                        ],
+                            if (hasInternalPhoto)
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.redAccent,
+                                  side: BorderSide(
+                                    color: Colors.redAccent.withOpacity(0.45),
+                                  ),
+                                  backgroundColor: const Color(0xFF2A1518),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
+                                  minimumSize: const Size(0, 36),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                ),
+                                onPressed: () => setDialogState(() {
+                                  profilePhotoPath = '';
+                                  publicPhotoEnabled = false;
+                                }),
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  _t(
+                                    nl: 'Pasfoto verwijderen',
+                                    en: 'Remove profile photo',
+                                    fr: 'Supprimer la photo',
+                                    es: 'Eliminar foto',
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F1322),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _gold.withOpacity(0.34)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Publiek partnerprofiel',
+                            en: 'Public partner profile',
+                            fr: 'Profil partenaire public',
+                            es: 'Perfil público de socio',
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13.6,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: publicProfileEnabled,
+                          activeColor: _gold,
+                          onChanged: (v) => setDialogState(() {
+                            publicProfileEnabled = v;
+                            if (!publicProfileEnabled) {
+                              publicPhotoEnabled = false;
+                            }
+                          }),
+                          title: Text(
+                            _t(
+                              nl: 'Toon chauffeur publiek',
+                              en: 'Show driver publicly',
+                              fr: 'Afficher le chauffeur publiquement',
+                              es: 'Mostrar conductor públicamente',
+                            ),
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value:
+                              publicProfileEnabled &&
+                              hasInternalPhoto &&
+                              publicPhotoEnabled,
+                          activeColor: _gold,
+                          onChanged:
+                              (!publicProfileEnabled || !hasInternalPhoto)
+                              ? null
+                              : (v) => setDialogState(
+                                  () => publicPhotoEnabled = v,
+                                ),
+                          title: Text(
+                            _t(
+                              nl: 'Toon pasfoto publiek',
+                              en: 'Show profile photo publicly',
+                              fr: 'Afficher la photo publiquement',
+                              es: 'Mostrar foto públicamente',
+                            ),
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          subtitle: (!hasInternalPhoto)
+                              ? Text(
+                                  _t(
+                                    nl: 'Voeg eerst een interne pasfoto toe.',
+                                    en: 'Add an internal profile photo first.',
+                                    fr: 'Ajoutez d’abord une photo interne.',
+                                    es: 'Añade primero una foto interna.',
+                                  ),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.62),
+                                    fontSize: 11.2,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        _driverField(
+                          publicDisplayNameCtrl,
+                          _t(
+                            nl: 'Publieke naam',
+                            en: 'Public name',
+                            fr: 'Nom public',
+                            es: 'Nombre público',
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _t(
+                            nl: 'Deze instellingen publiceren nog niets automatisch. Publicatie gebeurt later via het publieke partnerprofiel.',
+                            en: 'These settings do not publish anything automatically yet. Publishing happens later through the public partner profile.',
+                            fr: 'Ces paramètres ne publient encore rien automatiquement. La publication se fera plus tard via le profil partenaire public.',
+                            es: 'Estos ajustes aún no publican nada automáticamente. La publicación se hará más adelante mediante el perfil público del socio.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.58),
+                            fontSize: 11.1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _driverField(
+                    nameCtrl,
+                    _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                  ),
+                  _driverField(
+                    idCtrl,
+                    _t(
+                      nl: 'Chauffeur-ID',
+                      en: 'Driver ID',
+                      fr: 'ID chauffeur',
+                      es: 'ID conductor',
+                    ),
+                    enabled: false,
+                  ),
+                  _driverField(
+                    phoneCtrl,
+                    _t(
+                      nl: 'Telefoonnummer',
+                      en: 'Phone number',
+                      fr: 'Numéro de téléphone',
+                      es: 'Número de teléfono',
+                    ),
+                  ),
+                  _driverField(
+                    taxiCardNumberCtrl,
+                    _t(
+                      nl: 'Kaartnummer',
+                      en: 'Card number',
+                      fr: 'N° carte',
+                      es: 'N.º tarjeta',
+                    ),
+                  ),
+                  _driverField(
+                    taxiCardExpiryCtrl,
+                    _t(
+                      nl: 'Vervaldatum kaart',
+                      en: 'Card expiry',
+                      fr: 'Expiration carte',
+                      es: 'Caducidad tarjeta',
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: active,
+                    onChanged: (v) => setDialogState(() => active = v),
+                    title: Text(
+                      _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: Text(
+                            _t(
+                              nl: 'Annuleren',
+                              en: 'Cancel',
+                              fr: 'Annuler',
+                              es: 'Cancelar',
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            final updated = existing.copyWith(
+                              fullName: nameCtrl.text.trim(),
+                              phone: phoneCtrl.text.trim(),
+                              taxiDriverCardNumber: taxiCardNumberCtrl.text
+                                  .trim(),
+                              taxiDriverCardExpiry: taxiCardExpiryCtrl.text
+                                  .trim(),
+                              isActive: active,
+                              profilePhotoPath: profilePhotoPath.trim().isEmpty
+                                  ? null
+                                  : profilePhotoPath.trim(),
+                              publicProfileEnabled: publicProfileEnabled,
+                              publicPhotoEnabled:
+                                  publicProfileEnabled &&
+                                  hasInternalPhoto &&
+                                  publicPhotoEnabled,
+                              publicDisplayName:
+                                  publicDisplayNameCtrl.text.trim().isEmpty
+                                  ? null
+                                  : publicDisplayNameCtrl.text.trim(),
+                            );
+                            updateDriver(existing.id, updated);
+                            Navigator.pop(ctx);
+                          },
+                          child: Text(
+                            _t(
+                              nl: 'Opslaan',
+                              en: 'Save',
+                              fr: 'Enregistrer',
+                              es: 'Guardar',
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                ),
-                _driverField(
-                  nameCtrl,
-                  _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
-                ),
-                _driverField(
-                  idCtrl,
-                  _t(
-                    nl: 'Chauffeur-ID',
-                    en: 'Driver ID',
-                    fr: 'ID chauffeur',
-                    es: 'ID conductor',
-                  ),
-                  enabled: false,
-                ),
-                _driverField(
-                  phoneCtrl,
-                  _t(
-                    nl: 'Telefoonnummer',
-                    en: 'Phone number',
-                    fr: 'Numéro de téléphone',
-                    es: 'Número de teléfono',
-                  ),
-                ),
-                _driverField(
-                  taxiCardNumberCtrl,
-                  _t(
-                    nl: 'Kaartnummer',
-                    en: 'Card number',
-                    fr: 'N° carte',
-                    es: 'N.º tarjeta',
-                  ),
-                ),
-                _driverField(
-                  taxiCardExpiryCtrl,
-                  _t(
-                    nl: 'Vervaldatum kaart',
-                    en: 'Card expiry',
-                    fr: 'Expiration carte',
-                    es: 'Caducidad tarjeta',
-                  ),
-                ),
-                const SizedBox(height: 4),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: active,
-                  onChanged: (v) => setDialogState(() => active = v),
-                  title: Text(
-                    _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text(
-                          _t(
-                            nl: 'Annuleren',
-                            en: 'Cancel',
-                            fr: 'Annuler',
-                            es: 'Cancelar',
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () {
-                          final updated = existing.copyWith(
-                            fullName: nameCtrl.text.trim(),
-                            phone: phoneCtrl.text.trim(),
-                            taxiDriverCardNumber: taxiCardNumberCtrl.text
-                                .trim(),
-                            taxiDriverCardExpiry: taxiCardExpiryCtrl.text
-                                .trim(),
-                            isActive: active,
-                            profilePhotoPath: profilePhotoPath.trim().isEmpty
-                                ? null
-                                : profilePhotoPath.trim(),
-                          );
-                          updateDriver(existing.id, updated);
-                          Navigator.pop(ctx);
-                        },
-                        child: Text(
-                          _t(
-                            nl: 'Opslaan',
-                            en: 'Save',
-                            fr: 'Enregistrer',
-                            es: 'Guardar',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
