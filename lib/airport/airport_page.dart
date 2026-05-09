@@ -360,8 +360,11 @@ class _AirportPageState extends State<AirportPage> {
   int _bags = 0;
   bool _meetAndGreet = false;
   bool _isResolvingPickupLocation = false;
+  bool _isResolvingDestinationLocation = false;
   double? _pickupLatitude;
   double? _pickupLongitude;
+  double? _destinationLatitude;
+  double? _destinationLongitude;
 
   List<String> get _availableCountryCodes {
     final unique = <String>{};
@@ -1019,6 +1022,28 @@ class _AirportPageState extends State<AirportPage> {
               controller: _destinationAddressController,
               hint: 'Straat, nummer, postcode, stad',
               icon: Icons.location_on_outlined,
+              suffixIcon: IconButton(
+                onPressed: _isResolvingDestinationLocation
+                    ? null
+                    : _useCurrentDestinationLocation,
+                tooltip: 'Huidige locatie gebruiken',
+                icon: _isResolvingDestinationLocation
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _gold.withOpacity(0.96),
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.my_location_rounded,
+                        color: _gold.withOpacity(0.92),
+                        size: 18,
+                      ),
+              ),
             ),
             const SizedBox(height: 10),
             _buildTextField(
@@ -1461,6 +1486,91 @@ class _AirportPageState extends State<AirportPage> {
       return trimmed.isEmpty ? null : trimmed;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<void> _useCurrentDestinationLocation() async {
+    if (_isResolvingDestinationLocation) {
+      return;
+    }
+    setState(() {
+      _isResolvingDestinationLocation = true;
+    });
+    try {
+      final enabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Locatieservices staan uit op dit toestel.'),
+          ),
+        );
+        return;
+      }
+      var permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied) {
+        permission = await geo.Geolocator.requestPermission();
+      }
+      if (permission == geo.LocationPermission.denied) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Locatietoegang geweigerd.')),
+        );
+        return;
+      }
+      if (permission == geo.LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      );
+
+      if (!mounted) return;
+      final lat = pos.latitude;
+      final lng = pos.longitude;
+      final resolvedAddress = await _reverseGeocodePickup(lat, lng);
+      if (!mounted) return;
+      final fallbackAddress =
+          'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+      setState(() {
+        _destinationLatitude = lat;
+        _destinationLongitude = lng;
+        _destinationAddressController.text =
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+            ? resolvedAddress
+            : fallbackAddress;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+                ? 'Huidig adres ingevuld.'
+                : 'Huidige locatie ingevuld.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Huidige locatie kon niet worden opgehaald.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResolvingDestinationLocation = false;
+        });
+      }
     }
   }
 
