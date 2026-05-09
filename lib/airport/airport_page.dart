@@ -2,6 +2,24 @@ import 'package:flutter/material.dart';
 
 enum _TransferMode { toAirport, fromAirport }
 
+class _AirportOption {
+  const _AirportOption({
+    required this.id,
+    required this.countryCode,
+    required this.countryName,
+    required this.city,
+    required this.name,
+    required this.iata,
+  });
+
+  final String id;
+  final String countryCode;
+  final String countryName;
+  final String city;
+  final String name;
+  final String iata;
+}
+
 class AirportPage extends StatefulWidget {
   const AirportPage({super.key});
 
@@ -15,19 +33,59 @@ class _AirportPageState extends State<AirportPage> {
   static const Color _gold = Color(0xFFE5B641);
   static const Color _soft = Color(0xFFB4B4B4);
 
-  static const List<String> _airports = <String>[
-    'Brussels Airport',
-    'Charleroi Airport',
-    'Amsterdam Schiphol',
-    'Paris Charles de Gaulle',
-    'London Heathrow',
+  static const List<_AirportOption> _airports = <_AirportOption>[
+    _AirportOption(
+      id: 'bru',
+      countryCode: 'BE',
+      countryName: 'Belgium/Belgie',
+      city: 'Brussels/Brussel',
+      name: 'Brussels Airport',
+      iata: 'BRU',
+    ),
+    _AirportOption(
+      id: 'crl',
+      countryCode: 'BE',
+      countryName: 'Belgium/Belgie',
+      city: 'Charleroi',
+      name: 'Charleroi Airport',
+      iata: 'CRL',
+    ),
+    _AirportOption(
+      id: 'ams',
+      countryCode: 'NL',
+      countryName: 'Netherlands/Nederland',
+      city: 'Amsterdam',
+      name: 'Amsterdam Schiphol',
+      iata: 'AMS',
+    ),
+    _AirportOption(
+      id: 'cdg',
+      countryCode: 'FR',
+      countryName: 'France/Frankrijk',
+      city: 'Paris/Parijs',
+      name: 'Paris Charles de Gaulle',
+      iata: 'CDG',
+    ),
+    _AirportOption(
+      id: 'lhr',
+      countryCode: 'GB',
+      countryName: 'United Kingdom/Verenigd Koninkrijk',
+      city: 'London/Londen',
+      name: 'London Heathrow',
+      iata: 'LHR',
+    ),
   ];
 
   _TransferMode _selectedMode = _TransferMode.toAirport;
-  String _selectedAirport = _airports.first;
+  String _selectedAirportId = _airports.first.id;
   int _passengers = 1;
   int _bags = 0;
   bool _meetAndGreet = false;
+
+  _AirportOption get _selectedAirport => _airports.firstWhere(
+    (airport) => airport.id == _selectedAirportId,
+    orElse: () => _airports.first,
+  );
 
   final TextEditingController _pickupAddressController =
       TextEditingController();
@@ -530,7 +588,7 @@ class _AirportPageState extends State<AirportPage> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: _selectedAirport,
+          value: _selectedAirport.id,
           isDense: true,
           isExpanded: true,
           dropdownColor: const Color(0xFF1A1A1A),
@@ -539,8 +597,8 @@ class _AirportPageState extends State<AirportPage> {
           items: _airports
               .map(
                 (airport) => DropdownMenuItem<String>(
-                  value: airport,
-                  child: Text(airport),
+                  value: airport.id,
+                  child: Text(airport.name),
                 ),
               )
               .toList(growable: false),
@@ -549,7 +607,7 @@ class _AirportPageState extends State<AirportPage> {
               return;
             }
             setState(() {
-              _selectedAirport = value;
+              _selectedAirportId = value;
             });
           },
         ),
