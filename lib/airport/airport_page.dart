@@ -962,6 +962,18 @@ class _AirportPageState extends State<AirportPage> {
               controller: _pickupDateTimeController,
               hint: 'Bijv. 21/06/2026 - 05:45',
               icon: Icons.schedule_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_pickupDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_pickupDateTimeController),
+                tooltip: 'Datum en tijd kiezen',
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
@@ -1021,6 +1033,18 @@ class _AirportPageState extends State<AirportPage> {
               controller: _landingDateTimeController,
               hint: 'Bijv. 21/06/2026 - 18:20',
               icon: Icons.schedule_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_landingDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_landingDateTimeController),
+                tooltip: 'Datum en tijd kiezen',
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
             ),
             const SizedBox(height: 10),
             _buildMeetAndGreetToggle(),
@@ -1083,11 +1107,15 @@ class _AirportPageState extends State<AirportPage> {
     required String hint,
     required IconData icon,
     Widget? suffixIcon,
+    bool readOnly = false,
+    VoidCallback? onTap,
     int maxLines = 1,
     int minLines = 1,
   }) {
     return TextField(
       controller: controller,
+      readOnly: readOnly,
+      onTap: onTap,
       maxLines: maxLines,
       minLines: minLines,
       style: const TextStyle(color: Colors.white, fontSize: 13),
@@ -1098,6 +1126,85 @@ class _AirportPageState extends State<AirportPage> {
         suffixIcon: suffixIcon,
       ),
     );
+  }
+
+  DateTime? _parseAirportDateTime(String value) {
+    final input = value.trim();
+    if (input.isEmpty) {
+      return null;
+    }
+    final split = input.split(' ');
+    if (split.length != 2) {
+      return null;
+    }
+    final dateParts = split.first.split('/');
+    final timeParts = split.last.split(':');
+    if (dateParts.length != 3 || timeParts.length != 2) {
+      return null;
+    }
+    final day = int.tryParse(dateParts[0]);
+    final month = int.tryParse(dateParts[1]);
+    final year = int.tryParse(dateParts[2]);
+    final hour = int.tryParse(timeParts[0]);
+    final minute = int.tryParse(timeParts[1]);
+    if (day == null ||
+        month == null ||
+        year == null ||
+        hour == null ||
+        minute == null) {
+      return null;
+    }
+    try {
+      final parsed = DateTime(year, month, day, hour, minute);
+      if (parsed.year != year ||
+          parsed.month != month ||
+          parsed.day != day ||
+          parsed.hour != hour ||
+          parsed.minute != minute) {
+        return null;
+      }
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _pickAirportDateTime(TextEditingController controller) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final parsed = _parseAirportDateTime(controller.text);
+    final initialDate = parsed != null && !parsed.isBefore(today)
+        ? DateTime(parsed.year, parsed.month, parsed.day)
+        : today;
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+    );
+    if (selectedDate == null || !mounted) {
+      return;
+    }
+
+    final initialTime = parsed != null
+        ? TimeOfDay(hour: parsed.hour, minute: parsed.minute)
+        : TimeOfDay.fromDateTime(now);
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+    );
+    if (selectedTime == null || !mounted) {
+      return;
+    }
+
+    final dd = selectedDate.day.toString().padLeft(2, '0');
+    final mm = selectedDate.month.toString().padLeft(2, '0');
+    final yyyy = selectedDate.year.toString();
+    final hh = selectedTime.hour.toString().padLeft(2, '0');
+    final min = selectedTime.minute.toString().padLeft(2, '0');
+    controller.text = '$dd/$mm/$yyyy $hh:$min';
+    setState(() {});
   }
 
   Widget _buildStepperRow({
