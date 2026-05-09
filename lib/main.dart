@@ -49,6 +49,7 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'airport/airport_page.dart';
 import 'events/events_page.dart';
 
 import 'widgets/cockpit_widget.dart';
@@ -9674,7 +9675,9 @@ class CustomerHomePage extends StatelessWidget {
           fr: 'Trajets aéroport',
           es: 'Traslados aeropuerto',
         ),
-        onTap: () => _comingSoon(context),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const AirportPage())),
       ),
       (
         icon: Icons.hotel_rounded,
