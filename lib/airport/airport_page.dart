@@ -525,6 +525,13 @@ class _AirportPageState extends State<AirportPage> {
     )) {
       _selectedAirportId = _filteredAirports.first.id;
     }
+    _pickupAddressController.addListener(_handleSummaryInputChanged);
+    _destinationAddressController.addListener(_handleSummaryInputChanged);
+    _pickupDateTimeController.addListener(_handleSummaryInputChanged);
+    _landingDateTimeController.addListener(_handleSummaryInputChanged);
+    _flightNumberController.addListener(_handleSummaryInputChanged);
+    _noteController.addListener(_handleSummaryInputChanged);
+    _nameBoardController.addListener(_handleSummaryInputChanged);
   }
 
   final TextEditingController _pickupAddressController =
@@ -541,6 +548,13 @@ class _AirportPageState extends State<AirportPage> {
 
   @override
   void dispose() {
+    _pickupAddressController.removeListener(_handleSummaryInputChanged);
+    _destinationAddressController.removeListener(_handleSummaryInputChanged);
+    _pickupDateTimeController.removeListener(_handleSummaryInputChanged);
+    _landingDateTimeController.removeListener(_handleSummaryInputChanged);
+    _flightNumberController.removeListener(_handleSummaryInputChanged);
+    _noteController.removeListener(_handleSummaryInputChanged);
+    _nameBoardController.removeListener(_handleSummaryInputChanged);
     _pickupAddressController.dispose();
     _destinationAddressController.dispose();
     _pickupDateTimeController.dispose();
@@ -577,6 +591,8 @@ class _AirportPageState extends State<AirportPage> {
                   _buildDirectionActions(),
                   const SizedBox(height: 10),
                   _buildIntakePanel(),
+                  const SizedBox(height: 10),
+                  _buildRideSummaryCard(),
                   const SizedBox(height: 12),
                   _buildCtaButton(context),
                 ],
@@ -1180,6 +1196,252 @@ class _AirportPageState extends State<AirportPage> {
                 }
               });
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleSummaryInputChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
+  }
+
+  String _valueOrFallback(
+    TextEditingController controller, {
+    String fallback = 'Nog niet ingevuld',
+  }) {
+    final text = controller.text.trim();
+    return text.isEmpty ? fallback : text;
+  }
+
+  Widget _buildSummaryRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    int maxLines = 2,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: _gold.withOpacity(0.92), size: 16),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: _soft.withOpacity(0.92),
+                  fontSize: 10.8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                maxLines: maxLines,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.4,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRideSummaryCard() {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final selectedAirport = _selectedAirport;
+    final flightNumber = _flightNumberController.text.trim();
+    final note = _noteController.text.trim();
+    final nameBoard = _nameBoardController.text.trim();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _gold.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, color: _gold, size: 17),
+              const SizedBox(width: 7),
+              const Expanded(
+                child: Text(
+                  'Ritoverzicht',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: _gold.withOpacity(0.58)),
+                ),
+                child: const Text(
+                  'Lokaal',
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: 10.4,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          _buildSummaryRow(
+            icon: Icons.swap_horiz_rounded,
+            label: 'Type',
+            value: isToAirport ? 'Naar de luchthaven' : 'Van de luchthaven',
+          ),
+          const SizedBox(height: 8),
+          _buildSummaryRow(
+            icon: Icons.public_rounded,
+            label: 'Land',
+            value: selectedAirport.countryName,
+          ),
+          const SizedBox(height: 8),
+          _buildSummaryRow(
+            icon: Icons.flight_rounded,
+            label: 'Luchthaven',
+            value: '${selectedAirport.name} (${selectedAirport.iata})',
+          ),
+          const SizedBox(height: 8),
+          if (isToAirport) ...[
+            _buildSummaryRow(
+              icon: Icons.pin_drop_outlined,
+              label: 'Ophaaladres',
+              value: _valueOrFallback(_pickupAddressController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.schedule_rounded,
+              label: 'Ophaaldatum/tijd',
+              value: _valueOrFallback(_pickupDateTimeController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.groups_2_outlined,
+              label: 'Passagiers',
+              value: '$_passengers',
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.luggage_outlined,
+              label: 'Bagage',
+              value: '$_bags',
+              maxLines: 1,
+            ),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildSummaryRow(
+                icon: Icons.edit_note_rounded,
+                label: 'Opmerking',
+                value: note,
+              ),
+            ],
+          ] else ...[
+            _buildSummaryRow(
+              icon: Icons.location_on_outlined,
+              label: 'Bestemming',
+              value: _valueOrFallback(_destinationAddressController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.confirmation_number_outlined,
+              label: 'Vluchtnummer',
+              value: flightNumber.isEmpty ? 'Optioneel' : flightNumber,
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.schedule_rounded,
+              label: 'Landingsdatum/tijd',
+              value: _valueOrFallback(_landingDateTimeController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.support_agent_rounded,
+              label: 'Meet & greet',
+              value: _meetAndGreet ? 'Ja' : 'Nee',
+              maxLines: 1,
+            ),
+            if (_meetAndGreet) ...[
+              const SizedBox(height: 8),
+              _buildSummaryRow(
+                icon: Icons.badge_outlined,
+                label: 'Naam bordje',
+                value: nameBoard.isEmpty ? 'Nog niet ingevuld' : nameBoard,
+              ),
+            ],
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.groups_2_outlined,
+              label: 'Passagiers',
+              value: '$_passengers',
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.luggage_outlined,
+              label: 'Bagage',
+              value: '$_bags',
+              maxLines: 1,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _gold.withOpacity(0.5)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.verified_rounded, color: _gold, size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Status: Klaar voor prijsberekening',
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
