@@ -71,7 +71,7 @@ class _AirportPageState extends State<AirportPage> {
       countryCode: 'BE',
       countryName: 'België',
       city: 'Luik',
-      name: 'Liege Airport',
+      name: 'Liège Airport',
       iata: 'LGG',
     ),
     _AirportOption(
@@ -143,7 +143,7 @@ class _AirportPageState extends State<AirportPage> {
       countryCode: 'FR',
       countryName: 'Frankrijk',
       city: 'Lyon',
-      name: 'Lyon-Saint Exupery Airport',
+      name: 'Lyon-Saint Exupéry Airport',
       iata: 'LYS',
     ),
     _AirportOption(
@@ -159,7 +159,7 @@ class _AirportPageState extends State<AirportPage> {
       countryCode: 'FR',
       countryName: 'Frankrijk',
       city: 'Nice',
-      name: 'Nice Cote d’Azur Airport',
+      name: 'Nice Côte d’Azur Airport',
       iata: 'NCE',
     ),
     _AirportOption(
@@ -183,7 +183,7 @@ class _AirportPageState extends State<AirportPage> {
       countryCode: 'DE',
       countryName: 'Duitsland',
       city: 'Düsseldorf',
-      name: 'Dusseldorf Airport',
+      name: 'Düsseldorf Airport',
       iata: 'DUS',
     ),
     _AirportOption(
@@ -304,7 +304,7 @@ class _AirportPageState extends State<AirportPage> {
   String _countryLabelForCode(String countryCode) {
     switch (countryCode) {
       case 'BE':
-        return 'Belgie';
+        return 'België';
       case 'NL':
         return 'Nederland';
       case 'FR':
@@ -375,6 +375,7 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Widget _buildAirportOnlyDropdown() {
+    final filteredAirports = _filteredAirports;
     return InputDecorator(
       decoration: _fieldDecoration(
         label: 'Luchthaven',
@@ -388,11 +389,40 @@ class _AirportPageState extends State<AirportPage> {
           dropdownColor: const Color(0xFF1A1A1A),
           iconEnabledColor: _gold,
           style: const TextStyle(color: Colors.white, fontSize: 13),
-          items: _filteredAirports
+          selectedItemBuilder: (context) => filteredAirports
+              .map(
+                (airport) => Text(
+                  airport.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )
+              .toList(growable: false),
+          items: filteredAirports
               .map(
                 (airport) => DropdownMenuItem<String>(
                   value: airport.id,
-                  child: Text(airport.name),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          airport.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        airport.iata,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.95),
+                          fontSize: 11.6,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               )
               .toList(growable: false),
