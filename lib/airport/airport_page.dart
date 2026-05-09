@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -1965,7 +1966,7 @@ class _AirportPageState extends State<AirportPage> {
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-        onPressed: _isRequestingQuote ? null : _requestAirportQuote,
+        onPressed: _isRequestingQuote ? null : _prepareAirportBookingDetails,
         child: Text(
           _isRequestingQuote
               ? 'Prijs berekenen...'
@@ -2132,16 +2133,18 @@ class _AirportPageState extends State<AirportPage> {
     };
   }
 
-  Future<void> _requestAirportQuote() async {
+  Future<Map<String, dynamic>?> _requestAirportQuoteForReview({
+    required bool showSuccessSnackbar,
+  }) async {
     if (_isRequestingQuote) {
-      return;
+      return _airportQuote;
     }
     final validationError = _validatePrepareRideDetailsMessage();
     if (validationError != null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(validationError)));
-      return;
+      return null;
     }
     final payload = _buildAirportQuotePayload();
     if (payload == null) {
@@ -2150,7 +2153,7 @@ class _AirportPageState extends State<AirportPage> {
           content: Text('Prijsberekening kon niet worden opgehaald.'),
         ),
       );
-      return;
+      return null;
     }
     setState(() {
       _isRequestingQuote = true;
@@ -2171,30 +2174,19 @@ class _AirportPageState extends State<AirportPage> {
           response.statusCode < 300 &&
           data?['ok'] == true;
       if (!mounted) {
-        return;
+        return null;
       }
       if (isOk && data != null) {
         setState(() {
           _airportQuote = data;
           _airportQuoteError = null;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Prijsberekening opgehaald.')),
-        );
-      } else {
-        setState(() {
-          _airportQuote = null;
-          _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Prijsberekening kon niet worden opgehaald.'),
-          ),
-        );
-      }
-    } catch (_) {
-      if (!mounted) {
-        return;
+        if (showSuccessSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Prijsberekening opgehaald.')),
+          );
+        }
+        return data;
       }
       setState(() {
         _airportQuote = null;
@@ -2205,6 +2197,21 @@ class _AirportPageState extends State<AirportPage> {
           content: Text('Prijsberekening kon niet worden opgehaald.'),
         ),
       );
+      return null;
+    } catch (_) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _airportQuote = null;
+        _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Prijsberekening kon niet worden opgehaald.'),
+        ),
+      );
+      return null;
     } finally {
       if (mounted) {
         setState(() {
@@ -2212,6 +2219,41 @@ class _AirportPageState extends State<AirportPage> {
         });
       }
     }
+  }
+
+  Future<void> _prepareAirportBookingDetails() async {
+    final payload = _buildAirportQuotePayload();
+    if (payload == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ritgegevens zijn nog niet volledig ingevuld.'),
+        ),
+      );
+      return;
+    }
+    var quote = _airportQuote;
+    quote ??= await _requestAirportQuoteForReview(showSuccessSnackbar: false);
+    if (quote == null || !mounted) {
+      return;
+    }
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => AirportBookingReviewPage(
+          bookingBaseUrl: widget.bookingBaseUrl,
+          quote: Map<String, dynamic>.from(quote!),
+          payload: Map<String, dynamic>.from(payload),
+          languageCode: appConfig.currentLanguage.name,
+          currencySymbol: '€',
+        ),
+      ),
+    );
+    if (result == true && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _requestAirportQuote() async {
+    await _requestAirportQuoteForReview(showSuccessSnackbar: true);
   }
 
   double? _quoteNum(dynamic value) {
