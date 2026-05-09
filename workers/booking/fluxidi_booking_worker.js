@@ -3923,6 +3923,65 @@ GET /oauth/callback
         }, 200);
       }
 
+      if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const key = buildScopedAirportFixedFaresKey(explicitScope);
+        const emptyDocument = { version: 1, updated_at: null, rules: [] };
+        if (!key) {
+          return json({
+            ok: true,
+            key: "",
+            airport_fixed_fares: emptyDocument,
+          }, 200);
+        }
+        const raw = await env.BOOKING_KV.get(key, { type: "json" });
+        const airport_fixed_fares =
+          raw && typeof raw === "object"
+            ? _normalizeAirportFixedFaresDocument(raw)
+            : emptyDocument;
+        return json({
+          ok: true,
+          key,
+          airport_fixed_fares,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const incoming = body?.airport_fixed_fares && typeof body.airport_fixed_fares === "object"
+          ? body.airport_fixed_fares
+          : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
+        const validated = _validateAirportFixedFaresForAdmin(incoming);
+        if (!validated.ok) {
+          return json({
+            ok: false,
+            error: "invalid_airport_fixed_fares",
+            details: validated.details,
+          }, 400);
+        }
+        const saved = await _saveScopedAirportFixedFares(env, incoming, explicitScope);
+        return json({
+          ok: true,
+          key: saved.key,
+          airport_fixed_fares: saved.airport_fixed_fares,
+        }, 200);
+      }
+
       if (url.pathname === "/admin/business/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
         const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
@@ -8909,6 +8968,177 @@ function _normalizeAirportFixedFaresDocument(raw) {
     rules.push(normalized);
   }
   return { version, updated_at, rules };
+}
+
+function _validateAirportFixedFaresForAdmin(doc) {
+  const details = [];
+  const pushErr = (ruleIndex, field, error) => {
+    details.push({
+      ...(Number.isInteger(ruleIndex) ? { rule_index: ruleIndex } : {}),
+      field,
+      error,
+    });
+  };
+
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+    return {
+      ok: false,
+      details: [{ field: "airport_fixed_fares", error: "must be an object" }],
+    };
+  }
+  if (doc.rules != null && !Array.isArray(doc.rules)) {
+    return {
+      ok: false,
+      details: [{ field: "rules", error: "must be an array" }],
+    };
+  }
+
+  const rules = Array.isArray(doc.rules) ? doc.rules : [];
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
+      pushErr(i, "rule", "must be an object");
+      continue;
+    }
+
+    const ruleId = _fixedFareNormalizeText(rule.rule_id ?? rule.ruleId, 96);
+    if (!ruleId) pushErr(i, "rule_id", "is required");
+
+    if (rule.enabled != null && typeof rule.enabled !== "boolean") {
+      pushErr(i, "enabled", "must be a boolean");
+    }
+
+    if (rule.priority != null) {
+      const priority = Number(rule.priority);
+      if (!Number.isFinite(priority) || !Number.isInteger(priority)) {
+        pushErr(i, "priority", "must be an integer");
+      }
+    }
+
+    const airportIataRaw = sanitizeTenantString(
+      rule.airport_iata ?? rule.airportIata,
+      12,
+    ).trim();
+    const airportIataUpper = airportIataRaw.toUpperCase();
+    if (!airportIataRaw) {
+      pushErr(i, "airport_iata", "is required");
+    } else if (!/^[A-Z0-9]{3,8}$/.test(airportIataUpper)) {
+      pushErr(i, "airport_iata", "must be 3-8 chars and contain only A-Z0-9");
+    }
+
+    const direction = _fixedFareNormalizeText(rule.direction, 24).toLowerCase();
+    if (!["to_airport", "from_airport", "both"].includes(direction)) {
+      pushErr(i, "direction", "must be to_airport, from_airport or both");
+    }
+
+    const tierRaw = sanitizeTenantString(rule.tier, 24).trim().toLowerCase();
+    if (!tierRaw) {
+      pushErr(i, "tier", "is required");
+    } else if (!["comfort", "private", "premium"].includes(tierRaw)) {
+      pushErr(i, "tier", "must map to comfort/private/premium");
+    }
+
+    const priceInclVat = Number(rule.price_incl_vat ?? rule.priceInclVat);
+    if (!Number.isFinite(priceInclVat) || priceInclVat <= 0) {
+      pushErr(i, "price_incl_vat", "must be a finite number > 0");
+    }
+
+    const currencyRaw = _fixedFareNormalizeText(rule.currency, 8);
+    const currency = _fixedFareNormalizeUpperToken(rule.currency, 8);
+    if (!currencyRaw) {
+      pushErr(i, "currency", "is required");
+    } else if (currency !== "EUR") {
+      pushErr(i, "currency", "must be EUR");
+    }
+
+    const paxMin = Number(rule.pax_min ?? rule.paxMin);
+    const paxMax = Number(rule.pax_max ?? rule.paxMax);
+    if (!Number.isFinite(paxMin) || !Number.isInteger(paxMin)) {
+      pushErr(i, "pax_min", "must be an integer");
+    }
+    if (!Number.isFinite(paxMax) || !Number.isInteger(paxMax)) {
+      pushErr(i, "pax_max", "must be an integer");
+    }
+    if (
+      Number.isFinite(paxMin) &&
+      Number.isFinite(paxMax) &&
+      Number.isInteger(paxMin) &&
+      Number.isInteger(paxMax)
+    ) {
+      if (paxMin < 1) pushErr(i, "pax_min", "must be >= 1");
+      if (paxMax < paxMin) pushErr(i, "pax_max", "must be >= pax_min");
+    }
+
+    const bagsMax = Number(rule.bags_max ?? rule.bagsMax);
+    if (!Number.isFinite(bagsMax) || !Number.isInteger(bagsMax)) {
+      pushErr(i, "bags_max", "must be an integer");
+    } else if (bagsMax < 0) {
+      pushErr(i, "bags_max", "must be >= 0");
+    }
+
+    const zoneType = _fixedFareNormalizeText(
+      rule.zone_type ?? rule.zoneType ?? "none",
+      24,
+    ).toLowerCase();
+    if (!["none", "postcode", "city", "country"].includes(zoneType)) {
+      pushErr(i, "zone_type", "must be none, postcode, city or country");
+    }
+    const zoneValue = _fixedFareNormalizeZoneValue(
+      ["none", "postcode", "city", "country"].includes(zoneType) ? zoneType : "none",
+      rule.zone_value ?? rule.zoneValue ?? "",
+    );
+    if (zoneType !== "none" && !zoneValue) {
+      pushErr(i, "zone_value", "is required when zone_type is not none");
+    }
+
+    const activeFrom = _fixedFareNormalizeText(
+      rule.active_from ?? rule.activeFrom ?? "",
+      64,
+    );
+    const activeUntil = _fixedFareNormalizeText(
+      rule.active_until ?? rule.activeUntil ?? "",
+      64,
+    );
+    const activeFromMs = activeFrom ? Date.parse(activeFrom) : null;
+    const activeUntilMs = activeUntil ? Date.parse(activeUntil) : null;
+    if (activeFrom && !Number.isFinite(activeFromMs)) {
+      pushErr(i, "active_from", "must be a parseable datetime");
+    }
+    if (activeUntil && !Number.isFinite(activeUntilMs)) {
+      pushErr(i, "active_until", "must be a parseable datetime");
+    }
+    if (
+      Number.isFinite(activeFromMs) &&
+      Number.isFinite(activeUntilMs) &&
+      activeFromMs > activeUntilMs
+    ) {
+      pushErr(i, "active_until", "must be >= active_from");
+    }
+  }
+
+  return { ok: details.length === 0, details };
+}
+
+async function _saveScopedAirportFixedFares(env, doc, scope) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const key = buildScopedAirportFixedFaresKey(scope);
+  if (!key) throw new Error("missing_tenant_scope");
+  const normalized = _normalizeAirportFixedFaresDocument(doc);
+  const updatedAt = new Date().toISOString();
+  const out = {
+    version: normalized.version || 1,
+    updated_at: updatedAt,
+    rules: Array.isArray(normalized.rules) ? normalized.rules : [],
+  };
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      updated_at: updatedAt,
+      airport_fixed_fares: out,
+    }),
+  );
+  return { key, airport_fixed_fares: out };
 }
 
 async function _loadScopedAirportFixedFares(env, scope) {
