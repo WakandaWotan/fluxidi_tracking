@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
@@ -47,6 +48,23 @@ class _AirportPageState extends State<AirportPage> {
   static const Color _gold = Color(0xFFE5B641);
   static const Color _soft = Color(0xFFB4B4B4);
   static const String _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
+  static const Set<String> _supportedCountryCodes = <String>{
+    'BE',
+    'NL',
+    'FR',
+    'DE',
+    'LU',
+    'ES',
+    'GB',
+  };
+  static const Set<String> _requiredAirportIata = <String>{
+    'AMS',
+    'DUS',
+    'BER',
+    'MAD',
+    'IBZ',
+    'LYS',
+  };
 
   static const List<_AirportOption> _airports = <_AirportOption>[
     _AirportOption(
@@ -381,10 +399,52 @@ class _AirportPageState extends State<AirportPage> {
       iata: 'BHX',
     ),
   ];
+  static final List<_AirportOption> _catalogAirports = _buildCatalogAirports();
+
+  static List<_AirportOption> _buildCatalogAirports() {
+    final generated = kAirportCatalog
+        .where(
+          (entry) =>
+              _supportedCountryCodes.contains(entry.countryCode) &&
+              entry.iata.trim().length == 3,
+        )
+        .map(
+          (entry) => _AirportOption(
+            id: entry.iata.toLowerCase(),
+            countryCode: entry.countryCode,
+            countryName: entry.countryName,
+            city: entry.municipality,
+            name: entry.name,
+            iata: entry.iata,
+            latitude: entry.latitude,
+            longitude: entry.longitude,
+            preciseAddress: entry.preciseAddress,
+          ),
+        )
+        .toList(growable: false);
+
+    if (generated.isEmpty) {
+      debugPrint(
+        '[AIRPORT_CATALOG] generated catalog empty in supported scope; using fallback list.',
+      );
+      return _airports;
+    }
+    final iataSet = generated.map((airport) => airport.iata).toSet();
+    final missingRequired = _requiredAirportIata
+        .where((iata) => !iataSet.contains(iata))
+        .toList(growable: false);
+    if (missingRequired.isNotEmpty) {
+      debugPrint(
+        '[AIRPORT_CATALOG] missing required generated airports ${missingRequired.join(", ")}; using fallback list.',
+      );
+      return _airports;
+    }
+    return generated;
+  }
 
   _TransferMode _selectedMode = _TransferMode.toAirport;
-  String _selectedCountryCode = _airports.first.countryCode;
-  String _selectedAirportId = _airports.first.id;
+  String _selectedCountryCode = _catalogAirports.first.countryCode;
+  String _selectedAirportId = _catalogAirports.first.id;
   int _passengers = 1;
   int _bags = 0;
   bool _meetAndGreet = false;
@@ -401,7 +461,7 @@ class _AirportPageState extends State<AirportPage> {
   List<String> get _availableCountryCodes {
     final unique = <String>{};
     final codes = <String>[];
-    for (final airport in _airports) {
+    for (final airport in _catalogAirports) {
       if (unique.add(airport.countryCode)) {
         codes.add(airport.countryCode);
       }
@@ -409,14 +469,14 @@ class _AirportPageState extends State<AirportPage> {
     return codes;
   }
 
-  List<_AirportOption> get _filteredAirports => _airports
+  List<_AirportOption> get _filteredAirports => _catalogAirports
       .where((airport) => airport.countryCode == _selectedCountryCode)
       .toList(growable: false);
 
   _AirportOption get _selectedAirport {
     final filtered = _filteredAirports;
     if (filtered.isEmpty) {
-      return _airports.first;
+      return _catalogAirports.first;
     }
     return filtered.firstWhere(
       (airport) => airport.id == _selectedAirportId,
@@ -432,10 +492,16 @@ class _AirportPageState extends State<AirportPage> {
         return 'Nederland';
       case 'FR':
         return 'Frankrijk';
+      case 'DE':
+        return 'Duitsland';
+      case 'LU':
+        return 'Luxemburg';
+      case 'ES':
+        return 'Spanje';
       case 'GB':
         return 'Verenigd Koninkrijk';
       default:
-        final fallback = _airports
+        final fallback = _catalogAirports
             .where((airport) => airport.countryCode == countryCode)
             .map((airport) => airport.countryName)
             .firstWhere((_) => true, orElse: () => countryCode);
@@ -448,9 +514,9 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   void _setCountry(String countryCode) {
-    final firstAirport = _airports.firstWhere(
+    final firstAirport = _catalogAirports.firstWhere(
       (airport) => airport.countryCode == countryCode,
-      orElse: () => _airports.first,
+      orElse: () => _catalogAirports.first,
     );
     _clearAirportQuote();
     setState(() {
