@@ -3358,14 +3358,24 @@ GET /oauth/callback
         const biz = normalizeBusiness(body);
         const business_detected = !!biz.vat_number;
         const invoice_requested = business_detected ? true : !!biz.invoice_requested;
+        const fromPoint = readExplicitCoordinatePair(body, "from");
+        const toPoint = readExplicitCoordinatePair(body, "to");
 
         // Route WITH waypoints + per-leg breakdown
         const routeOut = await routeFromTextsWithStopsDetailed({
           fromText: body.from,
           toText: body.to,
+          fromPoint,
+          toPoint,
           stopsTexts: stops,
           token: env.MAPBOX_TOKEN
         });
+        const route_source =
+          routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
+            ? "coordinates"
+            : (routeOut.fromSource === "coordinates" || routeOut.toSource === "coordinates")
+              ? "mixed"
+              : "text";
 
         const route = routeOut.route;
         const legs = routeOut.legs || [];
@@ -3456,6 +3466,7 @@ GET /oauth/callback
             stop_count,
             wait_min,
             stops,
+            route_source,
 
             // ✅ business fields echoed back
             business_detected,
@@ -8461,6 +8472,30 @@ function inferMapboxCountryCodeFromQuery(query) {
   return "BE";
 }
 
+function parseFiniteCoordinateNumber(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function readExplicitCoordinatePair(body, prefix) {
+  const key = String(prefix || "").trim().toLowerCase();
+  if (key !== "from" && key !== "to") return null;
+
+  const lat = parseFiniteCoordinateNumber(
+    body?.[`${key}_lat`] ?? body?.[`${key}Lat`]
+  );
+  const lng = parseFiniteCoordinateNumber(
+    body?.[`${key}_lng`] ?? body?.[`${key}Lng`]
+  );
+
+  if (lat == null || lng == null) return null;
+  if (lat < -90 || lat > 90) return null;
+  if (lng < -180 || lng > 180) return null;
+
+  return { lat, lng };
+}
+
 async function geocodeText(query, token) { return geocode(query, token); }
 
 async function directionsMulti(coords, token) {
@@ -8505,9 +8540,16 @@ function normalizeStops(body) {
   return out.slice(0, 6);
 }
 
-async function routeFromTextsWithStopsDetailed({ fromText, toText, stopsTexts, token }) {
-  const from = await geocode(fromText, token);
-  const to = await geocode(toText, token);
+async function routeFromTextsWithStopsDetailed({
+  fromText,
+  toText,
+  fromPoint = null,
+  toPoint = null,
+  stopsTexts,
+  token
+}) {
+  const from = fromPoint || await geocode(fromText, token);
+  const to = toPoint || await geocode(toText, token);
 
   const stops = Array.isArray(stopsTexts) ? stopsTexts : [];
   const stopCoords = [];
@@ -8540,7 +8582,13 @@ async function routeFromTextsWithStopsDetailed({ fromText, toText, stopsTexts, t
     };
   });
 
-  return { route, legs: legsOut, waypointNames };
+  return {
+    route,
+    legs: legsOut,
+    waypointNames,
+    fromSource: fromPoint ? "coordinates" : "text",
+    toSource: toPoint ? "coordinates" : "text"
+  };
 }
 
 /* ===================== PRICING ===================== */
