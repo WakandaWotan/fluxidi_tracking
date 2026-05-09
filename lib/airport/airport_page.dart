@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as geo;
+import 'package:http/http.dart' as http;
 
 enum _TransferMode { toAirport, fromAirport }
 
@@ -33,6 +36,7 @@ class _AirportPageState extends State<AirportPage> {
   static const Color _panel = Color(0xFF101010);
   static const Color _gold = Color(0xFFE5B641);
   static const Color _soft = Color(0xFFB4B4B4);
+  static const String _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
 
   static const List<_AirportOption> _airports = <_AirportOption>[
     _AirportOption(
@@ -1278,14 +1282,26 @@ class _AirportPageState extends State<AirportPage> {
       if (!mounted) return;
       final lat = pos.latitude;
       final lng = pos.longitude;
+      final resolvedAddress = await _reverseGeocodePickup(lat, lng);
+      if (!mounted) return;
+      final fallbackAddress =
+          'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
       setState(() {
         _pickupLatitude = lat;
         _pickupLongitude = lng;
         _pickupAddressController.text =
-            'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+            ? resolvedAddress
+            : fallbackAddress;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Huidige locatie ingevuld.')),
+        SnackBar(
+          content: Text(
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+                ? 'Huidig adres ingevuld.'
+                : 'Huidige locatie ingevuld.',
+          ),
+        ),
       );
     } catch (_) {
       if (!mounted) return;
@@ -1300,6 +1316,44 @@ class _AirportPageState extends State<AirportPage> {
           _isResolvingPickupLocation = false;
         });
       }
+    }
+  }
+
+  Future<String?> _reverseGeocodePickup(double lat, double lng) async {
+    if (_mapboxToken.trim().isEmpty) {
+      return null;
+    }
+    final url = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${lng.toStringAsFixed(6)},${lat.toStringAsFixed(6)}.json'
+      '?access_token=${Uri.encodeComponent(_mapboxToken)}'
+      '&language=nl'
+      '&limit=1',
+    );
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        return null;
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) {
+        return null;
+      }
+      final features = data['features'];
+      if (features is! List || features.isEmpty) {
+        return null;
+      }
+      final first = features.first;
+      if (first is! Map<String, dynamic>) {
+        return null;
+      }
+      final placeName = first['place_name'];
+      if (placeName is! String) {
+        return null;
+      }
+      final trimmed = placeName.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    } catch (_) {
+      return null;
     }
   }
 
