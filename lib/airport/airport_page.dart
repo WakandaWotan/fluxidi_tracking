@@ -16,6 +16,9 @@ class _AirportOption {
     required this.city,
     required this.name,
     required this.iata,
+    this.latitude,
+    this.longitude,
+    this.preciseAddress,
   });
 
   final String id;
@@ -24,6 +27,9 @@ class _AirportOption {
   final String city;
   final String name;
   final String iata;
+  final double? latitude;
+  final double? longitude;
+  final String? preciseAddress;
 }
 
 class AirportPage extends StatefulWidget {
@@ -90,6 +96,10 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Amsterdam',
       name: 'Amsterdam Schiphol',
       iata: 'AMS',
+      latitude: 52.308601,
+      longitude: 4.763890,
+      preciseAddress:
+          'Evert van de Beekstraat 202, 1118 CP Schiphol, Nederland',
     ),
     _AirportOption(
       id: 'ein',
@@ -154,6 +164,9 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Lyon',
       name: 'Lyon-Saint Exupéry Airport',
       iata: 'LYS',
+      latitude: 45.725996,
+      longitude: 5.090139,
+      preciseAddress: '69125 Colombier-Saugnieu, Frankrijk',
     ),
     _AirportOption(
       id: 'mrs',
@@ -194,6 +207,9 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Düsseldorf',
       name: 'Düsseldorf Airport',
       iata: 'DUS',
+      latitude: 51.289501,
+      longitude: 6.766780,
+      preciseAddress: 'Flughafenstraße 105, 40474 Düsseldorf, Duitsland',
     ),
     _AirportOption(
       id: 'cgn',
@@ -210,6 +226,9 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Berlijn',
       name: 'Berlin Brandenburg Airport',
       iata: 'BER',
+      latitude: 52.361738,
+      longitude: 13.502341,
+      preciseAddress: 'Willy-Brandt-Platz, 12529 Schönefeld, Duitsland',
     ),
     _AirportOption(
       id: 'ham',
@@ -234,6 +253,9 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Madrid',
       name: 'Madrid Barajas Airport',
       iata: 'MAD',
+      latitude: 40.493407,
+      longitude: -3.572249,
+      preciseAddress: 'Av de la Hispanidad, s/n, 28042 Madrid, Spanje',
     ),
     _AirportOption(
       id: 'bcn',
@@ -290,6 +312,9 @@ class _AirportPageState extends State<AirportPage> {
       city: 'Ibiza',
       name: 'Ibiza Airport',
       iata: 'IBZ',
+      latitude: 38.872898,
+      longitude: 1.373120,
+      preciseAddress: '07820 Sant Jordi de ses Salines, Ibiza, Spanje',
     ),
     _AirportOption(
       id: 'tfs',
@@ -1950,6 +1975,22 @@ class _AirportPageState extends State<AirportPage> {
   String _isoLikeLocal(DateTime dt) =>
       '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00';
 
+  bool _hasValidCoordinates(double? latitude, double? longitude) {
+    if (latitude == null || longitude == null) {
+      return false;
+    }
+    if (!latitude.isFinite || !longitude.isFinite) {
+      return false;
+    }
+    if (latitude < -90 || latitude > 90) {
+      return false;
+    }
+    if (longitude < -180 || longitude > 180) {
+      return false;
+    }
+    return true;
+  }
+
   Map<String, dynamic>? _buildAirportQuotePayload() {
     final selectedAirport = _selectedAirport;
     final isToAirport = _selectedMode == _TransferMode.toAirport;
@@ -1973,6 +2014,15 @@ class _AirportPageState extends State<AirportPage> {
     final note = _noteController.text.trim();
     final flightNumber = _flightNumberController.text.trim();
     final nameBoard = _nameBoardController.text.trim();
+    final hasAirportCoordinates = _hasValidCoordinates(
+      selectedAirport.latitude,
+      selectedAirport.longitude,
+    );
+    debugPrint(
+      '[AIRPORT_QUOTE] airport=${selectedAirport.id}/${selectedAirport.iata} '
+      'direction=${isToAirport ? "to_airport" : "from_airport"} '
+      'airport_coords=$hasAirportCoordinates',
+    );
     return <String, dynamic>{
       'from': fromText,
       'to': toText,
@@ -1993,6 +2043,14 @@ class _AirportPageState extends State<AirportPage> {
       'airport_name': selectedAirport.name,
       'airport_country': selectedAirport.countryName,
       if (note.isNotEmpty) 'note': note,
+      if (hasAirportCoordinates && isToAirport) ...{
+        'to_lat': selectedAirport.latitude,
+        'to_lng': selectedAirport.longitude,
+      },
+      if (hasAirportCoordinates && !isToAirport) ...{
+        'from_lat': selectedAirport.latitude,
+        'from_lng': selectedAirport.longitude,
+      },
       if (isToAirport) ...{
         if (_pickupLatitude != null) 'pickup_lat': _pickupLatitude,
         if (_pickupLongitude != null) 'pickup_lng': _pickupLongitude,
