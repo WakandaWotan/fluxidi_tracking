@@ -459,6 +459,27 @@ class _AirportPageState extends State<AirportPage> {
   Map<String, dynamic>? _airportQuote;
   String? _airportQuoteError;
 
+  String get _lang => appConfig.currentLanguage.name.toLowerCase();
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case 'en':
+        return en;
+      case 'fr':
+        return fr;
+      case 'es':
+        return es;
+      case 'nl':
+      default:
+        return nl;
+    }
+  }
+
   List<String> get _availableCountryCodes {
     final unique = <String>{};
     final codes = <String>[];
@@ -488,19 +509,39 @@ class _AirportPageState extends State<AirportPage> {
   String _countryLabelForCode(String countryCode) {
     switch (countryCode) {
       case 'BE':
-        return 'België';
+        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
       case 'NL':
-        return 'Nederland';
+        return _t(
+          nl: 'Nederland',
+          en: 'Netherlands',
+          fr: 'Pays-Bas',
+          es: 'Países Bajos',
+        );
       case 'FR':
-        return 'Frankrijk';
+        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
       case 'DE':
-        return 'Duitsland';
+        return _t(
+          nl: 'Duitsland',
+          en: 'Germany',
+          fr: 'Allemagne',
+          es: 'Alemania',
+        );
       case 'LU':
-        return 'Luxemburg';
+        return _t(
+          nl: 'Luxemburg',
+          en: 'Luxembourg',
+          fr: 'Luxembourg',
+          es: 'Luxemburgo',
+        );
       case 'ES':
-        return 'Spanje';
+        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
       case 'GB':
-        return 'Verenigd Koninkrijk';
+        return _t(
+          nl: 'Verenigd Koninkrijk',
+          en: 'United Kingdom',
+          fr: 'Royaume-Uni',
+          es: 'Reino Unido',
+        );
       default:
         final fallback = _catalogAirports
             .where((airport) => airport.countryCode == countryCode)
@@ -536,7 +577,7 @@ class _AirportPageState extends State<AirportPage> {
   Widget _buildCountryDropdown() {
     return InputDecorator(
       decoration: _fieldDecoration(
-        label: 'Land',
+        label: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
         prefixIcon: Icons.public_rounded,
       ),
       child: DropdownButtonHideUnderline(
@@ -570,7 +611,12 @@ class _AirportPageState extends State<AirportPage> {
     final filteredAirports = _filteredAirports;
     return InputDecorator(
       decoration: _fieldDecoration(
-        label: 'Luchthaven',
+        label: _t(
+          nl: 'Luchthaven',
+          en: 'Airport',
+          fr: 'Aéroport',
+          es: 'Aeropuerto',
+        ),
         prefixIcon: Icons.flight_rounded,
       ),
       child: DropdownButtonHideUnderline(
@@ -729,15 +775,20 @@ class _AirportPageState extends State<AirportPage> {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back_rounded),
             color: _gold,
-            tooltip: 'Terug',
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
           const SizedBox(width: 2),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Luchthavenvervoer',
+                  _t(
+                    nl: 'Luchthavenvervoer',
+                    en: 'Airport transfers',
+                    fr: 'Transferts aéroport',
+                    es: 'Traslados al aeropuerto',
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -748,7 +799,12 @@ class _AirportPageState extends State<AirportPage> {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Premium transfers voor comfortabele ritten van en naar de luchthaven',
+                  _t(
+                    nl: 'Premium transfers voor comfortabele ritten van en naar de luchthaven',
+                    en: 'Premium transfers for comfortable rides to and from the airport',
+                    fr: "Transferts premium pour des trajets confortables vers et depuis l'aéroport",
+                    es: 'Traslados premium para viajes cómodos hacia y desde el aeropuerto',
+                  ),
                   style: TextStyle(color: _soft, fontSize: 11.5, height: 1.2),
                 ),
               ],
@@ -793,7 +849,12 @@ class _AirportPageState extends State<AirportPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Zakelijk en privé luchthavenvervoer',
+                  _t(
+                    nl: 'Zakelijk en privé luchthavenvervoer',
+                    en: 'Business and private airport transfers',
+                    fr: 'Transferts aéroport professionnels et privés',
+                    es: 'Traslados al aeropuerto para empresas y particulares',
+                  ),
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: compact ? 13.6 : 14.2,
@@ -802,7 +863,12 @@ class _AirportPageState extends State<AirportPage> {
                 ),
                 SizedBox(height: compact ? 3 : 4),
                 Text(
-                  'Plan binnenkort direct uw transfer met heldere serviceopties en betrouwbare chauffeurs.',
+                  _t(
+                    nl: 'Plan binnenkort direct uw transfer met heldere serviceopties en betrouwbare chauffeurs.',
+                    en: 'Plan your transfer soon with clear service options and reliable drivers.',
+                    fr: 'Planifiez bientôt votre transfert avec des options claires et des chauffeurs fiables.',
+                    es: 'Planifica pronto tu traslado con opciones claras y conductores fiables.',
+                  ),
                   style: TextStyle(
                     color: _soft,
                     fontSize: compact ? 11.3 : 11.8,
@@ -823,14 +889,34 @@ class _AirportPageState extends State<AirportPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final first = _actionCard(
-          title: 'Naar de luchthaven',
-          subtitle: 'Vertrek naar uw vlucht',
+          title: _t(
+            nl: 'Naar de luchthaven',
+            en: 'To the airport',
+            fr: "Vers l'aéroport",
+            es: 'Al aeropuerto',
+          ),
+          subtitle: _t(
+            nl: 'Vertrek naar uw vlucht',
+            en: 'Departure to your flight',
+            fr: 'Départ vers votre vol',
+            es: 'Salida hacia tu vuelo',
+          ),
           icon: Icons.flight_takeoff_rounded,
           mode: _TransferMode.toAirport,
         );
         final second = _actionCard(
-          title: 'Van de luchthaven',
-          subtitle: 'Aankomst op de luchthaven',
+          title: _t(
+            nl: 'Van de luchthaven',
+            en: 'From the airport',
+            fr: "Depuis l'aéroport",
+            es: 'Desde el aeropuerto',
+          ),
+          subtitle: _t(
+            nl: 'Aankomst op de luchthaven',
+            en: 'Arrival at the airport',
+            fr: "Arrivée à l'aéroport",
+            es: 'Llegada al aeropuerto',
+          ),
           icon: Icons.flight_land_rounded,
           mode: _TransferMode.fromAirport,
         );
@@ -953,9 +1039,9 @@ class _AirportPageState extends State<AirportPage> {
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(color: _gold.withOpacity(0.7)),
                     ),
-                    child: const Text(
-                      'Actief',
-                      style: TextStyle(
+                    child: Text(
+                      _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                      style: const TextStyle(
                         color: _gold,
                         fontSize: 10.6,
                         fontWeight: FontWeight.w800,
@@ -1026,8 +1112,18 @@ class _AirportPageState extends State<AirportPage> {
     final isToAirport = _selectedMode == _TransferMode.toAirport;
     return _sectionCard(
       title: isToAirport
-          ? 'Intake: naar de luchthaven'
-          : 'Intake: van de luchthaven',
+          ? _t(
+              nl: 'Intake: naar de luchthaven',
+              en: 'Intake: to the airport',
+              fr: "Saisie : vers l'aéroport",
+              es: 'Datos: al aeropuerto',
+            )
+          : _t(
+              nl: 'Intake: van de luchthaven',
+              en: 'Intake: from the airport',
+              fr: "Saisie : depuis l'aéroport",
+              es: 'Datos: desde el aeropuerto',
+            ),
       icon: isToAirport
           ? Icons.directions_car_filled_rounded
           : Icons.local_taxi_rounded,
@@ -1036,15 +1132,30 @@ class _AirportPageState extends State<AirportPage> {
         children: [
           if (isToAirport) ...[
             _buildTextField(
-              label: 'Ophaaladres',
+              label: _t(
+                nl: 'Ophaaladres',
+                en: 'Pickup address',
+                fr: 'Adresse de prise en charge',
+                es: 'Dirección de recogida',
+              ),
               controller: _pickupAddressController,
-              hint: 'Straat, nummer, postcode, stad',
+              hint: _t(
+                nl: 'Straat, nummer, postcode, stad',
+                en: 'Street, number, postal code, city',
+                fr: 'Rue, numéro, code postal, ville',
+                es: 'Calle, número, código postal, ciudad',
+              ),
               icon: Icons.pin_drop_outlined,
               suffixIcon: IconButton(
                 onPressed: _isResolvingPickupLocation
                     ? null
                     : _useCurrentPickupLocation,
-                tooltip: 'Huidige locatie gebruiken',
+                tooltip: _t(
+                  nl: 'Huidige locatie gebruiken',
+                  en: 'Use current location',
+                  fr: 'Utiliser la position actuelle',
+                  es: 'Usar ubicación actual',
+                ),
                 icon: _isResolvingPickupLocation
                     ? SizedBox(
                         width: 18,
@@ -1067,16 +1178,31 @@ class _AirportPageState extends State<AirportPage> {
             _buildAirportDropdown(),
             const SizedBox(height: 10),
             _buildTextField(
-              label: 'Ophaaldatum en tijd',
+              label: _t(
+                nl: 'Ophaaldatum en tijd',
+                en: 'Pickup date and time',
+                fr: 'Date et heure de prise en charge',
+                es: 'Fecha y hora de recogida',
+              ),
               controller: _pickupDateTimeController,
-              hint: 'Bijv. 21/06/2026 - 05:45',
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 05:45',
+                en: 'E.g. 21/06/2026 - 05:45',
+                fr: 'Ex. 21/06/2026 - 05:45',
+                es: 'Ej. 21/06/2026 - 05:45',
+              ),
               icon: Icons.schedule_rounded,
               readOnly: true,
               onTap: () => _pickAirportDateTime(_pickupDateTimeController),
               suffixIcon: IconButton(
                 onPressed: () =>
                     _pickAirportDateTime(_pickupDateTimeController),
-                tooltip: 'Datum en tijd kiezen',
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
                 icon: Icon(
                   Icons.calendar_month_rounded,
                   color: _gold.withOpacity(0.92),
@@ -1086,7 +1212,12 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
-              label: 'Passagiers',
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
               value: _passengers,
               min: 1,
               max: 8,
@@ -1098,7 +1229,12 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
-              label: 'Bagage',
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
               value: _bags,
               min: 0,
               max: 12,
@@ -1110,16 +1246,31 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             _buildTextField(
-              label: 'Opmerking (optioneel)',
+              label: _t(
+                nl: 'Opmerking (optioneel)',
+                en: 'Note (optional)',
+                fr: 'Remarque (optionnel)',
+                es: 'Nota (opcional)',
+              ),
               controller: _noteController,
-              hint: 'Extra info voor de chauffeur',
+              hint: _t(
+                nl: 'Extra info voor de chauffeur',
+                en: 'Extra information for the driver',
+                fr: 'Informations supplémentaires pour le chauffeur',
+                es: 'Información adicional para el conductor',
+              ),
               icon: Icons.edit_note_rounded,
               minLines: 2,
               maxLines: 3,
             ),
             const SizedBox(height: 10),
             Text(
-              'Prijsberekening en boeking worden in een volgende stap gekoppeld.',
+              _t(
+                nl: 'Prijsberekening en boeking worden in een volgende stap gekoppeld.',
+                en: 'Price calculation and booking are connected in the next step.',
+                fr: 'Le calcul du prix et la réservation seront reliés à l’étape suivante.',
+                es: 'El cálculo del precio y la reserva se conectarán en el siguiente paso.',
+              ),
               style: TextStyle(
                 color: _soft.withOpacity(0.95),
                 fontSize: 11.4,
@@ -1130,15 +1281,30 @@ class _AirportPageState extends State<AirportPage> {
             _buildAirportDropdown(),
             const SizedBox(height: 10),
             _buildTextField(
-              label: 'Bestemmingsadres',
+              label: _t(
+                nl: 'Bestemmingsadres',
+                en: 'Destination address',
+                fr: 'Adresse de destination',
+                es: 'Dirección de destino',
+              ),
               controller: _destinationAddressController,
-              hint: 'Straat, nummer, postcode, stad',
+              hint: _t(
+                nl: 'Straat, nummer, postcode, stad',
+                en: 'Street, number, postal code, city',
+                fr: 'Rue, numéro, code postal, ville',
+                es: 'Calle, número, código postal, ciudad',
+              ),
               icon: Icons.location_on_outlined,
               suffixIcon: IconButton(
                 onPressed: _isResolvingDestinationLocation
                     ? null
                     : _useCurrentDestinationLocation,
-                tooltip: 'Huidige locatie gebruiken',
+                tooltip: _t(
+                  nl: 'Huidige locatie gebruiken',
+                  en: 'Use current location',
+                  fr: 'Utiliser la position actuelle',
+                  es: 'Usar ubicación actual',
+                ),
                 icon: _isResolvingDestinationLocation
                     ? SizedBox(
                         width: 18,
@@ -1159,23 +1325,48 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             _buildTextField(
-              label: 'Vluchtnummer (optioneel)',
+              label: _t(
+                nl: 'Vluchtnummer (optioneel)',
+                en: 'Flight number (optional)',
+                fr: 'Numéro de vol (optionnel)',
+                es: 'Número de vuelo (opcional)',
+              ),
               controller: _flightNumberController,
-              hint: 'Bijv. SN204',
+              hint: _t(
+                nl: 'Bijv. SN204',
+                en: 'E.g. SN204',
+                fr: 'Ex. SN204',
+                es: 'Ej. SN204',
+              ),
               icon: Icons.confirmation_number_outlined,
             ),
             const SizedBox(height: 10),
             _buildTextField(
-              label: 'Landingsdatum en tijd',
+              label: _t(
+                nl: 'Landingsdatum en tijd',
+                en: 'Landing date and time',
+                fr: "Date et heure d'atterrissage",
+                es: 'Fecha y hora de aterrizaje',
+              ),
               controller: _landingDateTimeController,
-              hint: 'Bijv. 21/06/2026 - 18:20',
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 18:20',
+                en: 'E.g. 21/06/2026 - 18:20',
+                fr: 'Ex. 21/06/2026 - 18:20',
+                es: 'Ej. 21/06/2026 - 18:20',
+              ),
               icon: Icons.schedule_rounded,
               readOnly: true,
               onTap: () => _pickAirportDateTime(_landingDateTimeController),
               suffixIcon: IconButton(
                 onPressed: () =>
                     _pickAirportDateTime(_landingDateTimeController),
-                tooltip: 'Datum en tijd kiezen',
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
                 icon: Icon(
                   Icons.calendar_month_rounded,
                   color: _gold.withOpacity(0.92),
@@ -1188,15 +1379,30 @@ class _AirportPageState extends State<AirportPage> {
             if (_meetAndGreet) ...[
               const SizedBox(height: 10),
               _buildTextField(
-                label: 'Naam op bordje',
+                label: _t(
+                  nl: 'Naam op bordje',
+                  en: 'Name on sign',
+                  fr: 'Nom sur pancarte',
+                  es: 'Nombre en cartel',
+                ),
                 controller: _nameBoardController,
-                hint: 'Bijv. Mevr. Van Dijk',
+                hint: _t(
+                  nl: 'Bijv. Mevr. Van Dijk',
+                  en: 'E.g. Mrs. Smith',
+                  fr: 'Ex. Mme Dupont',
+                  es: 'Ej. Sra. García',
+                ),
                 icon: Icons.badge_outlined,
               ),
             ],
             const SizedBox(height: 10),
             _buildStepperRow(
-              label: 'Passagiers',
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
               value: _passengers,
               min: 1,
               max: 8,
@@ -1208,7 +1414,12 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
-              label: 'Bagage',
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
               value: _bags,
               min: 0,
               max: 12,
@@ -1220,7 +1431,12 @@ class _AirportPageState extends State<AirportPage> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Vluchttracking en boeking worden in een volgende stap gekoppeld.',
+              _t(
+                nl: 'Vluchttracking en boeking worden in een volgende stap gekoppeld.',
+                en: 'Flight tracking and booking are connected in the next step.',
+                fr: 'Le suivi de vol et la réservation seront reliés à l’étape suivante.',
+                es: 'El seguimiento de vuelo y la reserva se conectarán en el siguiente paso.',
+              ),
               style: TextStyle(
                 color: _soft.withOpacity(0.95),
                 fontSize: 11.4,
@@ -1455,10 +1671,15 @@ class _AirportPageState extends State<AirportPage> {
             size: 18,
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Meet & greet',
-              style: TextStyle(
+              _t(
+                nl: 'Meet & greet',
+                en: 'Meet & greet',
+                fr: 'Accueil personnalisé',
+                es: 'Recepción personalizada',
+              ),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12.8,
                 fontWeight: FontWeight.w700,
@@ -1497,8 +1718,15 @@ class _AirportPageState extends State<AirportPage> {
       if (!enabled) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Locatieservices staan uit op dit toestel.'),
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatieservices staan uit op dit toestel.',
+                en: 'Location services are turned off on this device.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
+              ),
+            ),
           ),
         );
         return;
@@ -1510,16 +1738,30 @@ class _AirportPageState extends State<AirportPage> {
       if (permission == geo.LocationPermission.denied) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Locatietoegang geweigerd.')),
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang geweigerd.',
+                en: 'Location access denied.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
+              ),
+            ),
+          ),
         );
         return;
       }
       if (permission == geo.LocationPermission.deniedForever) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+              _t(
+                nl: 'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+                en: 'Location access is permanently denied. Adjust this in settings.',
+                fr: 'L’accès à la localisation est refusé de façon permanente. Modifiez cela dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Ajústalo en la configuración.',
+              ),
             ),
           ),
         );
@@ -1536,7 +1778,7 @@ class _AirportPageState extends State<AirportPage> {
       final resolvedAddress = await _reverseGeocodePickup(lat, lng);
       if (!mounted) return;
       final fallbackAddress =
-          'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+          '${_t(nl: "Huidige locatie", en: "Current location", fr: "Position actuelle", es: "Ubicación actual")} (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
       setState(() {
         _pickupLatitude = lat;
         _pickupLongitude = lng;
@@ -1549,16 +1791,33 @@ class _AirportPageState extends State<AirportPage> {
         SnackBar(
           content: Text(
             (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
-                ? 'Huidig adres ingevuld.'
-                : 'Huidige locatie ingevuld.',
+                ? _t(
+                    nl: 'Huidig adres ingevuld.',
+                    en: 'Current address filled in.',
+                    fr: 'Adresse actuelle renseignée.',
+                    es: 'Dirección actual completada.',
+                  )
+                : _t(
+                    nl: 'Huidige locatie ingevuld.',
+                    en: 'Current location filled in.',
+                    fr: 'Position actuelle renseignée.',
+                    es: 'Ubicación actual completada.',
+                  ),
           ),
         ),
       );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Huidige locatie kon niet worden opgehaald.'),
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Huidige locatie kon niet worden opgehaald.',
+              en: 'Could not fetch current location.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
+            ),
+          ),
         ),
       );
     } finally {
@@ -1577,7 +1836,7 @@ class _AirportPageState extends State<AirportPage> {
     final url = Uri.parse(
       'https://api.mapbox.com/geocoding/v5/mapbox.places/${lng.toStringAsFixed(6)},${lat.toStringAsFixed(6)}.json'
       '?access_token=${Uri.encodeComponent(_mapboxToken)}'
-      '&language=nl'
+      '&language=${Uri.encodeComponent(_lang)}'
       '&limit=1',
     );
     try {
@@ -1620,8 +1879,15 @@ class _AirportPageState extends State<AirportPage> {
       if (!enabled) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Locatieservices staan uit op dit toestel.'),
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatieservices staan uit op dit toestel.',
+                en: 'Location services are turned off on this device.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
+              ),
+            ),
           ),
         );
         return;
@@ -1633,16 +1899,30 @@ class _AirportPageState extends State<AirportPage> {
       if (permission == geo.LocationPermission.denied) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Locatietoegang geweigerd.')),
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang geweigerd.',
+                en: 'Location access denied.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
+              ),
+            ),
+          ),
         );
         return;
       }
       if (permission == geo.LocationPermission.deniedForever) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+              _t(
+                nl: 'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+                en: 'Location access is permanently denied. Adjust this in settings.',
+                fr: 'L’accès à la localisation est refusé de façon permanente. Modifiez cela dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Ajústalo en la configuración.',
+              ),
             ),
           ),
         );
@@ -1659,7 +1939,7 @@ class _AirportPageState extends State<AirportPage> {
       final resolvedAddress = await _reverseGeocodePickup(lat, lng);
       if (!mounted) return;
       final fallbackAddress =
-          'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+          '${_t(nl: "Huidige locatie", en: "Current location", fr: "Position actuelle", es: "Ubicación actual")} (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
       setState(() {
         _destinationLatitude = lat;
         _destinationLongitude = lng;
@@ -1672,16 +1952,33 @@ class _AirportPageState extends State<AirportPage> {
         SnackBar(
           content: Text(
             (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
-                ? 'Huidig adres ingevuld.'
-                : 'Huidige locatie ingevuld.',
+                ? _t(
+                    nl: 'Huidig adres ingevuld.',
+                    en: 'Current address filled in.',
+                    fr: 'Adresse actuelle renseignée.',
+                    es: 'Dirección actual completada.',
+                  )
+                : _t(
+                    nl: 'Huidige locatie ingevuld.',
+                    en: 'Current location filled in.',
+                    fr: 'Position actuelle renseignée.',
+                    es: 'Ubicación actual completada.',
+                  ),
           ),
         ),
       );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Huidige locatie kon niet worden opgehaald.'),
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Huidige locatie kon niet worden opgehaald.',
+              en: 'Could not fetch current location.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
+            ),
+          ),
         ),
       );
     } finally {
@@ -1716,10 +2013,18 @@ class _AirportPageState extends State<AirportPage> {
 
   String _valueOrFallback(
     TextEditingController controller, {
-    String fallback = 'Nog niet ingevuld',
+    String? fallback,
   }) {
+    final effectiveFallback =
+        fallback ??
+        _t(
+          nl: 'Nog niet ingevuld',
+          en: 'Not filled in yet',
+          fr: 'Non renseigné',
+          es: 'No completado',
+        );
     final text = controller.text.trim();
-    return text.isEmpty ? fallback : text;
+    return text.isEmpty ? effectiveFallback : text;
   }
 
   Widget _buildSummaryRow({
@@ -1792,9 +2097,14 @@ class _AirportPageState extends State<AirportPage> {
             children: [
               Icon(Icons.receipt_long_rounded, color: _gold, size: 17),
               const SizedBox(width: 7),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Ritoverzicht',
+                  _t(
+                    nl: 'Ritoverzicht',
+                    en: 'Ride overview',
+                    fr: 'Aperçu du trajet',
+                    es: 'Resumen del viaje',
+                  ),
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 13.2,
@@ -1809,9 +2119,9 @@ class _AirportPageState extends State<AirportPage> {
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(color: _gold.withOpacity(0.58)),
                 ),
-                child: const Text(
-                  'Lokaal',
-                  style: TextStyle(
+                child: Text(
+                  _t(nl: 'Lokaal', en: 'Local', fr: 'Local', es: 'Local'),
+                  style: const TextStyle(
                     color: _gold,
                     fontSize: 10.4,
                     fontWeight: FontWeight.w800,
@@ -1823,45 +2133,82 @@ class _AirportPageState extends State<AirportPage> {
           const SizedBox(height: 9),
           _buildSummaryRow(
             icon: Icons.swap_horiz_rounded,
-            label: 'Type',
-            value: isToAirport ? 'Naar de luchthaven' : 'Van de luchthaven',
+            label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+            value: isToAirport
+                ? _t(
+                    nl: 'Naar de luchthaven',
+                    en: 'To the airport',
+                    fr: "Vers l'aéroport",
+                    es: 'Al aeropuerto',
+                  )
+                : _t(
+                    nl: 'Van de luchthaven',
+                    en: 'From the airport',
+                    fr: "Depuis l'aéroport",
+                    es: 'Desde el aeropuerto',
+                  ),
           ),
           const SizedBox(height: 8),
           _buildSummaryRow(
             icon: Icons.public_rounded,
-            label: 'Land',
+            label: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
             value: selectedAirport.countryName,
           ),
           const SizedBox(height: 8),
           _buildSummaryRow(
             icon: Icons.flight_rounded,
-            label: 'Luchthaven',
+            label: _t(
+              nl: 'Luchthaven',
+              en: 'Airport',
+              fr: 'Aéroport',
+              es: 'Aeropuerto',
+            ),
             value: '${selectedAirport.name} (${selectedAirport.iata})',
           ),
           const SizedBox(height: 8),
           if (isToAirport) ...[
             _buildSummaryRow(
               icon: Icons.pin_drop_outlined,
-              label: 'Ophaaladres',
+              label: _t(
+                nl: 'Ophaaladres',
+                en: 'Pickup address',
+                fr: 'Adresse de prise en charge',
+                es: 'Dirección de recogida',
+              ),
               value: _valueOrFallback(_pickupAddressController),
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.schedule_rounded,
-              label: 'Ophaaldatum/tijd',
+              label: _t(
+                nl: 'Ophaaldatum/tijd',
+                en: 'Pickup date and time',
+                fr: 'Date et heure de prise en charge',
+                es: 'Fecha y hora de recogida',
+              ),
               value: _valueOrFallback(_pickupDateTimeController),
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.groups_2_outlined,
-              label: 'Passagiers',
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
               value: '$_passengers',
               maxLines: 1,
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.luggage_outlined,
-              label: 'Bagage',
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
               value: '$_bags',
               maxLines: 1,
             ),
@@ -1869,55 +2216,106 @@ class _AirportPageState extends State<AirportPage> {
               const SizedBox(height: 8),
               _buildSummaryRow(
                 icon: Icons.edit_note_rounded,
-                label: 'Opmerking',
+                label: _t(
+                  nl: 'Opmerking',
+                  en: 'Note',
+                  fr: 'Remarque',
+                  es: 'Nota',
+                ),
                 value: note,
               ),
             ],
           ] else ...[
             _buildSummaryRow(
               icon: Icons.location_on_outlined,
-              label: 'Bestemming',
+              label: _t(
+                nl: 'Bestemming',
+                en: 'Destination',
+                fr: 'Destination',
+                es: 'Destino',
+              ),
               value: _valueOrFallback(_destinationAddressController),
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.confirmation_number_outlined,
-              label: 'Vluchtnummer',
-              value: flightNumber.isEmpty ? 'Optioneel' : flightNumber,
+              label: _t(
+                nl: 'Vluchtnummer',
+                en: 'Flight number',
+                fr: 'Numéro de vol',
+                es: 'Número de vuelo',
+              ),
+              value: flightNumber.isEmpty
+                  ? _t(
+                      nl: 'Optioneel',
+                      en: 'Optional',
+                      fr: 'Optionnel',
+                      es: 'Opcional',
+                    )
+                  : flightNumber,
               maxLines: 1,
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.schedule_rounded,
-              label: 'Landingsdatum/tijd',
+              label: _t(
+                nl: 'Landingsdatum/tijd',
+                en: 'Landing date and time',
+                fr: "Date et heure d'atterrissage",
+                es: 'Fecha y hora de aterrizaje',
+              ),
               value: _valueOrFallback(_landingDateTimeController),
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.support_agent_rounded,
-              label: 'Meet & greet',
-              value: _meetAndGreet ? 'Ja' : 'Nee',
+              label: _t(
+                nl: 'Meet & greet',
+                en: 'Meet & greet',
+                fr: 'Accueil personnalisé',
+                es: 'Recepción personalizada',
+              ),
+              value: _meetAndGreet
+                  ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Sí')
+                  : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
               maxLines: 1,
             ),
             if (_meetAndGreet) ...[
               const SizedBox(height: 8),
               _buildSummaryRow(
                 icon: Icons.badge_outlined,
-                label: 'Naam bordje',
-                value: nameBoard.isEmpty ? 'Nog niet ingevuld' : nameBoard,
+                label: _t(
+                  nl: 'Naam bordje',
+                  en: 'Name on sign',
+                  fr: 'Nom sur pancarte',
+                  es: 'Nombre en cartel',
+                ),
+                value: nameBoard.isEmpty
+                    ? _valueOrFallback(_nameBoardController)
+                    : nameBoard,
               ),
             ],
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.groups_2_outlined,
-              label: 'Passagiers',
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
               value: '$_passengers',
               maxLines: 1,
             ),
             const SizedBox(height: 8),
             _buildSummaryRow(
               icon: Icons.luggage_outlined,
-              label: 'Bagage',
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
               value: '$_bags',
               maxLines: 1,
             ),
@@ -1931,14 +2329,19 @@ class _AirportPageState extends State<AirportPage> {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: _gold.withOpacity(0.5)),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.verified_rounded, color: _gold, size: 16),
-                SizedBox(width: 8),
+                const Icon(Icons.verified_rounded, color: _gold, size: 16),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Status: Klaar voor prijsberekening',
-                    style: TextStyle(
+                    _t(
+                      nl: 'Status: Klaar voor prijsberekening',
+                      en: 'Status: Ready for price calculation',
+                      fr: 'Statut : prêt pour le calcul du prix',
+                      es: 'Estado: listo para calcular el precio',
+                    ),
+                    style: const TextStyle(
                       color: _gold,
                       fontSize: 11.8,
                       fontWeight: FontWeight.w800,
@@ -1969,8 +2372,18 @@ class _AirportPageState extends State<AirportPage> {
         onPressed: _isRequestingQuote ? null : _prepareAirportBookingDetails,
         child: Text(
           _isRequestingQuote
-              ? 'Prijs berekenen...'
-              : 'Ritgegevens voorbereiden',
+              ? _t(
+                  nl: 'Prijs berekenen...',
+                  en: 'Calculating price...',
+                  fr: 'Calcul du prix...',
+                  es: 'Calculando precio...',
+                )
+              : _t(
+                  nl: 'Ritgegevens voorbereiden',
+                  en: 'Prepare ride details',
+                  fr: 'Préparer les détails du trajet',
+                  es: 'Preparar detalles del viaje',
+                ),
         ),
       ),
     );
@@ -1980,32 +2393,77 @@ class _AirportPageState extends State<AirportPage> {
     final isToAirport = _selectedMode == _TransferMode.toAirport;
     if (isToAirport) {
       if (_pickupAddressController.text.trim().isEmpty) {
-        return 'Vul eerst het ophaaladres in.';
+        return _t(
+          nl: 'Vul eerst het ophaaladres in.',
+          en: 'Enter the pickup address first.',
+          fr: "Saisissez d'abord l'adresse de prise en charge.",
+          es: 'Primero introduce la dirección de recogida.',
+        );
       }
       if (_pickupDateTimeController.text.trim().isEmpty) {
-        return 'Kies eerst de ophaaldatum en tijd.';
+        return _t(
+          nl: 'Kies eerst de ophaaldatum en tijd.',
+          en: 'Select pickup date and time first.',
+          fr: "Choisissez d'abord la date et l'heure de prise en charge.",
+          es: 'Primero selecciona la fecha y hora de recogida.',
+        );
       }
       if (_filteredAirports.isEmpty) {
-        return 'Kies eerst een luchthaven.';
+        return _t(
+          nl: 'Kies eerst een luchthaven.',
+          en: 'Select an airport first.',
+          fr: "Choisissez d'abord un aéroport.",
+          es: 'Primero selecciona un aeropuerto.',
+        );
       }
       if (_passengers < 1) {
-        return 'Kies minstens 1 passagier.';
+        return _t(
+          nl: 'Kies minstens 1 passagier.',
+          en: 'Select at least 1 passenger.',
+          fr: 'Sélectionnez au moins 1 passager.',
+          es: 'Selecciona al menos 1 pasajero.',
+        );
       }
     } else {
       if (_destinationAddressController.text.trim().isEmpty) {
-        return 'Vul eerst de bestemming in.';
+        return _t(
+          nl: 'Vul eerst de bestemming in.',
+          en: 'Enter the destination first.',
+          fr: "Saisissez d'abord la destination.",
+          es: 'Primero introduce el destino.',
+        );
       }
       if (_landingDateTimeController.text.trim().isEmpty) {
-        return 'Kies eerst de landingsdatum en tijd.';
+        return _t(
+          nl: 'Kies eerst de landingsdatum en tijd.',
+          en: 'Select landing date and time first.',
+          fr: "Choisissez d'abord la date et l'heure d'atterrissage.",
+          es: 'Primero selecciona la fecha y hora de aterrizaje.',
+        );
       }
       if (_filteredAirports.isEmpty) {
-        return 'Kies eerst een luchthaven.';
+        return _t(
+          nl: 'Kies eerst een luchthaven.',
+          en: 'Select an airport first.',
+          fr: "Choisissez d'abord un aéroport.",
+          es: 'Primero selecciona un aeropuerto.',
+        );
       }
       if (_passengers < 1) {
-        return 'Kies minstens 1 passagier.';
+        return _t(
+          nl: 'Kies minstens 1 passagier.',
+          en: 'Select at least 1 passenger.',
+          fr: 'Sélectionnez au moins 1 passager.',
+          es: 'Selecciona al menos 1 pasajero.',
+        );
       }
       if (_meetAndGreet && _nameBoardController.text.trim().isEmpty) {
-        return 'Vul de naam voor het bordje in.';
+        return _t(
+          nl: 'Vul de naam voor het bordje in.',
+          en: 'Enter the name for the sign.',
+          fr: 'Saisissez le nom pour la pancarte.',
+          es: 'Introduce el nombre para el cartel.',
+        );
       }
     }
     return null;
@@ -2015,7 +2473,12 @@ class _AirportPageState extends State<AirportPage> {
     final errorMessage = _validatePrepareRideDetailsMessage();
     final snackBarMessage =
         errorMessage ??
-        'Ritgegevens voorbereid. Prijsberekening wordt in de volgende stap gekoppeld.';
+        _t(
+          nl: 'Ritgegevens voorbereid. Prijsberekening wordt in de volgende stap gekoppeld.',
+          en: 'Ride details prepared. Price calculation is connected in the next step.',
+          fr: 'Détails du trajet préparés. Le calcul du prix est relié à l’étape suivante.',
+          es: 'Detalles del viaje preparados. El cálculo del precio se conectará en el siguiente paso.',
+        );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(snackBarMessage)));
@@ -2149,8 +2612,15 @@ class _AirportPageState extends State<AirportPage> {
     final payload = _buildAirportQuotePayload();
     if (payload == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Prijsberekening kon niet worden opgehaald.'),
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Prijsberekening kon niet worden opgehaald.',
+              en: 'Price calculation could not be retrieved.',
+              fr: "Le calcul du prix n'a pas pu être récupéré.",
+              es: 'No se pudo obtener el cálculo del precio.',
+            ),
+          ),
         ),
       );
       return null;
@@ -2183,20 +2653,32 @@ class _AirportPageState extends State<AirportPage> {
         });
         if (showSuccessSnackbar) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Prijsberekening opgehaald.')),
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Prijsberekening opgehaald.',
+                  en: 'Price calculation retrieved.',
+                  fr: 'Calcul du prix récupéré.',
+                  es: 'Cálculo del precio obtenido.',
+                ),
+              ),
+            ),
           );
         }
         return data;
       }
       setState(() {
         _airportQuote = null;
-        _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
+        _airportQuoteError = _t(
+          nl: 'Prijsberekening kon niet worden opgehaald.',
+          en: 'Price calculation could not be retrieved.',
+          fr: "Le calcul du prix n'a pas pu être récupéré.",
+          es: 'No se pudo obtener el cálculo del precio.',
+        );
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Prijsberekening kon niet worden opgehaald.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportQuoteError!)));
       return null;
     } catch (_) {
       if (!mounted) {
@@ -2204,13 +2686,16 @@ class _AirportPageState extends State<AirportPage> {
       }
       setState(() {
         _airportQuote = null;
-        _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
+        _airportQuoteError = _t(
+          nl: 'Prijsberekening kon niet worden opgehaald.',
+          en: 'Price calculation could not be retrieved.',
+          fr: "Le calcul du prix n'a pas pu être récupéré.",
+          es: 'No se pudo obtener el cálculo del precio.',
+        );
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Prijsberekening kon niet worden opgehaald.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportQuoteError!)));
       return null;
     } finally {
       if (mounted) {
@@ -2225,8 +2710,15 @@ class _AirportPageState extends State<AirportPage> {
     final payload = _buildAirportQuotePayload();
     if (payload == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ritgegevens zijn nog niet volledig ingevuld.'),
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Ritgegevens zijn nog niet volledig ingevuld.',
+              en: 'Ride details are not complete yet.',
+              fr: 'Les détails du trajet ne sont pas encore complets.',
+              es: 'Los datos del viaje aún no están completos.',
+            ),
+          ),
         ),
       );
       return;
@@ -2290,9 +2782,14 @@ class _AirportPageState extends State<AirportPage> {
             children: [
               Icon(Icons.calculate_rounded, color: _gold, size: 17),
               const SizedBox(width: 7),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Prijsindicatie',
+                  _t(
+                    nl: 'Prijsindicatie',
+                    en: 'Price indication',
+                    fr: 'Indication de prix',
+                    es: 'Indicación de precio',
+                  ),
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 13.2,
@@ -2309,7 +2806,12 @@ class _AirportPageState extends State<AirportPage> {
             Row(
               children: [
                 Text(
-                  'Geschatte prijs',
+                  _t(
+                    nl: 'Geschatte prijs',
+                    en: 'Estimated price',
+                    fr: 'Prix estimé',
+                    es: 'Precio estimado',
+                  ),
                   style: TextStyle(
                     color: _soft.withOpacity(0.95),
                     fontSize: 11.8,
@@ -2335,8 +2837,8 @@ class _AirportPageState extends State<AirportPage> {
                 Expanded(
                   child: Text(
                     distance != null
-                        ? 'Afstand: ${distance.toStringAsFixed(1)} km'
-                        : 'Afstand: —',
+                        ? '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: ${distance.toStringAsFixed(1)} km'
+                        : '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: —',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.84),
                       fontSize: 11.6,
@@ -2346,8 +2848,8 @@ class _AirportPageState extends State<AirportPage> {
                 Expanded(
                   child: Text(
                     duration != null
-                        ? 'Duur: ${duration.toStringAsFixed(0)} min'
-                        : 'Duur: —',
+                        ? '${_t(nl: "Duur", en: "Duration", fr: "Durée", es: "Duración")}: ${duration.toStringAsFixed(0)} min'
+                        : '${_t(nl: "Duur", en: "Duration", fr: "Durée", es: "Duración")}: —',
                     textAlign: TextAlign.right,
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.84),

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
+import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:http/http.dart' as http;
 
 class AirportBookingReviewPage extends StatefulWidget {
@@ -34,12 +36,48 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _companyNameController = TextEditingController();
+  final TextEditingController _vatNumberController = TextEditingController();
 
   bool _isSubmitting = false;
   bool _isSubmitted = false;
   bool _isReturningToCustomerPage = false;
   String? _submitError;
   String? _submittedBookingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _vatNumberController.addListener(_onVatNumberChanged);
+    unawaited(_prefillFromCustomerProfile());
+  }
+
+  void _onVatNumberChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _prefillFromCustomerProfile() async {
+    try {
+      final profile = await CustomerProfileStore.instance.load();
+      if (!mounted || profile == null) return;
+
+      void setIfBlank(TextEditingController controller, String value) {
+        if (controller.text.trim().isNotEmpty) return;
+        final incoming = value.trim();
+        if (incoming.isEmpty) return;
+        controller.text = incoming;
+      }
+
+      setIfBlank(_nameController, profile.name);
+      setIfBlank(_phoneController, profile.phone);
+      setIfBlank(_emailController, profile.email);
+      setIfBlank(_companyNameController, profile.companyName);
+      setIfBlank(_vatNumberController, profile.vatNumber);
+    } catch (_) {
+      // Best-effort prefill only; never block airport booking flow.
+    }
+  }
 
   String get _lang {
     final raw = widget.languageCode.trim().toLowerCase();
@@ -51,9 +89,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   @override
   void dispose() {
+    _vatNumberController.removeListener(_onVatNumberChanged);
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
+    _companyNameController.dispose();
+    _vatNumberController.dispose();
     super.dispose();
   }
 
@@ -99,6 +140,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     required String name,
     required String phone,
     required String email,
+    String companyName = '',
+    String vatNumber = '',
   }) {
     final base = Map<String, dynamic>.from(widget.payload);
     final tenantId = (base['tenant_id'] ?? base['tenantId'] ?? '').toString();
@@ -129,10 +172,32 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         'name': name,
         'phone': phone,
         'email': email,
+        if (companyName.isNotEmpty) ...{
+          'company_name': companyName,
+          'companyName': companyName,
+        },
+        if (vatNumber.isNotEmpty) ...{
+          'vat_number': vatNumber,
+          'vatNumber': vatNumber,
+        },
       },
       'customer_name': name,
       'customer_phone': phone,
       'customer_email': email,
+      if (companyName.isNotEmpty) ...{
+        'customer_company_name': companyName,
+        'customerCompanyName': companyName,
+        'billing_company_name': companyName,
+        'company_name': companyName,
+        'companyName': companyName,
+      },
+      if (vatNumber.isNotEmpty) ...{
+        'customer_vat_number': vatNumber,
+        'customerVatNumber': vatNumber,
+        'billing_vat_number': vatNumber,
+        'vat_number': vatNumber,
+        'vatNumber': vatNumber,
+      },
       'quote': widget.quote,
       'airport_transfer': airportTransfer,
     };
@@ -235,22 +300,30 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     final email = _emailController.text.trim();
+    final companyName = _companyNameController.text.trim();
+    final vatNumber = _vatNumberController.text.trim();
     if (name.isEmpty ||
         phone.isEmpty ||
         email.isEmpty ||
         !_isValidEmail(email)) {
       setState(() {
         _submitError = _t(
-          nl: 'Vul naam, telefoon en geldig e-mailadres in.',
-          en: 'Please enter name, phone and a valid email address.',
-          fr: 'Veuillez saisir le nom, le téléphone et une adresse e-mail valide.',
-          es: 'Introduce nombre, teléfono y un correo electrónico válido.',
+          nl: 'Vul naam, telefoon en e-mail in.',
+          en: 'Enter name, phone and email.',
+          fr: "Saisissez le nom, le téléphone et l'e-mail.",
+          es: 'Introduce nombre, teléfono y e-mail.',
         );
       });
       return;
     }
 
-    final payload = _buildBookPayload(name: name, phone: phone, email: email);
+    final payload = _buildBookPayload(
+      name: name,
+      phone: phone,
+      email: email,
+      companyName: companyName,
+      vatNumber: vatNumber,
+    );
     setState(() {
       _isSubmitting = true;
       _submitError = null;
@@ -279,10 +352,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       if (!ok) {
         setState(() {
           _submitError = _t(
-            nl: 'Luchthavenrit kon niet worden aangevraagd. Probeer opnieuw.',
-            en: 'Airport ride request failed. Please try again.',
-            fr: 'La demande de trajet aéroport a échoué. Réessayez.',
-            es: 'No se pudo solicitar el traslado al aeropuerto. Inténtalo de nuevo.',
+            nl: 'Boeking kon niet worden aangemaakt.',
+            en: 'Booking could not be created.',
+            fr: "La réservation n'a pas pu être créée.",
+            es: 'No se pudo crear la reserva.',
           );
         });
         return;
@@ -333,10 +406,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       if (!mounted) return;
       setState(() {
         _submitError = _t(
-          nl: 'Luchthavenrit kon niet worden aangevraagd. Controleer de verbinding.',
-          en: 'Airport ride request failed. Check your connection.',
-          fr: 'La demande de trajet aéroport a échoué. Vérifiez la connexion.',
-          es: 'No se pudo solicitar el traslado al aeropuerto. Verifica la conexión.',
+          nl: 'Er ging iets mis bij het aanvragen.',
+          en: 'Something went wrong while submitting.',
+          fr: "Une erreur est survenue lors de l'envoi.",
+          es: 'Se produjo un error al enviar la solicitud.',
         );
       });
     } finally {
@@ -404,15 +477,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final directionLabel = directionRaw == 'from_airport'
         ? _t(
             nl: 'Van de luchthaven',
-            en: 'From airport',
-            fr: 'Depuis l’aéroport',
+            en: 'From the airport',
+            fr: "Depuis l'aéroport",
             es: 'Desde el aeropuerto',
           )
         : _t(
             nl: 'Naar de luchthaven',
-            en: 'To airport',
-            fr: 'Vers l’aéroport',
-            es: 'Hacia el aeropuerto',
+            en: 'To the airport',
+            fr: "Vers l'aéroport",
+            es: 'Al aeropuerto',
           );
     final flightNumber = _fallback(payload['flight_number'], empty: '');
     final nameBoard = _fallback(payload['name_board'], empty: '');
@@ -425,10 +498,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         foregroundColor: _gold,
         title: Text(
           _t(
-            nl: 'Luchthavenrit controleren',
-            en: 'Review airport ride',
-            fr: 'Vérifier le trajet aéroport',
-            es: 'Revisar traslado aeropuerto',
+            nl: 'Luchthavenrit controle',
+            en: 'Airport ride review',
+            fr: 'Vérification du transfert aéroport',
+            es: 'Revisión del traslado al aeropuerto',
           ),
           style: const TextStyle(
             color: Colors.white,
@@ -452,9 +525,9 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                 Text(
                   _t(
                     nl: 'Ritoverzicht',
-                    en: 'Ride summary',
-                    fr: 'Résumé de course',
-                    es: 'Resumen del trayecto',
+                    en: 'Ride overview',
+                    fr: 'Aperçu du trajet',
+                    es: 'Resumen del viaje',
                   ),
                   style: const TextStyle(
                     color: _gold,
@@ -476,13 +549,19 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   _t(
                     nl: 'Richting',
                     en: 'Direction',
-                    fr: 'Sens',
+                    fr: 'Direction',
                     es: 'Dirección',
                   ),
                   directionLabel,
                 ),
-                _summaryRow('From', _fallback(payload['from'])),
-                _summaryRow('To', _fallback(payload['to'])),
+                _summaryRow(
+                  _t(nl: 'Van', en: 'From', fr: 'De', es: 'Desde'),
+                  _fallback(payload['from']),
+                ),
+                _summaryRow(
+                  _t(nl: 'Naar', en: 'To', fr: 'Vers', es: 'Hasta'),
+                  _fallback(payload['to']),
+                ),
                 _summaryRow(
                   _t(
                     nl: 'Datum en tijd',
@@ -502,7 +581,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   _fallback(payload['pax']),
                 ),
                 _summaryRow(
-                  _t(nl: 'Bagage', en: 'Bags', fr: 'Bagages', es: 'Equipaje'),
+                  _t(
+                    nl: 'Bagage',
+                    en: 'Luggage',
+                    fr: 'Bagages',
+                    es: 'Equipaje',
+                  ),
                   _fallback(payload['bags']),
                 ),
                 _summaryRow(
@@ -539,7 +623,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                 if (payload['meet_and_greet'] == true)
                   _summaryRow(
-                    'Meet & greet',
+                    _t(
+                      nl: 'Meet & greet',
+                      en: 'Meet & greet',
+                      fr: 'Accueil personnalisé',
+                      es: 'Recepción personalizada',
+                    ),
                     _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Sí'),
                   ),
                 if (nameBoard.isNotEmpty)
@@ -614,6 +703,61 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   icon: Icons.alternate_email_rounded,
                   keyboardType: TextInputType.emailAddress,
                 ),
+                const SizedBox(height: 12),
+                Text(
+                  _t(
+                    nl: 'Facturatie optioneel',
+                    en: 'Billing optional',
+                    fr: 'Facturation optionnelle',
+                    es: 'Facturación opcional',
+                  ),
+                  style: TextStyle(
+                    color: _soft.withOpacity(0.95),
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _inputField(
+                  controller: _companyNameController,
+                  label: _t(
+                    nl: 'Bedrijfsnaam',
+                    en: 'Company name',
+                    fr: "Nom de l'entreprise",
+                    es: 'Nombre de la empresa',
+                  ),
+                  icon: Icons.business_outlined,
+                ),
+                const SizedBox(height: 8),
+                _inputField(
+                  controller: _vatNumberController,
+                  label: _t(
+                    nl: 'BTW-nummer',
+                    en: 'VAT number',
+                    fr: 'Numéro de TVA',
+                    es: 'Número de IVA',
+                  ),
+                  icon: Icons.receipt_long_outlined,
+                  suffixIcon: _vatNumberController.text.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: _t(
+                            nl: 'Wissen',
+                            en: 'Clear',
+                            fr: 'Effacer',
+                            es: 'Borrar',
+                          ),
+                          onPressed: () {
+                            _vatNumberController.clear();
+                            if (mounted) setState(() {});
+                          },
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            color: _gold,
+                            size: 18,
+                          ),
+                        ),
+                ),
                 if (_submitError != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -675,14 +819,14 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ? _t(
                       nl: 'Aanvragen...',
                       en: 'Requesting...',
-                      fr: 'Demande...',
-                      es: 'Solicitando...',
+                      fr: 'Envoi...',
+                      es: 'Enviando...',
                     )
                   : _t(
                       nl: 'Luchthavenrit aanvragen',
                       en: 'Request airport ride',
-                      fr: 'Demander un trajet aéroport',
-                      es: 'Solicitar traslado aeropuerto',
+                      fr: 'Demander le transfert aéroport',
+                      es: 'Solicitar traslado al aeropuerto',
                     ),
             ),
           ),
@@ -714,6 +858,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     required String label,
     required IconData icon,
     TextInputType keyboardType = TextInputType.text,
+    Widget? suffixIcon,
   }) {
     return TextField(
       controller: controller,
@@ -723,6 +868,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         labelText: label,
         labelStyle: TextStyle(color: _soft, fontSize: 12.2),
         prefixIcon: Icon(icon, color: _gold, size: 18),
+        suffixIcon: suffixIcon,
         filled: true,
         fillColor: const Color(0xFF181818),
         isDense: true,
