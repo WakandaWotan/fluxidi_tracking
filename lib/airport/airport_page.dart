@@ -427,6 +427,7 @@ class _AirportPageState extends State<AirportPage> {
       (airport) => airport.countryCode == countryCode,
       orElse: () => _airports.first,
     );
+    _clearAirportQuote();
     setState(() {
       _selectedCountryCode = countryCode;
       _selectedAirportId = firstAirport.id;
@@ -434,6 +435,7 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   void _setAirport(String airportId) {
+    _clearAirportQuote();
     setState(() {
       _selectedAirportId = airportId;
     });
@@ -792,6 +794,7 @@ class _AirportPageState extends State<AirportPage> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
+            _clearAirportQuote();
             setState(() {
               _selectedMode = mode;
             });
@@ -996,7 +999,10 @@ class _AirportPageState extends State<AirportPage> {
               min: 1,
               max: 8,
               icon: Icons.groups_2_outlined,
-              onChanged: (value) => setState(() => _passengers = value),
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _passengers = value);
+              },
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
@@ -1005,7 +1011,10 @@ class _AirportPageState extends State<AirportPage> {
               min: 0,
               max: 12,
               icon: Icons.luggage_outlined,
-              onChanged: (value) => setState(() => _bags = value),
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _bags = value);
+              },
             ),
             const SizedBox(height: 10),
             _buildTextField(
@@ -1100,7 +1109,10 @@ class _AirportPageState extends State<AirportPage> {
               min: 1,
               max: 8,
               icon: Icons.groups_2_outlined,
-              onChanged: (value) => setState(() => _passengers = value),
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _passengers = value);
+              },
             ),
             const SizedBox(height: 10),
             _buildStepperRow(
@@ -1109,7 +1121,10 @@ class _AirportPageState extends State<AirportPage> {
               min: 0,
               max: 12,
               icon: Icons.luggage_outlined,
-              onChanged: (value) => setState(() => _bags = value),
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _bags = value);
+              },
             ),
             const SizedBox(height: 10),
             Text(
@@ -1364,6 +1379,7 @@ class _AirportPageState extends State<AirportPage> {
             inactiveThumbColor: _soft,
             inactiveTrackColor: const Color(0xFF2E2E2E),
             onChanged: (value) {
+              _clearAirportQuote();
               setState(() {
                 _meetAndGreet = value;
                 if (!value) {
@@ -1585,10 +1601,24 @@ class _AirportPageState extends State<AirportPage> {
     }
   }
 
+  void _clearAirportQuote() {
+    if (!mounted) {
+      return;
+    }
+    if (_airportQuote == null && _airportQuoteError == null) {
+      return;
+    }
+    setState(() {
+      _airportQuote = null;
+      _airportQuoteError = null;
+    });
+  }
+
   void _handleSummaryInputChanged() {
     if (!mounted) {
       return;
     }
+    _clearAirportQuote();
     setState(() {});
   }
 
