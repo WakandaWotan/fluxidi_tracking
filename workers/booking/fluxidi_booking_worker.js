@@ -1379,6 +1379,13 @@ function buildScopedSettingsKeys(scope) {
   };
 }
 
+function buildScopedAirportFixedFaresKey(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return "";
+  return `tenant:${tenantId}:company:${companyId}:airport_fixed_fares:v1`;
+}
+
 function communicationTemplatesScopedKeyForScope(scope) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
@@ -3384,23 +3391,51 @@ GET /oauth/callback
         const duration_route_min = Math.round(route.duration / 60);
 
         const mainWhen = normalizeWhen(body.date, body.time);
+        const quoteReturnRequested = _fixedFareReturnRequested(body);
+        const quoteExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(body, quoteScope);
+        const quoteFixedFareEligible =
+          _isAirportFixedFareEligiblePayload(body) &&
+          quoteExplicitScopeAllowed &&
+          quoteReturnRequested !== true;
+        let fixedFareQuoteResult = {
+          matched: false,
+          pricing_source: "route_calc",
+          fixed_fare_applied: false,
+          fixed_fare_rule_id: null,
+          pricing: null,
+        };
+        if (quoteFixedFareEligible) {
+          fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
+            pricingProfile,
+            fallbackVatRate: vat_rate,
+            returnRequested: quoteReturnRequested,
+          });
+        }
+        const quoteUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
+        const quotePricingSource = quoteUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+        const quoteFixedFareApplied = quoteUsesFixedFare;
+        const quoteFixedFareRuleId = quoteUsesFixedFare
+          ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
+          : null;
 
         // Pricing: server truth
-        const mainPricing = calcPrice({
-          distance_km,
-          duration_min: duration_route_min,
-          tier,
-          service,
-          when: mainWhen,
-          time_str: body.time,
-          pax,
-          bags,
-          vat_rate,
-          stop_count,
-          wait_min,
-          pricing_profile: pricingProfile,
-          apply_return_fee: false,
-        });
+        const mainPricing = quoteUsesFixedFare
+          ? fixedFareQuoteResult.pricing
+          : calcPrice({
+            distance_km,
+            duration_min: duration_route_min,
+            tier,
+            service,
+            when: mainWhen,
+            time_str: body.time,
+            pax,
+            bags,
+            vat_rate,
+            stop_count,
+            wait_min,
+            pricing_profile: pricingProfile,
+            apply_return_fee: false,
+          });
 
         // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
         let returnQuote = null;
@@ -3483,6 +3518,9 @@ GET /oauth/callback
           price_incl_vat: mainPricing.price_incl_vat,
           note: mainPricing.note,
           pricing_profile: pricingProfile,
+          pricing_source: quotePricingSource,
+          fixed_fare_applied: quoteFixedFareApplied,
+          fixed_fare_rule_id: quoteFixedFareRuleId,
 
           // totals (main + optional return)
           total_price_ex_vat: round2((mainPricing.price_ex_vat || 0) + (returnQuote ? (returnQuote.price_ex_vat || 0) : 0)),
@@ -6895,6 +6933,32 @@ async function handleBooking(payload, env, request) {
     const return_time = safeStr(payload?.return_time || payload?.returnTime);
     const hasReturnSchedule = !!(ret.enabled && return_date && return_time);
     const return_pickup_iso = hasReturnSchedule ? brusselsIsoFromDateTime(return_date, return_time) : null;
+    const bookingReturnRequested = ret.enabled || hasReturnSchedule;
+    const bookingExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(payload, tenantContext);
+    const bookingFixedFareEligible =
+      _isAirportFixedFareEligiblePayload(payload) &&
+      bookingExplicitScopeAllowed &&
+      bookingReturnRequested !== true;
+    let fixedFareBookingResult = {
+      matched: false,
+      pricing_source: "route_calc",
+      fixed_fare_applied: false,
+      fixed_fare_rule_id: null,
+      pricing: null,
+    };
+    if (bookingFixedFareEligible) {
+      fixedFareBookingResult = await resolveAirportFixedFare(env, tenantContext, payload, {
+        pricingProfile,
+        fallbackVatRate: vat_rate,
+        returnRequested: bookingReturnRequested,
+      });
+    }
+    const bookingUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
+    const bookingPricingSource = bookingUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+    const bookingFixedFareApplied = bookingUsesFixedFare;
+    const bookingFixedFareRuleId = bookingUsesFixedFare
+      ? (fixedFareBookingResult.fixed_fare_rule_id || null)
+      : null;
 
     let return_from = "";
     let return_to = "";
@@ -6935,21 +6999,23 @@ async function handleBooking(payload, env, request) {
     }
 
     const when = normalizeWhen(date, time);
-    const mainPricing = calcPrice({
-      distance_km,
-      duration_min: duration_route_min,
-      tier,
-      service,
-      when,
-      time_str: time,
-      pax,
-      bags,
-      vat_rate,
-      stop_count,
-      wait_min,
-      pricing_profile: pricingProfile,
-      apply_return_fee: false,
-    });
+    const mainPricing = bookingUsesFixedFare
+      ? fixedFareBookingResult.pricing
+      : calcPrice({
+        distance_km,
+        duration_min: duration_route_min,
+        tier,
+        service,
+        when,
+        time_str: time,
+        pax,
+        bags,
+        vat_rate,
+        stop_count,
+        wait_min,
+        pricing_profile: pricingProfile,
+        apply_return_fee: false,
+      });
 
     // Total pricing = main + (optional) return
     const totalPricing = (() => {
@@ -7500,6 +7566,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       price_ex_vat: totalPricing?.price_ex_vat,
       price_vat: totalPricing?.price_vat,
       price_incl_vat: totalPricing?.price_incl_vat,
+      pricing_source: bookingPricingSource,
+      fixed_fare_applied: bookingFixedFareApplied,
+      fixed_fare_rule_id: bookingFixedFareRuleId,
 
       // parts (handig voor UI/agenda)
       price_ex_vat_main: mainPricing?.price_ex_vat,
@@ -7608,6 +7677,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         wait_min: booking.wait_min,
         stops: Array.isArray(booking.stops) ? booking.stops : [],
         duration_route_min: booking.duration_route_min,
+        pricing_source: booking.pricing_source || "route_calc",
+        fixed_fare_applied: booking.fixed_fare_applied === true,
+        fixed_fare_rule_id: booking.fixed_fare_rule_id || null,
         return_enabled: !!booking.return_enabled,
         returnPickupIso: booking.returnPickupIso || null,
         return_duration_min: Number(
@@ -7644,10 +7716,18 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         stops,
         distance_km,
         duration_min: duration_route_min,
-        pricing: totalPricing,
+        pricing: {
+          ...totalPricing,
+          pricing_source: bookingPricingSource,
+          fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_rule_id: bookingFixedFareRuleId,
+        },
         pricing_main: mainPricing,
         pricing_return: returnPricing,
         pricing_profile: pricingProfile,
+        pricing_source: bookingPricingSource,
+        fixed_fare_applied: bookingFixedFareApplied,
+        fixed_fare_rule_id: bookingFixedFareRuleId,
         return: ret.enabled ? {
           enabled: true,
           from: return_from,
@@ -8687,6 +8767,429 @@ async function _saveTenantPricingProfile(
     pricing_profile: normalized,
   }));
   return normalized;
+}
+
+function _fixedFareNormalizeUpperToken(value, maxLen = 24) {
+  const text = sanitizeTenantString(value, maxLen).toUpperCase();
+  if (!text) return "";
+  const compact = text.replace(/[^A-Z0-9]/g, "");
+  return compact || "";
+}
+
+function _fixedFareNormalizeText(value, maxLen = 120) {
+  const text = sanitizeTenantString(value, maxLen).trim();
+  if (!text) return "";
+  return text.replace(/\s+/g, " ");
+}
+
+function _fixedFareNormalizeZoneValue(zoneType, value) {
+  const raw = _fixedFareNormalizeText(value, 120);
+  if (!raw) return "";
+  if (zoneType === "postcode") {
+    return raw.toUpperCase().replace(/\s+/g, "");
+  }
+  if (zoneType === "country") {
+    return raw.toUpperCase();
+  }
+  if (zoneType === "city") {
+    return raw.toLowerCase();
+  }
+  return raw;
+}
+
+function _fixedFareIntOr(rawValue, fallback, min = 0, max = 9999) {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return fallback;
+  const asInt = Math.trunc(n);
+  return Math.max(min, Math.min(max, asInt));
+}
+
+function _fixedFareNumOr(rawValue, fallback, min = 0, max = Number.POSITIVE_INFINITY) {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function _fixedFareReturnRequested(payload = {}) {
+  const boolRaw = payload?.return_enabled ?? payload?.returnEnabled ?? payload?.return;
+  const boolText = String(boolRaw ?? "").trim().toLowerCase();
+  const enabled =
+    boolRaw === true ||
+    boolText === "1" ||
+    boolText === "true" ||
+    boolText === "yes" ||
+    boolText === "ja" ||
+    boolText === "on";
+  return (
+    enabled ||
+    !!safeStr(payload?.return_date ?? payload?.returnDate, 32) ||
+    !!safeStr(payload?.return_time ?? payload?.returnTime, 32) ||
+    !!safeStr(payload?.return_pickup_iso ?? payload?.returnPickupIso, 64)
+  );
+}
+
+function _normalizeAirportFixedFareRule(raw, idx = 0) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const enabled = raw.enabled !== false;
+  const rule_id =
+    _fixedFareNormalizeText(raw.rule_id ?? raw.ruleId, 96) ||
+    `rule_${idx + 1}`;
+  const priority = _fixedFareIntOr(raw.priority, 0, 0, 1_000_000);
+  const airport_iata = _fixedFareNormalizeUpperToken(raw.airport_iata ?? raw.airportIata, 8);
+  if (!airport_iata || airport_iata.length < 3 || airport_iata.length > 8) return null;
+
+  const directionRaw = _fixedFareNormalizeText(raw.direction, 24).toLowerCase();
+  const direction =
+    directionRaw === "to_airport" || directionRaw === "from_airport" || directionRaw === "both"
+      ? directionRaw
+      : "";
+  if (!direction) return null;
+
+  const tier = normalizeTier(raw.tier ?? "comfort");
+  const pax_min = _fixedFareIntOr(raw.pax_min ?? raw.paxMin, 1, 1, 99);
+  const pax_max = _fixedFareIntOr(raw.pax_max ?? raw.paxMax, pax_min, pax_min, 99);
+  const bags_max = _fixedFareIntOr(raw.bags_max ?? raw.bagsMax, 99, 0, 99);
+  const zoneTypeRaw = _fixedFareNormalizeText(raw.zone_type ?? raw.zoneType ?? "none", 24).toLowerCase();
+  const zone_type =
+    zoneTypeRaw === "postcode" || zoneTypeRaw === "city" || zoneTypeRaw === "country" || zoneTypeRaw === "none"
+      ? zoneTypeRaw
+      : "none";
+  const zone_value = _fixedFareNormalizeZoneValue(zone_type, raw.zone_value ?? raw.zoneValue ?? "");
+  if (zone_type !== "none" && !zone_value) return null;
+
+  const price_incl_vat = _fixedFareNumOr(raw.price_incl_vat ?? raw.priceInclVat, Number.NaN, 0.01, 1_000_000);
+  if (!Number.isFinite(price_incl_vat) || price_incl_vat <= 0) return null;
+  const currency = _fixedFareNormalizeUpperToken(raw.currency ?? "EUR", 8) || "EUR";
+  if (currency !== "EUR") return null;
+
+  const active_from = _fixedFareNormalizeText(raw.active_from ?? raw.activeFrom ?? "", 64) || null;
+  const active_until = _fixedFareNormalizeText(raw.active_until ?? raw.activeUntil ?? "", 64) || null;
+  const active_from_ms = active_from ? Date.parse(active_from) : null;
+  const active_until_ms = active_until ? Date.parse(active_until) : null;
+  if (active_from && !Number.isFinite(active_from_ms)) return null;
+  if (active_until && !Number.isFinite(active_until_ms)) return null;
+
+  return {
+    rule_id,
+    enabled,
+    priority,
+    airport_iata,
+    direction,
+    tier,
+    pax_min,
+    pax_max,
+    bags_max,
+    zone_type,
+    zone_value,
+    price_incl_vat,
+    currency,
+    active_from,
+    active_until,
+    active_from_ms: Number.isFinite(active_from_ms) ? active_from_ms : null,
+    active_until_ms: Number.isFinite(active_until_ms) ? active_until_ms : null,
+  };
+}
+
+function _normalizeAirportFixedFaresDocument(raw) {
+  const source =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw.airport_fixed_fares && typeof raw.airport_fixed_fares === "object"
+        ? raw.airport_fixed_fares
+        : raw
+      : {};
+  const version = _fixedFareIntOr(source.version, 1, 1, 10_000);
+  const updated_at =
+    _fixedFareNormalizeText(source.updated_at ?? source.updatedAt ?? "", 80) ||
+    new Date().toISOString();
+  const rulesInput = Array.isArray(source.rules) ? source.rules : [];
+  const rules = [];
+  for (let i = 0; i < rulesInput.length; i++) {
+    const normalized = _normalizeAirportFixedFareRule(rulesInput[i], i);
+    if (!normalized) continue;
+    rules.push(normalized);
+  }
+  return { version, updated_at, rules };
+}
+
+async function _loadScopedAirportFixedFares(env, scope) {
+  const key = buildScopedAirportFixedFaresKey(scope);
+  if (!key) {
+    return { key: "", document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "missing_scope" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "missing_booking_kv" };
+  }
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!raw || typeof raw !== "object") {
+      return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "not_found" };
+    }
+    return { key, document: _normalizeAirportFixedFaresDocument(raw), load_error: null };
+  } catch (_) {
+    return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "kv_read_failed" };
+  }
+}
+
+function _isAirportFixedFareEligiblePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const transfer =
+    payload.airport_transfer && typeof payload.airport_transfer === "object"
+      ? payload.airport_transfer
+      : {};
+  const direction = _fixedFareNormalizeText(
+    payload.airport_direction ?? payload.airportDirection ?? transfer.airport_direction ?? transfer.airportDirection,
+    24,
+  ).toLowerCase();
+  const airportIata = _fixedFareNormalizeUpperToken(
+    payload.airport_iata ?? payload.airportIata ?? transfer.airport_iata ?? transfer.airportIata,
+    8,
+  );
+  const airportId = _fixedFareNormalizeText(
+    payload.airport_id ?? payload.airportId ?? transfer.airport_id ?? transfer.airportId,
+    64,
+  );
+  const service = normalizeService(payload.service ?? "");
+  const bookingType = _fixedFareNormalizeText(payload.booking_type ?? payload.bookingType, 64).toLowerCase();
+  const bookingSource = _fixedFareNormalizeText(payload.booking_source ?? payload.bookingSource, 64).toLowerCase();
+  const hasAirportMeta = !!direction && (airportIata.length >= 3 || !!airportId);
+  const hasAirportIntent =
+    service === "airport" ||
+    bookingType === "airport_transfer" ||
+    bookingSource === "airport_module";
+  return hasAirportMeta && hasAirportIntent;
+}
+
+function _hasExplicitAirportFixedFareScope(payload, resolvedScope = null) {
+  if (!payload || typeof payload !== "object") return false;
+  const payloadTenant = sanitizeTenantString(payload?.tenant_id ?? payload?.tenantId, 80);
+  const payloadCompany = sanitizeTenantString(payload?.company_id ?? payload?.companyId, 80);
+  if (!payloadTenant || !payloadCompany) return false;
+
+  const resolvedTenant = sanitizeTenantString(
+    resolvedScope?.tenant_id ?? resolvedScope?.tenantId,
+    80,
+  );
+  const resolvedCompany = sanitizeTenantString(
+    resolvedScope?.company_id ?? resolvedScope?.companyId,
+    80,
+  );
+  if (resolvedTenant && payloadTenant !== resolvedTenant) return false;
+  if (resolvedCompany && payloadCompany !== resolvedCompany) return false;
+  return true;
+}
+
+function _matchAirportFixedFareRule(rule, normalizedCtx) {
+  if (!rule || !normalizedCtx) return { matched: false, reason: "invalid_input" };
+  if (rule.enabled !== true) return { matched: false, reason: "disabled" };
+  if (rule.airport_iata !== normalizedCtx.airport_iata) return { matched: false, reason: "airport_iata_mismatch" };
+  if (!(rule.direction === "both" || rule.direction === normalizedCtx.direction)) {
+    return { matched: false, reason: "direction_mismatch" };
+  }
+  if (rule.tier !== normalizedCtx.tier) return { matched: false, reason: "tier_mismatch" };
+  if (normalizedCtx.pax < rule.pax_min || normalizedCtx.pax > rule.pax_max) {
+    return { matched: false, reason: "pax_mismatch" };
+  }
+  if (normalizedCtx.bags > rule.bags_max) return { matched: false, reason: "bags_mismatch" };
+
+  const nowMs = normalizedCtx.now_ms;
+  if (Number.isFinite(rule.active_from_ms) && Number.isFinite(nowMs) && nowMs < rule.active_from_ms) {
+    return { matched: false, reason: "inactive_not_started" };
+  }
+  if (Number.isFinite(rule.active_until_ms) && Number.isFinite(nowMs) && nowMs > rule.active_until_ms) {
+    return { matched: false, reason: "inactive_expired" };
+  }
+
+  if (rule.zone_type !== "none") {
+    const bucket = normalizedCtx.zone_values?.[rule.zone_type];
+    if (!(bucket instanceof Set) || bucket.size === 0) {
+      return { matched: false, reason: "zone_context_missing" };
+    }
+    if (!bucket.has(rule.zone_value)) {
+      return { matched: false, reason: "zone_mismatch" };
+    }
+  }
+
+  return { matched: true, reason: "match" };
+}
+
+function _selectBestAirportFixedFareRule(matches) {
+  if (!Array.isArray(matches) || matches.length === 0) return null;
+  const zoneRank = { none: 0, country: 1, city: 2, postcode: 3 };
+  const sorted = [...matches].sort((a, b) => {
+    const pa = _fixedFareIntOr(a?.rule?.priority, 0, 0, 1_000_000);
+    const pb = _fixedFareIntOr(b?.rule?.priority, 0, 0, 1_000_000);
+    if (pb !== pa) return pb - pa;
+
+    const za = zoneRank[a?.rule?.zone_type] ?? 0;
+    const zb = zoneRank[b?.rule?.zone_type] ?? 0;
+    if (zb !== za) return zb - za;
+
+    const bandA = Math.max(0, _fixedFareIntOr(a?.rule?.pax_max, 99) - _fixedFareIntOr(a?.rule?.pax_min, 1));
+    const bandB = Math.max(0, _fixedFareIntOr(b?.rule?.pax_max, 99) - _fixedFareIntOr(b?.rule?.pax_min, 1));
+    if (bandA !== bandB) return bandA - bandB;
+
+    const bagsA = _fixedFareIntOr(a?.rule?.bags_max, 99);
+    const bagsB = _fixedFareIntOr(b?.rule?.bags_max, 99);
+    if (bagsA !== bagsB) return bagsA - bagsB;
+
+    const idA = _fixedFareNormalizeText(a?.rule?.rule_id, 120);
+    const idB = _fixedFareNormalizeText(b?.rule?.rule_id, 120);
+    return idA.localeCompare(idB);
+  });
+  return sorted[0] || null;
+}
+
+function _splitInclVatFromPricingProfile(priceIncl, pricingProfile, fallbackVatRate = 0.06) {
+  const profile = _normalizeTenantPricingProfile(pricingProfile);
+  const inclNum = Number(priceIncl);
+  if (!Number.isFinite(inclNum) || inclNum <= 0) {
+    return { price_ex_vat: to2(0), price_vat: to2(0), price_incl_vat: to2(0), vat_rate: 0, vat_mode: profile.vat_mode || "excl" };
+  }
+  const rate = clampNumber(profile?.vat_rate, clampNumber(fallbackVatRate, 0.06, 0, 1), 0, 1);
+  const exRaw = inclNum / (1 + rate);
+  const vatRaw = inclNum - exRaw;
+  return {
+    price_ex_vat: to2(exRaw),
+    price_vat: to2(vatRaw),
+    price_incl_vat: to2(inclNum),
+    vat_rate: rate,
+    vat_mode: profile.vat_mode || "excl",
+  };
+}
+
+async function resolveAirportFixedFare(env, scope, payload, options = {}) {
+  const fallback = {
+    matched: false,
+    pricing_source: "route_calc",
+    fixed_fare_applied: false,
+    fixed_fare_rule_id: null,
+    pricing: null,
+  };
+  try {
+    if (!_isAirportFixedFareEligiblePayload(payload)) return fallback;
+    const returnRequested = options?.returnRequested === true || _fixedFareReturnRequested(payload);
+    if (returnRequested) return fallback;
+
+    const transfer =
+      payload?.airport_transfer && typeof payload.airport_transfer === "object"
+        ? payload.airport_transfer
+        : {};
+    const airport_iata = _fixedFareNormalizeUpperToken(
+      payload?.airport_iata ??
+        payload?.airportIata ??
+        transfer?.airport_iata ??
+        transfer?.airportIata,
+      8,
+    );
+    const direction = _fixedFareNormalizeText(
+      payload?.airport_direction ??
+        payload?.airportDirection ??
+        transfer?.airport_direction ??
+        transfer?.airportDirection,
+      24,
+    ).toLowerCase();
+    const tier = normalizeTier(payload?.tier ?? "comfort");
+    const pax = _fixedFareIntOr(payload?.pax, 1, 1, 99);
+    const bags = _fixedFareIntOr(payload?.bags, 0, 0, 99);
+    const nowMs = Date.parse(options?.nowIso || new Date().toISOString());
+    if (!airport_iata || !direction) return fallback;
+
+    const explicitCountry = [
+      payload?.country,
+      payload?.country_code,
+      payload?.countryCode,
+      payload?.airport_country,
+      transfer?.airport_country,
+      payload?.pickup_country,
+      payload?.pickupCountry,
+      payload?.destination_country,
+      payload?.destinationCountry,
+      payload?.from_country,
+      payload?.to_country,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("country", value))
+      .filter((value) => !!value);
+    const explicitCity = [
+      payload?.city,
+      payload?.pickup_city,
+      payload?.pickupCity,
+      payload?.destination_city,
+      payload?.destinationCity,
+      payload?.from_city,
+      payload?.to_city,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("city", value))
+      .filter((value) => !!value);
+    const explicitPostcode = [
+      payload?.postcode,
+      payload?.postal_code,
+      payload?.postalCode,
+      payload?.pickup_postcode,
+      payload?.pickupPostcode,
+      payload?.destination_postcode,
+      payload?.destinationPostcode,
+      payload?.from_postcode,
+      payload?.to_postcode,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("postcode", value))
+      .filter((value) => !!value);
+
+    const normalizedCtx = {
+      airport_iata,
+      direction,
+      tier,
+      pax,
+      bags,
+      now_ms: Number.isFinite(nowMs) ? nowMs : Date.now(),
+      zone_values: {
+        country: new Set(explicitCountry),
+        city: new Set(explicitCity),
+        postcode: new Set(explicitPostcode),
+      },
+    };
+
+    const loaded = await _loadScopedAirportFixedFares(env, scope);
+    const rules = Array.isArray(loaded?.document?.rules) ? loaded.document.rules : [];
+    if (!rules.length) return fallback;
+    const matches = [];
+    for (const rule of rules) {
+      const match = _matchAirportFixedFareRule(rule, normalizedCtx);
+      if (match.matched) matches.push({ rule, match });
+    }
+    const winner = _selectBestAirportFixedFareRule(matches);
+    if (!winner?.rule) return fallback;
+    const split = _splitInclVatFromPricingProfile(
+      winner.rule.price_incl_vat,
+      options?.pricingProfile,
+      options?.fallbackVatRate ?? 0.06,
+    );
+    return {
+      matched: true,
+      pricing_source: "airport_fixed_fare",
+      fixed_fare_applied: true,
+      fixed_fare_rule_id: winner.rule.rule_id,
+      pricing: {
+        price_ex_vat: split.price_ex_vat,
+        price_vat: split.price_vat,
+        price_incl_vat: split.price_incl_vat,
+        note: "Vast luchthaventarief toegepast.",
+        breakdown: {
+          kind: "airport_fixed_fare",
+          fixed_fare_rule_id: winner.rule.rule_id,
+          fixed_fare_priority: winner.rule.priority,
+          airport_iata: winner.rule.airport_iata,
+          direction: winner.rule.direction,
+          tier: winner.rule.tier,
+          zone_type: winner.rule.zone_type,
+          zone_value: winner.rule.zone_value || "",
+          currency: winner.rule.currency,
+          vat_rate: split.vat_rate,
+        },
+      },
+    };
+  } catch (_) {
+    return fallback;
+  }
 }
 
 function tierFeeEx(tier) {
