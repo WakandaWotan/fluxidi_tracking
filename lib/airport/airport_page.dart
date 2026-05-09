@@ -57,7 +57,7 @@ class _AirportPageState extends State<AirportPage> {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width < 360 ? 12.0 : 14.0;
-    final stackedActions = width < 385;
+    final compactHero = width < 380;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -74,9 +74,9 @@ class _AirportPageState extends State<AirportPage> {
                   16,
                 ),
                 children: [
-                  _buildHero(),
+                  _buildHero(compact: compactHero),
                   const SizedBox(height: 10),
-                  _buildDirectionActions(stacked: stackedActions),
+                  _buildDirectionActions(),
                   const SizedBox(height: 10),
                   _buildIntakePanel(),
                   const SizedBox(height: 12),
@@ -129,9 +129,9 @@ class _AirportPageState extends State<AirportPage> {
     );
   }
 
-  Widget _buildHero() {
+  Widget _buildHero({required bool compact}) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _gold.withOpacity(0.28)),
@@ -144,17 +144,21 @@ class _AirportPageState extends State<AirportPage> {
       child: Row(
         children: [
           Container(
-            width: 54,
-            height: 54,
+            width: compact ? 48 : 54,
+            height: compact ? 48 : 54,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(color: _gold.withOpacity(0.45)),
               color: _gold.withOpacity(0.14),
             ),
-            child: const Icon(Icons.local_taxi_rounded, color: _gold, size: 30),
+            child: Icon(
+              Icons.local_taxi_rounded,
+              color: _gold,
+              size: compact ? 26 : 30,
+            ),
           ),
-          const SizedBox(width: 10),
-          const Expanded(
+          SizedBox(width: compact ? 8 : 10),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -162,14 +166,18 @@ class _AirportPageState extends State<AirportPage> {
                   'Zakelijk en privé luchthavenvervoer',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 14.2,
+                    fontSize: compact ? 13.6 : 14.2,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                SizedBox(height: 4),
+                SizedBox(height: compact ? 3 : 4),
                 Text(
                   'Plan binnenkort direct uw transfer met heldere serviceopties en betrouwbare chauffeurs.',
-                  style: TextStyle(color: _soft, fontSize: 11.8, height: 1.25),
+                  style: TextStyle(
+                    color: _soft,
+                    fontSize: compact ? 11.3 : 11.8,
+                    height: 1.25,
+                  ),
                 ),
               ],
             ),
@@ -179,28 +187,42 @@ class _AirportPageState extends State<AirportPage> {
     );
   }
 
-  Widget _buildDirectionActions({required bool stacked}) {
-    final first = _actionCard(
-      title: 'Naar de luchthaven',
-      subtitle: 'Vertrek op tijd met comfortabele ophaalservice.',
-      icon: Icons.flight_takeoff_rounded,
-      mode: _TransferMode.toAirport,
-    );
-    final second = _actionCard(
-      title: 'Van de luchthaven',
-      subtitle: 'Aankomsttransfer met duidelijke afhaalafspraken.',
-      icon: Icons.flight_land_rounded,
-      mode: _TransferMode.fromAirport,
-    );
-    if (stacked) {
-      return Column(children: [first, const SizedBox(height: 8), second]);
-    }
-    return Row(
-      children: [
-        Expanded(child: first),
-        const SizedBox(width: 8),
-        Expanded(child: second),
-      ],
+  Widget _buildDirectionActions() {
+    const cardGap = 10.0;
+    const minCardWidth = 230.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final first = _actionCard(
+          title: 'Naar de luchthaven',
+          subtitle: 'Vertrek naar uw vlucht',
+          icon: Icons.flight_takeoff_rounded,
+          mode: _TransferMode.toAirport,
+        );
+        final second = _actionCard(
+          title: 'Van de luchthaven',
+          subtitle: 'Aankomst op de luchthaven',
+          icon: Icons.flight_land_rounded,
+          mode: _TransferMode.fromAirport,
+        );
+        final canShowSideBySide =
+            constraints.maxWidth >= (minCardWidth * 2) + cardGap;
+        if (!canShowSideBySide) {
+          return Column(
+            children: [
+              first,
+              const SizedBox(height: cardGap),
+              second,
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: first),
+            const SizedBox(width: cardGap),
+            Expanded(child: second),
+          ],
+        );
+      },
     );
   }
 
@@ -241,56 +263,56 @@ class _AirportPageState extends State<AirportPage> {
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isSelected
-                        ? _gold.withOpacity(0.22)
-                        : _gold.withOpacity(0.14),
-                    border: Border.all(
-                      color: isSelected
-                          ? _gold.withOpacity(0.72)
-                          : _gold.withOpacity(0.4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected
+                            ? _gold.withOpacity(0.22)
+                            : _gold.withOpacity(0.14),
+                        border: Border.all(
+                          color: isSelected
+                              ? _gold.withOpacity(0.72)
+                              : _gold.withOpacity(0.4),
+                        ),
+                      ),
+                      child: Icon(icon, color: _gold, size: 18),
                     ),
-                  ),
-                  child: Icon(icon, color: _gold, size: 18),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
                         title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
                         style: TextStyle(
                           color: isSelected ? _gold : Colors.white,
-                          fontSize: 12.8,
+                          fontSize: 13.2,
                           fontWeight: FontWeight.w800,
+                          height: 1.15,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _soft,
-                          fontSize: 11,
-                          height: 1.2,
-                        ),
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  style: const TextStyle(
+                    color: _soft,
+                    fontSize: 11.2,
+                    height: 1.2,
                   ),
                 ),
-                if (isSelected)
+                if (isSelected) ...[
+                  const SizedBox(height: 8),
                   Container(
-                    margin: const EdgeInsets.only(left: 6),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 5,
@@ -309,6 +331,7 @@ class _AirportPageState extends State<AirportPage> {
                       ),
                     ),
                   ),
+                ],
               ],
             ),
           ),
