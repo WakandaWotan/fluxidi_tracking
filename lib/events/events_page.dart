@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'events_detail_page.dart';
 
 class EventsPage extends StatefulWidget {
   const EventsPage({super.key});
@@ -33,8 +34,8 @@ class _EventsPageState extends State<EventsPage> {
   int _selectedFilterIndex = 0;
   int _selectedTabIndex = 0;
 
-  final List<_LocalEvent> _events = const <_LocalEvent>[
-    _LocalEvent(
+  final List<EventDetailData> _events = const <EventDetailData>[
+    EventDetailData(
       title: 'Stadsfestival Antwerpen',
       category: 'Muziek',
       dateTime: 'Vandaag • 19:30',
@@ -43,7 +44,7 @@ class _EventsPageState extends State<EventsPage> {
       ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF2A1F08), Color(0xFF15120A)],
     ),
-    _LocalEvent(
+    EventDetailData(
       title: 'Businessnetwerk Brussel',
       category: 'Zakelijk',
       dateTime: 'Vrijdag • 18:00',
@@ -52,7 +53,7 @@ class _EventsPageState extends State<EventsPage> {
       ctaLabel: 'Details bekijken',
       gradient: <Color>[Color(0xFF2A260E), Color(0xFF12110A)],
     ),
-    _LocalEvent(
+    EventDetailData(
       title: 'Sportevenement Gent',
       category: 'Sport',
       dateTime: 'Zaterdag • 14:00',
@@ -61,7 +62,7 @@ class _EventsPageState extends State<EventsPage> {
       ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF1F1A0C), Color(0xFF100F0A)],
     ),
-    _LocalEvent(
+    EventDetailData(
       title: 'Foodmarkt Leuven',
       category: 'Vandaag',
       dateTime: 'Vandaag • 17:00',
@@ -78,7 +79,7 @@ class _EventsPageState extends State<EventsPage> {
     super.dispose();
   }
 
-  List<_LocalEvent> get _visibleEvents {
+  List<EventDetailData> get _visibleEvents {
     final query = _searchController.text.trim().toLowerCase();
     final selectedFilter = _filters[_selectedFilterIndex];
     return _events
@@ -379,7 +380,7 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildEventList(List<_LocalEvent> events) {
+  Widget _buildEventList(List<EventDetailData> events) {
     return Column(
       children: [
         for (var i = 0; i < events.length; i++) ...[
@@ -405,276 +406,289 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  Widget _buildEventCard(_LocalEvent event) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-        boxShadow: [
-          BoxShadow(
-            color: _gold.withOpacity(0.05),
-            blurRadius: 12,
-            spreadRadius: 0.4,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 94,
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-              ),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: event.gradient,
-              ),
+  Widget _buildEventCard(EventDetailData event) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<EventDetailPage>(
+              builder: (_) => EventDetailPage(event: event),
             ),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 14,
-                  top: 14,
-                  child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          _gold.withOpacity(0.20),
-                          _gold.withOpacity(0.04),
-                          Colors.transparent,
-                        ],
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _panelBlack,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _gold.withOpacity(0.24)),
+            boxShadow: [
+              BoxShadow(
+                color: _gold.withOpacity(0.05),
+                blurRadius: 12,
+                spreadRadius: 0.4,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 94,
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: event.gradient,
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: 14,
+                      top: 14,
+                      child: Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              _gold.withOpacity(0.20),
+                              _gold.withOpacity(0.04),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    Positioned(
+                      right: 44,
+                      top: 18,
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(0.35),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 65,
+                      top: 31,
+                      child: Container(
+                        width: 3,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(0.24),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 56,
+                      top: 46,
+                      child: Container(
+                        width: 4,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: _gold.withOpacity(0.18),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 10,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: _gold.withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _categoryIcon(event.category),
+                              color: _gold,
+                              size: 12,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              event.category,
+                              style: const TextStyle(
+                                color: _gold,
+                                fontSize: 10.6,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      bottom: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.34),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: _gold.withOpacity(0.32)),
+                        ),
+                        child: Text(
+                          'Evenementlocatie',
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.95),
+                            fontSize: 10.2,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 10,
+                      top: 6,
+                      child: IconButton(
+                        onPressed: () {},
+                        icon: const Icon(Icons.favorite_border_rounded),
+                        iconSize: 18,
+                        color: Colors.white.withOpacity(0.92),
+                        tooltip: 'Favoriet',
+                        visualDensity: const VisualDensity(
+                          horizontal: -2,
+                          vertical: -2,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  right: 44,
-                  top: 18,
-                  child: Container(
-                    width: 5,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.35),
-                      shape: BoxShape.circle,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14.8,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                ),
-                Positioned(
-                  right: 65,
-                  top: 31,
-                  child: Container(
-                    width: 3,
-                    height: 3,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.24),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 56,
-                  top: 46,
-                  child: Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.18),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 10,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: _gold.withOpacity(0.5)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    const SizedBox(height: 6),
+                    Row(
                       children: [
                         Icon(
-                          _categoryIcon(event.category),
-                          color: _gold,
-                          size: 12,
+                          Icons.calendar_today_outlined,
+                          size: 13,
+                          color: _gold.withOpacity(0.95),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          event.category,
-                          style: const TextStyle(
-                            color: _gold,
-                            fontSize: 10.6,
-                            fontWeight: FontWeight.w700,
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            event.dateTime,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _softText,
+                              fontSize: 11.9,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 14,
+                          color: _gold.withOpacity(0.95),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            event.location,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _softText,
+                              fontSize: 11.9,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.4)),
+                          ),
+                          child: Text(
+                            event.distanceOrStatus,
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 10.8,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF15120A),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.5)),
+                          ),
+                          child: Text(
+                            event.ctaLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 10.9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                Positioned(
-                  left: 12,
-                  bottom: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.34),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: _gold.withOpacity(0.32)),
-                    ),
-                    child: Text(
-                      'Evenementlocatie',
-                      style: TextStyle(
-                        color: _gold.withOpacity(0.95),
-                        fontSize: 10.2,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 10,
-                  top: 6,
-                  child: IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.favorite_border_rounded),
-                    iconSize: 18,
-                    color: Colors.white.withOpacity(0.92),
-                    tooltip: 'Favoriet',
-                    visualDensity: const VisualDensity(
-                      horizontal: -2,
-                      vertical: -2,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14.8,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: 13,
-                      color: _gold.withOpacity(0.95),
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Text(
-                        event.dateTime,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _softText,
-                          fontSize: 11.9,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.location_on_outlined,
-                      size: 14,
-                      color: _gold.withOpacity(0.95),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        event.location,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _softText,
-                          fontSize: 11.9,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _gold.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.4)),
-                      ),
-                      child: Text(
-                        event.distanceOrStatus,
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.8,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF15120A),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.5)),
-                      ),
-                      child: Text(
-                        event.ctaLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.9,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -752,24 +766,4 @@ class _EventsPageState extends State<EventsPage> {
       ),
     );
   }
-}
-
-class _LocalEvent {
-  const _LocalEvent({
-    required this.title,
-    required this.category,
-    required this.dateTime,
-    required this.location,
-    required this.distanceOrStatus,
-    required this.ctaLabel,
-    required this.gradient,
-  });
-
-  final String title;
-  final String category;
-  final String dateTime;
-  final String location;
-  final String distanceOrStatus;
-  final String ctaLabel;
-  final List<Color> gradient;
 }
