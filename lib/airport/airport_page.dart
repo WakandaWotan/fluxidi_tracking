@@ -1723,18 +1723,46 @@ class _AirportPageState extends State<AirportPage> {
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Deze flow koppelt in de volgende fase met prijsberekening en boeking.',
-              ),
-            ),
-          );
-        },
+        onPressed: _handlePrepareRideDetails,
         child: const Text('Ritgegevens voorbereiden'),
       ),
     );
+  }
+
+  void _handlePrepareRideDetails() {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    String? errorMessage;
+
+    if (isToAirport) {
+      if (_pickupAddressController.text.trim().isEmpty) {
+        errorMessage = 'Vul eerst het ophaaladres in.';
+      } else if (_pickupDateTimeController.text.trim().isEmpty) {
+        errorMessage = 'Kies eerst de ophaaldatum en tijd.';
+      } else if (_filteredAirports.isEmpty) {
+        errorMessage = 'Kies eerst een luchthaven.';
+      } else if (_passengers < 1) {
+        errorMessage = 'Kies minstens 1 passagier.';
+      }
+    } else {
+      if (_destinationAddressController.text.trim().isEmpty) {
+        errorMessage = 'Vul eerst de bestemming in.';
+      } else if (_landingDateTimeController.text.trim().isEmpty) {
+        errorMessage = 'Kies eerst de landingsdatum en tijd.';
+      } else if (_filteredAirports.isEmpty) {
+        errorMessage = 'Kies eerst een luchthaven.';
+      } else if (_passengers < 1) {
+        errorMessage = 'Kies minstens 1 passagier.';
+      } else if (_meetAndGreet && _nameBoardController.text.trim().isEmpty) {
+        errorMessage = 'Vul de naam voor het bordje in.';
+      }
+    }
+
+    final snackBarMessage =
+        errorMessage ??
+        'Ritgegevens voorbereid. Prijsberekening wordt in de volgende stap gekoppeld.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(snackBarMessage)));
   }
 
   InputDecoration _fieldDecoration({
