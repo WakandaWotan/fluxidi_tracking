@@ -77,15 +77,153 @@ class _AirportPageState extends State<AirportPage> {
   ];
 
   _TransferMode _selectedMode = _TransferMode.toAirport;
+  String _selectedCountryCode = _airports.first.countryCode;
   String _selectedAirportId = _airports.first.id;
   int _passengers = 1;
   int _bags = 0;
   bool _meetAndGreet = false;
 
-  _AirportOption get _selectedAirport => _airports.firstWhere(
-    (airport) => airport.id == _selectedAirportId,
-    orElse: () => _airports.first,
-  );
+  List<String> get _availableCountryCodes {
+    final unique = <String>{};
+    final codes = <String>[];
+    for (final airport in _airports) {
+      if (unique.add(airport.countryCode)) {
+        codes.add(airport.countryCode);
+      }
+    }
+    return codes;
+  }
+
+  List<_AirportOption> get _filteredAirports => _airports
+      .where((airport) => airport.countryCode == _selectedCountryCode)
+      .toList(growable: false);
+
+  _AirportOption get _selectedAirport {
+    final filtered = _filteredAirports;
+    if (filtered.isEmpty) {
+      return _airports.first;
+    }
+    return filtered.firstWhere(
+      (airport) => airport.id == _selectedAirportId,
+      orElse: () => filtered.first,
+    );
+  }
+
+  String _countryLabelForCode(String countryCode) {
+    switch (countryCode) {
+      case 'BE':
+        return 'Belgie';
+      case 'NL':
+        return 'Nederland';
+      case 'FR':
+        return 'Frankrijk';
+      case 'GB':
+        return 'Verenigd Koninkrijk';
+      default:
+        final fallback = _airports
+            .where((airport) => airport.countryCode == countryCode)
+            .map((airport) => airport.countryName)
+            .firstWhere((_) => true, orElse: () => countryCode);
+        final separator = fallback.indexOf('/');
+        if (separator >= 0 && separator < fallback.length - 1) {
+          return fallback.substring(separator + 1);
+        }
+        return fallback;
+    }
+  }
+
+  void _setCountry(String countryCode) {
+    final firstAirport = _airports.firstWhere(
+      (airport) => airport.countryCode == countryCode,
+      orElse: () => _airports.first,
+    );
+    setState(() {
+      _selectedCountryCode = countryCode;
+      _selectedAirportId = firstAirport.id;
+    });
+  }
+
+  void _setAirport(String airportId) {
+    setState(() {
+      _selectedAirportId = airportId;
+    });
+  }
+
+  Widget _buildCountryDropdown() {
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        label: 'Land',
+        prefixIcon: Icons.public_rounded,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedCountryCode,
+          isDense: true,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF1A1A1A),
+          iconEnabledColor: _gold,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          items: _availableCountryCodes
+              .map(
+                (countryCode) => DropdownMenuItem<String>(
+                  value: countryCode,
+                  child: Text(_countryLabelForCode(countryCode)),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: (value) {
+            if (value == null || value == _selectedCountryCode) {
+              return;
+            }
+            _setCountry(value);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAirportOnlyDropdown() {
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        label: 'Luchthaven',
+        prefixIcon: Icons.flight_rounded,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedAirport.id,
+          isDense: true,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF1A1A1A),
+          iconEnabledColor: _gold,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          items: _filteredAirports
+              .map(
+                (airport) => DropdownMenuItem<String>(
+                  value: airport.id,
+                  child: Text(airport.name),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            _setAirport(value);
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_filteredAirports.every(
+      (airport) => airport.id != _selectedAirportId,
+    )) {
+      _selectedAirportId = _filteredAirports.first.id;
+    }
+  }
 
   final TextEditingController _pickupAddressController =
       TextEditingController();
@@ -581,37 +719,13 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Widget _buildAirportDropdown() {
-    return InputDecorator(
-      decoration: _fieldDecoration(
-        label: 'Luchthaven',
-        prefixIcon: Icons.flight_rounded,
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _selectedAirport.id,
-          isDense: true,
-          isExpanded: true,
-          dropdownColor: const Color(0xFF1A1A1A),
-          iconEnabledColor: _gold,
-          style: const TextStyle(color: Colors.white, fontSize: 13),
-          items: _airports
-              .map(
-                (airport) => DropdownMenuItem<String>(
-                  value: airport.id,
-                  child: Text(airport.name),
-                ),
-              )
-              .toList(growable: false),
-          onChanged: (value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              _selectedAirportId = value;
-            });
-          },
-        ),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildCountryDropdown(),
+        const SizedBox(height: 10),
+        _buildAirportOnlyDropdown(),
+      ],
     );
   }
 
