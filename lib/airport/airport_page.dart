@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart' as geo;
 
 enum _TransferMode { toAirport, fromAirport }
 
@@ -354,6 +355,9 @@ class _AirportPageState extends State<AirportPage> {
   int _passengers = 1;
   int _bags = 0;
   bool _meetAndGreet = false;
+  bool _isResolvingPickupLocation = false;
+  double? _pickupLatitude;
+  double? _pickupLongitude;
 
   List<String> get _availableCountryCodes {
     final unique = <String>{};
@@ -923,6 +927,28 @@ class _AirportPageState extends State<AirportPage> {
               controller: _pickupAddressController,
               hint: 'Straat, nummer, postcode, stad',
               icon: Icons.pin_drop_outlined,
+              suffixIcon: IconButton(
+                onPressed: _isResolvingPickupLocation
+                    ? null
+                    : _useCurrentPickupLocation,
+                tooltip: 'Huidige locatie gebruiken',
+                icon: _isResolvingPickupLocation
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _gold.withOpacity(0.96),
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.my_location_rounded,
+                        color: _gold.withOpacity(0.92),
+                        size: 18,
+                      ),
+              ),
             ),
             const SizedBox(height: 10),
             _buildAirportDropdown(),
@@ -1052,6 +1078,7 @@ class _AirportPageState extends State<AirportPage> {
     required TextEditingController controller,
     required String hint,
     required IconData icon,
+    Widget? suffixIcon,
     int maxLines = 1,
     int minLines = 1,
   }) {
@@ -1064,6 +1091,7 @@ class _AirportPageState extends State<AirportPage> {
         label: label,
         hintText: hint,
         prefixIcon: icon,
+        suffixIcon: suffixIcon,
       ),
     );
   }
@@ -1200,6 +1228,79 @@ class _AirportPageState extends State<AirportPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _useCurrentPickupLocation() async {
+    if (_isResolvingPickupLocation) {
+      return;
+    }
+    setState(() {
+      _isResolvingPickupLocation = true;
+    });
+    try {
+      final enabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Locatieservices staan uit op dit toestel.'),
+          ),
+        );
+        return;
+      }
+      var permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied) {
+        permission = await geo.Geolocator.requestPermission();
+      }
+      if (permission == geo.LocationPermission.denied) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Locatietoegang geweigerd.')),
+        );
+        return;
+      }
+      if (permission == geo.LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      );
+
+      if (!mounted) return;
+      final lat = pos.latitude;
+      final lng = pos.longitude;
+      setState(() {
+        _pickupLatitude = lat;
+        _pickupLongitude = lng;
+        _pickupAddressController.text =
+            'Huidige locatie (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Huidige locatie ingevuld.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Huidige locatie kon niet worden opgehaald.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResolvingPickupLocation = false;
+        });
+      }
+    }
   }
 
   void _handleSummaryInputChanged() {
@@ -1479,6 +1580,7 @@ class _AirportPageState extends State<AirportPage> {
     required String label,
     String? hintText,
     required IconData prefixIcon,
+    Widget? suffixIcon,
   }) {
     return InputDecoration(
       labelText: label,
@@ -1486,6 +1588,7 @@ class _AirportPageState extends State<AirportPage> {
       labelStyle: TextStyle(color: _soft.withOpacity(0.95), fontSize: 12.2),
       hintStyle: TextStyle(color: _soft.withOpacity(0.55), fontSize: 12),
       prefixIcon: Icon(prefixIcon, color: _gold.withOpacity(0.92), size: 18),
+      suffixIcon: suffixIcon,
       filled: true,
       fillColor: const Color(0xFF181818),
       isDense: true,
