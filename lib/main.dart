@@ -49,6 +49,7 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'events/events_page.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/route_marquee.dart';
@@ -9971,7 +9972,9 @@ class CustomerHomePage extends StatelessWidget {
                   visualAsset: 'assets/fluxidi/fluxidi_event_crowd_night.jpg',
                   visualHeight: 130,
                   visualAlignment: Alignment.centerRight,
-                  onTap: () => _comingSoon(context),
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute(builder: (_) => const EventsPage())),
                 ),
                 const SizedBox(height: 10),
                 _customerWideCard(
