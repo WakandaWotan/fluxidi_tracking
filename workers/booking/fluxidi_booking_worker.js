@@ -8403,11 +8403,12 @@ function normalizeWhen(dateStr, timeStr) {
 
 async function geocode(query, token) {
   if (!token) throw new Error("Missing MAPBOX_TOKEN in Worker secrets");
+  const countryCode = inferMapboxCountryCodeFromQuery(query);
 
   const u =
     "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
     encodeURIComponent(query) +
-    ".json?limit=1&country=BE&language=nl&access_token=" +
+    `.json?limit=1&country=${encodeURIComponent(countryCode)}&language=nl&access_token=` +
     token;
 
   const r = await fetch(u);
@@ -8415,6 +8416,49 @@ async function geocode(query, token) {
   if (!j.features?.length) throw new Error("Geocode failed");
   const [lng, lat] = j.features[0].center;
   return { lat, lng };
+}
+
+function inferMapboxCountryCodeFromQuery(query) {
+  const raw = String(query || "").trim();
+  if (!raw) return "BE";
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ");
+  const compact = ` ${normalized.replace(/\s+/g, " ").trim()} `;
+
+  const hasWord = (word) => compact.includes(` ${word} `);
+  const hasPhrase = (phrase) => compact.includes(` ${phrase} `);
+
+  if (hasWord("nederland") || hasWord("netherlands") || hasWord("holland")) {
+    return "NL";
+  }
+  if (hasWord("frankrijk") || hasWord("france")) {
+    return "FR";
+  }
+  if (hasWord("duitsland") || hasWord("germany") || hasWord("deutschland")) {
+    return "DE";
+  }
+  if (hasWord("luxemburg") || hasWord("luxembourg")) {
+    return "LU";
+  }
+  if (
+    hasPhrase("verenigd koninkrijk") ||
+    hasPhrase("united kingdom") ||
+    hasPhrase("great britain")
+  ) {
+    return "GB";
+  }
+  if (hasWord("spanje") || hasWord("spain") || hasWord("espana")) {
+    return "ES";
+  }
+  if (hasWord("belgie") || hasWord("belgium")) {
+    return "BE";
+  }
+
+  return "BE";
 }
 
 async function geocodeText(query, token) { return geocode(query, token); }
