@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 
@@ -25,7 +27,9 @@ class _AirportOption {
 }
 
 class AirportPage extends StatefulWidget {
-  const AirportPage({super.key});
+  const AirportPage({super.key, required this.bookingBaseUrl});
+
+  final String bookingBaseUrl;
 
   @override
   State<AirportPage> createState() => _AirportPageState();
@@ -361,10 +365,13 @@ class _AirportPageState extends State<AirportPage> {
   bool _meetAndGreet = false;
   bool _isResolvingPickupLocation = false;
   bool _isResolvingDestinationLocation = false;
+  bool _isRequestingQuote = false;
   double? _pickupLatitude;
   double? _pickupLongitude;
   double? _destinationLatitude;
   double? _destinationLongitude;
+  Map<String, dynamic>? _airportQuote;
+  String? _airportQuoteError;
 
   List<String> get _availableCountryCodes {
     final unique = <String>{};
@@ -604,6 +611,10 @@ class _AirportPageState extends State<AirportPage> {
                   _buildIntakePanel(),
                   const SizedBox(height: 10),
                   _buildRideSummaryCard(),
+                  if (_airportQuote != null || _airportQuoteError != null) ...[
+                    const SizedBox(height: 10),
+                    _buildAirportQuoteCard(),
+                  ],
                   const SizedBox(height: 12),
                   _buildCtaButton(context),
                 ],
@@ -1833,46 +1844,327 @@ class _AirportPageState extends State<AirportPage> {
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-        onPressed: _handlePrepareRideDetails,
-        child: const Text('Ritgegevens voorbereiden'),
+        onPressed: _isRequestingQuote ? null : _requestAirportQuote,
+        child: Text(
+          _isRequestingQuote
+              ? 'Prijs berekenen...'
+              : 'Ritgegevens voorbereiden',
+        ),
       ),
     );
   }
 
-  void _handlePrepareRideDetails() {
+  String? _validatePrepareRideDetailsMessage() {
     final isToAirport = _selectedMode == _TransferMode.toAirport;
-    String? errorMessage;
-
     if (isToAirport) {
       if (_pickupAddressController.text.trim().isEmpty) {
-        errorMessage = 'Vul eerst het ophaaladres in.';
-      } else if (_pickupDateTimeController.text.trim().isEmpty) {
-        errorMessage = 'Kies eerst de ophaaldatum en tijd.';
-      } else if (_filteredAirports.isEmpty) {
-        errorMessage = 'Kies eerst een luchthaven.';
-      } else if (_passengers < 1) {
-        errorMessage = 'Kies minstens 1 passagier.';
+        return 'Vul eerst het ophaaladres in.';
+      }
+      if (_pickupDateTimeController.text.trim().isEmpty) {
+        return 'Kies eerst de ophaaldatum en tijd.';
+      }
+      if (_filteredAirports.isEmpty) {
+        return 'Kies eerst een luchthaven.';
+      }
+      if (_passengers < 1) {
+        return 'Kies minstens 1 passagier.';
       }
     } else {
       if (_destinationAddressController.text.trim().isEmpty) {
-        errorMessage = 'Vul eerst de bestemming in.';
-      } else if (_landingDateTimeController.text.trim().isEmpty) {
-        errorMessage = 'Kies eerst de landingsdatum en tijd.';
-      } else if (_filteredAirports.isEmpty) {
-        errorMessage = 'Kies eerst een luchthaven.';
-      } else if (_passengers < 1) {
-        errorMessage = 'Kies minstens 1 passagier.';
-      } else if (_meetAndGreet && _nameBoardController.text.trim().isEmpty) {
-        errorMessage = 'Vul de naam voor het bordje in.';
+        return 'Vul eerst de bestemming in.';
+      }
+      if (_landingDateTimeController.text.trim().isEmpty) {
+        return 'Kies eerst de landingsdatum en tijd.';
+      }
+      if (_filteredAirports.isEmpty) {
+        return 'Kies eerst een luchthaven.';
+      }
+      if (_passengers < 1) {
+        return 'Kies minstens 1 passagier.';
+      }
+      if (_meetAndGreet && _nameBoardController.text.trim().isEmpty) {
+        return 'Vul de naam voor het bordje in.';
       }
     }
+    return null;
+  }
 
+  void _handlePrepareRideDetails() {
+    final errorMessage = _validatePrepareRideDetailsMessage();
     final snackBarMessage =
         errorMessage ??
         'Ritgegevens voorbereid. Prijsberekening wordt in de volgende stap gekoppeld.';
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(snackBarMessage)));
+  }
+
+  String _activeTenantCompanyId() {
+    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (localCompanyId.isNotEmpty) {
+      return localCompanyId;
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return resolved;
+    }
+    return kTenantId;
+  }
+
+  String _fmtDateYmd(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+
+  String _fmtTimeHm(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  String _isoLikeLocal(DateTime dt) =>
+      '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00';
+
+  Map<String, dynamic>? _buildAirportQuotePayload() {
+    final selectedAirport = _selectedAirport;
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final dateSource = isToAirport
+        ? _pickupDateTimeController.text
+        : _landingDateTimeController.text;
+    final parsedDate = _parseAirportDateTime(dateSource);
+    if (parsedDate == null) {
+      return null;
+    }
+    final tenantCompanyId = _activeTenantCompanyId();
+    final fromText = isToAirport
+        ? _pickupAddressController.text.trim()
+        : '${selectedAirport.name}, ${selectedAirport.countryName}';
+    final toText = isToAirport
+        ? '${selectedAirport.name}, ${selectedAirport.countryName}'
+        : _destinationAddressController.text.trim();
+    if (fromText.isEmpty || toText.isEmpty) {
+      return null;
+    }
+    final note = _noteController.text.trim();
+    final flightNumber = _flightNumberController.text.trim();
+    final nameBoard = _nameBoardController.text.trim();
+    return <String, dynamic>{
+      'from': fromText,
+      'to': toText,
+      'date': _fmtDateYmd(parsedDate),
+      'time': _fmtTimeHm(parsedDate),
+      'pickup_iso': _isoLikeLocal(parsedDate),
+      'tier': 'COMFORT',
+      'service': 'AIRPORT',
+      'pax': _passengers,
+      'bags': _bags,
+      'tenant_id': tenantCompanyId,
+      'company_id': tenantCompanyId,
+      'tenantId': tenantCompanyId,
+      'companyId': tenantCompanyId,
+      'airport_direction': isToAirport ? 'to_airport' : 'from_airport',
+      'airport_id': selectedAirport.id,
+      'airport_iata': selectedAirport.iata,
+      'airport_name': selectedAirport.name,
+      'airport_country': selectedAirport.countryName,
+      if (note.isNotEmpty) 'note': note,
+      if (isToAirport) ...{
+        if (_pickupLatitude != null) 'pickup_lat': _pickupLatitude,
+        if (_pickupLongitude != null) 'pickup_lng': _pickupLongitude,
+      } else ...{
+        if (_destinationLatitude != null)
+          'destination_lat': _destinationLatitude,
+        if (_destinationLongitude != null)
+          'destination_lng': _destinationLongitude,
+        if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
+        'meet_and_greet': _meetAndGreet,
+        if (nameBoard.isNotEmpty) 'name_board': nameBoard,
+      },
+    };
+  }
+
+  Future<void> _requestAirportQuote() async {
+    if (_isRequestingQuote) {
+      return;
+    }
+    final validationError = _validatePrepareRideDetailsMessage();
+    if (validationError != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(validationError)));
+      return;
+    }
+    final payload = _buildAirportQuotePayload();
+    if (payload == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Prijsberekening kon niet worden opgehaald.'),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _isRequestingQuote = true;
+      _airportQuoteError = null;
+    });
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${widget.bookingBaseUrl}/quote'),
+            headers: const <String, String>{'content-type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      final dynamic decoded = jsonDecode(response.body);
+      final data = decoded is Map<String, dynamic> ? decoded : null;
+      final isOk =
+          response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          data?['ok'] == true;
+      if (!mounted) {
+        return;
+      }
+      if (isOk && data != null) {
+        setState(() {
+          _airportQuote = data;
+          _airportQuoteError = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Prijsberekening opgehaald.')),
+        );
+      } else {
+        setState(() {
+          _airportQuote = null;
+          _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Prijsberekening kon niet worden opgehaald.'),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _airportQuote = null;
+        _airportQuoteError = 'Prijsberekening kon niet worden opgehaald.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Prijsberekening kon niet worden opgehaald.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRequestingQuote = false;
+        });
+      }
+    }
+  }
+
+  double? _quoteNum(dynamic value) {
+    if (value is num) {
+      final n = value.toDouble();
+      return n.isFinite ? n : null;
+    }
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) {
+      return null;
+    }
+    return double.tryParse(text.replaceAll(',', '.'));
+  }
+
+  Widget _buildAirportQuoteCard() {
+    final quote = _airportQuote;
+    final error = _airportQuoteError;
+    final totalIncl = _quoteNum(quote?['total_price_incl_vat']);
+    final mainIncl = _quoteNum(quote?['price_incl_vat']);
+    final displayPrice = totalIncl ?? mainIncl;
+    final distance = _quoteNum(quote?['distance_km']);
+    final duration = _quoteNum(quote?['duration_min']);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.calculate_rounded, color: _gold, size: 17),
+              const SizedBox(width: 7),
+              const Expanded(
+                child: Text(
+                  'Prijsindicatie',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (error != null)
+            Text(error, style: const TextStyle(color: _soft, fontSize: 12))
+          else if (quote != null) ...[
+            Row(
+              children: [
+                Text(
+                  'Geschatte prijs',
+                  style: TextStyle(
+                    color: _soft.withOpacity(0.95),
+                    fontSize: 11.8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  displayPrice != null
+                      ? '€ ${displayPrice.toStringAsFixed(2)}'
+                      : '—',
+                  style: const TextStyle(
+                    color: _gold,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    distance != null
+                        ? 'Afstand: ${distance.toStringAsFixed(1)} km'
+                        : 'Afstand: —',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.84),
+                      fontSize: 11.6,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    duration != null
+                        ? 'Duur: ${duration.toStringAsFixed(0)} min'
+                        : 'Duur: —',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.84),
+                      fontSize: 11.6,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   InputDecoration _fieldDecoration({

@@ -9675,9 +9675,11 @@ class CustomerHomePage extends StatelessWidget {
           fr: 'Trajets aéroport',
           es: 'Traslados aeropuerto',
         ),
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const AirportPage())),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AirportPage(bookingBaseUrl: kBookingBaseUrl),
+          ),
+        ),
       ),
       (
         icon: Icons.hotel_rounded,
