@@ -1624,6 +1624,299 @@ function sanitizePublicCompanyId(value) {
   return trimmed.replace(/[^a-zA-Z0-9_.-]/g, "");
 }
 
+const COMPANY_LINK_CODE_INDEX_KEY_PREFIX = "company_link:index:code:";
+const COMPANY_LINK_CODE_INDEX_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
+const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
+
+function normalizePublicCompanyCode(value) {
+  let text = sanitizeTenantString(value, 80).trim().toUpperCase();
+  if (!text) return "";
+  text = text.replace(/\s+/g, "-");
+  text = text.replace(/-+/g, "-");
+  return text;
+}
+
+function validatePublicCompanyCode(value) {
+  const code = normalizePublicCompanyCode(value);
+  if (!code) {
+    return { ok: false, code: "", error: "invalid_company_code" };
+  }
+  if (code.length < 4 || code.length > 24) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  if (!/^[A-Z0-9-]+$/.test(code)) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  if (!/[A-Z0-9]/.test(code)) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  return { ok: true, code };
+}
+
+function normalizeTaxOrRegistrationIdForCountry(value, country) {
+  const raw = sanitizeTenantString(value, 96).toUpperCase();
+  if (!raw) return null;
+  const normalizedCountry = sanitizeTenantString(country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  // Country-aware normalization: BE VAT/KBO is supported as a strict variant,
+  // while non-BE values use a generic alphanumeric normalization for safe comparison.
+  if (normalizedCountry === "BE") {
+    const compact = raw.replace(/[\s./-]+/g, "");
+    const withoutPrefix = compact.startsWith("BE") ? compact.slice(2) : compact;
+    if (!/^\d{10}$/.test(withoutPrefix)) return null;
+    return `BE${withoutPrefix}`;
+  }
+  const compact = raw.replace(/[\s./-]+/g, "");
+  const safe = compact.replace(/[^A-Z0-9]/g, "");
+  if (safe.length < 4 || safe.length > 32) return null;
+  if (!/[A-Z0-9]/.test(safe)) return null;
+  return safe;
+}
+
+function normalizeIdentifierType(value) {
+  const type = sanitizeTenantString(value, 40).toLowerCase().replace(/[^a-z_]+/g, "_");
+  if (!type) return "";
+  const allowed = new Set(["vat", "company_registration", "tax_id", "other"]);
+  return allowed.has(type) ? type : "";
+}
+
+function _pickTaxOrRegistrationIdAlias(source) {
+  if (!source || typeof source !== "object") return "";
+  return sanitizeTenantString(
+    source.tax_or_registration_id ??
+      source.taxOrRegistrationId ??
+      source.vat_or_kbo ??
+      source.vatOrKbo ??
+      source.vat_number ??
+      source.vatNumber ??
+      source.business_identifier ??
+      source.businessIdentifier ??
+      source.company_registration_id ??
+      source.companyRegistrationId,
+    96,
+  );
+}
+
+function maskPhoneForPublic(phone) {
+  const raw = sanitizeTenantString(phone, 64);
+  if (!raw) return "";
+  const compact = raw.replace(/[^0-9+]/g, "");
+  const digits = compact.replace(/\D/g, "");
+  if (!digits) return "";
+  const tail = digits.slice(-2).padStart(2, "•");
+  return `••••${tail}`;
+}
+
+function _companyLinkIndexKeyForCode(code) {
+  return `${COMPANY_LINK_CODE_INDEX_KEY_PREFIX}${code}${COMPANY_LINK_CODE_INDEX_KEY_SUFFIX}`;
+}
+
+function _companyLinkChallengeKey(challengeId) {
+  return `${COMPANY_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_LINK_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyLinkChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cl_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _looksLikeE164Phone(value) {
+  const text = sanitizeTenantString(value, 40);
+  return /^\+[1-9]\d{6,14}$/.test(text);
+}
+
+function _isCompanyLinkSmsProviderConfigured(env) {
+  const provider = sanitizeTenantString(env?.COMPANY_LINK_SMS_PROVIDER, 32).toLowerCase();
+  if (!provider) return false;
+  // Future: wire a concrete provider implementation (e.g. Twilio) with strict validation.
+  return false;
+}
+
+/**
+ * Private server-side link index record (never expose directly):
+ * {
+ *   tenant_id,
+ *   company_id,
+ *   company_code,
+ *   display_name,
+ *   country,
+ *   tax_or_registration_id,
+ *   identifier_type,
+ *   registered_phone_e164,
+ *   linking_enabled
+ * }
+ */
+async function loadCompanyLinkRecordByCode(env, rawCode) {
+  const codeValidation = validatePublicCompanyCode(rawCode);
+  if (!codeValidation.ok) return null;
+  if (!env?.BOOKING_KV) return null;
+  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw.record && typeof raw.record === "object" ? raw.record : raw;
+  const companyCode = normalizePublicCompanyCode(
+    source.company_code ?? source.companyCode ?? codeValidation.code,
+  );
+  if (companyCode !== codeValidation.code) return null;
+  const normalized = {
+    tenant_id: sanitizeTenantString(source.tenant_id ?? source.tenantId, 80),
+    company_id: sanitizeTenantString(source.company_id ?? source.companyId, 80),
+    company_code: companyCode,
+    display_name: sanitizeTenantString(
+      source.display_name ?? source.displayName ?? source.company_name ?? source.companyName,
+      160,
+    ),
+    country: sanitizeTenantString(source.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    identifier_type: normalizeIdentifierType(source.identifier_type ?? source.identifierType),
+    tax_or_registration_id: normalizeTaxOrRegistrationIdForCountry(
+      _pickTaxOrRegistrationIdAlias(source),
+      source.country,
+    ),
+    registered_phone_e164: sanitizeTenantString(
+      source.registered_phone_e164 ?? source.registeredPhoneE164,
+      40,
+    ),
+    linking_enabled: source.linking_enabled !== false,
+  };
+  return normalized;
+}
+
+function projectSafeCompanyResolve(record) {
+  const methods = [];
+  if (_looksLikeE164Phone(record?.registered_phone_e164)) methods.push("sms_otp");
+  return {
+    ok: true,
+    company_code: record.company_code,
+    display_name: sanitizeTenantString(record.display_name, 160),
+    country: sanitizeTenantString(record.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    masked_phone: maskPhoneForPublic(record.registered_phone_e164),
+    linking_required: true,
+    link_methods_available: methods,
+  };
+}
+
+async function handlePublicCompanyResolve(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("code") ?? url.searchParams.get("company_code") ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!record || record.linking_enabled !== true) {
+    return json({ ok: false, error: "company_not_found" }, 404);
+  }
+  return json(projectSafeCompanyResolve(record), 200);
+}
+
+async function handlePublicCompanyLinkStart(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: codeValidation.error }, 400);
+  }
+  const country = sanitizeTenantString(body.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const identifierType = normalizeIdentifierType(
+    body.identifier_type ?? body.identifierType,
+  );
+  const requestIdentifierRaw = _pickTaxOrRegistrationIdAlias(body);
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  const compareCountry = country || record?.country || "";
+  const requestIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    requestIdentifierRaw,
+    compareCountry,
+  );
+  const storedIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    record?.tax_or_registration_id,
+    record?.country || compareCountry,
+  );
+  if (
+    !record ||
+    record.linking_enabled !== true ||
+    !storedIdentifier ||
+    !requestIdentifier ||
+    storedIdentifier !== requestIdentifier
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!_looksLikeE164Phone(record.registered_phone_e164)) {
+    return json({ ok: false, error: "registered_phone_missing" }, 409);
+  }
+  const maskedPhone = maskPhoneForPublic(record.registered_phone_e164);
+  if (!_isCompanyLinkSmsProviderConfigured(env)) {
+    return json({ ok: false, error: "sms_not_configured", masked_phone: maskedPhone }, 503);
+  }
+  // TODO(linking-sms): Implement OTP generation + hash + SMS dispatch to record.registered_phone_e164.
+  // Never use claimant-provided phone numbers for verification delivery.
+  // Never persist plaintext OTP codes.
+  const challengeId = _companyLinkChallengeId();
+  if (env?.BOOKING_KV) {
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + COMPANY_LINK_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+    const challengePayload = {
+      version: 1,
+      challenge_id: challengeId,
+      company_code: record.company_code,
+      tenant_id: record.tenant_id,
+      company_id: record.company_id,
+      otp_hash: "",
+      attempts: 0,
+      created_at: nowIso,
+      expires_at: expiresAt,
+      masked_phone: maskedPhone,
+      verification_channel: "sms_otp",
+      identifier_type: identifierType || record.identifier_type || "",
+      device_label: sanitizeTenantString(body.device_label ?? body.deviceLabel, 120),
+      device_type: sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase(),
+    };
+    await env.BOOKING_KV.put(
+      _companyLinkChallengeKey(challengeId),
+      JSON.stringify(challengePayload),
+      { expirationTtl: COMPANY_LINK_CHALLENGE_TTL_SECONDS },
+    );
+  }
+  return json(
+    {
+      ok: false,
+      error: "verification_not_available",
+      challenge_id: challengeId,
+      masked_phone: maskedPhone,
+    },
+    501,
+  );
+}
+
+async function handlePublicCompanyLinkVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const challengeId = sanitizeTenantString(body.challenge_id ?? body.challengeId, 120)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  const otpCode = sanitizeTenantString(body.otp_code ?? body.otpCode, 16).replace(/\s+/g, "");
+  if (!challengeId || !otpCode) {
+    return json({ ok: false, error: "invalid_verification_payload" }, 400);
+  }
+  // TODO(linking-verify):
+  // - Load challenge by id and verify existence.
+  // - Enforce TTL/expiry and attempt limits.
+  // - Verify OTP hash match (constant-time compare).
+  // - Consume challenge on success.
+  // - Return limited device/company session only after successful second proof.
+  void env;
+  return json({ ok: false, error: "verification_not_available" }, 501);
+}
+
 function pickFirstPublicValue(...values) {
   for (const value of values) {
     const candidate = sanitizeTenantString(value, 240);
@@ -3656,6 +3949,29 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handlePublicBootstrap(url, env);
+      }
+
+      if (url.pathname === "/public/company/resolve") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicCompanyResolve(url, env);
+      }
+
+      if (url.pathname === "/public/company/link/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyLinkStart(body, env);
+      }
+
+      if (url.pathname === "/public/company/link/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyLinkVerify(body, env);
       }
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
