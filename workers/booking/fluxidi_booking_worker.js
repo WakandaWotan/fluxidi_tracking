@@ -1944,8 +1944,43 @@ async function handlePublicCompanyLinkVerify(body, env) {
   return json({ ok: false, error: "verification_not_available" }, 501);
 }
 
+async function readAdminCompanyLinkBody(request) {
+  const text = await request.text();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    return {};
+  } catch {
+    const params = new URLSearchParams(text);
+    const out = {};
+    for (const [key, value] of params.entries()) {
+      out[key] = value;
+    }
+    return out;
+  }
+}
+
 function _readCompanyLinkBodyCompanyCode(body) {
   return body?.company_code ?? body?.companyCode ?? body?.code ?? "";
+}
+
+function readAndValidateCompanyLinkCode(body, url) {
+  const bodyCode = _readCompanyLinkBodyCompanyCode(body);
+  const rawCompanyCode = sanitizeTenantString(
+    bodyCode ||
+      url?.searchParams?.get("company_code") ||
+      url?.searchParams?.get("companyCode") ||
+      url?.searchParams?.get("code") ||
+      "",
+    80,
+  );
+  const normalizedCompanyCode = normalizePublicCompanyCode(rawCompanyCode);
+  const codeValidation = validatePublicCompanyCode(normalizedCompanyCode);
+  if (!codeValidation.ok) {
+    return { ok: false, error: codeValidation.error || "invalid_company_code" };
+  }
+  return { ok: true, code: codeValidation.code };
 }
 
 function _readCompanyLinkBodyPhone(body) {
@@ -1960,9 +1995,9 @@ function _readCompanyLinkBodyIdentifierType(body) {
 }
 
 async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
   _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-  const body = await safeJson(request);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
@@ -1975,11 +2010,9 @@ async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
     return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
   }
-  const rawCompanyCode = _readCompanyLinkBodyCompanyCode(body);
-  const normalizedCompanyCode = normalizePublicCompanyCode(rawCompanyCode);
-  const codeValidation = validatePublicCompanyCode(normalizedCompanyCode);
-  if (!codeValidation.ok) {
-    return json({ ok: false, error: codeValidation.error }, 400);
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error }, 400);
   }
   const country = _normalizeCompanyLinkCountry(body.country);
   if (!country) {
@@ -2000,7 +2033,7 @@ async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
   const linkingEnabled = _coerceLinkingEnabled(
     body.linking_enabled ?? body.linkingEnabled,
   );
-  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const key = _companyLinkIndexKeyForCode(codeRead.code);
   const existingRaw = await env.BOOKING_KV.get(key, { type: "json" });
   const existing = existingRaw && typeof existingRaw === "object" && !Array.isArray(existingRaw)
     ? existingRaw
@@ -2009,7 +2042,7 @@ async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
   const record = {
     tenant_id: tenantId,
     company_id: companyId,
-    company_code: codeValidation.code,
+    company_code: codeRead.code,
     display_name: sanitizeTenantString(
       body.display_name ?? body.displayName,
       160,
@@ -2039,13 +2072,11 @@ async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
 async function handleAdminCompanyLinkIndexGet(request, url, env) {
   _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
-  const codeValidation = validatePublicCompanyCode(
-    url.searchParams.get("company_code") ?? url.searchParams.get("companyCode") ?? "",
-  );
-  if (!codeValidation.ok) {
-    return json({ ok: false, error: codeValidation.error }, 400);
+  const codeRead = readAndValidateCompanyLinkCode(null, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error }, 400);
   }
-  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const key = _companyLinkIndexKeyForCode(codeRead.code);
   const record = await env.BOOKING_KV.get(key, { type: "json" });
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     return json({ ok: false, error: "company_link_index_not_found" }, 404);
