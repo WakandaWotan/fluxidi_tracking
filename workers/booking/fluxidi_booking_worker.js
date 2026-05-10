@@ -1629,6 +1629,16 @@ const COMPANY_LINK_CODE_INDEX_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
 const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_DRIVER_INDEX_KEY_PREFIX = "tenant:";
+const COMPANY_DRIVER_INDEX_KEY_MIDDLE = ":company:";
+const COMPANY_DRIVER_INDEX_KEY_SUFFIX = ":drivers:index:v1";
+const COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX = "company_driver_link:challenge:";
+const COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX = "company_driver_link:active:";
+const COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX = ":v1";
+const COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS = 10 * 60;
+const COMPANY_DRIVER_LINK_MAX_TTL_SECONDS = 30 * 60;
+const COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS = 5;
 
 function normalizePublicCompanyCode(value) {
   let text = sanitizeTenantString(value, 80).trim().toUpperCase();
@@ -1754,6 +1764,175 @@ function _coerceLinkingEnabled(value) {
   if (!text) return true;
   if (text === "false" || text === "0" || text === "no") return false;
   return true;
+}
+
+function _coerceBoolean(value, fallback = true) {
+  if (value == null) return fallback;
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTenantString(value, 16).toLowerCase();
+  if (!text) return fallback;
+  if (text === "false" || text === "0" || text === "no") return false;
+  if (text === "true" || text === "1" || text === "yes") return true;
+  return fallback;
+}
+
+function _normalizeDriverPairingTtl(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
+  return Math.min(COMPANY_DRIVER_LINK_MAX_TTL_SECONDS, rounded);
+}
+
+function _normalizeDriverPairingCode(value) {
+  return sanitizeTenantString(value, 40).toUpperCase().replace(/\s+/g, "");
+}
+
+function _validateDriverPairingCode(value) {
+  const code = _normalizeDriverPairingCode(value);
+  if (!code) return { ok: false, code: "", error: "invalid_pairing_code" };
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+    return { ok: false, code, error: "invalid_pairing_code" };
+  }
+  return { ok: true, code };
+}
+
+function _normalizeDriverDisplayName(value) {
+  return sanitizeTenantString(value, 160);
+}
+
+function _normalizeDriverEmployeeNumber(value) {
+  return sanitizeTenantString(value, 80);
+}
+
+function _normalizeDriverPhone(value) {
+  return sanitizeTenantString(value, 40);
+}
+
+function _normalizeDriverPairingSessionExpiry(nowMs = Date.now()) {
+  return new Date(nowMs + 12 * 60 * 60 * 1000).toISOString();
+}
+
+function _companyDriverIndexKey(scope) {
+  return `${COMPANY_DRIVER_INDEX_KEY_PREFIX}${scope.tenant_id}${COMPANY_DRIVER_INDEX_KEY_MIDDLE}${scope.company_id}${COMPANY_DRIVER_INDEX_KEY_SUFFIX}`;
+}
+
+function _companyDriverLinkChallengeKey(challengeId) {
+  return `${COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyDriverLinkActiveKey(companyCode) {
+  return `${COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX}`;
+}
+
+function _companyDriverLinkChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `dcl_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _generateDriverPairingCode(length = 6) {
+  const normalizedLength = Math.max(4, Math.min(12, Math.round(Number(length) || 6)));
+  const alphabet = "0123456789";
+  const values = new Uint8Array(normalizedLength);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += alphabet[value % alphabet.length];
+  }
+  return out;
+}
+
+async function _sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text || ""));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+function _constantTimeEquals(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  const maxLen = Math.max(left.length, right.length);
+  let diff = left.length ^ right.length;
+  for (let i = 0; i < maxLen; i += 1) {
+    const ca = i < left.length ? left.charCodeAt(i) : 0;
+    const cb = i < right.length ? right.charCodeAt(i) : 0;
+    diff |= (ca ^ cb);
+  }
+  return diff === 0;
+}
+
+function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
+  return {
+    ok: true,
+    role: "driver",
+    link_method: "driver_pairing_code",
+    tenant_id: challenge.tenant_id,
+    company_id: challenge.company_id,
+    company_code: challenge.company_code,
+    driver: {
+      driver_id: challenge.driver_id,
+      driver_name: challenge.driver_name || "",
+      employee_number: challenge.employee_number || "",
+    },
+    issued_at: nowIso,
+    expires_at: _normalizeDriverPairingSessionExpiry(Date.parse(nowIso)),
+  };
+}
+
+async function _loadDriverIndexRecord(env, scope) {
+  if (!env?.BOOKING_KV) return null;
+  const key = _companyDriverIndexKey(scope);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { key, drivers: {}, updated_at: "" };
+  }
+  const source = raw.drivers && typeof raw.drivers === "object" && !Array.isArray(raw.drivers)
+    ? raw.drivers
+    : {};
+  const drivers = {};
+  for (const [driverIdRaw, entryRaw] of Object.entries(source)) {
+    const driverId = sanitizeTenantString(driverIdRaw, 96);
+    if (!_isSafeCompanyLinkScopePart(driverId)) continue;
+    const entry = entryRaw && typeof entryRaw === "object" && !Array.isArray(entryRaw) ? entryRaw : {};
+    drivers[driverId] = {
+      driver_id: driverId,
+      display_name: _normalizeDriverDisplayName(
+        entry.display_name ?? entry.displayName ?? entry.driver_name ?? entry.driverName ?? entry.fullName,
+      ),
+      employee_number: _normalizeDriverEmployeeNumber(
+        entry.employee_number ?? entry.employeeNumber,
+      ),
+      phone: _normalizeDriverPhone(entry.phone),
+      is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      assigned_vehicle_id: sanitizeTenantString(
+        entry.assigned_vehicle_id ?? entry.assignedVehicleId,
+        96,
+      ),
+      updated_at: sanitizeTenantString(entry.updated_at ?? entry.updatedAt, 80),
+    };
+  }
+  return {
+    key,
+    drivers,
+    updated_at: sanitizeTenantString(raw.updated_at ?? raw.updatedAt, 80),
+  };
+}
+
+async function _saveDriverIndexRecord(env, scope, doc) {
+  const key = _companyDriverIndexKey(scope);
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      drivers: doc.drivers,
+      updated_at: doc.updated_at,
+    }),
+  );
+  return key;
 }
 
 function _isCompanyLinkSmsProviderConfigured(env) {
@@ -2082,6 +2261,269 @@ async function handleAdminCompanyLinkIndexGet(request, url, env) {
     return json({ ok: false, error: "company_link_index_not_found" }, 404);
   }
   return json({ ok: true, key, record }, 200);
+}
+
+async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const displayName = _normalizeDriverDisplayName(
+    body.display_name ?? body.displayName ?? body.driver_name ?? body.driverName ?? body.fullName,
+  );
+  const employeeNumber = _normalizeDriverEmployeeNumber(
+    body.employee_number ?? body.employeeNumber,
+  );
+  const phone = _normalizeDriverPhone(body.phone);
+  if (phone && !_looksLikeE164PhoneForAdminUpsert(phone)) {
+    return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  const assignedVehicleId = sanitizeTenantString(
+    body.assigned_vehicle_id ?? body.assignedVehicleId,
+    96,
+  );
+  if (assignedVehicleId && !_isSafeCompanyLinkScopePart(assignedVehicleId)) {
+    return json({ ok: false, error: "invalid_assigned_vehicle_id" }, 400);
+  }
+  const isActive = _coerceBoolean(body.is_active ?? body.isActive, true);
+  const nowIso = new Date().toISOString();
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  nextDrivers[driverId] = {
+    driver_id: driverId,
+    display_name: displayName,
+    employee_number: employeeNumber,
+    phone,
+    is_active: isActive,
+    assigned_vehicle_id: assignedVehicleId,
+    updated_at: nowIso,
+  };
+  const key = await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      is_active: isActive,
+      key,
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error || "invalid_company_code" }, 400);
+  }
+  const companyLinkRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (
+    !companyLinkRecord ||
+    companyLinkRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyLinkRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyLinkRecord.company_id, 80) !== companyId
+  ) {
+    return json({ ok: false, error: "invalid_company_scope_for_code" }, 403);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const driverIndex = await _loadDriverIndexRecord(env, scope);
+  const driverRecord = driverIndex?.drivers?.[driverId] || null;
+  if (!driverRecord || driverRecord.is_active !== true) {
+    return json({ ok: false, error: "driver_not_found_or_inactive" }, 404);
+  }
+  const ttlSeconds = _normalizeDriverPairingTtl(body.expires_in_seconds ?? body.expiresInSeconds);
+  const pairingCode = _generateDriverPairingCode(6);
+  const pairingCodeHash = await _sha256Hex(`${codeRead.code}:${pairingCode}`);
+  const challengeId = _companyDriverLinkChallengeId();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + ttlSeconds * 1000).toISOString();
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeRead.code,
+    driver_id: driverId,
+    driver_name: sanitizeTenantString(driverRecord.display_name, 160),
+    employee_number: sanitizeTenantString(driverRecord.employee_number, 80),
+    pairing_code_hash: pairingCodeHash,
+    attempts: 0,
+    max_attempts: COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+  };
+  const challengeKey = _companyDriverLinkChallengeKey(challengeId);
+  const activeKey = _companyDriverLinkActiveKey(codeRead.code);
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: ttlSeconds,
+  });
+  await env.BOOKING_KV.put(
+    activeKey,
+    JSON.stringify({
+      challenge_id: challengeId,
+      company_code: codeRead.code,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+    }),
+    { expirationTtl: ttlSeconds },
+  );
+  return json(
+    {
+      ok: true,
+      company_code: codeRead.code,
+      driver_id: driverId,
+      pairing_code: pairingCode,
+      expires_in_seconds: ttlSeconds,
+      expires_at: expiresAt,
+      challenge_id: challengeId,
+    },
+    200,
+  );
+}
+
+async function handlePublicCompanyDriverLinkVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const pairingValidation = _validateDriverPairingCode(
+    body.pairing_code ?? body.pairingCode,
+  );
+  if (!pairingValidation.ok) {
+    return json({ ok: false, error: "invalid_pairing_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const activeKey = _companyDriverLinkActiveKey(codeValidation.code);
+  const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
+  const challengeId = sanitizeTenantString(active?.challenge_id ?? active?.challengeId, 120)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!challengeId) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _companyDriverLinkChallengeKey(challengeId);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.tenant_id, 80) !== sanitizeTenantString(companyRecord.tenant_id, 80) ||
+    sanitizeTenantString(challenge.company_id, 80) !== sanitizeTenantString(companyRecord.company_id, 80)
+  ) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (sanitizeTenantString(challenge.consumed_at, 80)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (attempts >= maxAttempts) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedHash = sanitizeTenantString(challenge.pairing_code_hash, 200).toLowerCase();
+  const candidateHash = await _sha256Hex(`${codeValidation.code}:${pairingValidation.code}`);
+  const hashOk = _constantTimeEquals(expectedHash, candidateHash);
+  if (!hashOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    if (nextAttempts >= maxAttempts) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.last_device_label = sanitizeTenantString(body.device_label ?? body.deviceLabel, 120);
+  challenge.last_device_type = sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase();
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  await env.BOOKING_KV.delete(activeKey);
+  return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso), 200);
 }
 
 function pickFirstPublicValue(...values) {
@@ -4153,6 +4595,28 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyLinkIndexGet(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/index/upsert") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriversIndexUpsert(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/driver-link-code/create") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriverLinkCodeCreate(request, url, env);
+      }
+
+      if (url.pathname === "/public/company/driver-link/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyDriverLinkVerify(body, env);
       }
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
