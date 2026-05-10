@@ -1729,6 +1729,33 @@ function _looksLikeE164Phone(value) {
   return /^\+[1-9]\d{6,14}$/.test(text);
 }
 
+function _looksLikeE164PhoneForAdminUpsert(value) {
+  const text = sanitizeTenantString(value, 40);
+  return /^\+\d{8,15}$/.test(text);
+}
+
+function _isSafeCompanyLinkScopePart(value) {
+  const text = sanitizeTenantString(value, 80);
+  if (!text) return false;
+  return /^[A-Za-z0-9._-]+$/.test(text);
+}
+
+function _normalizeCompanyLinkCountry(value) {
+  const letters = sanitizeTenantString(value, 16).toUpperCase().replace(/[^A-Z]/g, "");
+  if (!letters) return "";
+  if (letters.length >= 2) return letters.slice(0, 2);
+  return "";
+}
+
+function _coerceLinkingEnabled(value) {
+  if (value == null) return true;
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTenantString(value, 16).toLowerCase();
+  if (!text) return true;
+  if (text === "false" || text === "0" || text === "no") return false;
+  return true;
+}
+
 function _isCompanyLinkSmsProviderConfigured(env) {
   const provider = sanitizeTenantString(env?.COMPANY_LINK_SMS_PROVIDER, 32).toLowerCase();
   if (!provider) return false;
@@ -1915,6 +1942,113 @@ async function handlePublicCompanyLinkVerify(body, env) {
   // - Return limited device/company session only after successful second proof.
   void env;
   return json({ ok: false, error: "verification_not_available" }, 501);
+}
+
+function _readCompanyLinkBodyCompanyCode(body) {
+  return body?.company_code ?? body?.companyCode ?? "";
+}
+
+function _readCompanyLinkBodyPhone(body) {
+  return sanitizeTenantString(
+    body?.registered_phone_e164 ?? body?.registeredPhoneE164,
+    40,
+  );
+}
+
+function _readCompanyLinkBodyIdentifierType(body) {
+  return normalizeIdentifierType(body?.identifier_type ?? body?.identifierType);
+}
+
+async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const body = await safeJson(request);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeValidation = validatePublicCompanyCode(_readCompanyLinkBodyCompanyCode(body));
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: codeValidation.error }, 400);
+  }
+  const country = _normalizeCompanyLinkCountry(body.country);
+  if (!country) {
+    return json({ ok: false, error: "invalid_country" }, 400);
+  }
+  const normalizedIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    _pickTaxOrRegistrationIdAlias(body),
+    country,
+  );
+  if (!normalizedIdentifier) {
+    return json({ ok: false, error: "invalid_tax_or_registration_id" }, 400);
+  }
+  const identifierType = _readCompanyLinkBodyIdentifierType(body);
+  const registeredPhone = _readCompanyLinkBodyPhone(body);
+  if (registeredPhone && !_looksLikeE164PhoneForAdminUpsert(registeredPhone)) {
+    return json({ ok: false, error: "invalid_registered_phone_e164" }, 400);
+  }
+  const linkingEnabled = _coerceLinkingEnabled(
+    body.linking_enabled ?? body.linkingEnabled,
+  );
+  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const existingRaw = await env.BOOKING_KV.get(key, { type: "json" });
+  const existing = existingRaw && typeof existingRaw === "object" && !Array.isArray(existingRaw)
+    ? existingRaw
+    : null;
+  const nowIso = new Date().toISOString();
+  const record = {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeValidation.code,
+    display_name: sanitizeTenantString(
+      body.display_name ?? body.displayName,
+      160,
+    ),
+    country,
+    tax_or_registration_id: normalizedIdentifier,
+    identifier_type: identifierType || normalizeIdentifierType(existing?.identifier_type),
+    registered_phone_e164: registeredPhone || sanitizeTenantString(existing?.registered_phone_e164, 40),
+    linking_enabled: linkingEnabled,
+    updated_at: nowIso,
+    created_or_updated_by: "admin",
+    created_at: sanitizeTenantString(existing?.created_at, 80) || nowIso,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+  return json(
+    {
+      ok: true,
+      company_code: record.company_code,
+      key,
+      linking_enabled: record.linking_enabled === true,
+      has_registered_phone: _looksLikeE164PhoneForAdminUpsert(record.registered_phone_e164),
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyLinkIndexGet(request, url, env) {
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("company_code") ?? url.searchParams.get("companyCode") ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: codeValidation.error }, 400);
+  }
+  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return json({ ok: false, error: "company_link_index_not_found" }, 404);
+  }
+  return json({ ok: true, key, record }, 200);
 }
 
 function pickFirstPublicValue(...values) {
@@ -3972,6 +4106,20 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCompanyLinkVerify(body, env);
+      }
+
+      if (url.pathname === "/admin/company/link-index/upsert") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkIndexUpsert(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/link-index/get") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkIndexGet(request, url, env);
       }
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
