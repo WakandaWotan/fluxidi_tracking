@@ -2760,6 +2760,52 @@ class _AirportPageState extends State<AirportPage> {
     return double.tryParse(text.replaceAll(',', '.'));
   }
 
+  bool _isFixedAirportFareQuote(Map<String, dynamic> quote) {
+    bool asBool(dynamic value) {
+      if (value is bool) {
+        return value;
+      }
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    String asText(dynamic value) {
+      return value?.toString().trim().toLowerCase() ?? '';
+    }
+
+    if (asBool(quote['fixed_fare_applied'])) {
+      return true;
+    }
+    if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
+      return true;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      final breakdown = Map<String, dynamic>.from(breakdownRaw);
+      if (asText(breakdown['kind']) == 'airport_fixed_fare') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String? _fixedFareRuleIdFromQuote(Map<String, dynamic> quote) {
+    String? nonEmpty(dynamic value) {
+      final text = value?.toString().trim() ?? '';
+      return text.isEmpty ? null : text;
+    }
+
+    final topLevel = nonEmpty(quote['fixed_fare_rule_id']);
+    if (topLevel != null) {
+      return topLevel;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      return nonEmpty(breakdownRaw['fixed_fare_rule_id']);
+    }
+    return null;
+  }
+
   Widget _buildAirportQuoteCard() {
     final quote = _airportQuote;
     final error = _airportQuoteError;
@@ -2768,6 +2814,12 @@ class _AirportPageState extends State<AirportPage> {
     final displayPrice = totalIncl ?? mainIncl;
     final distance = _quoteNum(quote?['distance_km']);
     final duration = _quoteNum(quote?['duration_min']);
+    final hasFixedFare =
+        quote != null &&
+        _isFixedAirportFareQuote(Map<String, dynamic>.from(quote));
+    final fixedFareRuleId = quote == null
+        ? null
+        : _fixedFareRuleIdFromQuote(Map<String, dynamic>.from(quote));
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
@@ -2832,6 +2884,74 @@ class _AirportPageState extends State<AirportPage> {
               ],
             ),
             const SizedBox(height: 6),
+            if (hasFixedFare) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: _gold.withOpacity(0.48)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.workspace_premium_rounded,
+                      color: _gold.withOpacity(0.96),
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _t(
+                          nl: 'Vast tarief volgens bedrijfsregel',
+                          en: 'Fixed fare by company rule',
+                          fr: 'Tarif fixe selon la règle d’entreprise',
+                          es: 'Tarifa fija según regla de empresa',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 11.1,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _t(
+                  nl: 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
+                  en: 'This price comes from the company’s configured airport rules.',
+                  fr: 'Ce prix provient des règles aéroport configurées par l’entreprise.',
+                  es: 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _soft.withOpacity(0.9),
+                  fontSize: 10.8,
+                  height: 1.2,
+                ),
+              ),
+              if (fixedFareRuleId != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  '${_t(nl: "Tariefregel", en: "Fare rule", fr: "Règle tarifaire", es: "Regla de tarifa")}: $fixedFareRuleId',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _soft.withOpacity(0.93),
+                    fontSize: 10.7,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 6),
+            ],
             Row(
               children: [
                 Expanded(

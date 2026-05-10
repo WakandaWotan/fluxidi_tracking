@@ -136,6 +136,52 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return '${widget.currencySymbol} ${amount.toStringAsFixed(2)}';
   }
 
+  bool _isFixedAirportFareQuote(Map<String, dynamic> quote) {
+    bool asBool(dynamic value) {
+      if (value is bool) {
+        return value;
+      }
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    String asText(dynamic value) {
+      return value?.toString().trim().toLowerCase() ?? '';
+    }
+
+    if (asBool(quote['fixed_fare_applied'])) {
+      return true;
+    }
+    if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
+      return true;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      final breakdown = Map<String, dynamic>.from(breakdownRaw);
+      if (asText(breakdown['kind']) == 'airport_fixed_fare') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String? _fixedFareRuleIdFromQuote(Map<String, dynamic> quote) {
+    String? nonEmpty(dynamic value) {
+      final text = value?.toString().trim() ?? '';
+      return text.isEmpty ? null : text;
+    }
+
+    final topLevel = nonEmpty(quote['fixed_fare_rule_id']);
+    if (topLevel != null) {
+      return topLevel;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      return nonEmpty(breakdownRaw['fixed_fare_rule_id']);
+    }
+    return null;
+  }
+
   Map<String, dynamic> _buildBookPayload({
     required String name,
     required String phone,
@@ -473,6 +519,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final priceIncl = quote['total_price_incl_vat'] ?? quote['price_incl_vat'];
     final distance = _toNum(quote['distance_km']);
     final duration = _toNum(quote['duration_min']);
+    final hasFixedFare = _isFixedAirportFareQuote(quote);
+    final fixedFareRuleId = _fixedFareRuleIdFromQuote(quote);
     final directionRaw = _fallback(payload['airport_direction'], empty: '');
     final directionLabel = directionRaw == 'from_airport'
         ? _t(
@@ -611,6 +659,78 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                   _fmtMoney(priceIncl),
                 ),
+                if (hasFixedFare) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 7),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _gold.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(color: _gold.withOpacity(0.48)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.workspace_premium_rounded,
+                            color: _gold.withOpacity(0.96),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _t(
+                                nl: 'Vast tarief volgens bedrijfsregel',
+                                en: 'Fixed fare by company rule',
+                                fr: 'Tarif fixe selon la règle d’entreprise',
+                                es: 'Tarifa fija según regla de empresa',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _gold,
+                                fontSize: 11.1,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 7),
+                    child: Text(
+                      _t(
+                        nl: 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
+                        en: 'This price comes from the company’s configured airport rules.',
+                        fr: 'Ce prix provient des règles aéroport configurées par l’entreprise.',
+                        es: 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _soft.withOpacity(0.9),
+                        fontSize: 10.8,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  if (fixedFareRuleId != null)
+                    _summaryRow(
+                      _t(
+                        nl: 'Tariefregel',
+                        en: 'Fare rule',
+                        fr: 'Règle tarifaire',
+                        es: 'Regla de tarifa',
+                      ),
+                      fixedFareRuleId,
+                    ),
+                ],
                 if (flightNumber.isNotEmpty)
                   _summaryRow(
                     _t(
