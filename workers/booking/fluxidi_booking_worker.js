@@ -1629,6 +1629,13 @@ const COMPANY_LINK_CODE_INDEX_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
 const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX = "company_link:admin_pairing:challenge:";
+const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX = "company_link:admin_pairing:active:";
+const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_SUFFIX = ":v1";
+const COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS = 10 * 60;
+const COMPANY_ADMIN_PAIRING_MAX_TTL_SECONDS = 30 * 60;
+const COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS = 5;
 const COMPANY_DRIVER_INDEX_KEY_PREFIX = "tenant:";
 const COMPANY_DRIVER_INDEX_KEY_MIDDLE = ":company:";
 const COMPANY_DRIVER_INDEX_KEY_SUFFIX = ":drivers:index:v1";
@@ -1774,6 +1781,66 @@ function _coerceBoolean(value, fallback = true) {
   if (text === "false" || text === "0" || text === "no") return false;
   if (text === "true" || text === "1" || text === "yes") return true;
   return fallback;
+}
+
+function _normalizeCompanyAdminPairingTtl(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS;
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS;
+  return Math.min(COMPANY_ADMIN_PAIRING_MAX_TTL_SECONDS, rounded);
+}
+
+function _validateCompanyAdminPairingCode(value) {
+  const code = sanitizeTenantString(value, 32).replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(code)) {
+    return { ok: false, code: "", error: "invalid_pairing_code" };
+  }
+  return { ok: true, code };
+}
+
+function _companyAdminPairingChallengeKey(challengeId) {
+  return `${COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyAdminPairingActiveKey(companyCode) {
+  return `${COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_ADMIN_PAIRING_ACTIVE_KEY_SUFFIX}`;
+}
+
+function _companyAdminPairingChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cap_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _generateCompanyAdminPairingCode() {
+  const values = new Uint8Array(6);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += String(value % 10);
+  }
+  return out;
+}
+
+function _projectCompanyAdminSessionPayload(record, nowIso) {
+  const issuedAtMs = Date.parse(nowIso);
+  const expiresAt = Number.isFinite(issuedAtMs)
+    ? new Date(issuedAtMs + 12 * 60 * 60 * 1000).toISOString()
+    : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  return {
+    ok: true,
+    role: "companyAdmin",
+    link_method: "company_pairing_code",
+    tenant_id: record.tenant_id,
+    company_id: record.company_id,
+    company_code: record.company_code,
+    company: {
+      display_name: sanitizeTenantString(record.display_name, 160),
+      country: sanitizeTenantString(record.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    },
+    issued_at: nowIso,
+    expires_at: expiresAt,
+  };
 }
 
 function _normalizeDriverPairingTtl(value) {
@@ -2107,20 +2174,96 @@ async function handlePublicCompanyLinkVerify(body, env) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
-  const challengeId = sanitizeTenantString(body.challenge_id ?? body.challengeId, 120)
-    .replace(/[^a-zA-Z0-9_-]+/g, "");
-  const otpCode = sanitizeTenantString(body.otp_code ?? body.otpCode, 16).replace(/\s+/g, "");
-  if (!challengeId || !otpCode) {
-    return json({ ok: false, error: "invalid_verification_payload" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeRead = readAndValidateCompanyLinkCode(body, null);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
   }
-  // TODO(linking-verify):
-  // - Load challenge by id and verify existence.
-  // - Enforce TTL/expiry and attempt limits.
-  // - Verify OTP hash match (constant-time compare).
-  // - Consume challenge on success.
-  // - Return limited device/company session only after successful second proof.
-  void env;
-  return json({ ok: false, error: "verification_not_available" }, 501);
+  const pairingValidation = _validateCompanyAdminPairingCode(
+    body.pairing_code ?? body.pairingCode,
+  );
+  if (!pairingValidation.ok) {
+    return json({ ok: false, error: "invalid_pairing_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const activeKey = _companyAdminPairingActiveKey(codeRead.code);
+  const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
+  const challengeId = sanitizeTenantString(active?.challenge_id ?? active?.challengeId, 120)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!challengeId) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _companyAdminPairingChallengeKey(challengeId);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeRead.code ||
+    sanitizeTenantString(challenge.tenant_id, 80) !== sanitizeTenantString(companyRecord.tenant_id, 80) ||
+    sanitizeTenantString(challenge.company_id, 80) !== sanitizeTenantString(companyRecord.company_id, 80)
+  ) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (sanitizeTenantString(challenge.consumed_at, 80)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (attempts >= maxAttempts) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedHash = sanitizeTenantString(challenge.pairing_code_hash, 200).toLowerCase();
+  const candidateHash = await _sha256Hex(`${codeRead.code}:${pairingValidation.code}`);
+  const hashOk = _constantTimeEquals(expectedHash, candidateHash);
+  if (!hashOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    if (nextAttempts >= maxAttempts) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.last_device_label = sanitizeTenantString(body.device_label ?? body.deviceLabel, 120);
+  challenge.last_device_type = sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase();
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  await env.BOOKING_KV.delete(activeKey);
+  return json(_projectCompanyAdminSessionPayload(companyRecord, nowIso), 200);
 }
 
 async function readAdminCompanyLinkBody(request) {
@@ -2261,6 +2404,85 @@ async function handleAdminCompanyLinkIndexGet(request, url, env) {
     return json({ ok: false, error: "company_link_index_not_found" }, 404);
   }
   return json({ ok: true, key, record }, 200);
+}
+
+async function handleAdminCompanyLinkCodeCreate(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error || "invalid_company_code" }, 400);
+  }
+  const companyLinkRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (
+    !companyLinkRecord ||
+    companyLinkRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyLinkRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyLinkRecord.company_id, 80) !== companyId
+  ) {
+    return json({ ok: false, error: "invalid_company_scope_for_code" }, 403);
+  }
+  const ttlSeconds = _normalizeCompanyAdminPairingTtl(
+    body.expires_in_seconds ?? body.expiresInSeconds,
+  );
+  const pairingCode = _generateCompanyAdminPairingCode();
+  const pairingCodeHash = await _sha256Hex(`${codeRead.code}:${pairingCode}`);
+  const challengeId = _companyAdminPairingChallengeId();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + ttlSeconds * 1000).toISOString();
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeRead.code,
+    pairing_code_hash: pairingCodeHash,
+    attempts: 0,
+    max_attempts: COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+  };
+  const challengeKey = _companyAdminPairingChallengeKey(challengeId);
+  const activeKey = _companyAdminPairingActiveKey(codeRead.code);
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: ttlSeconds,
+  });
+  await env.BOOKING_KV.put(
+    activeKey,
+    JSON.stringify({
+      challenge_id: challengeId,
+      company_code: codeRead.code,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+    }),
+    { expirationTtl: ttlSeconds },
+  );
+  return json(
+    {
+      ok: true,
+      company_code: codeRead.code,
+      pairing_code: pairingCode,
+      expires_in_seconds: ttlSeconds,
+      expires_at: expiresAt,
+      challenge_id: challengeId,
+    },
+    200,
+  );
 }
 
 async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
@@ -4595,6 +4817,13 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyLinkIndexGet(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/link-code/create") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkCodeCreate(request, url, env);
       }
 
       if (url.pathname === "/admin/company/drivers/index/upsert") {
