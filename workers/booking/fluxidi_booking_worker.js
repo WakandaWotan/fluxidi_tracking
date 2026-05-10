@@ -1945,7 +1945,7 @@ async function handlePublicCompanyLinkVerify(body, env) {
 }
 
 function _readCompanyLinkBodyCompanyCode(body) {
-  return body?.company_code ?? body?.companyCode ?? "";
+  return body?.company_code ?? body?.companyCode ?? body?.code ?? "";
 }
 
 function _readCompanyLinkBodyPhone(body) {
@@ -1975,7 +1975,9 @@ async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
     return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
   }
-  const codeValidation = validatePublicCompanyCode(_readCompanyLinkBodyCompanyCode(body));
+  const rawCompanyCode = _readCompanyLinkBodyCompanyCode(body);
+  const normalizedCompanyCode = normalizePublicCompanyCode(rawCompanyCode);
+  const codeValidation = validatePublicCompanyCode(normalizedCompanyCode);
   if (!codeValidation.ok) {
     return json({ ok: false, error: codeValidation.error }, 400);
   }
