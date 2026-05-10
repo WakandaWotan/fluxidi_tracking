@@ -647,6 +647,18 @@ class CompanySessionStore {
     return 'fluxidi_${slug}_${_randomSuffix()}';
   }
 
+  static String _normalizeHumanCompanyId(String raw) {
+    var text = raw.trim().toUpperCase();
+    if (text.isEmpty) return '';
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'[^A-Z0-9-]'), '');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    text = text.replaceAll(RegExp(r'^-+|-+$'), '');
+    if (text.length < 4 || text.length > 24) return '';
+    if (!RegExp(r'[A-Z0-9]').hasMatch(text)) return '';
+    return text;
+  }
+
   /// Persists profile + session; mirrors key fields into [businessSettingsNotifier] for existing UI.
   Future<void> saveNewProfileFromOnboarding({
     required String companyName,
@@ -656,9 +668,15 @@ class CompanySessionStore {
     String vatNumber = '',
     String city = '',
     String countryCode = 'BE',
+    String? companyIdOverride,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
-    final id = generateCompanyId(companyName);
+    final normalizedOverride = _normalizeHumanCompanyId(
+      companyIdOverride ?? '',
+    );
+    final id = normalizedOverride.isNotEmpty
+        ? normalizedOverride
+        : generateCompanyId(companyName);
     final em = email.trim();
     final profile = CompanyProfile(
       companyId: id,

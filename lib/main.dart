@@ -2013,6 +2013,50 @@ class RoleEntryPage extends StatelessWidget {
   static const String _startBackgroundAsset =
       'assets/fluxidi/fluxidi_start_background.png';
 
+  String _normalizeHumanCompanyId(String raw) {
+    var text = raw.trim().toUpperCase();
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    return text;
+  }
+
+  String? _validateHumanCompanyId(String raw) {
+    final value = _normalizeHumanCompanyId(raw);
+    if (value.isEmpty) {
+      return _t(
+        nl: 'Vul een bedrijfs-ID in.',
+        en: 'Enter a company ID.',
+        fr: 'Saisissez un ID d’entreprise.',
+        es: 'Introduce un ID de empresa.',
+      );
+    }
+    if (value.length < 4 || value.length > 24) {
+      return _t(
+        nl: 'Bedrijfs-ID moet tussen 4 en 24 tekens zijn.',
+        en: 'Company ID must be between 4 and 24 characters.',
+        fr: 'L’ID d’entreprise doit contenir entre 4 et 24 caractères.',
+        es: 'El ID de empresa debe tener entre 4 y 24 caracteres.',
+      );
+    }
+    if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(value)) {
+      return _t(
+        nl: 'Gebruik alleen A-Z, 0-9 en koppelteken (-).',
+        en: 'Use only A-Z, 0-9 and hyphen (-).',
+        fr: 'Utilisez uniquement A-Z, 0-9 et le tiret (-).',
+        es: 'Usa solo A-Z, 0-9 y guion (-).',
+      );
+    }
+    if (!RegExp(r'[A-Z0-9]').hasMatch(value)) {
+      return _t(
+        nl: 'Bedrijfs-ID moet letters of cijfers bevatten.',
+        en: 'Company ID must contain letters or digits.',
+        fr: 'L’ID d’entreprise doit contenir des lettres ou des chiffres.',
+        es: 'El ID de empresa debe contener letras o dígitos.',
+      );
+    }
+    return null;
+  }
+
   String _t({
     required String nl,
     required String en,
@@ -2195,6 +2239,266 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
+  Future<String?> _promptExistingCompanyId(BuildContext context) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bedrijfs-ID invoeren',
+                  en: 'Enter company ID',
+                  fr: 'Saisir un ID d’entreprise',
+                  es: 'Introducir ID de empresa',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Gebruik een eenvoudige code zoals FLX-4821 of TAXI-4821.',
+                      en: 'Use a simple code like FLX-4821 or TAXI-4821.',
+                      fr: 'Utilisez un code simple comme FLX-4821 ou TAXI-4821.',
+                      es: 'Usa un código simple como FLX-4821 o TAXI-4821.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: controller,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Bedrijfs-ID',
+                        en: 'Company ID',
+                        fr: 'ID d’entreprise',
+                        es: 'ID de empresa',
+                      ),
+                      labelStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.32),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: const BorderRadius.all(
+                          Radius.circular(12),
+                        ),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow,
+                          width: 1.1,
+                        ),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      final normalized = _normalizeHumanCompanyId(value);
+                      if (normalized != value) {
+                        controller.value = TextEditingValue(
+                          text: normalized,
+                          selection: TextSelection.collapsed(
+                            offset: normalized.length,
+                          ),
+                        );
+                      }
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final normalized = _normalizeHumanCompanyId(
+                      controller.text,
+                    );
+                    final validationError = _validateHumanCompanyId(normalized);
+                    if (validationError != null) {
+                      setDialogState(() => errorText = validationError);
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(normalized);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Verder',
+                      en: 'Continue',
+                      fr: 'Continuer',
+                      es: 'Continuar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<bool?> _showBusinessOnboardingChoice(BuildContext context) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: false,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0E0E0E),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
+              boxShadow: [
+                BoxShadow(
+                  color: kFluxidiYellow.withOpacity(0.12),
+                  blurRadius: 14,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Hoe wilt u als bedrijf starten?',
+                    en: 'How do you want to start as a business?',
+                    fr: 'Comment voulez-vous commencer en tant qu’entreprise ?',
+                    es: '¿Cómo quieres empezar como empresa?',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _t(
+                    nl: 'Kies of u al een bedrijfs-ID heeft of eerst uw bedrijfsgegevens wilt invullen.',
+                    en: 'Choose whether you already have a company ID or want to enter company details first.',
+                    fr: 'Choisissez si vous avez déjà un ID d’entreprise ou si vous voulez d’abord saisir les données de l’entreprise.',
+                    es: 'Elige si ya tienes un ID de empresa o si primero quieres introducir los datos de la empresa.',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.72),
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(true),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    backgroundColor: kFluxidiYellow,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik heb al een bedrijfs-ID',
+                      en: 'I already have a company ID',
+                      fr: 'J’ai déjà un ID d’entreprise',
+                      es: 'Ya tengo un ID de empresa',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.52)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                      en: 'I want to enter my company details',
+                      fr: 'Je veux saisir les données de mon entreprise',
+                      es: 'Quiero introducir los datos de mi empresa',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openBusinessOnboarding(
+    BuildContext context, {
+    String? initialCompanyId,
+    bool lockCompanyId = false,
+  }) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => CompanyOnboardingPage(
+          initialCompanyId: initialCompanyId,
+          lockCompanyId: lockCompanyId,
+          onCompleted: (ctx) {
+            setAppRole(AppRole.companyAdmin);
+            Navigator.of(ctx).pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _goBusiness(BuildContext context) async {
     await CompanySessionStore.instance.bootstrap();
     if (!context.mounted) return;
@@ -2204,20 +2508,19 @@ class RoleEntryPage extends StatelessWidget {
         MaterialPageRoute(builder: (_) => const BusinessHomePage()),
       );
     } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => CompanyOnboardingPage(
-            onCompleted: (ctx) {
-              setAppRole(AppRole.companyAdmin);
-              Navigator.of(ctx).pushReplacement(
-                MaterialPageRoute<void>(
-                  builder: (_) => const BusinessHomePage(),
-                ),
-              );
-            },
-          ),
-        ),
-      );
+      final hasExistingId = await _showBusinessOnboardingChoice(context);
+      if (!context.mounted || hasExistingId == null) return;
+      if (hasExistingId) {
+        final companyId = await _promptExistingCompanyId(context);
+        if (!context.mounted || companyId == null) return;
+        _openBusinessOnboarding(
+          context,
+          initialCompanyId: companyId,
+          lockCompanyId: true,
+        );
+        return;
+      }
+      _openBusinessOnboarding(context);
     }
   }
 
