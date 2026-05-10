@@ -490,7 +490,17 @@ class CompanySessionStore {
 
       final legacyFile = await _legacyProfileFile();
       final legacy = await _readProfileFromFile(legacyFile);
-      if (legacy == null) return null;
+      if (legacy == null) {
+        final discovered = await _discoverLatestScopedProfile();
+        if (discovered != null) {
+          _profileMemory = discovered;
+          debugPrint(
+            '[COMPANY_SESSION][DISCOVER] target=profile tenant=${discovered.tenantId} company=${discovered.companyId}',
+          );
+          return discovered;
+        }
+        return null;
+      }
 
       final scopedTarget = await _profileFileForScope(
         tenantId: legacy.tenantId,
@@ -505,6 +515,40 @@ class CompanySessionStore {
       }
       _profileMemory = legacy;
       return legacy;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<CompanyProfile?> _discoverLatestScopedProfile() async {
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) return null;
+      CompanyProfile? latestProfile;
+      DateTime? latestModifiedAt;
+      await for (final tenantNode in root.list(followLinks: false)) {
+        if (tenantNode is! Directory) continue;
+        await for (final companyNode in tenantNode.list(followLinks: false)) {
+          if (companyNode is! Directory) continue;
+          final profileFile = File(
+            '${companyNode.path}${Platform.pathSeparator}$_profileFileName',
+          );
+          final profile = await _readProfileFromFile(profileFile);
+          if (profile == null) continue;
+          DateTime modifiedAt;
+          try {
+            modifiedAt = await profileFile.lastModified();
+          } catch (_) {
+            modifiedAt = DateTime.fromMillisecondsSinceEpoch(0);
+          }
+          if (latestModifiedAt == null ||
+              modifiedAt.isAfter(latestModifiedAt)) {
+            latestModifiedAt = modifiedAt;
+            latestProfile = profile;
+          }
+        }
+      }
+      return latestProfile;
     } catch (_) {
       return null;
     }
@@ -558,22 +602,30 @@ class CompanySessionStore {
 
   /// Call after tenant state load — reconciles disk + sets notifiers; does not overwrite pricing fields.
   Future<void> bootstrap() async {
+    debugPrint('[COMPANY_PAIRING][BOOTSTRAP] started=true');
     _profileMemory = null;
     _sessionMemory = null;
     CompanyProfile? p = await loadProfile();
     ActiveCompanySession? s = await loadSession();
 
     if (p == null || !p.isActive || p.companyId.isEmpty) {
+      debugPrint('[COMPANY_PAIRING][SESSION_MISSING] reason=profile_missing');
       await clearLocalCompanyState();
       return;
     }
     companyProfileNotifier.value = p;
     if (s == null || s.companyId != p.companyId) {
       await _writeSessionForProfile(p);
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only',
+      );
       return;
     }
     activeCompanySessionNotifier.value = s;
     await _touchSessionLastUsed();
+    debugPrint(
+      '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_session',
+    );
   }
 
   Future<void> _writeSessionForProfile(CompanyProfile p) async {
@@ -705,6 +757,63 @@ class CompanySessionStore {
     await _writeSessionForProfile(profile);
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
+  }
+
+  /// Persists a verified backend pairing into local company profile + session.
+  /// This does not use admin endpoints and stores only safe public pairing fields.
+  Future<void> saveVerifiedCompanyPairingSession({
+    required String tenantId,
+    required String companyId,
+    required String companyCode,
+    required String companyName,
+    required String countryCode,
+    DateTime? issuedAt,
+    DateTime? expiresAt,
+  }) async {
+    final resolvedCompanyId = companyId.trim();
+    if (resolvedCompanyId.isEmpty) return;
+    final resolvedTenantId = tenantId.trim();
+    if (resolvedTenantId.isEmpty) return;
+    final now = DateTime.now().toUtc();
+    final issued = (issuedAt ?? now).toUtc();
+    final nowIso = now.toIso8601String();
+    final issuedIso = issued.toIso8601String();
+    final normalizedCountry = countryCode.trim().toUpperCase();
+    final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
+    final safeCode = companyCode.trim().isEmpty
+        ? resolvedCompanyId
+        : companyCode.trim();
+    final safeName = companyName.trim().isEmpty ? safeCode : companyName.trim();
+    final profile = CompanyProfile(
+      companyId: resolvedCompanyId,
+      companyName: safeName,
+      ownerName: '',
+      email: '',
+      phone: '',
+      vatNumber: '',
+      addressLine: '',
+      postalCode: '',
+      city: '',
+      countryCode: safeCountry,
+      companyEmail: '',
+      supportEmail: '',
+      billingEmail: '',
+      bookingEmail: '',
+      notificationEmail: '',
+      createdAt: issuedIso,
+      updatedAt: nowIso,
+      isActive: true,
+      verificationStatus: CompanyVerificationStatus.pendingVerification,
+    );
+    await persistProfile(profile);
+    await _writeSessionForProfile(profile);
+    companyProfileNotifier.value = profile;
+    applyProfileToBusinessNotifier(profile);
+    debugPrint(
+      '[COMPANY_PAIRING][SAVE] tenant=$resolvedTenantId company=$resolvedCompanyId',
+    );
+    // Reserved for future session-expiry checks at bootstrap level.
+    final _ = expiresAt;
   }
 
   Future<void> persistProfile(CompanyProfile profile) async {

@@ -58,6 +58,7 @@ import 'widgets/route_marquee.dart';
 final bool kIsWindows = !kIsWeb && Platform.isWindows;
 
 CustomerProfile? _cachedCustomerProfile;
+bool _startInCompanyAdminHome = false;
 
 Future<void> _refreshCachedCustomerProfile() async {
   _cachedCustomerProfile = await CustomerProfileStore.instance.load();
@@ -246,6 +247,15 @@ Future<void> main() async {
   await loadLocalTenantState();
   await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
+  if (CompanySessionStore.instance.hasValidCompanyContext) {
+    setAppRole(AppRole.companyAdmin);
+    _startInCompanyAdminHome = true;
+    debugPrint('[COMPANY_PAIRING][AUTO_ROUTE] target=business_home');
+  } else {
+    debugPrint(
+      '[COMPANY_PAIRING][AUTO_ROUTE_SKIP] reason=no_valid_company_context',
+    );
+  }
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
   await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
@@ -2001,7 +2011,9 @@ class FluxidiDriverApp extends StatelessWidget {
         builder: (context, child) {
           return FluxidiFrame(child: child ?? const SizedBox.shrink());
         },
-        home: const RoleEntryPage(),
+        home: _startInCompanyAdminHome
+            ? const BusinessHomePage()
+            : const RoleEntryPage(),
       ),
     );
   }
@@ -2380,6 +2392,285 @@ class RoleEntryPage extends StatelessWidget {
     return result;
   }
 
+  String _safePairingText(dynamic value) => (value ?? '').toString().trim();
+
+  Future<Map<String, dynamic>> _resolveCompanyCode(String companyCode) async {
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/public/company/resolve?code=${Uri.encodeQueryComponent(companyCode)}',
+    );
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      if (response.statusCode == 200 && body['ok'] == true) {
+        return <String, dynamic>{
+          'ok': true,
+          'company_code': _safePairingText(body['company_code']),
+          'display_name': _safePairingText(body['display_name']),
+          'country': _safePairingText(body['country']),
+          'masked_phone': _safePairingText(body['masked_phone']),
+        };
+      }
+      final error = _safePairingText(body['error']).toLowerCase();
+      if (response.statusCode == 404 || error == 'company_not_found') {
+        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
+      }
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    } catch (_) {
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    }
+  }
+
+  Future<String?> _promptCompanyPairingCode(
+    BuildContext context, {
+    required String companyCode,
+    required String displayName,
+    required String country,
+    required String maskedPhone,
+  }) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bedrijf koppelen',
+                  en: 'Link company',
+                  fr: 'Lier l’entreprise',
+                  es: 'Vincular empresa',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Bedrijf gevonden',
+                      en: 'Company found',
+                      fr: 'Entreprise trouvée',
+                      es: 'Empresa encontrada',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    [
+                      if (displayName.isNotEmpty) displayName,
+                      if (companyCode.isNotEmpty) companyCode,
+                      if (country.isNotEmpty) country,
+                      if (maskedPhone.isNotEmpty) maskedPhone,
+                    ].join('  •  '),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(
+                      nl: 'Voer de koppelcode in',
+                      en: 'Enter the pairing code',
+                      fr: 'Saisissez le code de liaison',
+                      es: 'Introduce el código de vinculación',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.82),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Koppelcode',
+                        en: 'Pairing code',
+                        fr: 'Code de liaison',
+                        es: 'Código de vinculación',
+                      ),
+                      labelStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final pairingCode = controller.text.trim();
+                    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
+                      setDialogState(
+                        () => errorText = _t(
+                          nl: 'Bedrijfs-ID of koppelcode ongeldig',
+                          en: 'Company ID or pairing code is invalid',
+                          fr: 'ID d’entreprise ou code de liaison invalide',
+                          es: 'ID de empresa o código de vinculación no válido',
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(pairingCode);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Bedrijf koppelen',
+                      en: 'Link company',
+                      fr: 'Lier l’entreprise',
+                      es: 'Vincular empresa',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<Map<String, dynamic>> _verifyCompanyPairingCode({
+    required String companyCode,
+    required String pairingCode,
+  }) async {
+    final uri = Uri.parse('$kBookingBaseUrl/public/company/link/verify');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, dynamic>{
+              'company_code': companyCode,
+              'pairing_code': pairingCode,
+              'device_label': 'Bedrijf tablet',
+              'device_type': 'tablet',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = _safePairingText(body['role']);
+      if (response.statusCode == 200 && ok && role == 'companyAdmin') {
+        return <String, dynamic>{'ok': true, 'payload': body};
+      }
+      final error = _safePairingText(body['error']).toLowerCase();
+      if (error == 'company_not_found') {
+        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
+      }
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    } catch (_) {
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    }
+  }
+
+  Future<bool> _openVerifiedCompanySession(
+    BuildContext context,
+    Map<String, dynamic> payload,
+  ) async {
+    if (payload['ok'] != true) return false;
+    if (_safePairingText(payload['role']) != 'companyAdmin') return false;
+    final tenantId = _safePairingText(payload['tenant_id']);
+    final companyId = _safePairingText(payload['company_id']);
+    final companyCode = _safePairingText(payload['company_code']);
+    if (tenantId.isEmpty || companyId.isEmpty || companyCode.isEmpty) {
+      return false;
+    }
+    final companyMap = payload['company'] is Map
+        ? Map<String, dynamic>.from(payload['company'] as Map)
+        : <String, dynamic>{};
+    final companyName = _safePairingText(companyMap['display_name']);
+    final countryCode = _safePairingText(companyMap['country']);
+    final issuedAt = DateTime.tryParse(_safePairingText(payload['issued_at']));
+    final expiresAt = DateTime.tryParse(
+      _safePairingText(payload['expires_at']),
+    );
+    await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      companyName: companyName,
+      countryCode: countryCode,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+    );
+    if (!context.mounted) return false;
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
+    setAppRole(AppRole.companyAdmin);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+    );
+    return true;
+  }
+
+  String _companyPairingErrorText(String code) {
+    if (code == 'company_not_found') {
+      return _t(
+        nl: 'Geen bedrijf gevonden voor deze ID',
+        en: 'No company found for this ID',
+        fr: 'Aucune entreprise trouvée pour cet ID',
+        es: 'No se encontró ninguna empresa para este ID',
+      );
+    }
+    return _t(
+      nl: 'Bedrijfs-ID of koppelcode ongeldig',
+      en: 'Company ID or pairing code is invalid',
+      fr: 'ID d’entreprise ou code de liaison invalide',
+      es: 'ID de empresa o código de vinculación no válido',
+    );
+  }
+
   Future<bool?> _showBusinessOnboardingChoice(BuildContext context) {
     return showModalBottomSheet<bool>(
       context: context,
@@ -2513,11 +2804,53 @@ class RoleEntryPage extends StatelessWidget {
       if (hasExistingId) {
         final companyId = await _promptExistingCompanyId(context);
         if (!context.mounted || companyId == null) return;
-        _openBusinessOnboarding(
+        final resolved = await _resolveCompanyCode(companyId);
+        if (!context.mounted) return;
+        if (resolved['ok'] != true) {
+          final errorCode = _safePairingText(resolved['error']).toLowerCase();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+          );
+          return;
+        }
+        final pairingCode = await _promptCompanyPairingCode(
           context,
-          initialCompanyId: companyId,
-          lockCompanyId: true,
+          companyCode: _safePairingText(resolved['company_code']).isEmpty
+              ? companyId
+              : _safePairingText(resolved['company_code']),
+          displayName: _safePairingText(resolved['display_name']),
+          country: _safePairingText(resolved['country']),
+          maskedPhone: _safePairingText(resolved['masked_phone']),
         );
+        if (!context.mounted || pairingCode == null) return;
+        final resolvedCompanyCode =
+            _safePairingText(resolved['company_code']).isEmpty
+            ? companyId
+            : _safePairingText(resolved['company_code']);
+        final verified = await _verifyCompanyPairingCode(
+          companyCode: resolvedCompanyCode,
+          pairingCode: pairingCode,
+        );
+        if (!context.mounted) return;
+        if (verified['ok'] != true) {
+          final errorCode = _safePairingText(verified['error']).toLowerCase();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+          );
+          return;
+        }
+        final payload = verified['payload'] is Map
+            ? Map<String, dynamic>.from(verified['payload'] as Map)
+            : <String, dynamic>{};
+        final opened = await _openVerifiedCompanySession(context, payload);
+        if (!context.mounted) return;
+        if (!opened) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_companyPairingErrorText('verification_failed')),
+            ),
+          );
+        }
         return;
       }
       _openBusinessOnboarding(context);
