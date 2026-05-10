@@ -10173,6 +10173,12 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final reference = booking.publicReference.trim().isNotEmpty
         ? booking.publicReference.trim()
         : booking.bookingId.trim();
+    final hasIdentity =
+        reference.isNotEmpty || booking.bookingStatus.trim().isNotEmpty;
+    final hasFrom = booking.from.trim().isNotEmpty;
+    final hasTo = booking.to.trim().isNotEmpty;
+    final hasPrice = booking.price != null;
+    final showPartialLoading = hasIdentity && (!hasFrom || !hasTo || !hasPrice);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -10221,14 +10227,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     ),
                   ),
                   const Spacer(),
-                  Text(
-                    _formatPrice(booking),
-                    style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.98),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                  if (!showPartialLoading || hasPrice)
+                    Text(
+                      _formatPrice(booking),
+                      style: TextStyle(
+                        color: kFluxidiYellow.withOpacity(0.98),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -10240,63 +10247,81 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Column(
-                    children: [
-                      Icon(
-                        Icons.radio_button_checked,
-                        size: 11.5,
-                        color: kFluxidiYellow.withOpacity(0.94),
-                      ),
-                      Container(
-                        width: 1.8,
-                        height: 30,
-                        margin: const EdgeInsets.symmetric(vertical: 3),
-                        color: kFluxidiYellow.withOpacity(0.35),
-                      ),
-                      const Icon(
-                        Icons.location_on,
-                        size: 13.5,
-                        color: Color(0xFF34D29A),
-                      ),
-                    ],
+              if (showPartialLoading) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _t(
+                    nl: 'Boekingsgegevens laden...',
+                    en: 'Loading booking details...',
+                    fr: 'Chargement des détails de réservation...',
+                    es: 'Cargando detalles de la reserva...',
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.66),
+                    fontSize: 11.4,
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
                       children: [
-                        Text(
-                          booking.from.isEmpty ? '-' : booking.from,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.8,
-                            fontWeight: FontWeight.w600,
-                            height: 1.24,
-                          ),
+                        Icon(
+                          Icons.radio_button_checked,
+                          size: 11.5,
+                          color: kFluxidiYellow.withOpacity(0.94),
                         ),
-                        const SizedBox(height: 15),
-                        Text(
-                          booking.to.isEmpty ? '-' : booking.to,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 12.8,
-                            fontWeight: FontWeight.w600,
-                            height: 1.24,
-                          ),
+                        Container(
+                          width: 1.8,
+                          height: 30,
+                          margin: const EdgeInsets.symmetric(vertical: 3),
+                          color: kFluxidiYellow.withOpacity(0.35),
+                        ),
+                        const Icon(
+                          Icons.location_on,
+                          size: 13.5,
+                          color: Color(0xFF34D29A),
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            booking.from,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                              height: 1.24,
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            booking.to,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                              height: 1.24,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,

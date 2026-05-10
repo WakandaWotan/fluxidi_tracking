@@ -408,6 +408,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       }
       final bookingId = _readBookingId(body);
       try {
+        final localFallback = StoredCustomerBooking.fromBookSuccess(
+          response: body,
+          requestPayload: payload,
+          customerName: name,
+          customerPhone: phone,
+          customerEmail: email,
+        );
         final authoritativeResponse = bookingId.isEmpty
             ? null
             : await _fetchAuthoritativeBooking(bookingId, payload);
@@ -415,14 +422,9 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             ? StoredCustomerBooking.fromAuthoritativeResponse(
                 bookingId: bookingId,
                 response: authoritativeResponse,
+                fallback: localFallback,
               )
-            : StoredCustomerBooking.fromBookSuccess(
-                response: body,
-                requestPayload: payload,
-                customerName: name,
-                customerPhone: phone,
-                customerEmail: email,
-              );
+            : localFallback;
         await CustomerBookingsStore.instance.upsert(storedBooking);
       } catch (err) {
         debugPrint('[AIRPORT_BOOKING][LOCAL_PERSIST][ERROR] $err');
