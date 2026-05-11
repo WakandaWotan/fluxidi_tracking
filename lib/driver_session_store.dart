@@ -405,12 +405,14 @@ class DriverSessionStore {
     required String driverId,
     required String driverName,
     required String companyDisplayName,
+    String? assignedVehicleId,
   }) async {
     final normalizedTenantId = tenantId.trim();
     final normalizedCompanyId = companyId.trim();
     final normalizedDriverId = driverId.trim();
     final normalizedDriverName = driverName.trim();
     final normalizedCompanyDisplayName = companyDisplayName.trim();
+    final normalizedAssignedVehicleId = (assignedVehicleId ?? '').trim();
     if (normalizedTenantId.isEmpty ||
         normalizedCompanyId.isEmpty ||
         normalizedDriverId.isEmpty) {
@@ -432,6 +434,9 @@ class DriverSessionStore {
       updatedAt: now,
       tenantId: normalizedTenantId,
       companyId: normalizedCompanyId,
+      assignedVehicleId: normalizedAssignedVehicleId.isEmpty
+          ? null
+          : normalizedAssignedVehicleId,
       linkMethod: 'public_driver_login',
     );
     try {

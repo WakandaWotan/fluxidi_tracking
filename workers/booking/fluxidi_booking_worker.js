@@ -2939,6 +2939,49 @@ async function handlePublicDriverLogin(body, env) {
     match.display_name ?? match.displayName ?? match.driver_name ?? match.driverName,
     160,
   );
+  let assignedVehicleId = sanitizeTenantString(
+    match.assigned_vehicle_id ??
+      match.assignedVehicleId ??
+      match.vehicle_id ??
+      match.vehicleId ??
+      match.assigned_vehicle?.vehicle_id ??
+      match.assigned_vehicle?.id,
+    96,
+  );
+  if (!assignedVehicleId) {
+    try {
+      const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+      const fleetRows = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+      for (const row of fleetRows) {
+        if (!row || typeof row !== "object") continue;
+        const vehicleId = sanitizeTenantString(
+          row.vehicle_id ?? row.vehicleId ?? row.id,
+          96,
+        );
+        if (!vehicleId) continue;
+        const assignedDriverId = sanitizeTenantString(
+          row.assigned_driver?.driver_id ??
+            row.assigned_driver?.driverId ??
+            row.assigned_driver?.id ??
+            row.assignedDriver?.driver_id ??
+            row.assignedDriver?.driverId ??
+            row.assignedDriver?.id ??
+            row.driver_id ??
+            row.driverId ??
+            row.driver?.driver_id ??
+            row.driver?.driverId ??
+            row.driver?.id,
+          96,
+        );
+        if (assignedDriverId && assignedDriverId === driverId) {
+          assignedVehicleId = vehicleId;
+          break;
+        }
+      }
+    } catch (_) {
+      // best-effort only
+    }
+  }
   const companyDisplayName = sanitizeTenantString(
     companyRecord.display_name ?? companyRecord.company_name ?? companyRecord.companyName,
     160,
@@ -2955,6 +2998,12 @@ async function handlePublicDriverLogin(body, env) {
       driver_id: driverId,
       driver_name: driverName,
       company_display_name: companyDisplayName,
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
     },
     200,
   );
@@ -11633,6 +11682,23 @@ function _flattenBookingForRidesList(bookingId, rec) {
     rec?.paymentSource ??
     _pick(rec, ["booking", "payment_source"], null) ??
     _pick(rec, ["booking", "paymentSource"], null);
+  const assignedDriverId =
+    _pick(rec, ["assigned_driver", "driver_id"], null) ??
+    _pick(rec, ["assigned_driver", "driverId"], null) ??
+    _pick(rec, ["assigned_driver", "id"], null) ??
+    _pick(rec, ["assignedDriver", "driver_id"], null) ??
+    _pick(rec, ["assignedDriver", "driverId"], null) ??
+    _pick(rec, ["assignedDriver", "id"], null) ??
+    _pick(rec, ["driver_id"], null) ??
+    _pick(rec, ["driverId"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "driver_id"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "driverId"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "id"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "driver_id"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "driverId"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "id"], null) ??
+    _pick(rec, ["booking", "driver_id"], null) ??
+    _pick(rec, ["booking", "driverId"], null);
 
   return {
     booking_id: bookingId,
@@ -11645,6 +11711,9 @@ function _flattenBookingForRidesList(bookingId, rec) {
     assigned_vehicle_id:
       _pick(rec, ["assigned_vehicle_id"], null) ??
       _pick(rec, ["booking", "assigned_vehicle_id"], null),
+    ...(assignedDriverId
+      ? { assigned_driver_id: assignedDriverId, assignedDriverId: assignedDriverId }
+      : {}),
     customer_name: customerName,
     customer_phone: customerPhone,
     customer_email: customerEmail,

@@ -3486,6 +3486,7 @@ class _BackendDriverLoginResult {
     required this.driverId,
     required this.driverName,
     required this.companyDisplayName,
+    required this.assignedVehicleId,
   });
 
   final String tenantId;
@@ -3493,6 +3494,7 @@ class _BackendDriverLoginResult {
   final String driverId;
   final String driverName;
   final String companyDisplayName;
+  final String assignedVehicleId;
 }
 
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
@@ -3545,6 +3547,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         driverId: backendLogin.driverId,
         driverName: backendLogin.driverName,
         companyDisplayName: backendLogin.companyDisplayName,
+        assignedVehicleId: backendLogin.assignedVehicleId,
       );
       debugPrint(
         '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(backendLogin.tenantId)} company=${_maskLoginCode(backendLogin.companyId)} driver=${_maskLoginCode(backendLogin.driverId)}',
@@ -3683,6 +3686,14 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       final companyDisplayName = (body['company_display_name'] ?? '')
           .toString()
           .trim();
+      final assignedVehicleId =
+          (body['assigned_vehicle_id'] ??
+                  body['assignedVehicleId'] ??
+                  body['vehicle_id'] ??
+                  body['vehicleId'] ??
+                  '')
+              .toString()
+              .trim();
       if (response.statusCode >= 200 &&
           response.statusCode < 300 &&
           ok &&
@@ -3699,6 +3710,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
           driverId: driverId,
           driverName: driverName,
           companyDisplayName: companyDisplayName,
+          assignedVehicleId: assignedVehicleId,
         );
       }
       debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode}');
