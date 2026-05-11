@@ -1934,6 +1934,10 @@ function _constantTimeEquals(a, b) {
 }
 
 function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
+  const assignedVehicleId = sanitizeTenantString(
+    challenge.assigned_vehicle_id ?? challenge.assignedVehicleId,
+    96,
+  );
   return {
     ok: true,
     role: "driver",
@@ -1945,6 +1949,12 @@ function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
       driver_id: challenge.driver_id,
       driver_name: challenge.driver_name || "",
       employee_number: challenge.employee_number || "",
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
     },
     issued_at: nowIso,
     expires_at: _normalizeDriverPairingSessionExpiry(Date.parse(nowIso)),
@@ -2614,6 +2624,10 @@ async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
     driver_id: driverId,
     driver_name: sanitizeTenantString(driverRecord.display_name, 160),
     employee_number: sanitizeTenantString(driverRecord.employee_number, 80),
+    assigned_vehicle_id: sanitizeTenantString(
+      driverRecord.assigned_vehicle_id ?? driverRecord.assignedVehicleId,
+      96,
+    ),
     pairing_code_hash: pairingCodeHash,
     attempts: 0,
     max_attempts: COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS,
@@ -12861,27 +12875,40 @@ async function listBookingsAuthoritative(
   const nowMs = Date.now();
   const actionableGraceMs = 6 * 60 * 60 * 1000; // keep slightly-past rides visible for operational safety
   const cutoffMs = nowMs - actionableGraceMs;
-  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
   const out = [];
-  for (const k of listed?.keys || []) {
-    const name = String(k?.name || "");
-    if (!name.startsWith("booking:")) continue;
-    const bookingId = name.slice("booking:".length);
-    if (!bookingId) continue;
-    const rec = await env.BOOKING_KV.get(name, { type: "json" });
-    if (!rec || typeof rec !== "object") continue;
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
-    const row = _flattenBookingForRidesList(bookingId, rec);
-    if (!includeHistory && (row.status === "COMPLETED" || row.status === "CANCELLED")) continue;
-    if (!includeHistory) {
-      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-      // For "available rides", require a valid pickup datetime.
-      // Historical/debug records with missing/invalid pickup should stay out of operational list.
-      if (!Number.isFinite(pickupTs)) continue;
-      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const k of listed?.keys || []) {
+      const name = String(k?.name || "");
+      if (!name.startsWith("booking:")) continue;
+      const bookingId = name.slice("booking:".length);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(name, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+      const row = _flattenBookingForRidesList(bookingId, rec);
+      if (
+        !includeHistory &&
+        (row.status === "COMPLETED" || row.status === "CANCELLED")
+      ) continue;
+      if (!includeHistory) {
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+        // For "available rides", require a valid pickup datetime.
+        // Historical/debug records with missing/invalid pickup should stay out of operational list.
+        if (!Number.isFinite(pickupTs)) continue;
+        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+      }
+      out.push(row);
     }
-    out.push(row);
-  }
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
 
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
