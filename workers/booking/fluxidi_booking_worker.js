@@ -1875,6 +1875,22 @@ function _normalizeDriverEmployeeNumber(value) {
   return sanitizeTenantString(value, 80);
 }
 
+function _normalizeSafeRemoteMediaRef(value) {
+  const text = sanitizeTenantString(value, 1200);
+  if (!text) return "";
+  const normalized = text.trim();
+  if (!normalized) return "";
+  if (
+    normalized.startsWith("https://") ||
+    normalized.startsWith("http://") ||
+    normalized.startsWith("/public/media/") ||
+    normalized.startsWith("public-media/")
+  ) {
+    return normalized;
+  }
+  return "";
+}
+
 function _normalizeDriverLoginCode(value) {
   return sanitizeTenantString(value, 80).trim().toLowerCase();
 }
@@ -2154,6 +2170,14 @@ async function _loadDriverIndexRecord(env, scope) {
       assigned_vehicle_id: sanitizeTenantString(
         entry.assigned_vehicle_id ?? entry.assignedVehicleId,
         96,
+      ),
+      driver_photo_url: _normalizeSafeRemoteMediaRef(
+        entry.driver_photo_url ??
+          entry.driverPhotoUrl ??
+          entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
       ),
       updated_at: sanitizeTenantString(entry.updated_at ?? entry.updatedAt, 80),
     };
@@ -2709,6 +2733,14 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     return json({ ok: false, error: "invalid_assigned_vehicle_id" }, 400);
   }
   const isActive = _coerceBoolean(body.is_active ?? body.isActive, true);
+  const driverPhotoUrlInput = _normalizeSafeRemoteMediaRef(
+    body.driver_photo_url ??
+      body.driverPhotoUrl ??
+      body.public_portrait_url ??
+      body.publicPortraitUrl ??
+      body.profile_photo_url ??
+      body.profilePhotoUrl,
+  );
   const nowIso = new Date().toISOString();
   const scope = { tenant_id: tenantId, company_id: companyId };
   const existing = await _loadDriverIndexRecord(env, scope);
@@ -2741,6 +2773,7 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     phone,
     is_active: isActive,
     assigned_vehicle_id: assignedVehicleId,
+    driver_photo_url: driverPhotoUrlInput || _normalizeSafeRemoteMediaRef(existingDriver.driver_photo_url),
     updated_at: nowIso,
   };
   const key = await _saveDriverIndexRecord(env, scope, {
@@ -3020,6 +3053,14 @@ async function handlePublicDriverLogin(body, env) {
     match.display_name ?? match.displayName ?? match.driver_name ?? match.driverName,
     160,
   );
+  const driverPhotoUrl = _normalizeSafeRemoteMediaRef(
+    match.driver_photo_url ??
+      match.driverPhotoUrl ??
+      match.public_portrait_url ??
+      match.publicPortraitUrl ??
+      match.profile_photo_url ??
+      match.profilePhotoUrl,
+  );
   let assignedVehicleId = sanitizeTenantString(
     match.assigned_vehicle_id ??
       match.assignedVehicleId ??
@@ -3029,6 +3070,7 @@ async function handlePublicDriverLogin(body, env) {
       match.assigned_vehicle?.id,
     96,
   );
+  let vehiclePhotoUrl = "";
   if (!assignedVehicleId) {
     try {
       const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
@@ -3056,8 +3098,42 @@ async function handlePublicDriverLogin(body, env) {
         );
         if (assignedDriverId && assignedDriverId === driverId) {
           assignedVehicleId = vehicleId;
+          vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+            row.vehicle_photo_url ??
+              row.vehiclePhotoUrl ??
+              row.public_photo_url ??
+              row.publicPhotoUrl ??
+              row.photo_url ??
+              row.photoUrl ??
+              row.media?.photo_url ??
+              row.media?.photoUrl,
+          );
           break;
         }
+      }
+    } catch (_) {
+      // best-effort only
+    }
+  }
+  if (!vehiclePhotoUrl && assignedVehicleId) {
+    try {
+      const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+      const fleetRows = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+      for (const row of fleetRows) {
+        if (!row || typeof row !== "object") continue;
+        const rowVehicleId = sanitizeTenantString(row.vehicle_id ?? row.vehicleId ?? row.id, 96);
+        if (!rowVehicleId || rowVehicleId !== assignedVehicleId) continue;
+        vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+          row.vehicle_photo_url ??
+            row.vehiclePhotoUrl ??
+            row.public_photo_url ??
+            row.publicPhotoUrl ??
+            row.photo_url ??
+            row.photoUrl ??
+            row.media?.photo_url ??
+            row.media?.photoUrl,
+        );
+        break;
       }
     } catch (_) {
       // best-effort only
@@ -3067,6 +3143,20 @@ async function handlePublicDriverLogin(body, env) {
     companyRecord.display_name ?? companyRecord.company_name ?? companyRecord.companyName,
     160,
   );
+  let companyLogoUrl = "";
+  try {
+    const businessProfile = await loadBusinessProfile(env, scope, {
+      allowLegacyFallback: false,
+    });
+    companyLogoUrl = _normalizeSafeRemoteMediaRef(
+      businessProfile?.publicLogoUrl ??
+        businessProfile?.public_logo_url ??
+        businessProfile?.logoUrl ??
+        businessProfile?.logo_url,
+    );
+  } catch (_) {
+    companyLogoUrl = "";
+  }
   const sessionToken = _generateOpaqueToken(32);
   const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
   const sessionKey = _publicDriverSessionKey(sessionTokenHash);
@@ -3115,6 +3205,24 @@ async function handlePublicDriverLogin(body, env) {
         ? {
             assigned_vehicle_id: assignedVehicleId,
             assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      ...(driverPhotoUrl
+        ? {
+            driver_photo_url: driverPhotoUrl,
+            driverPhotoUrl: driverPhotoUrl,
+          }
+        : {}),
+      ...(companyLogoUrl
+        ? {
+            company_logo_url: companyLogoUrl,
+            companyLogoUrl: companyLogoUrl,
+          }
+        : {}),
+      ...(vehiclePhotoUrl
+        ? {
+            vehicle_photo_url: vehiclePhotoUrl,
+            vehiclePhotoUrl: vehiclePhotoUrl,
           }
         : {}),
       driver_session_token: sessionToken,

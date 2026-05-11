@@ -20,6 +20,9 @@ class ActiveDriverSession {
     this.companyId,
     this.companyCode,
     this.assignedVehicleId,
+    this.driverPhotoUrl,
+    this.companyLogoUrl,
+    this.vehiclePhotoUrl,
     this.driverSessionToken,
     this.driverSessionExpiresAtUtc,
     this.linkMethod,
@@ -36,6 +39,9 @@ class ActiveDriverSession {
   final String? companyId;
   final String? companyCode;
   final String? assignedVehicleId;
+  final String? driverPhotoUrl;
+  final String? companyLogoUrl;
+  final String? vehiclePhotoUrl;
   final String? driverSessionToken;
   final String? driverSessionExpiresAtUtc;
   final String? linkMethod;
@@ -66,6 +72,12 @@ class ActiveDriverSession {
     if ((companyCode ?? '').trim().isNotEmpty) 'companyCode': companyCode,
     if ((assignedVehicleId ?? '').trim().isNotEmpty)
       'assignedVehicleId': assignedVehicleId,
+    if ((driverPhotoUrl ?? '').trim().isNotEmpty)
+      'driverPhotoUrl': driverPhotoUrl,
+    if ((companyLogoUrl ?? '').trim().isNotEmpty)
+      'companyLogoUrl': companyLogoUrl,
+    if ((vehiclePhotoUrl ?? '').trim().isNotEmpty)
+      'vehiclePhotoUrl': vehiclePhotoUrl,
     if ((driverSessionToken ?? '').trim().isNotEmpty)
       'driverSessionToken': driverSessionToken,
     if ((driverSessionExpiresAtUtc ?? '').trim().isNotEmpty)
@@ -94,6 +106,25 @@ class ActiveDriverSession {
       assignedVehicleId:
           readOptional('assignedVehicleId') ??
           readOptional('assigned_vehicle_id'),
+      driverPhotoUrl:
+          readOptional('driverPhotoUrl') ??
+          readOptional('driver_photo_url') ??
+          readOptional('publicPortraitUrl') ??
+          readOptional('public_portrait_url') ??
+          readOptional('profilePhotoUrl') ??
+          readOptional('profile_photo_url'),
+      companyLogoUrl:
+          readOptional('companyLogoUrl') ??
+          readOptional('company_logo_url') ??
+          readOptional('logoUrl') ??
+          readOptional('logo_url'),
+      vehiclePhotoUrl:
+          readOptional('vehiclePhotoUrl') ??
+          readOptional('vehicle_photo_url') ??
+          readOptional('publicPhotoUrl') ??
+          readOptional('public_photo_url') ??
+          readOptional('photoUrl') ??
+          readOptional('photo_url'),
       driverSessionToken:
           readOptional('driverSessionToken') ??
           readOptional('driver_session_token'),
@@ -437,6 +468,9 @@ class DriverSessionStore {
     required String driverName,
     required String companyDisplayName,
     String? assignedVehicleId,
+    String? driverPhotoUrl,
+    String? companyLogoUrl,
+    String? vehiclePhotoUrl,
     String? driverSessionToken,
     int? expiresInSeconds,
     DateTime? expiresAtUtc,
@@ -447,6 +481,9 @@ class DriverSessionStore {
     final normalizedDriverName = driverName.trim();
     final normalizedCompanyDisplayName = companyDisplayName.trim();
     final normalizedAssignedVehicleId = (assignedVehicleId ?? '').trim();
+    final normalizedDriverPhotoUrl = (driverPhotoUrl ?? '').trim();
+    final normalizedCompanyLogoUrl = (companyLogoUrl ?? '').trim();
+    final normalizedVehiclePhotoUrl = (vehiclePhotoUrl ?? '').trim();
     final normalizedDriverSessionToken = (driverSessionToken ?? '').trim();
     if (normalizedTenantId.isEmpty ||
         normalizedCompanyId.isEmpty ||
@@ -481,6 +518,15 @@ class DriverSessionStore {
       assignedVehicleId: normalizedAssignedVehicleId.isEmpty
           ? null
           : normalizedAssignedVehicleId,
+      driverPhotoUrl: normalizedDriverPhotoUrl.isEmpty
+          ? null
+          : normalizedDriverPhotoUrl,
+      companyLogoUrl: normalizedCompanyLogoUrl.isEmpty
+          ? null
+          : normalizedCompanyLogoUrl,
+      vehiclePhotoUrl: normalizedVehiclePhotoUrl.isEmpty
+          ? null
+          : normalizedVehiclePhotoUrl,
       driverSessionToken: normalizedDriverSessionToken.isEmpty
           ? null
           : normalizedDriverSessionToken,

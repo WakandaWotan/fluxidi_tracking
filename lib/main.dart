@@ -3488,6 +3488,9 @@ class _BackendDriverLoginResult {
     required this.driverName,
     required this.companyDisplayName,
     required this.assignedVehicleId,
+    required this.driverPhotoUrl,
+    required this.companyLogoUrl,
+    required this.vehiclePhotoUrl,
     required this.driverSessionToken,
     required this.expiresInSeconds,
   });
@@ -3498,6 +3501,9 @@ class _BackendDriverLoginResult {
   final String driverName;
   final String companyDisplayName;
   final String assignedVehicleId;
+  final String driverPhotoUrl;
+  final String companyLogoUrl;
+  final String vehiclePhotoUrl;
   final String driverSessionToken;
   final int? expiresInSeconds;
 }
@@ -3553,6 +3559,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         driverName: backendLogin.driverName,
         companyDisplayName: backendLogin.companyDisplayName,
         assignedVehicleId: backendLogin.assignedVehicleId,
+        driverPhotoUrl: backendLogin.driverPhotoUrl,
+        companyLogoUrl: backendLogin.companyLogoUrl,
+        vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
         driverSessionToken: backendLogin.driverSessionToken,
         expiresInSeconds: backendLogin.expiresInSeconds,
       );
@@ -3701,6 +3710,34 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                   '')
               .toString()
               .trim();
+      final driverPhotoUrl =
+          (body['driver_photo_url'] ??
+                  body['driverPhotoUrl'] ??
+                  body['public_portrait_url'] ??
+                  body['publicPortraitUrl'] ??
+                  body['profile_photo_url'] ??
+                  body['profilePhotoUrl'] ??
+                  '')
+              .toString()
+              .trim();
+      final companyLogoUrl =
+          (body['company_logo_url'] ??
+                  body['companyLogoUrl'] ??
+                  body['logo_url'] ??
+                  body['logoUrl'] ??
+                  '')
+              .toString()
+              .trim();
+      final vehiclePhotoUrl =
+          (body['vehicle_photo_url'] ??
+                  body['vehiclePhotoUrl'] ??
+                  body['public_photo_url'] ??
+                  body['publicPhotoUrl'] ??
+                  body['photo_url'] ??
+                  body['photoUrl'] ??
+                  '')
+              .toString()
+              .trim();
       final driverSessionToken =
           (body['driver_session_token'] ?? body['driverSessionToken'] ?? '')
               .toString()
@@ -3726,6 +3763,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
           driverName: driverName,
           companyDisplayName: companyDisplayName,
           assignedVehicleId: assignedVehicleId,
+          driverPhotoUrl: driverPhotoUrl,
+          companyLogoUrl: companyLogoUrl,
+          vehiclePhotoUrl: vehiclePhotoUrl,
           driverSessionToken: driverSessionToken,
           expiresInSeconds: expiresInSeconds,
         );
@@ -22660,12 +22700,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     BoxFit fit = BoxFit.contain,
     Widget? fallback,
   }) {
+    String? safeRemoteImageUrl(String? value) {
+      final text = (value ?? '').trim();
+      if (text.isEmpty) return null;
+      if (text.startsWith('https://') || text.startsWith('http://')) {
+        return text;
+      }
+      return null;
+    }
+
     return ValueListenableBuilder<BusinessSettingsState>(
       valueListenable: businessSettingsNotifier,
       builder: (context, s, _) {
-        final ref = s.logoAssetPath.trim().isNotEmpty
-            ? s.logoAssetPath.trim()
-            : kFluxidiLogoAsset;
+        final localRef = s.logoAssetPath.trim();
+        final sessionLogoRef = safeRemoteImageUrl(
+          activeDriverSessionNotifier.value?.companyLogoUrl,
+        );
+        final ref = localRef.isNotEmpty
+            ? localRef
+            : (sessionLogoRef ?? kFluxidiLogoAsset);
         if (_isAssetRef(ref)) {
           return Image.asset(
             ref,
@@ -29372,6 +29425,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  String? _dashboardAvatarNetworkUrl() {
+    final session = activeDriverSessionNotifier.value;
+    final candidate = (session?.driverPhotoUrl ?? '').trim();
+    if (candidate.isEmpty) return null;
+    if (candidate.startsWith('https://') || candidate.startsWith('http://')) {
+      return candidate;
+    }
+    return null;
+  }
+
   String _dashboardGreeting() {
     final name = _dashboardDriverName();
     if (name.toLowerCase() == 'chauffeur') {
@@ -29848,6 +29911,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     const headerTopPull = -8.0;
     const logoVisualLift = -14.0;
     final avatarPhotoPath = _dashboardAvatarPhotoPath();
+    final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -29868,14 +29932,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                   child: SizedBox(
                     width: logoWidth,
                     height: logoHeight,
-                    child: Image.asset(
-                      kFluxidiLogoAsset,
-                      width: logoWidth,
+                    child: _tenantLogo(
                       height: logoHeight,
                       fit: BoxFit.contain,
-                      alignment: Alignment.topLeft,
-                      filterQuality: FilterQuality.high,
-                      errorBuilder: (_, __, ___) => const Icon(
+                      fallback: const Icon(
                         Icons.local_taxi_rounded,
                         color: Color(0xFFFFD36A),
                         size: 64,
@@ -29941,7 +30001,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                             child: ClipOval(
                               child: SizedBox.expand(
                                 child: avatarPhotoPath == null
-                                    ? Center(child: _dashboardAvatarFallback())
+                                    ? (avatarPhotoUrl == null
+                                          ? Center(
+                                              child: _dashboardAvatarFallback(),
+                                            )
+                                          : Image.network(
+                                              avatarPhotoUrl,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => Center(
+                                                child:
+                                                    _dashboardAvatarFallback(),
+                                              ),
+                                            ))
                                     : Image.file(
                                         File(avatarPhotoPath),
                                         fit: BoxFit.cover,

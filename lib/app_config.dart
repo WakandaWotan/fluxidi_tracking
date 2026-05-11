@@ -1883,6 +1883,22 @@ Future<bool> syncDriverIndexEntryToBackend(
     final driverId = driver.id.trim();
     if (driverId.isEmpty) return false;
     final driverCode = driver.employeeNumber.trim();
+    String? normalizedPublicDriverPhotoUrl(String? value) {
+      final text = (value ?? '').trim();
+      if (text.isEmpty) return null;
+      if (text.startsWith('https://') || text.startsWith('http://')) {
+        return text;
+      }
+      if (text.startsWith('/public/media/') ||
+          text.startsWith('public-media/')) {
+        return text;
+      }
+      return null;
+    }
+
+    final safePublicDriverPhotoUrl = normalizedPublicDriverPhotoUrl(
+      driver.publicPortraitUrl,
+    );
     final payload = <String, dynamic>{
       ...scope,
       'driver_id': driverId,
@@ -1902,6 +1918,12 @@ Future<bool> syncDriverIndexEntryToBackend(
       'phone': driver.phone.trim(),
       'is_active': isActiveOverride ?? driver.isActive,
       'isActive': isActiveOverride ?? driver.isActive,
+      if (safePublicDriverPhotoUrl != null) ...{
+        'public_portrait_url': safePublicDriverPhotoUrl,
+        'publicPortraitUrl': safePublicDriverPhotoUrl,
+        'driver_photo_url': safePublicDriverPhotoUrl,
+        'driverPhotoUrl': safePublicDriverPhotoUrl,
+      },
     };
     final response = await http
         .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
