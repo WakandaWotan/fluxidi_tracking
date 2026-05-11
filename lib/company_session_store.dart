@@ -278,6 +278,10 @@ class ActiveCompanySession {
     required this.role,
     required this.createdAt,
     required this.lastUsedAt,
+    this.companySessionToken,
+    this.companySessionExpiresAtUtc,
+    this.companyCode,
+    this.linkMethod,
   });
 
   final String companyId;
@@ -286,21 +290,54 @@ class ActiveCompanySession {
   final String role;
   final String createdAt;
   final String lastUsedAt;
+  final String? companySessionToken;
+  final String? companySessionExpiresAtUtc;
+  final String? companyCode;
+  final String? linkMethod;
+
+  DateTime? get sessionExpiresAtUtc {
+    final raw = (companySessionExpiresAtUtc ?? '').trim();
+    if (raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    return parsed?.toUtc();
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'companyId': companyId,
     'role': role,
     'createdAt': createdAt,
     'lastUsedAt': lastUsedAt,
+    if ((companySessionToken ?? '').trim().isNotEmpty)
+      'companySessionToken': companySessionToken,
+    if ((companySessionExpiresAtUtc ?? '').trim().isNotEmpty)
+      'companySessionExpiresAtUtc': companySessionExpiresAtUtc,
+    if ((companyCode ?? '').trim().isNotEmpty) 'companyCode': companyCode,
+    if ((linkMethod ?? '').trim().isNotEmpty) 'linkMethod': linkMethod,
   };
 
   factory ActiveCompanySession.fromJson(Map<String, dynamic> json) {
     String read(String key) => (json[key] ?? '').toString().trim();
+    String? readOptional(String key) {
+      final value = (json[key] ?? '').toString().trim();
+      return value.isEmpty ? null : value;
+    }
+
     return ActiveCompanySession(
       companyId: read('companyId'),
       role: read('role').isNotEmpty ? read('role') : 'companyAdmin',
       createdAt: read('createdAt'),
       lastUsedAt: read('lastUsedAt'),
+      companySessionToken:
+          readOptional('companySessionToken') ??
+          readOptional('company_session_token'),
+      companySessionExpiresAtUtc:
+          readOptional('companySessionExpiresAtUtc') ??
+          readOptional('company_session_expires_at_utc') ??
+          readOptional('companySessionExpiresAt') ??
+          readOptional('company_session_expires_at') ??
+          readOptional('expires_at'),
+      companyCode: readOptional('companyCode') ?? readOptional('company_code'),
+      linkMethod: readOptional('linkMethod') ?? readOptional('link_method'),
     );
   }
 
@@ -309,12 +346,21 @@ class ActiveCompanySession {
     String? role,
     String? createdAt,
     String? lastUsedAt,
+    String? companySessionToken,
+    String? companySessionExpiresAtUtc,
+    String? companyCode,
+    String? linkMethod,
   }) {
     return ActiveCompanySession(
       companyId: companyId ?? this.companyId,
       role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
       lastUsedAt: lastUsedAt ?? this.lastUsedAt,
+      companySessionToken: companySessionToken ?? this.companySessionToken,
+      companySessionExpiresAtUtc:
+          companySessionExpiresAtUtc ?? this.companySessionExpiresAtUtc,
+      companyCode: companyCode ?? this.companyCode,
+      linkMethod: linkMethod ?? this.linkMethod,
     );
   }
 }
@@ -329,6 +375,19 @@ class CompanySessionStore {
 
   CompanyProfile? _profileMemory;
   ActiveCompanySession? _sessionMemory;
+  bool _sessionInvalidForSecurity = false;
+
+  bool _isSessionStillValid(ActiveCompanySession session) {
+    final linkMethod = (session.linkMethod ?? '').trim().toLowerCase();
+    final token = (session.companySessionToken ?? '').trim();
+    final usesTokenSession =
+        linkMethod == 'public_company_pairing' || token.isNotEmpty;
+    if (!usesTokenSession) return true;
+    if (token.isEmpty) return false;
+    final expires = session.sessionExpiresAtUtc;
+    if (expires == null) return true;
+    return DateTime.now().toUtc().isBefore(expires);
+  }
 
   String _safeScopeSegment(String value) {
     final trimmed = value.trim();
@@ -561,6 +620,13 @@ class CompanySessionStore {
       if (scopedFile != null) {
         final scoped = await _readSessionFromFile(scopedFile);
         if (scoped != null) {
+          if (!_isSessionStillValid(scoped)) {
+            _sessionInvalidForSecurity = true;
+            try {
+              if (await scopedFile.exists()) await scopedFile.delete();
+            } catch (_) {}
+            return null;
+          }
           _sessionMemory = scoped;
           return scoped;
         }
@@ -569,6 +635,13 @@ class CompanySessionStore {
       final legacyFile = await _legacySessionFile();
       final legacy = await _readSessionFromFile(legacyFile);
       if (legacy == null) return null;
+      if (!_isSessionStillValid(legacy)) {
+        _sessionInvalidForSecurity = true;
+        try {
+          if (await legacyFile.exists()) await legacyFile.delete();
+        } catch (_) {}
+        return null;
+      }
 
       final scopedTarget = await _sessionFileForScope(
         tenantId: legacy.companyId,
@@ -593,6 +666,7 @@ class CompanySessionStore {
       companyProfileNotifier.value != null &&
       activeCompanySessionNotifier.value != null &&
       companyProfileNotifier.value!.isActive &&
+      _isSessionStillValid(activeCompanySessionNotifier.value!) &&
       companyProfileNotifier.value!.companyId ==
           activeCompanySessionNotifier.value!.companyId;
 
@@ -605,6 +679,7 @@ class CompanySessionStore {
     debugPrint('[COMPANY_PAIRING][BOOTSTRAP] started=true');
     _profileMemory = null;
     _sessionMemory = null;
+    _sessionInvalidForSecurity = false;
     CompanyProfile? p = await loadProfile();
     ActiveCompanySession? s = await loadSession();
 
@@ -615,6 +690,13 @@ class CompanySessionStore {
     }
     companyProfileNotifier.value = p;
     if (s == null || s.companyId != p.companyId) {
+      if (_sessionInvalidForSecurity) {
+        activeCompanySessionNotifier.value = null;
+        debugPrint(
+          '[COMPANY_PAIRING][SESSION_EXPIRED] company=${p.companyId} source=token_session',
+        );
+        return;
+      }
       await _writeSessionForProfile(p);
       debugPrint(
         '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only',
@@ -638,6 +720,10 @@ class CompanySessionStore {
           ? prev.createdAt
           : now,
       lastUsedAt: now,
+      companySessionToken: prev?.companySessionToken,
+      companySessionExpiresAtUtc: prev?.companySessionExpiresAtUtc,
+      companyCode: prev?.companyCode,
+      linkMethod: prev?.linkMethod,
     );
     try {
       final file = await _sessionFileForScope(
@@ -764,11 +850,15 @@ class CompanySessionStore {
   Future<void> saveVerifiedCompanyPairingSession({
     required String tenantId,
     required String companyId,
-    required String companyCode,
+    String? companyCode,
     required String companyName,
     required String countryCode,
     DateTime? issuedAt,
     DateTime? expiresAt,
+    String? companySessionToken,
+    int? expiresInSeconds,
+    DateTime? expiresAtUtc,
+    String? linkMethod,
   }) async {
     final resolvedCompanyId = companyId.trim();
     if (resolvedCompanyId.isEmpty) return;
@@ -780,9 +870,9 @@ class CompanySessionStore {
     final issuedIso = issued.toIso8601String();
     final normalizedCountry = countryCode.trim().toUpperCase();
     final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
-    final safeCode = companyCode.trim().isEmpty
+    final safeCode = (companyCode ?? '').trim().isEmpty
         ? resolvedCompanyId
-        : companyCode.trim();
+        : (companyCode ?? '').trim();
     final safeName = companyName.trim().isEmpty ? safeCode : companyName.trim();
     final profile = CompanyProfile(
       companyId: resolvedCompanyId,
@@ -806,7 +896,45 @@ class CompanySessionStore {
       verificationStatus: CompanyVerificationStatus.pendingVerification,
     );
     await persistProfile(profile);
-    await _writeSessionForProfile(profile);
+    final prev = await loadSession();
+    final resolvedExpiresAtUtc = () {
+      if (expiresAtUtc != null) return expiresAtUtc.toUtc();
+      if (expiresAt != null) return expiresAt.toUtc();
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        return now.add(Duration(seconds: expiresInSeconds)).toUtc();
+      }
+      return null;
+    }();
+    final normalizedToken = (companySessionToken ?? '').trim();
+    final normalizedLinkMethod = (linkMethod ?? '').trim();
+    final session = ActiveCompanySession(
+      companyId: profile.companyId,
+      role: 'companyAdmin',
+      createdAt: prev != null && prev.companyId == profile.companyId
+          ? prev.createdAt
+          : nowIso,
+      lastUsedAt: nowIso,
+      companySessionToken: normalizedToken.isEmpty ? null : normalizedToken,
+      companySessionExpiresAtUtc: resolvedExpiresAtUtc?.toIso8601String(),
+      companyCode: safeCode,
+      linkMethod: normalizedLinkMethod.isEmpty
+          ? (normalizedToken.isEmpty
+                ? 'company_pairing_code'
+                : 'public_company_pairing')
+          : normalizedLinkMethod,
+    );
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: profile.tenantId,
+        companyId: profile.companyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _sessionMemory = session;
+      activeCompanySessionNotifier.value = session;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
+      );
+    } catch (_) {}
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
     debugPrint(

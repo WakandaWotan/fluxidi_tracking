@@ -1894,6 +1894,39 @@ function _normalizeSafeRemoteMediaRef(value) {
   return "";
 }
 
+function _normalizeVehiclePhotoRef(value) {
+  const text = sanitizeTenantString(value, 1200);
+  if (!text) return "";
+  const normalized = text.trim();
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (
+    lower.startsWith("https://") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("/public/media/") ||
+    lower.startsWith("public-media/") ||
+    lower.startsWith("assets/")
+  ) {
+    return normalized;
+  }
+  if (lower.startsWith("file://")) return "";
+  if (lower.startsWith("\\\\") || /^[a-z]:\\/.test(lower)) return "";
+  if (lower.startsWith("/") && !lower.startsWith("/public/media/")) return "";
+  return "";
+}
+
+function _normalizeVehiclePhotoRefList(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value) {
+    const ref = _normalizeVehiclePhotoRef(entry);
+    if (!ref || out.includes(ref)) continue;
+    out.push(ref);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 function _normalizeDriverLoginCode(value) {
   return sanitizeTenantString(value, 80).trim().toLowerCase();
 }
@@ -1966,6 +1999,14 @@ async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
 
 function _normalizeDriverPhone(value) {
   return sanitizeTenantString(value, 40);
+}
+
+function _normalizeDriverPhoneForAdminUpsert(value) {
+  const raw = sanitizeTenantString(value, 80).trim();
+  if (!raw) return "";
+  if (!raw.startsWith("+")) return "";
+  const digits = raw.slice(1).replace(/[^0-9]/g, "");
+  return `+${digits}`;
 }
 
 function _normalizeDriverPairingSessionExpiry(nowMs = Date.now()) {
@@ -2212,6 +2253,9 @@ async function _loadDriverIndexRecord(env, scope) {
       employee_number: _normalizeDriverEmployeeNumber(
         entry.employee_number ?? entry.employeeNumber,
       ),
+      employeeNumber: _normalizeDriverEmployeeNumber(
+        entry.employeeNumber ?? entry.employee_number,
+      ),
       driver_code: _normalizeDriverEmployeeNumber(
         entry.driver_code ?? entry.driverCode ?? entry.login_code ?? entry.loginCode,
       ),
@@ -2239,6 +2283,70 @@ async function _loadDriverIndexRecord(env, scope) {
           entry.publicPortraitUrl ??
           entry.profile_photo_url ??
           entry.profilePhotoUrl,
+      ),
+      driverPhotoUrl: _normalizeSafeRemoteMediaRef(
+        entry.driverPhotoUrl ??
+          entry.driver_photo_url ??
+          entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
+      ),
+      public_portrait_url: _normalizeSafeRemoteMediaRef(
+        entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.driver_photo_url ??
+          entry.driverPhotoUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
+      ),
+      publicPortraitUrl: _normalizeSafeRemoteMediaRef(
+        entry.publicPortraitUrl ??
+          entry.public_portrait_url ??
+          entry.driverPhotoUrl ??
+          entry.driver_photo_url ??
+          entry.profilePhotoUrl ??
+          entry.profile_photo_url,
+      ),
+      taxi_driver_card_number: sanitizeTenantString(
+        entry.taxi_driver_card_number ?? entry.taxiDriverCardNumber,
+        120,
+      ),
+      taxiDriverCardNumber: sanitizeTenantString(
+        entry.taxiDriverCardNumber ?? entry.taxi_driver_card_number,
+        120,
+      ),
+      taxi_driver_card_expiry: sanitizeTenantString(
+        entry.taxi_driver_card_expiry ?? entry.taxiDriverCardExpiry,
+        80,
+      ),
+      taxiDriverCardExpiry: sanitizeTenantString(
+        entry.taxiDriverCardExpiry ?? entry.taxi_driver_card_expiry,
+        80,
+      ),
+      public_profile_enabled: _coerceBoolean(
+        entry.public_profile_enabled ?? entry.publicProfileEnabled,
+        false,
+      ),
+      publicProfileEnabled: _coerceBoolean(
+        entry.publicProfileEnabled ?? entry.public_profile_enabled,
+        false,
+      ),
+      public_photo_enabled: _coerceBoolean(
+        entry.public_photo_enabled ?? entry.publicPhotoEnabled,
+        false,
+      ),
+      publicPhotoEnabled: _coerceBoolean(
+        entry.publicPhotoEnabled ?? entry.public_photo_enabled,
+        false,
+      ),
+      public_display_name: sanitizeTenantString(
+        entry.public_display_name ?? entry.publicDisplayName,
+        160,
+      ),
+      publicDisplayName: sanitizeTenantString(
+        entry.publicDisplayName ?? entry.public_display_name,
+        160,
       ),
       updated_at: sanitizeTenantString(entry.updated_at ?? entry.updatedAt, 80),
     };
@@ -2803,14 +2911,20 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
   }
   const driverId = sanitizeTenantString(
-    body.driver_id ?? body.driverId,
+    body.driver_id ?? body.driverId ?? body.id,
     96,
   );
   if (!_isSafeCompanyLinkScopePart(driverId)) {
     return json({ ok: false, error: "invalid_driver_id" }, 400);
   }
   const displayName = _normalizeDriverDisplayName(
-    body.display_name ?? body.displayName ?? body.driver_name ?? body.driverName ?? body.fullName,
+    body.display_name ??
+      body.displayName ??
+      body.driver_name ??
+      body.driverName ??
+      body.full_name ??
+      body.fullName ??
+      body.name,
   );
   const employeeNumberInput = _normalizeDriverEmployeeNumber(
     body.employee_number ?? body.employeeNumber,
@@ -2823,7 +2937,7 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       body.chauffeur_code ??
       body.chauffeurCode,
   );
-  const phone = _normalizeDriverPhone(body.phone);
+  const phone = _normalizeDriverPhoneForAdminUpsert(body.phone);
   if (phone && !_looksLikeE164PhoneForAdminUpsert(phone)) {
     return json({ ok: false, error: "invalid_phone" }, 400);
   }
@@ -2843,6 +2957,22 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       body.profile_photo_url ??
       body.profilePhotoUrl,
   );
+  const taxiDriverCardNumberInput = sanitizeTenantString(
+    body.taxi_driver_card_number ?? body.taxiDriverCardNumber,
+    120,
+  );
+  const taxiDriverCardExpiryInput = sanitizeTenantString(
+    body.taxi_driver_card_expiry ?? body.taxiDriverCardExpiry,
+    80,
+  );
+  const publicDisplayNameInput = sanitizeTenantString(
+    body.public_display_name ?? body.publicDisplayName,
+    160,
+  );
+  const hasPublicProfileEnabled = Object.prototype.hasOwnProperty.call(body, "public_profile_enabled") ||
+    Object.prototype.hasOwnProperty.call(body, "publicProfileEnabled");
+  const hasPublicPhotoEnabled = Object.prototype.hasOwnProperty.call(body, "public_photo_enabled") ||
+    Object.prototype.hasOwnProperty.call(body, "publicPhotoEnabled");
   const nowIso = new Date().toISOString();
   const scope = { tenant_id: tenantId, company_id: companyId };
   const existing = await _loadDriverIndexRecord(env, scope);
@@ -2852,6 +2982,36 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
   );
   const resolvedEmployeeNumber = _normalizeDriverEmployeeNumber(
     employeeNumberInput || resolvedLoginCode || existingDriver.employee_number,
+  );
+  const resolvedTaxiDriverCardNumber = sanitizeTenantString(
+    taxiDriverCardNumberInput || existingDriver.taxi_driver_card_number || existingDriver.taxiDriverCardNumber,
+    120,
+  );
+  const resolvedTaxiDriverCardExpiry = sanitizeTenantString(
+    taxiDriverCardExpiryInput || existingDriver.taxi_driver_card_expiry || existingDriver.taxiDriverCardExpiry,
+    80,
+  );
+  const resolvedPublicDisplayName = sanitizeTenantString(
+    publicDisplayNameInput || existingDriver.public_display_name || existingDriver.publicDisplayName,
+    160,
+  );
+  const resolvedPublicProfileEnabled = hasPublicProfileEnabled
+    ? _coerceBoolean(body.public_profile_enabled ?? body.publicProfileEnabled, false)
+    : _coerceBoolean(
+      existingDriver.public_profile_enabled ?? existingDriver.publicProfileEnabled,
+      false,
+    );
+  const resolvedPublicPhotoEnabled = hasPublicPhotoEnabled
+    ? _coerceBoolean(body.public_photo_enabled ?? body.publicPhotoEnabled, false)
+    : _coerceBoolean(
+      existingDriver.public_photo_enabled ?? existingDriver.publicPhotoEnabled,
+      false,
+    );
+  const resolvedDriverPhotoUrl = driverPhotoUrlInput || _normalizeSafeRemoteMediaRef(
+    existingDriver.driver_photo_url ??
+      existingDriver.driverPhotoUrl ??
+      existingDriver.public_portrait_url ??
+      existingDriver.publicPortraitUrl,
   );
   const existingHash = sanitizeTenantString(existingDriver.driver_code_hash, 200).toLowerCase();
   const existingSalt = sanitizeTenantString(existingDriver.driver_code_salt, 120);
@@ -2868,6 +3028,7 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     driver_id: driverId,
     display_name: displayName,
     employee_number: resolvedEmployeeNumber,
+    employeeNumber: resolvedEmployeeNumber,
     driver_code: resolvedLoginCode,
     login_code: resolvedLoginCode,
     driver_code_hash: nextDriverCodeHash,
@@ -2875,7 +3036,20 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     phone,
     is_active: isActive,
     assigned_vehicle_id: assignedVehicleId,
-    driver_photo_url: driverPhotoUrlInput || _normalizeSafeRemoteMediaRef(existingDriver.driver_photo_url),
+    driver_photo_url: resolvedDriverPhotoUrl,
+    driverPhotoUrl: resolvedDriverPhotoUrl,
+    public_portrait_url: resolvedDriverPhotoUrl,
+    publicPortraitUrl: resolvedDriverPhotoUrl,
+    taxi_driver_card_number: resolvedTaxiDriverCardNumber,
+    taxiDriverCardNumber: resolvedTaxiDriverCardNumber,
+    taxi_driver_card_expiry: resolvedTaxiDriverCardExpiry,
+    taxiDriverCardExpiry: resolvedTaxiDriverCardExpiry,
+    public_profile_enabled: resolvedPublicProfileEnabled,
+    publicProfileEnabled: resolvedPublicProfileEnabled,
+    public_photo_enabled: resolvedPublicPhotoEnabled,
+    publicPhotoEnabled: resolvedPublicPhotoEnabled,
+    public_display_name: resolvedPublicDisplayName,
+    publicDisplayName: resolvedPublicDisplayName,
     updated_at: nowIso,
   };
   const key = await _saveDriverIndexRecord(env, scope, {
@@ -2890,6 +3064,56 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       driver_id: driverId,
       is_active: isActive,
       key,
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyDriversIndexDelete(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (Array.isArray(body.driver_ids) || Array.isArray(body.driverIds)) {
+    return json({ ok: false, error: "bulk_delete_not_supported" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId ?? body.id,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  const deleted = Object.prototype.hasOwnProperty.call(nextDrivers, driverId);
+  if (deleted) {
+    delete nextDrivers[driverId];
+  }
+  const nowIso = new Date().toISOString();
+  await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      deleted,
     },
     200,
   );
@@ -3380,7 +3604,11 @@ async function handleCompanyBootstrap(request, env) {
     const normalized = _normalizeVehicleEntry(row, { scope });
     if (!normalized) continue;
     const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
-      row.vehicle_photo_url ??
+      normalized.vehicle_photo_url ??
+        normalized.vehiclePhotoUrl ??
+        normalized.public_photo_url ??
+        normalized.publicPhotoUrl ??
+        row.vehicle_photo_url ??
         row.vehiclePhotoUrl ??
         row.public_photo_url ??
         row.publicPhotoUrl ??
@@ -3389,12 +3617,48 @@ async function handleCompanyBootstrap(request, env) {
         row.media?.photo_url ??
         row.media?.photoUrl,
     );
+    const publicPhotoUrl = _normalizeSafeRemoteMediaRef(
+      normalized.public_photo_url ??
+        normalized.publicPhotoUrl ??
+        vehiclePhotoUrl,
+    );
+    const primaryPhotoRef = _normalizeVehiclePhotoRef(
+      normalized.primary_photo_ref ??
+        normalized.primaryPhotoRef ??
+        row.primary_photo_ref ??
+        row.primaryPhotoRef,
+    );
+    const galleryPhotoRefs = _normalizeVehiclePhotoRefList(
+      normalized.gallery_photo_refs ??
+        normalized.galleryPhotoRefs ??
+        row.gallery_photo_refs ??
+        row.galleryPhotoRefs ??
+        [],
+    );
     vehicles.push({
       ...normalized,
+      ...(publicPhotoUrl
+        ? {
+            public_photo_url: publicPhotoUrl,
+            publicPhotoUrl: publicPhotoUrl,
+          }
+        : {}),
       ...(vehiclePhotoUrl
         ? {
             vehicle_photo_url: vehiclePhotoUrl,
             vehiclePhotoUrl: vehiclePhotoUrl,
+          }
+        : {}),
+      ...(primaryPhotoRef
+        ? {
+            primary_photo_ref: primaryPhotoRef,
+            primaryPhotoRef: primaryPhotoRef,
+          }
+        : {}),
+      ...(galleryPhotoRefs.length > 0
+        ? {
+            gallery_photo_refs: galleryPhotoRefs,
+            galleryPhotoRefs: galleryPhotoRefs,
           }
         : {}),
     });
@@ -3411,10 +3675,34 @@ async function handleCompanyBootstrap(request, env) {
       entry.display_name ?? entry.displayName ?? entry.driver_name ?? entry.driverName,
       160,
     );
+    const publicDisplayName = sanitizeTenantString(
+      entry.public_display_name ?? entry.publicDisplayName,
+      160,
+    );
+    const employeeNumber = sanitizeTenantString(
+      entry.employee_number ?? entry.employeeNumber,
+      80,
+    );
     const phone = sanitizeTenantString(entry.phone, 64);
     const assignedVehicleId = sanitizeTenantString(
       entry.assigned_vehicle_id ?? entry.assignedVehicleId,
       96,
+    );
+    const taxiDriverCardNumber = sanitizeTenantString(
+      entry.taxi_driver_card_number ?? entry.taxiDriverCardNumber,
+      120,
+    );
+    const taxiDriverCardExpiry = sanitizeTenantString(
+      entry.taxi_driver_card_expiry ?? entry.taxiDriverCardExpiry,
+      80,
+    );
+    const publicProfileEnabled = _coerceBoolean(
+      entry.public_profile_enabled ?? entry.publicProfileEnabled,
+      false,
+    );
+    const publicPhotoEnabled = _coerceBoolean(
+      entry.public_photo_enabled ?? entry.publicPhotoEnabled,
+      false,
     );
     const driverPhotoUrl = _normalizeSafeRemoteMediaRef(
       entry.driver_photo_url ??
@@ -3442,15 +3730,47 @@ async function handleCompanyBootstrap(request, env) {
     drivers.push({
       driver_id: driverId,
       driverId: driverId,
+      tenant_id: scope.tenant_id,
+      tenantId: scope.tenant_id,
+      company_id: scope.company_id,
+      companyId: scope.company_id,
       display_name: displayName,
       displayName: displayName,
+      ...(publicDisplayName
+        ? {
+            public_display_name: publicDisplayName,
+            publicDisplayName: publicDisplayName,
+          }
+        : {}),
+      ...(employeeNumber
+        ? {
+            employee_number: employeeNumber,
+            employeeNumber: employeeNumber,
+          }
+        : {}),
       ...(phone ? { phone } : {}),
       is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
       isActive: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      public_profile_enabled: publicProfileEnabled,
+      publicProfileEnabled: publicProfileEnabled,
+      public_photo_enabled: publicPhotoEnabled,
+      publicPhotoEnabled: publicPhotoEnabled,
       ...(assignedVehicleId
         ? {
             assigned_vehicle_id: assignedVehicleId,
             assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      ...(taxiDriverCardNumber
+        ? {
+            taxi_driver_card_number: taxiDriverCardNumber,
+            taxiDriverCardNumber: taxiDriverCardNumber,
+          }
+        : {}),
+      ...(taxiDriverCardExpiry
+        ? {
+            taxi_driver_card_expiry: taxiDriverCardExpiry,
+            taxiDriverCardExpiry: taxiDriverCardExpiry,
           }
         : {}),
       ...(driverPhotoUrl
@@ -5606,6 +5926,13 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyDriversIndexUpsert(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/index/delete") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriversIndexDelete(request, url, env);
       }
 
       if (url.pathname === "/admin/company/driver-link-code/create") {
@@ -13169,10 +13496,57 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   if (!raw || typeof raw !== "object") return null;
   const vehicleId = String(raw.vehicle_id || raw.id || "").trim();
   if (!vehicleId) return null;
-  const isActive = raw.is_active == null ? true : !!raw.is_active;
+  const isActive = _coerceBoolean(raw.is_active ?? raw.isActive, true);
   const tier = _normTierForVehicleMatch(raw.tier || raw.service_class || raw.class || "*");
   const passengerCapacity = _toPositiveInt(raw.passenger_capacity ?? raw.pax_capacity ?? raw.pax ?? 0, 0);
   const luggageCapacity = _toPositiveInt(raw.luggage_capacity ?? raw.bags_capacity ?? raw.bags ?? 0, 0);
+  const vehicleName = sanitizeTenantString(
+    raw.vehicle_name ?? raw.vehicleName ?? raw.name,
+    160,
+  );
+  const brandModel = sanitizeTenantString(
+    raw.brand_model ?? raw.brandModel,
+    160,
+  );
+  const licensePlate = sanitizeTenantString(
+    raw.license_plate ?? raw.licensePlate,
+    64,
+  );
+  const exploitationLicenseNumber = sanitizeTenantString(
+    raw.exploitation_license_number ?? raw.exploitationLicenseNumber,
+    120,
+  );
+  const vehicleRegistrationNumber = sanitizeTenantString(
+    raw.vehicle_registration_number ?? raw.vehicleRegistrationNumber,
+    120,
+  );
+  const color = sanitizeTenantString(raw.color, 80);
+  const primaryPhotoRef = _normalizeVehiclePhotoRef(
+    raw.primary_photo_ref ?? raw.primaryPhotoRef ?? raw.photo_ref ?? raw.photoRef,
+  );
+  const galleryPhotoRefs = _normalizeVehiclePhotoRefList(
+    raw.gallery_photo_refs ?? raw.galleryPhotoRefs ?? [],
+  );
+  const publicPhotoUrl = _normalizeSafeRemoteMediaRef(
+    raw.public_photo_url ??
+      raw.publicPhotoUrl ??
+      raw.vehicle_photo_url ??
+      raw.vehiclePhotoUrl ??
+      raw.photo_url ??
+      raw.photoUrl ??
+      raw.media?.photo_url ??
+      raw.media?.photoUrl,
+  );
+  const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+    raw.vehicle_photo_url ??
+      raw.vehiclePhotoUrl ??
+      raw.public_photo_url ??
+      raw.publicPhotoUrl ??
+      raw.photo_url ??
+      raw.photoUrl ??
+      raw.media?.photo_url ??
+      raw.media?.photoUrl,
+  );
   const driverRaw = raw.assigned_driver || raw.driver || null;
   let assignedDriver = null;
   if (driverRaw && typeof driverRaw === "object") {
@@ -13192,11 +13566,75 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   const companyId = _scopeText(raw.company_id ?? raw.companyId) || normalizedScope.company_id || tenantId;
   return {
     vehicle_id: vehicleId,
+    vehicleId: vehicleId,
     is_active: isActive,
+    isActive: isActive,
+    ...(vehicleName
+      ? {
+          vehicle_name: vehicleName,
+          vehicleName: vehicleName,
+        }
+      : {}),
+    ...(brandModel
+      ? {
+          brand_model: brandModel,
+          brandModel: brandModel,
+        }
+      : {}),
+    ...(licensePlate
+      ? {
+          license_plate: licensePlate,
+          licensePlate: licensePlate,
+        }
+      : {}),
+    ...(exploitationLicenseNumber
+      ? {
+          exploitation_license_number: exploitationLicenseNumber,
+          exploitationLicenseNumber: exploitationLicenseNumber,
+        }
+      : {}),
+    ...(vehicleRegistrationNumber
+      ? {
+          vehicle_registration_number: vehicleRegistrationNumber,
+          vehicleRegistrationNumber: vehicleRegistrationNumber,
+        }
+      : {}),
+    ...(color
+      ? {
+          color,
+        }
+      : {}),
     tier,
+    tierId: tier,
     passenger_capacity: passengerCapacity,
+    passengerCapacity: passengerCapacity,
     luggage_capacity: luggageCapacity,
+    luggageCapacity: luggageCapacity,
     assigned_driver: assignedDriver,
+    ...(primaryPhotoRef
+      ? {
+          primary_photo_ref: primaryPhotoRef,
+          primaryPhotoRef: primaryPhotoRef,
+        }
+      : {}),
+    ...(galleryPhotoRefs.length > 0
+      ? {
+          gallery_photo_refs: galleryPhotoRefs,
+          galleryPhotoRefs: galleryPhotoRefs,
+        }
+      : {}),
+    ...(publicPhotoUrl
+      ? {
+          public_photo_url: publicPhotoUrl,
+          publicPhotoUrl: publicPhotoUrl,
+        }
+      : {}),
+    ...(vehiclePhotoUrl
+      ? {
+          vehicle_photo_url: vehiclePhotoUrl,
+          vehiclePhotoUrl: vehiclePhotoUrl,
+        }
+      : {}),
     tenant_id: tenantId,
     company_id: companyId,
     tenantId: tenantId,
