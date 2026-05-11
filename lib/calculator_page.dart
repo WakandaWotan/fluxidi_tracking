@@ -20,9 +20,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
@@ -199,6 +199,74 @@ void _logBusinessPayload({
   );
   debugPrint(
     '[CALCULATOR][BUSINESS_PAYLOAD] stage=$stage business=$business invoiceRequested=$invoiceRequested companyFound=${companyName.isNotEmpty} vatFound=${vatNumber.isNotEmpty} invoiceEmailFound=${invoiceEmail.isNotEmpty} invoiceAddressFound=${invoiceAddress.isNotEmpty} company=${_maskBusinessPreview(companyName)} vat=${_maskBusinessPreview(vatNumber)}',
+  );
+}
+
+class _CalculatorScopeSelection {
+  const _CalculatorScopeSelection({
+    required this.tenantId,
+    required this.companyId,
+    required this.source,
+    required this.isMissing,
+  });
+
+  final String tenantId;
+  final String companyId;
+  final String source;
+  final bool isMissing;
+}
+
+_CalculatorScopeSelection _selectCalculatorBookingScope({
+  required String publicPartnerId,
+}) {
+  final partnerId = publicPartnerId.trim();
+  if (partnerId.isNotEmpty) {
+    debugPrint(
+      '[CALCULATOR][SCOPE_SELECTED] source=public_partner tenant=$partnerId company=$partnerId',
+    );
+    return _CalculatorScopeSelection(
+      tenantId: partnerId,
+      companyId: partnerId,
+      source: 'public_partner',
+      isMissing: false,
+    );
+  }
+
+  final effectiveScope = resolveEffectiveTenantCompanyScope(
+    allowDriverFallback: true,
+  );
+  final fallback = kTenantId.trim().isNotEmpty ? kTenantId.trim() : 'fluxidi';
+  final tenantId = effectiveScope.tenantId.trim().isNotEmpty
+      ? effectiveScope.tenantId.trim()
+      : fallback;
+  final companyId = effectiveScope.companyId.trim().isNotEmpty
+      ? effectiveScope.companyId.trim()
+      : fallback;
+  final isDefaultFallback =
+      effectiveScope.isFallback ||
+      effectiveScope.source == 'default_fallback' ||
+      (tenantId == fallback && companyId == fallback);
+
+  if (isDefaultFallback) {
+    debugPrint(
+      '[CALCULATOR][SCOPE_SELECTED] source=missing tenant=$tenantId company=$companyId',
+    );
+    return _CalculatorScopeSelection(
+      tenantId: tenantId,
+      companyId: companyId,
+      source: 'missing',
+      isMissing: true,
+    );
+  }
+
+  debugPrint(
+    '[CALCULATOR][SCOPE_SELECTED] source=paired_context tenant=$tenantId company=$companyId',
+  );
+  return _CalculatorScopeSelection(
+    tenantId: tenantId,
+    companyId: companyId,
+    source: 'paired_context',
+    isMissing: false,
   );
 }
 
@@ -610,17 +678,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00$sign$oh:$om';
   }
 
-  String _activeTenantCompanyId() {
-    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
-    if (localCompanyId.isNotEmpty) return localCompanyId;
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) return resolved;
-    return kTenantId;
-  }
-
   Map<String, dynamic> _buildQuotePayload(DateTime dt) {
     final vat = _activeVatConfig;
-    final tenantCompanyId = _activeTenantCompanyId();
+    final selectedScope = _selectCalculatorBookingScope(
+      publicPartnerId: _publicPartnerId,
+    );
     final returnEnabled = _returnFeatureEnabled && _returnTrip;
     final returnDt =
         _returnPickupDateTime ??
@@ -674,10 +736,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "extra_service_key": _isPremiumTier
           ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
           : 'NONE',
-      "tenant_id": tenantCompanyId,
-      "company_id": tenantCompanyId,
-      "tenantId": tenantCompanyId,
-      "companyId": tenantCompanyId,
+      "tenant_id": selectedScope.tenantId,
+      "company_id": selectedScope.companyId,
+      "tenantId": selectedScope.tenantId,
+      "companyId": selectedScope.companyId,
       if (_hasPublicPartnerContext) ...{
         "public_partner_id": _publicPartnerId,
         "publicPartnerId": _publicPartnerId,
@@ -3104,16 +3166,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final effectiveInvoiceAddress = _calcBusinessText(
       businessPayload['invoice_address'] ?? businessPayload['invoiceAddress'],
     );
-    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
-    final resolvedCompany = resolvedCompanyId.trim();
-    final tenantCompanyId = localCompanyId.isNotEmpty
-        ? localCompanyId
-        : (resolvedCompany.isNotEmpty ? resolvedCompany : kTenantId);
     final publicPartnerId = _calcBusinessText(
       widget.payload['public_partner_id'] ??
           widget.payload['publicPartnerId'] ??
           widget.payload['partner_id'] ??
           widget.payload['partnerId'],
+    );
+    final selectedScope = _selectCalculatorBookingScope(
+      publicPartnerId: publicPartnerId,
     );
     final publicPartnerName = _calcBusinessText(
       widget.payload['public_partner_name'] ??
@@ -3132,11 +3192,26 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       );
       return;
     }
+    if (selectedScope.isMissing) {
+      final chooseCompanyMessage = widget.language == AppLanguage.en
+          ? 'Please choose a taxi company first to complete your booking.'
+          : widget.language == AppLanguage.fr
+          ? 'Veuillez d abord choisir une compagnie de taxi pour finaliser votre reservation.'
+          : widget.language == AppLanguage.es
+          ? 'Primero elige una empresa de taxi para completar tu reserva.'
+          : 'Kies eerst een taxibedrijf om je boeking te voltooien.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(chooseCompanyMessage)));
+      return;
+    }
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
-      'tenant_id': tenantCompanyId,
-      'company_id': tenantCompanyId,
+      'tenant_id': selectedScope.tenantId,
+      'company_id': selectedScope.companyId,
+      'tenantId': selectedScope.tenantId,
+      'companyId': selectedScope.companyId,
       if (publicPartnerId.isNotEmpty) ...{
         'public_partner_id': publicPartnerId,
         'publicPartnerId': publicPartnerId,
@@ -3210,6 +3285,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     });
 
     try {
+      debugPrint(
+        '[CALCULATOR][BOOK_SCOPE] tenant=${selectedScope.tenantId} company=${selectedScope.companyId}',
+      );
       _logBusinessPayload(stage: 'book', payload: payload);
       final body = await _postBookAndDecode(payload);
       if (body == null) {

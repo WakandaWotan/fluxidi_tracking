@@ -59,6 +59,7 @@ final bool kIsWindows = !kIsWeb && Platform.isWindows;
 
 CustomerProfile? _cachedCustomerProfile;
 bool _startInCompanyAdminHome = false;
+bool _startInDriverHome = false;
 
 Future<void> _refreshCachedCustomerProfile() async {
   _cachedCustomerProfile = await CustomerProfileStore.instance.load();
@@ -250,6 +251,7 @@ Future<void> main() async {
   if (CompanySessionStore.instance.hasValidCompanyContext) {
     setAppRole(AppRole.companyAdmin);
     _startInCompanyAdminHome = true;
+    _startInDriverHome = false;
     debugPrint('[COMPANY_PAIRING][AUTO_ROUTE] target=business_home');
   } else {
     debugPrint(
@@ -257,6 +259,11 @@ Future<void> main() async {
     );
   }
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+  if (!_startInCompanyAdminHome && activeDriverSessionNotifier.value != null) {
+    setAppRole(AppRole.driver);
+    _startInDriverHome = true;
+    debugPrint('[DRIVER_PAIRING][AUTO_ROUTE] target=driver_home');
+  }
   await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
@@ -378,10 +385,17 @@ Set<String> _activeDriverLinkedVehicleIds() {
   return ids;
 }
 
+String _activeDriverSessionVehicleIdForScope() {
+  final sessionVehicleId =
+      activeDriverSessionNotifier.value?.assignedVehicleId?.trim() ?? '';
+  return sessionVehicleId;
+}
+
 bool _bookingBelongsToActiveDriver(Map<String, dynamic> booking) {
   final activeDriverId = _resolvedActiveDriverIdForScope().trim();
   if (activeDriverId.isEmpty) return false;
   final linkedVehicleIds = _activeDriverLinkedVehicleIds();
+  final activeSessionVehicleId = _activeDriverSessionVehicleIdForScope();
   final assignedDriverId = _bookingScopeFirstText(booking, const [
     ['assigned_driver', 'driver_id'],
     ['assigned_driver', 'driverId'],
@@ -424,10 +438,14 @@ bool _bookingBelongsToActiveDriver(Map<String, dynamic> booking) {
     ['record', 'booking', 'vehicle_id'],
     ['record', 'booking', 'vehicleId'],
   ]);
-  if (assignedVehicleId != null &&
-      assignedVehicleId.isNotEmpty &&
-      linkedVehicleIds.contains(assignedVehicleId)) {
-    return true;
+  if (assignedVehicleId != null && assignedVehicleId.isNotEmpty) {
+    if (activeSessionVehicleId.isNotEmpty &&
+        assignedVehicleId == activeSessionVehicleId) {
+      return true;
+    }
+    if (linkedVehicleIds.contains(assignedVehicleId)) {
+      return true;
+    }
   }
   return false;
 }
@@ -494,6 +512,7 @@ Map<String, dynamic> _driverMutationActorFields({String? actorVehicleId}) {
 }
 
 bool _outboundTenantFallbackLogged = false;
+String _lastDriverScopeLogKey = '';
 
 /// Tenant id for outbound ride/trip Worker payloads.
 ///
@@ -515,9 +534,46 @@ String get kOutboundTenantId {
 }
 
 Map<String, String> _activeBookingScopeQuery() {
+  final activeDriverSession = activeDriverSessionNotifier.value;
+  final driverTenantId = (activeDriverSession?.tenantId ?? '').trim();
+  final driverCompanyId = (activeDriverSession?.companyId ?? '').trim();
+  final hasValidCompanyContext =
+      CompanySessionStore.instance.hasValidCompanyContext;
+  final canUseVerifiedDriverScope =
+      !hasValidCompanyContext &&
+      driverTenantId.isNotEmpty &&
+      driverCompanyId.isNotEmpty &&
+      ((activeDriverSession?.isVerifiedPairingSession ?? false) ||
+          appRoleNotifier.value == AppRole.driver);
+  if (canUseVerifiedDriverScope) {
+    final logKey = 'active::$driverTenantId::$driverCompanyId';
+    if (_lastDriverScopeLogKey != logKey) {
+      _lastDriverScopeLogKey = logKey;
+      debugPrint(
+        '[DRIVER_SCOPE][ACTIVE] tenant=$driverTenantId company=$driverCompanyId',
+      );
+    }
+    return <String, String>{
+      'tenant_id': driverTenantId,
+      'company_id': driverCompanyId,
+      'tenantId': driverTenantId,
+      'companyId': driverCompanyId,
+    };
+  }
+
   final tenantId = kOutboundTenantId.trim();
   final companyIdRaw = resolvedCompanyId.trim();
   final companyId = companyIdRaw.isNotEmpty ? companyIdRaw : tenantId;
+  final fallbackReason = hasValidCompanyContext
+      ? 'company_context'
+      : 'default_scope';
+  final logKey = 'fallback::$fallbackReason::$tenantId::$companyId';
+  if (_lastDriverScopeLogKey != logKey) {
+    _lastDriverScopeLogKey = logKey;
+    debugPrint(
+      '[DRIVER_SCOPE][FALLBACK] reason=$fallbackReason tenant=$tenantId company=$companyId',
+    );
+  }
   return <String, String>{
     'tenant_id': tenantId,
     'company_id': companyId,
@@ -2013,7 +2069,9 @@ class FluxidiDriverApp extends StatelessWidget {
         },
         home: _startInCompanyAdminHome
             ? const BusinessHomePage()
-            : const RoleEntryPage(),
+            : (_startInDriverHome
+                  ? const DriverHomePage()
+                  : const RoleEntryPage()),
       ),
     );
   }
@@ -3294,6 +3352,311 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     );
   }
 
+  String _normalizeCompanyCode(String raw) {
+    var value = raw.trim().toUpperCase();
+    value = value.replaceAll(RegExp(r'\s+'), '-');
+    value = value.replaceAll(RegExp(r'-+'), '-');
+    return value;
+  }
+
+  String _driverPairingInvalidText() {
+    return _t(
+      nl: 'Chauffeurcode ongeldig of verlopen',
+      en: 'Driver code is invalid or expired',
+      fr: 'Le code chauffeur est invalide ou expiré',
+      es: 'El código de conductor no es válido o ha caducado',
+    );
+  }
+
+  Future<Map<String, dynamic>> _verifyDriverPairingCode({
+    required String companyCode,
+    required String pairingCode,
+  }) async {
+    final uri = Uri.parse('$kBookingBaseUrl/public/company/driver-link/verify');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, dynamic>{
+              'company_code': companyCode,
+              'pairing_code': pairingCode,
+              'device_label': 'Tablet chauffeur',
+              'device_type': 'tablet',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = (body['role'] ?? '').toString().trim().toLowerCase();
+      if (response.statusCode == 200 && ok && role == 'driver') {
+        return <String, dynamic>{'ok': true, 'payload': body};
+      }
+      return <String, dynamic>{'ok': false};
+    } catch (_) {
+      return <String, dynamic>{'ok': false};
+    }
+  }
+
+  Future<Map<String, String>?> _showDriverPairingSheet(BuildContext context) {
+    final companyCtrl = TextEditingController();
+    final codeCtrl = TextEditingController();
+    return showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        String? errorText;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                0,
+                12,
+                MediaQuery.of(context).viewInsets.bottom + 12,
+              ),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B0B0B),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: const Color(0xFFE5B641),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFE5B641).withOpacity(0.16),
+                      blurRadius: 16,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Chauffeurcode',
+                        en: 'Driver code',
+                        fr: 'Code chauffeur',
+                        es: 'Código de conductor',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: companyCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Bedrijfs-ID',
+                          en: 'Company ID',
+                          fr: 'ID d’entreprise',
+                          es: 'ID de empresa',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF151515),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setSheetState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: codeCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Chauffeurcode',
+                          en: 'Driver code',
+                          fr: 'Code chauffeur',
+                          es: 'Código de conductor',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF151515),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setSheetState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(
+                          color: Color(0xFFFF8A8A),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          child: Text(
+                            _t(
+                              nl: 'Annuleren',
+                              en: 'Cancel',
+                              fr: 'Annuler',
+                              es: 'Cancelar',
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () {
+                            final companyCode = _normalizeCompanyCode(
+                              companyCtrl.text,
+                            );
+                            final pairingCode = codeCtrl.text.trim();
+                            if (companyCode.isEmpty || pairingCode.isEmpty) {
+                              setSheetState(
+                                () => errorText = _driverPairingInvalidText(),
+                              );
+                              return;
+                            }
+                            Navigator.of(sheetContext).pop(<String, String>{
+                              'company_code': companyCode,
+                              'pairing_code': pairingCode,
+                            });
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFE5B641),
+                            foregroundColor: Colors.black,
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Code koppelen',
+                              en: 'Link code',
+                              fr: 'Lier le code',
+                              es: 'Vincular código',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      companyCtrl.dispose();
+      codeCtrl.dispose();
+    });
+  }
+
+  Future<void> _submitPairingCodeFlow() async {
+    if (_busy) return;
+    final formData = await _showDriverPairingSheet(context);
+    if (!mounted || formData == null) return;
+    setState(() {
+      _busy = true;
+      _lookupError = null;
+    });
+    final response = await _verifyDriverPairingCode(
+      companyCode: formData['company_code'] ?? '',
+      pairingCode: formData['pairing_code'] ?? '',
+    );
+    if (!mounted) return;
+    if (response['ok'] != true) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final payload = response['payload'] is Map
+        ? Map<String, dynamic>.from(response['payload'] as Map)
+        : <String, dynamic>{};
+    final tenantId = (payload['tenant_id'] ?? '').toString().trim();
+    final companyId = (payload['company_id'] ?? '').toString().trim();
+    final companyCode = (payload['company_code'] ?? '').toString().trim();
+    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
+    final ok = payload['ok'] == true;
+    final driverMap = payload['driver'] is Map
+        ? Map<String, dynamic>.from(payload['driver'] as Map)
+        : <String, dynamic>{};
+    final driverId = (driverMap['driver_id'] ?? '').toString().trim();
+    final driverName = (driverMap['driver_name'] ?? '').toString().trim();
+    final employeeNumber = (driverMap['employee_number'] ?? '')
+        .toString()
+        .trim();
+    final assignedVehicleId =
+        (driverMap['assigned_vehicle_id'] ??
+                driverMap['assignedVehicleId'] ??
+                '')
+            .toString()
+            .trim();
+    if (!ok ||
+        role != 'driver' ||
+        tenantId.isEmpty ||
+        companyId.isEmpty ||
+        companyCode.isEmpty ||
+        driverId.isEmpty ||
+        employeeNumber.isEmpty) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final issuedAt = DateTime.tryParse(
+      (payload['issued_at'] ?? '').toString().trim(),
+    );
+    final expiresAt = DateTime.tryParse(
+      (payload['expires_at'] ?? '').toString().trim(),
+    );
+    await DriverSessionStore.instance.saveVerifiedDriverPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      driverId: driverId,
+      driverName: driverName,
+      employeeNumber: employeeNumber,
+      assignedVehicleId: assignedVehicleId,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    setAppRole(AppRole.driver);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
@@ -3444,6 +3807,34 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton(
+                          onPressed: _busy
+                              ? null
+                              : () {
+                                  unawaited(_submitPairingCodeFlow());
+                                },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFE5B641),
+                            side: const BorderSide(
+                              color: Color(0xFFE5B641),
+                              width: 1.2,
+                            ),
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Ik heb een chauffeurcode',
+                              en: 'I have a driver code',
+                              fr: 'J’ai un code chauffeur',
+                              es: 'Tengo un código de conductor',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
                       ],
                     ),
@@ -14319,6 +14710,124 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return h;
   }
 
+  dynamic _cancelScopeValueAtPath(Map<String, dynamic> source, String path) {
+    dynamic current = source;
+    for (final segment in path.split('.')) {
+      if (current is Map && current.containsKey(segment)) {
+        current = current[segment];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  String _cancelScopeFirstNonEmpty(
+    Map<String, dynamic> source,
+    List<String> paths,
+  ) {
+    for (final path in paths) {
+      final raw = _cancelScopeValueAtPath(source, path);
+      final text = raw?.toString().trim() ?? '';
+      if (text.isNotEmpty &&
+          text.toLowerCase() != 'null' &&
+          text.toLowerCase() != 'undefined') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  Map<String, String> _selectedCancelScopeQuery() {
+    final scopeSource = <String, dynamic>{
+      ..._view.source,
+      'record': _view.record,
+      'booking': _view.booking,
+    };
+    final tenantFromBooking = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'tenant_id',
+      'tenantId',
+      'tenant',
+      'record.tenant_id',
+      'record.tenantId',
+      'record.tenant',
+      'record.booking.tenant_id',
+      'record.booking.tenantId',
+      'record.booking.tenant',
+      'record.payload.tenant_id',
+      'record.payload.tenantId',
+      'record.payload.tenant',
+      'booking.tenant_id',
+      'booking.tenantId',
+      'booking.tenant',
+      'payload.tenant_id',
+      'payload.tenantId',
+      'payload.tenant',
+      'data.tenant_id',
+      'data.tenantId',
+      'data.tenant',
+      'data.record.tenant_id',
+      'data.record.tenantId',
+      'data.record.tenant',
+      'data.record.booking.tenant_id',
+      'data.record.booking.tenantId',
+      'data.record.booking.tenant',
+      'data.record.payload.tenant_id',
+      'data.record.payload.tenantId',
+      'data.record.payload.tenant',
+    ]);
+    final companyFromBooking = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'company_id',
+      'companyId',
+      'company',
+      'record.company_id',
+      'record.companyId',
+      'record.company',
+      'record.booking.company_id',
+      'record.booking.companyId',
+      'record.booking.company',
+      'record.payload.company_id',
+      'record.payload.companyId',
+      'record.payload.company',
+      'booking.company_id',
+      'booking.companyId',
+      'booking.company',
+      'payload.company_id',
+      'payload.companyId',
+      'payload.company',
+      'data.company_id',
+      'data.companyId',
+      'data.company',
+      'data.record.company_id',
+      'data.record.companyId',
+      'data.record.company',
+      'data.record.booking.company_id',
+      'data.record.booking.companyId',
+      'data.record.booking.company',
+      'data.record.payload.company_id',
+      'data.record.payload.companyId',
+      'data.record.payload.company',
+    ]);
+    if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_record',
+      );
+      return <String, String>{
+        'tenant_id': tenantFromBooking,
+        'company_id': companyFromBooking,
+        'tenantId': tenantFromBooking,
+        'companyId': companyFromBooking,
+      };
+    }
+    final fallbackScope = _activeBookingScopeQuery();
+    final fallbackTenant = (fallbackScope['tenant_id'] ?? '').trim();
+    final fallbackCompany = (fallbackScope['company_id'] ?? '').trim();
+    debugPrint(
+      '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$fallbackTenant company=$fallbackCompany source=active_scope_fallback',
+    );
+    return fallbackScope;
+  }
+
   bool get _canCancelBooking {
     return !_isCustomerBookingTerminalStatus(_view.lifecycleStatus);
   }
@@ -14342,13 +14851,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   Future<bool> _verifyCancellationServerState({
     required String bookingId,
     required Map<String, String> proof,
+    required Map<String, String> cancelScope,
   }) async {
     try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scopedQuery = <String, String>{...cancelScope, ...proof};
+      final uri = Uri.parse(
+        '$kBookingBaseUrl$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
+      ).replace(queryParameters: scopedQuery);
       final res = await http
           .get(uri, headers: _cancelHeaders())
           .timeout(const Duration(seconds: 12));
@@ -14426,7 +14935,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _cancelling = true;
       _refreshError = null;
     });
-    final scope = _activeBookingScopeQuery();
+    final scope = _selectedCancelScopeQuery();
     final aliases = _customerBookingDeleteAliases(
       bookingId: bookingId,
       publicBookingReference: _view.publicBookingReference,
@@ -14457,11 +14966,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       if (proof['customer_phone'] != null)
         'customer_phone': proof['customer_phone'],
     };
-    final uri = _withActiveBookingScope(
-      kBookingBaseUrl,
-      '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
-      extraQuery: proof.isEmpty ? null : proof,
-    );
+    final scopedQuery = <String, String>{...scope, ...proof};
+    final uri = Uri.parse(
+      '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+    ).replace(queryParameters: scopedQuery);
     debugPrint(
       '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)}',
     );
@@ -14524,6 +15032,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         final cancelled = await _verifyCancellationServerState(
           bookingId: bookingId,
           proof: proof,
+          cancelScope: scope,
         );
         if (cancelled) {
           final localResult = await _removeLocalCustomerBookingEverywhere(
@@ -21548,7 +22057,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final activeDriverId = _resolvedActiveDriverIdForScope();
     if (!allowed) {
       debugPrint(
-        '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=$activeDriverId allowed=false',
+        '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=$activeDriverId active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
       );
       _toast(_driverOwnershipBlockedMessage());
       return false;
@@ -21581,7 +22090,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ]) ??
             '';
         debugPrint(
-          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=$allowed',
+          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=$allowed',
         );
         return allowed;
       })
@@ -36090,7 +36599,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         ]) ??
         '';
     debugPrint(
-      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=false',
+      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
     );
     if (context.mounted) {
       ScaffoldMessenger.of(
