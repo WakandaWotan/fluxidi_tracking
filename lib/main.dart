@@ -5,7 +5,7 @@ import 'dart:io' show Directory, File, FileMode, Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
+    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_email_sender/flutter_email_sender.dart';
@@ -683,6 +683,17 @@ const String kAdminToken = String.fromEnvironment(
   'ADMIN_TOKEN',
   defaultValue: '',
 );
+const bool _fluxidiDevPairingBypass = bool.fromEnvironment(
+  'FLUXIDI_DEV_PAIRING_BYPASS',
+);
+const String _fluxidiDevTenantId = String.fromEnvironment(
+  'FLUXIDI_DEV_TENANT_ID',
+);
+const String _fluxidiDevCompanyId = String.fromEnvironment(
+  'FLUXIDI_DEV_COMPANY_ID',
+);
+bool get _effectiveFluxidiDevPairingBypass =>
+    _fluxidiDevPairingBypass && !kReleaseMode;
 
 /// Endpoints (adjust if your Worker uses different paths)
 const String kListBookingsPath = '/bookings';
@@ -2315,6 +2326,9 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
+  static const String _companyPairingOnboardingIntent =
+      '__open_company_onboarding__';
+
   Future<String?> _promptExistingCompanyId(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
@@ -2332,10 +2346,10 @@ class RoleEntryPage extends StatelessWidget {
               ),
               title: Text(
                 _t(
-                  nl: 'Bedrijfs-ID invoeren',
-                  en: 'Enter company ID',
-                  fr: 'Saisir un ID d’entreprise',
-                  es: 'Introducir ID de empresa',
+                  nl: 'Bedrijf koppelen',
+                  en: 'Link company',
+                  fr: 'Lier l’entreprise',
+                  es: 'Vincular empresa',
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
@@ -2345,10 +2359,10 @@ class RoleEntryPage extends StatelessWidget {
                 children: [
                   Text(
                     _t(
-                      nl: 'Gebruik een eenvoudige code zoals FLX-4821 of TAXI-4821.',
-                      en: 'Use a simple code like FLX-4821 or TAXI-4821.',
-                      fr: 'Utilisez un code simple comme FLX-4821 ou TAXI-4821.',
-                      es: 'Usa un código simple como FLX-4821 o TAXI-4821.',
+                      nl: 'Vul de bedrijfscode in die je van Fluxidi of je beheerder kreeg.',
+                      en: 'Enter the company code you received from Fluxidi or your administrator.',
+                      fr: 'Saisissez le code entreprise reçu de Fluxidi ou de votre administrateur.',
+                      es: 'Introduce el código de empresa que recibiste de Fluxidi o de tu administrador.',
                     ),
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.78),
@@ -2363,10 +2377,10 @@ class RoleEntryPage extends StatelessWidget {
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       labelText: _t(
-                        nl: 'Bedrijfs-ID',
-                        en: 'Company ID',
-                        fr: 'ID d’entreprise',
-                        es: 'ID de empresa',
+                        nl: 'Bedrijfscode',
+                        en: 'Company code',
+                        fr: 'Code entreprise',
+                        es: 'Código de empresa',
                       ),
                       labelStyle: TextStyle(
                         color: Colors.white.withOpacity(0.8),
@@ -2439,10 +2453,27 @@ class RoleEntryPage extends StatelessWidget {
                   },
                   child: Text(
                     _t(
-                      nl: 'Verder',
-                      en: 'Continue',
-                      fr: 'Continuer',
-                      es: 'Continuar',
+                      nl: 'Volgende',
+                      en: 'Next',
+                      fr: 'Suivant',
+                      es: 'Siguiente',
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_companyPairingOnboardingIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                      en: 'I want to enter my company details',
+                      fr: 'Je veux saisir les données de mon entreprise',
+                      es: 'Quiero introducir los datos de mi empresa',
                     ),
                   ),
                 ),
@@ -2454,6 +2485,133 @@ class RoleEntryPage extends StatelessWidget {
     );
     controller.dispose();
     return result;
+  }
+
+  Future<bool?> _confirmResolvedCompanyPreview(
+    BuildContext context, {
+    required String companyCode,
+    required String displayName,
+    required String country,
+    required String maskedPhone,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Bedrijf gevonden',
+              en: 'Company found',
+              fr: 'Entreprise trouvée',
+              es: 'Empresa encontrada',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (displayName.isNotEmpty)
+                Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              if (companyCode.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  companyCode,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.84),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+              if (country.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _t(
+                    nl: 'Land: $country',
+                    en: 'Country: $country',
+                    fr: 'Pays : $country',
+                    es: 'País: $country',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.78),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              if (maskedPhone.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _t(
+                    nl: 'Contact: $maskedPhone',
+                    en: 'Contact: $maskedPhone',
+                    fr: 'Contact : $maskedPhone',
+                    es: 'Contacto: $maskedPhone',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.78),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Andere code gebruiken',
+                  en: 'Use another code',
+                  fr: 'Utiliser un autre code',
+                  es: 'Usar otro código',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Dit is mijn bedrijf',
+                  en: 'This is my company',
+                  fr: 'C’est mon entreprise',
+                  es: 'Esta es mi empresa',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   String _safePairingText(dynamic value) => (value ?? '').toString().trim();
@@ -2487,13 +2645,7 @@ class RoleEntryPage extends StatelessWidget {
     }
   }
 
-  Future<String?> _promptCompanyPairingCode(
-    BuildContext context, {
-    required String companyCode,
-    required String displayName,
-    required String country,
-    required String maskedPhone,
-  }) async {
+  Future<String?> _promptCompanyPairingCode(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
     final result = await showDialog<String>(
@@ -2510,10 +2662,10 @@ class RoleEntryPage extends StatelessWidget {
               ),
               title: Text(
                 _t(
-                  nl: 'Bedrijf koppelen',
-                  en: 'Link company',
-                  fr: 'Lier l’entreprise',
-                  es: 'Vincular empresa',
+                  nl: 'Verificatiecode invoeren',
+                  en: 'Enter verification code',
+                  fr: 'Saisir le code de vérification',
+                  es: 'Introducir código de verificación',
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
@@ -2523,56 +2675,28 @@ class RoleEntryPage extends StatelessWidget {
                 children: [
                   Text(
                     _t(
-                      nl: 'Bedrijf gevonden',
-                      en: 'Company found',
-                      fr: 'Entreprise trouvée',
-                      es: 'Empresa encontrada',
+                      nl: 'Vul de 6-cijferige code in die je van je beheerder kreeg.',
+                      en: 'Enter the 6-digit code you received from your administrator.',
+                      fr: 'Saisissez le code à 6 chiffres reçu de votre administrateur.',
+                      es: 'Introduce el código de 6 dígitos que recibiste de tu administrador.',
                     ),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    [
-                      if (displayName.isNotEmpty) displayName,
-                      if (companyCode.isNotEmpty) companyCode,
-                      if (country.isNotEmpty) country,
-                      if (maskedPhone.isNotEmpty) maskedPhone,
-                    ].join('  •  '),
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.78),
                       fontSize: 12,
                       height: 1.3,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _t(
-                      nl: 'Voer de koppelcode in',
-                      en: 'Enter the pairing code',
-                      fr: 'Saisissez le code de liaison',
-                      es: 'Introduce el código de vinculación',
-                    ),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.82),
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                   const SizedBox(height: 8),
                   TextField(
                     controller: controller,
                     keyboardType: TextInputType.number,
-                    textCapitalization: TextCapitalization.characters,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       labelText: _t(
-                        nl: 'Koppelcode',
-                        en: 'Pairing code',
-                        fr: 'Code de liaison',
-                        es: 'Código de vinculación',
+                        nl: 'Verificatiecode',
+                        en: 'Verification code',
+                        fr: 'Code de vérification',
+                        es: 'Código de verificación',
                       ),
                       labelStyle: TextStyle(
                         color: Colors.white.withOpacity(0.8),
@@ -2613,10 +2737,10 @@ class RoleEntryPage extends StatelessWidget {
                     if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
                       setDialogState(
                         () => errorText = _t(
-                          nl: 'Bedrijfs-ID of koppelcode ongeldig',
-                          en: 'Company ID or pairing code is invalid',
-                          fr: 'ID d’entreprise ou code de liaison invalide',
-                          es: 'ID de empresa o código de vinculación no válido',
+                          nl: 'Vul een geldige 6-cijferige verificatiecode in.',
+                          en: 'Enter a valid 6-digit verification code.',
+                          fr: 'Saisissez un code de vérification valide à 6 chiffres.',
+                          es: 'Introduce un código de verificación válido de 6 dígitos.',
                         ),
                       );
                       return;
@@ -2625,10 +2749,10 @@ class RoleEntryPage extends StatelessWidget {
                   },
                   child: Text(
                     _t(
-                      nl: 'Bedrijf koppelen',
-                      en: 'Link company',
-                      fr: 'Lier l’entreprise',
-                      es: 'Vincular empresa',
+                      nl: 'Toestel koppelen',
+                      en: 'Link device',
+                      fr: 'Lier l’appareil',
+                      es: 'Vincular dispositivo',
                     ),
                   ),
                 ),
@@ -2640,6 +2764,111 @@ class RoleEntryPage extends StatelessWidget {
     );
     controller.dispose();
     return result;
+  }
+
+  Future<void> _showCompanyPairingSuccessDialog(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Toestel gekoppeld',
+              en: 'Device linked',
+              fr: 'Appareil lié',
+              es: 'Dispositivo vinculado',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            _t(
+              nl: 'Je toestel is veilig gekoppeld aan je bedrijf.',
+              en: 'Your device has been securely linked to your company.',
+              fr: 'Votre appareil est lié en toute sécurité à votre entreprise.',
+              es: 'Tu dispositivo se vinculó de forma segura a tu empresa.',
+            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.8)),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Verder naar dashboard',
+                  en: 'Continue to dashboard',
+                  fr: 'Continuer vers le tableau de bord',
+                  es: 'Continuar al panel',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool?> _showCompanyPairingTestModeDialog(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Testmodus',
+              en: 'Test mode',
+              fr: 'Mode test',
+              es: 'Modo de prueba',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            _t(
+              nl: 'Dit toestel wordt gekoppeld zonder verificatiecode. Gebruik dit alleen voor ontwikkeling en testen.',
+              en: 'This device will be linked without a verification code. Use this only for development and testing.',
+              fr: 'Cet appareil sera lié sans code de vérification. Utilisez ceci uniquement pour le développement et les tests.',
+              es: 'Este dispositivo se vinculará sin código de verificación. Úsalo solo para desarrollo y pruebas.',
+            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.8)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Koppelen in testmodus',
+                  en: 'Link in test mode',
+                  fr: 'Lier en mode test',
+                  es: 'Vincular en modo de prueba',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<Map<String, dynamic>> _verifyCompanyPairingCode({
@@ -2718,118 +2947,66 @@ class RoleEntryPage extends StatelessWidget {
     return true;
   }
 
+  Future<bool> _openDevBypassCompanySession(
+    BuildContext context, {
+    required String resolvedCompanyCode,
+    required String resolvedDisplayName,
+    required String resolvedCountry,
+  }) async {
+    final companyCode = resolvedCompanyCode.trim();
+    if (companyCode.isEmpty) return false;
+    final tenantId = _fluxidiDevTenantId.trim().isNotEmpty
+        ? _fluxidiDevTenantId.trim()
+        : companyCode;
+    final companyId = _fluxidiDevCompanyId.trim().isNotEmpty
+        ? _fluxidiDevCompanyId.trim()
+        : companyCode;
+    final companyName = resolvedDisplayName.trim().isEmpty
+        ? companyCode
+        : resolvedDisplayName.trim();
+    final country = resolvedCountry.trim().toUpperCase();
+    debugPrint(
+      '[COMPANY_PAIRING][DEV_BYPASS] tenant=$tenantId company=$companyId code=$companyCode',
+    );
+    await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      companyName: companyName,
+      countryCode: country,
+      issuedAt: DateTime.now().toUtc(),
+    );
+    if (!context.mounted) return false;
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
+    setAppRole(AppRole.companyAdmin);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+    );
+    return true;
+  }
+
   String _companyPairingErrorText(String code) {
     if (code == 'company_not_found') {
       return _t(
-        nl: 'Geen bedrijf gevonden voor deze ID',
-        en: 'No company found for this ID',
-        fr: 'Aucune entreprise trouvée pour cet ID',
-        es: 'No se encontró ninguna empresa para este ID',
+        nl: 'We vinden geen bedrijf met deze code. Controleer de code en probeer opnieuw.',
+        en: 'We could not find a company with this code. Check the code and try again.',
+        fr: 'Aucune entreprise trouvée avec ce code. Vérifiez le code et réessayez.',
+        es: 'No encontramos una empresa con este código. Verifica el código e inténtalo de nuevo.',
+      );
+    }
+    if (code == 'verification_failed') {
+      return _t(
+        nl: 'De verificatiecode klopt niet of is verlopen. Vraag een nieuwe code aan je beheerder.',
+        en: 'The verification code is incorrect or expired. Ask your administrator for a new code.',
+        fr: 'Le code de vérification est incorrect ou expiré. Demandez un nouveau code à votre administrateur.',
+        es: 'El código de verificación es incorrecto o ha caducado. Solicita un nuevo código a tu administrador.',
       );
     }
     return _t(
-      nl: 'Bedrijfs-ID of koppelcode ongeldig',
-      en: 'Company ID or pairing code is invalid',
-      fr: 'ID d’entreprise ou code de liaison invalide',
-      es: 'ID de empresa o código de vinculación no válido',
-    );
-  }
-
-  Future<bool?> _showBusinessOnboardingChoice(BuildContext context) {
-    return showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: false,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0E0E0E),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
-              boxShadow: [
-                BoxShadow(
-                  color: kFluxidiYellow.withOpacity(0.12),
-                  blurRadius: 14,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  _t(
-                    nl: 'Hoe wilt u als bedrijf starten?',
-                    en: 'How do you want to start as a business?',
-                    fr: 'Comment voulez-vous commencer en tant qu’entreprise ?',
-                    es: '¿Cómo quieres empezar como empresa?',
-                  ),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _t(
-                    nl: 'Kies of u al een bedrijfs-ID heeft of eerst uw bedrijfsgegevens wilt invullen.',
-                    en: 'Choose whether you already have a company ID or want to enter company details first.',
-                    fr: 'Choisissez si vous avez déjà un ID d’entreprise ou si vous voulez d’abord saisir les données de l’entreprise.',
-                    es: 'Elige si ya tienes un ID de empresa o si primero quieres introducir los datos de la empresa.',
-                  ),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
-                    fontSize: 12,
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () => Navigator.of(sheetContext).pop(true),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                    backgroundColor: kFluxidiYellow,
-                    foregroundColor: Colors.black,
-                  ),
-                  child: Text(
-                    _t(
-                      nl: 'Ik heb al een bedrijfs-ID',
-                      en: 'I already have a company ID',
-                      fr: 'J’ai déjà un ID d’entreprise',
-                      es: 'Ya tengo un ID de empresa',
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () => Navigator.of(sheetContext).pop(false),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                    foregroundColor: Colors.white,
-                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.52)),
-                  ),
-                  child: Text(
-                    _t(
-                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
-                      en: 'I want to enter my company details',
-                      fr: 'Je veux saisir les données de mon entreprise',
-                      es: 'Quiero introducir los datos de mi empresa',
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      nl: 'Koppelen lukt niet. Controleer de gegevens en probeer opnieuw.',
+      en: 'Linking failed. Check your details and try again.',
+      fr: 'La liaison a échoué. Vérifiez les données et réessayez.',
+      es: 'No se pudo vincular. Revisa los datos e inténtalo de nuevo.',
     );
   }
 
@@ -2862,51 +3039,48 @@ class RoleEntryPage extends StatelessWidget {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const BusinessHomePage()),
       );
-    } else {
-      final hasExistingId = await _showBusinessOnboardingChoice(context);
-      if (!context.mounted || hasExistingId == null) return;
-      if (hasExistingId) {
-        final companyId = await _promptExistingCompanyId(context);
-        if (!context.mounted || companyId == null) return;
-        final resolved = await _resolveCompanyCode(companyId);
-        if (!context.mounted) return;
-        if (resolved['ok'] != true) {
-          final errorCode = _safePairingText(resolved['error']).toLowerCase();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(_companyPairingErrorText(errorCode))),
-          );
-          return;
-        }
-        final pairingCode = await _promptCompanyPairingCode(
+      return;
+    }
+    while (true) {
+      final companyId = await _promptExistingCompanyId(context);
+      if (!context.mounted || companyId == null) return;
+      if (companyId == _companyPairingOnboardingIntent) {
+        _openBusinessOnboarding(context);
+        return;
+      }
+      final resolved = await _resolveCompanyCode(companyId);
+      if (!context.mounted) return;
+      if (resolved['ok'] != true) {
+        final errorCode = _safePairingText(resolved['error']).toLowerCase();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+        );
+        return;
+      }
+      final resolvedCompanyCode =
+          _safePairingText(resolved['company_code']).isEmpty
+          ? companyId
+          : _safePairingText(resolved['company_code']);
+      final confirmed = await _confirmResolvedCompanyPreview(
+        context,
+        companyCode: resolvedCompanyCode,
+        displayName: _safePairingText(resolved['display_name']),
+        country: _safePairingText(resolved['country']),
+        maskedPhone: _safePairingText(resolved['masked_phone']),
+      );
+      if (!context.mounted || confirmed == null) return;
+      if (!confirmed) continue;
+      if (_effectiveFluxidiDevPairingBypass) {
+        final bypassConfirmed = await _showCompanyPairingTestModeDialog(
           context,
-          companyCode: _safePairingText(resolved['company_code']).isEmpty
-              ? companyId
-              : _safePairingText(resolved['company_code']),
-          displayName: _safePairingText(resolved['display_name']),
-          country: _safePairingText(resolved['country']),
-          maskedPhone: _safePairingText(resolved['masked_phone']),
         );
-        if (!context.mounted || pairingCode == null) return;
-        final resolvedCompanyCode =
-            _safePairingText(resolved['company_code']).isEmpty
-            ? companyId
-            : _safePairingText(resolved['company_code']);
-        final verified = await _verifyCompanyPairingCode(
-          companyCode: resolvedCompanyCode,
-          pairingCode: pairingCode,
+        if (!context.mounted || bypassConfirmed != true) return;
+        final opened = await _openDevBypassCompanySession(
+          context,
+          resolvedCompanyCode: resolvedCompanyCode,
+          resolvedDisplayName: _safePairingText(resolved['display_name']),
+          resolvedCountry: _safePairingText(resolved['country']),
         );
-        if (!context.mounted) return;
-        if (verified['ok'] != true) {
-          final errorCode = _safePairingText(verified['error']).toLowerCase();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(_companyPairingErrorText(errorCode))),
-          );
-          return;
-        }
-        final payload = verified['payload'] is Map
-            ? Map<String, dynamic>.from(verified['payload'] as Map)
-            : <String, dynamic>{};
-        final opened = await _openVerifiedCompanySession(context, payload);
         if (!context.mounted) return;
         if (!opened) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2917,7 +3091,35 @@ class RoleEntryPage extends StatelessWidget {
         }
         return;
       }
-      _openBusinessOnboarding(context);
+      final pairingCode = await _promptCompanyPairingCode(context);
+      if (!context.mounted || pairingCode == null) return;
+      final verified = await _verifyCompanyPairingCode(
+        companyCode: resolvedCompanyCode,
+        pairingCode: pairingCode,
+      );
+      if (!context.mounted) return;
+      if (verified['ok'] != true) {
+        final errorCode = _safePairingText(verified['error']).toLowerCase();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+        );
+        return;
+      }
+      final payload = verified['payload'] is Map
+          ? Map<String, dynamic>.from(verified['payload'] as Map)
+          : <String, dynamic>{};
+      await _showCompanyPairingSuccessDialog(context);
+      if (!context.mounted) return;
+      final opened = await _openVerifiedCompanySession(context, payload);
+      if (!context.mounted) return;
+      if (!opened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_companyPairingErrorText('verification_failed')),
+          ),
+        );
+      }
+      return;
     }
   }
 
@@ -3309,47 +3511,53 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    final activeCompanyId =
-        companyProfileNotifier.value?.companyId.trim().isNotEmpty == true
-        ? companyProfileNotifier.value!.companyId.trim()
-        : (activeCompanySessionNotifier.value?.companyId.trim().isNotEmpty ==
-                  true
-              ? activeCompanySessionNotifier.value!.companyId.trim()
-              : '');
-    final drivers = activeCompanyId.isNotEmpty
-        ? driversNotifier.value
-              .where(
-                (driver) => (driver.companyId?.trim() ?? '') == activeCompanyId,
-              )
-              .toList(growable: false)
-        // Temporary compatibility: if no active company is resolved yet,
-        // keep legacy/dev login behavior until company session is mandatory.
-        : driversNotifier.value;
-    final match = DriverSessionStore.instance.findDriverByEnteredId(
-      drivers,
-      _idCtrl.text,
+    final activeCompanyId = _activeCompanyIdForDriverLogin();
+    final lookup = _findLocalDriverForLogin(
+      entered: _idCtrl.text,
+      activeCompanyId: activeCompanyId,
+      drivers: driversNotifier.value,
     );
-    if (match == null) {
-      debugPrint('[DRIVER_LOGIN][FAIL] reason=not_found');
+    debugPrint(
+      '[DRIVER_LOGIN][LOOKUP] entered=${_maskLoginCode(_idCtrl.text)} drivers_total=${driversNotifier.value.length} active_company=${activeCompanyId.isEmpty ? "none" : _maskLoginCode(activeCompanyId)} candidates=${lookup.visibleCandidates} match=${lookup.match == null ? "none" : lookup.reason}',
+    );
+    if (lookup.match == null) {
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=${lookup.reason}');
       if (mounted) {
         setState(() {
           _busy = false;
           _lookupError = _t(
-            nl: 'Geen actieve chauffeur gevonden met deze ID.',
-            en: 'No active driver found with this ID.',
-            fr: 'Aucun chauffeur actif trouvé avec cet ID.',
-            es: 'No se encontró ningún conductor activo con este ID.',
+            nl: 'Geen actieve chauffeur gevonden met deze chauffeurcode.',
+            en: 'No active driver found with this driver code.',
+            fr: 'Aucun chauffeur actif trouvé avec ce code.',
+            es: 'No se encontró ningún conductor activo con este código.',
           );
         });
       }
       return;
     }
+    final selectedDriver = lookup.match!;
+    var normalizedMatch = _driverWithNormalizedLoginCode(
+      selectedDriver,
+      enteredCode: _idCtrl.text,
+    );
+    final shouldMigrateLegacyToScope =
+        lookup.reason == 'legacy_employee_code' ||
+        lookup.reason == 'legacy_internal_id';
+    if (shouldMigrateLegacyToScope && activeCompanyId.isNotEmpty) {
+      normalizedMatch = normalizedMatch.copyWith(companyId: activeCompanyId);
+    }
+    if (_driverChangedForLoginMigration(selectedDriver, normalizedMatch)) {
+      updateDriver(selectedDriver.id, normalizedMatch);
+      debugPrint(
+        '[DRIVER_LOGIN][MIGRATE] driver=${_maskLoginCode(selectedDriver.id)} company=${_maskLoginCode(activeCompanyId)} code=${_maskLoginCode(normalizedMatch.employeeNumber)} reason=${lookup.reason}',
+      );
+    }
     final prev = await DriverSessionStore.instance.load();
     await DriverSessionStore.instance.saveFromDriverProfile(
-      match,
+      normalizedMatch,
       previous: prev,
     );
-    DriverSessionStore.instance.logOk(match.id);
+    DriverSessionStore.instance.logOk(normalizedMatch.id);
     if (!mounted) return;
     setState(() => _busy = false);
     setAppRole(AppRole.driver);
@@ -3363,6 +3571,139 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     value = value.replaceAll(RegExp(r'\s+'), '-');
     value = value.replaceAll(RegExp(r'-+'), '-');
     return value;
+  }
+
+  String _activeCompanyIdForDriverLogin() {
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) return fromSession;
+    final resolved = resolvedCompanyId.trim();
+    return resolved;
+  }
+
+  String _normalizeLoginCode(String raw) => raw.trim().toLowerCase();
+
+  String _maskLoginCode(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return 'empty';
+    if (t.length <= 2) return '*' * t.length;
+    return '${t[0]}***${t[t.length - 1]}(len=${t.length})';
+  }
+
+  bool _sameCode(String a, String b) {
+    final na = _normalizeLoginCode(a);
+    final nb = _normalizeLoginCode(b);
+    if (na.isEmpty || nb.isEmpty) return false;
+    return na == nb;
+  }
+
+  bool _driverBelongsToActiveCompany(
+    DriverProfile driver,
+    String activeCompanyId,
+  ) {
+    final company = driver.companyId?.trim() ?? '';
+    if (activeCompanyId.isEmpty) return company.isEmpty;
+    return company.isNotEmpty && company == activeCompanyId;
+  }
+
+  bool _driverIsLegacyCompanyless(DriverProfile driver) =>
+      (driver.companyId?.trim() ?? '').isEmpty;
+
+  ({DriverProfile? match, String reason, int visibleCandidates})
+  _findLocalDriverForLogin({
+    required String entered,
+    required String activeCompanyId,
+    required List<DriverProfile> drivers,
+  }) {
+    final normalized = _normalizeLoginCode(entered);
+    if (normalized.isEmpty) {
+      return (match: null, reason: 'empty_input', visibleCandidates: 0);
+    }
+    if (drivers.isEmpty) {
+      return (match: null, reason: 'no_drivers_loaded', visibleCandidates: 0);
+    }
+
+    final eligible = drivers
+        .where((driver) {
+          if (!driver.isActive) return false;
+          final company = driver.companyId?.trim() ?? '';
+          if (company.isEmpty) return true;
+          if (activeCompanyId.isEmpty) return false;
+          return company == activeCompanyId;
+        })
+        .toList(growable: false);
+    if (eligible.isEmpty) {
+      return (match: null, reason: 'scope_mismatch', visibleCandidates: 0);
+    }
+
+    for (final driver in eligible) {
+      if (_driverBelongsToActiveCompany(driver, activeCompanyId) &&
+          _sameCode(driver.employeeNumber, normalized)) {
+        return (
+          match: driver,
+          reason: 'scoped_employee_code',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverIsLegacyCompanyless(driver) &&
+          _sameCode(driver.employeeNumber, normalized)) {
+        return (
+          match: driver,
+          reason: 'legacy_employee_code',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverBelongsToActiveCompany(driver, activeCompanyId) &&
+          _sameCode(driver.id, normalized)) {
+        return (
+          match: driver,
+          reason: 'scoped_internal_id',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverIsLegacyCompanyless(driver) &&
+          _sameCode(driver.id, normalized)) {
+        return (
+          match: driver,
+          reason: 'legacy_internal_id',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    return (
+      match: null,
+      reason: 'no_code_match',
+      visibleCandidates: eligible.length,
+    );
+  }
+
+  bool _driverChangedForLoginMigration(
+    DriverProfile before,
+    DriverProfile after,
+  ) {
+    return before.employeeNumber.trim() != after.employeeNumber.trim() ||
+        (before.companyId?.trim() ?? '') != (after.companyId?.trim() ?? '');
+  }
+
+  DriverProfile _driverWithNormalizedLoginCode(
+    DriverProfile driver, {
+    String enteredCode = '',
+  }) {
+    final code = driver.employeeNumber.trim();
+    if (code.isNotEmpty) return driver;
+    final fallbackId = driver.id.trim();
+    final fallbackInput = enteredCode.trim();
+    final resolved = fallbackId.isNotEmpty ? fallbackId : fallbackInput;
+    if (resolved.isEmpty) return driver;
+    return driver.copyWith(employeeNumber: resolved);
   }
 
   String _driverPairingInvalidText() {
@@ -3716,10 +4057,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                       children: [
                         Text(
                           _t(
-                            nl: 'Vul je chauffeur-ID in om je ritten te openen.',
-                            en: 'Enter your driver ID to open your rides.',
-                            fr: 'Saisissez votre ID chauffeur pour ouvrir vos courses.',
-                            es: 'Introduce tu ID de conductor para abrir tus viajes.',
+                            nl: 'Vul je chauffeurcode in om je ritten te openen.',
+                            en: 'Enter your driver code to open your rides.',
+                            fr: 'Saisissez votre code chauffeur pour ouvrir vos courses.',
+                            es: 'Introduce tu código de conductor para abrir tus viajes.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.85),
@@ -3737,10 +4078,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           },
                           decoration: InputDecoration(
                             labelText: _t(
-                              nl: 'Chauffeur-ID',
-                              en: 'Driver ID',
-                              fr: 'ID chauffeur',
-                              es: 'ID de conductor',
+                              nl: 'Chauffeurcode',
+                              en: 'Driver code',
+                              fr: 'Code chauffeur',
+                              es: 'Código de conductor',
                             ),
                             labelStyle: TextStyle(
                               color: Colors.white.withOpacity(0.8),
@@ -3759,10 +4100,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           validator: (v) {
                             if ((v ?? '').trim().isEmpty) {
                               return _t(
-                                nl: 'Vul je chauffeur-ID in.',
-                                en: 'Enter your driver ID.',
-                                fr: 'Saisissez votre ID chauffeur.',
-                                es: 'Introduce tu ID de conductor.',
+                                nl: 'Vul je chauffeurcode in.',
+                                en: 'Enter your driver code.',
+                                fr: 'Saisissez votre code chauffeur.',
+                                es: 'Introduce tu código de conductor.',
                               );
                             }
                             return null;
@@ -7467,7 +7808,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
     DriverProfile existing,
   ) async {
     final nameCtrl = TextEditingController(text: existing.fullName);
-    final idCtrl = TextEditingController(text: existing.employeeNumber);
+    final idCtrl = TextEditingController(
+      text: existing.employeeNumber.trim().isEmpty
+          ? existing.id
+          : existing.employeeNumber,
+    );
     final phoneCtrl = TextEditingController(text: existing.phone);
     final taxiCardNumberCtrl = TextEditingController(
       text: existing.taxiDriverCardNumber,
@@ -7885,12 +8230,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   _driverField(
                     idCtrl,
                     _t(
-                      nl: 'Chauffeur-ID',
-                      en: 'Driver ID',
-                      fr: 'ID chauffeur',
-                      es: 'ID conductor',
+                      nl: 'Chauffeurcode',
+                      en: 'Driver code',
+                      fr: 'Code chauffeur',
+                      es: 'Código de conductor',
                     ),
-                    enabled: false,
                   ),
                   _driverField(
                     phoneCtrl,
@@ -7950,6 +8294,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           onPressed: () {
                             final updated = existing.copyWith(
                               fullName: nameCtrl.text.trim(),
+                              employeeNumber: idCtrl.text.trim().isEmpty
+                                  ? existing.id.trim()
+                                  : idCtrl.text.trim(),
                               phone: phoneCtrl.text.trim(),
                               taxiDriverCardNumber: taxiCardNumberCtrl.text
                                   .trim(),
@@ -8666,12 +9013,14 @@ class CompanyDriverManagementPage extends StatelessWidget {
                               const SizedBox(height: 8),
                               _line(
                                 _t(
-                                  nl: 'Chauffeur-ID',
-                                  en: 'Driver ID',
-                                  fr: 'ID chauffeur',
-                                  es: 'ID conductor',
+                                  nl: 'Chauffeurcode',
+                                  en: 'Driver code',
+                                  fr: 'Code chauffeur',
+                                  es: 'Código de conductor',
                                 ),
-                                d.employeeNumber,
+                                d.employeeNumber.trim().isEmpty
+                                    ? d.id
+                                    : d.employeeNumber,
                                 icon: Icons.badge_outlined,
                               ),
                               _line(

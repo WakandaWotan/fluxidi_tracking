@@ -1163,19 +1163,32 @@ void deleteVehicle(String id) {
 }
 
 void addDriver(DriverProfile driver) {
-  driversNotifier.value = <DriverProfile>[...driversNotifier.value, driver];
+  final normalizedDriver = _driverWithNormalizedLoginCode(driver);
+  driversNotifier.value = <DriverProfile>[
+    ...driversNotifier.value,
+    normalizedDriver,
+  ];
   _persistLocalTenantState();
   final scopeId = _fleetScopeIdFromLocalState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
 }
 
 void updateDriver(String id, DriverProfile updated) {
+  final normalizedUpdated = _driverWithNormalizedLoginCode(updated);
   driversNotifier.value = driversNotifier.value
-      .map((d) => d.id == id ? updated : d)
+      .map((d) => d.id == id ? normalizedUpdated : d)
       .toList(growable: false);
   _persistLocalTenantState();
   final scopeId = _fleetScopeIdFromLocalState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
+}
+
+DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
+  final fallbackCode = driver.id.trim();
+  final code = driver.employeeNumber.trim();
+  if (code.isNotEmpty) return driver;
+  if (fallbackCode.isEmpty) return driver;
+  return driver.copyWith(employeeNumber: fallbackCode);
 }
 
 void deleteDriver(String id) {
@@ -1512,10 +1525,18 @@ DriverProfile _decodeDriver(
     return text.isEmpty ? null : text;
   }();
 
+  final id = (m['id'] ?? fallback.id).toString();
+  final employeeNumber = (m['employeeNumber'] ?? fallback.employeeNumber)
+      .toString()
+      .trim();
+  final resolvedEmployeeNumber = employeeNumber.isNotEmpty
+      ? employeeNumber
+      : id.trim();
+
   return fallback.copyWith(
-    id: (m['id'] ?? fallback.id).toString(),
+    id: id,
     fullName: (m['fullName'] ?? fallback.fullName).toString(),
-    employeeNumber: (m['employeeNumber'] ?? fallback.employeeNumber).toString(),
+    employeeNumber: resolvedEmployeeNumber,
     phone: (m['phone'] ?? fallback.phone).toString(),
     taxiDriverCardNumber:
         (m['taxiDriverCardNumber'] ?? fallback.taxiDriverCardNumber).toString(),
