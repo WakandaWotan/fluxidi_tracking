@@ -10469,110 +10469,6 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
-  Widget _customerPrimaryCta(BuildContext context) {
-    const ctaIconContainerSize = 58.0;
-    const ctaIconGlyphSize = 31.0;
-    return GestureDetector(
-      onTap: () => _openCalculator(context, scheduledIntent: false),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.46)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF101010), Color(0xFF07080C)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.11),
-              blurRadius: 16,
-              spreadRadius: 0.9,
-            ),
-            BoxShadow(
-              color: Colors.black.withOpacity(0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: ctaIconContainerSize,
-              height: ctaIconContainerSize,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    kFluxidiYellow.withOpacity(0.3),
-                    const Color(0xFF15120A),
-                  ],
-                ),
-                shape: BoxShape.circle,
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.5)),
-                boxShadow: [
-                  BoxShadow(
-                    color: kFluxidiYellow.withOpacity(0.09),
-                    blurRadius: 9,
-                    spreadRadius: 0.3,
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.local_taxi_outlined,
-                color: Color(0xFFE5B641),
-                size: ctaIconGlyphSize,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _t(
-                      nl: 'Bereken & boek je rit',
-                      en: 'Calculate & book your ride',
-                      fr: 'Calculez & réservez votre trajet',
-                      es: 'Calcula y reserva tu viaje',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15.6,
-                    ),
-                    maxLines: 1,
-                    softWrap: false,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 31,
-              height: 31,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF15120A).withOpacity(0.7),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.34)),
-              ),
-              child: Icon(
-                Icons.arrow_forward_rounded,
-                color: kFluxidiYellow.withOpacity(0.98),
-                size: 19,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _customerQuickActionCard({
     required BuildContext context,
     required IconData icon,
@@ -10888,7 +10784,7 @@ class CustomerHomePage extends StatelessWidget {
     const navIconSize = 25.0;
     final items = <String>[
       _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
-      _t(nl: 'Boek rit', en: 'Book ride', fr: 'Réserver', es: 'Reservar'),
+      _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis'),
       _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
       _t(
         nl: 'Meldingen',
@@ -10912,7 +10808,9 @@ class CustomerHomePage extends StatelessWidget {
           onTap: (i) {
             if (i == 0) return;
             if (i == 1) {
-              _openCalculator(context, scheduledIntent: false);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
+              );
               return;
             }
             if (i == 2) {
@@ -10986,8 +10884,6 @@ class CustomerHomePage extends StatelessWidget {
             child: Column(
               children: [
                 _customerHomeHero(context),
-                const SizedBox(height: 14),
-                _customerPrimaryCta(context),
                 const SizedBox(height: 14),
                 _customerQuickActionGrid(context),
                 const SizedBox(height: 12),
