@@ -4530,6 +4530,8 @@ function publicPreviewCopy(lang) {
       invalidPickupDateTime: "Ongeldige ophaaldatum of -tijd.",
       quoteFirst: "Bereken eerst een prijs voordat u boekt.",
       unavailableForBooking: "Deze pagina kan momenteel geen boekingen verwerken.",
+      suggestionUnavailable: "Adres-suggesties zijn momenteel niet beschikbaar.",
+      suggestionNoResults: "Geen suggesties gevonden.",
       codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
@@ -4579,6 +4581,8 @@ function publicPreviewCopy(lang) {
       invalidPickupDateTime: "Invalid pickup date or time.",
       quoteFirst: "Calculate a quote before requesting a booking.",
       unavailableForBooking: "This page is currently unavailable for bookings.",
+      suggestionUnavailable: "Address suggestions are currently unavailable.",
+      suggestionNoResults: "No suggestions found.",
       codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
@@ -4628,6 +4632,8 @@ function publicPreviewCopy(lang) {
       invalidPickupDateTime: "Date ou heure de prise en charge invalide.",
       quoteFirst: "Calculez d'abord un devis avant de réserver.",
       unavailableForBooking: "Cette page ne peut pas traiter de réservation pour le moment.",
+      suggestionUnavailable: "Les suggestions d'adresse sont actuellement indisponibles.",
+      suggestionNoResults: "Aucune suggestion trouvée.",
       codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
@@ -4677,6 +4683,8 @@ function publicPreviewCopy(lang) {
       invalidPickupDateTime: "Fecha u hora de recogida no válida.",
       quoteFirst: "Calcula primero una cotización antes de reservar.",
       unavailableForBooking: "Esta página no puede procesar reservas en este momento.",
+      suggestionUnavailable: "Las sugerencias de dirección no están disponibles en este momento.",
+      suggestionNoResults: "No se encontraron sugerencias.",
       codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
@@ -4697,6 +4705,149 @@ function _publicWebsiteHref(rawWebsite) {
   if (lower.startsWith("http://") || lower.startsWith("https://")) return value;
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return "";
   return `https://${value}`;
+}
+
+function _publicSuggestLanguage(value) {
+  const normalized = sanitizeTenantString(value, 16).toLowerCase();
+  if (["nl", "en", "fr", "es"].includes(normalized)) return normalized;
+  return "nl";
+}
+
+function _publicSuggestField(value) {
+  const field = sanitizeTenantString(value, 16).toLowerCase();
+  if (field === "from" || field === "to") return field;
+  return "";
+}
+
+function _publicSuggestText(value) {
+  return sanitizeTenantString(value, 120).trim();
+}
+
+function _publicMapboxContextValue(feature, prefix) {
+  if (!Array.isArray(feature?.context)) return "";
+  const keyPrefix = `${prefix}.`;
+  for (const entry of feature.context) {
+    const id = sanitizeTenantString(entry?.id, 120);
+    if (!id.startsWith(keyPrefix)) continue;
+    const text = sanitizeTenantString(
+      entry?.text ?? entry?.text_en ?? entry?.place_name,
+      120,
+    );
+    if (text) return text;
+  }
+  return "";
+}
+
+function _publicMapboxContextCountry(feature) {
+  if (!Array.isArray(feature?.context)) return "";
+  for (const entry of feature.context) {
+    const id = sanitizeTenantString(entry?.id, 120);
+    if (!id.startsWith("country.")) continue;
+    const shortCode = sanitizeTenantString(
+      entry?.short_code ?? entry?.shortCode,
+      16,
+    ).toUpperCase().replace(/[^A-Z]/g, "");
+    if (shortCode.length >= 2) return shortCode.slice(0, 2);
+    const text = sanitizeTenantString(
+      entry?.text ?? entry?.text_en ?? entry?.place_name,
+      120,
+    ).toUpperCase().replace(/[^A-Z]/g, "");
+    if (text.length >= 2) return text.slice(0, 2);
+  }
+  return "";
+}
+
+function _normalizePublicAddressSuggestion(feature) {
+  const center = Array.isArray(feature?.center) ? feature.center : [];
+  const lng = Number(center[0]);
+  const lat = Number(center[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const id = sanitizeTenantString(feature?.id, 120);
+  const label = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? feature?.text ?? "",
+    240,
+  );
+  if (!label) return null;
+  const street = sanitizeTenantString(feature?.text, 120);
+  const houseNumber = sanitizeTenantString(feature?.address, 24);
+  const address =
+    sanitizeTenantString([street, houseNumber].filter(Boolean).join(" "), 180) || label;
+  const city = _publicMapboxContextValue(feature, "place") || _publicMapboxContextValue(feature, "locality");
+  const postcode =
+    sanitizeTenantString(feature?.properties?.postcode, 24) ||
+    _publicMapboxContextValue(feature, "postcode");
+  const country =
+    _publicMapboxContextCountry(feature) ||
+    sanitizeTenantString(feature?.properties?.short_code, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+  return {
+    id,
+    label,
+    address,
+    city,
+    postcode,
+    country,
+    lat: Number(lat.toFixed(7)),
+    lng: Number(lng.toFixed(7)),
+  };
+}
+
+async function handlePublicAddressSuggest(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "invalid_company_code" }, 404);
+  }
+  const query = _publicSuggestText(url.searchParams.get("q"));
+  if (query.length < 3) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  const field = _publicSuggestField(url.searchParams.get("field"));
+  if (!field) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  const lang = _publicSuggestLanguage(url.searchParams.get("lang"));
+  const limitRequested = Number(url.searchParams.get("limit") || "5");
+  const limit = Math.max(1, Math.min(5, Number.isFinite(limitRequested) ? Math.round(limitRequested) : 5));
+  if (!env?.MAPBOX_TOKEN) {
+    return json({ ok: false, error: "suggestion_unavailable" }, 503);
+  }
+
+  const companyCountry = sanitizeTenantString(companyRecord?.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const fallbackCountry = inferMapboxCountryCodeFromQuery(query);
+  const countryCode = companyCountry || fallbackCountry || "BE";
+  const suggestUrl =
+    "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+    encodeURIComponent(query) +
+    `.json?autocomplete=true&limit=${encodeURIComponent(String(limit))}&types=address,place,postcode,locality,neighborhood&language=${encodeURIComponent(lang)}&country=${encodeURIComponent(countryCode)}&access_token=${encodeURIComponent(env.MAPBOX_TOKEN)}`;
+
+  try {
+    const response = await fetch(suggestUrl);
+    if (!response.ok) {
+      return json({ ok: false, error: "suggestion_unavailable" }, 502);
+    }
+    const payload = await response.json().catch(() => ({}));
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    const suggestions = [];
+    for (const feature of features) {
+      const normalized = _normalizePublicAddressSuggestion(feature);
+      if (!normalized) continue;
+      suggestions.push(normalized);
+      if (suggestions.length >= limit) break;
+    }
+    return json({ ok: true, suggestions }, 200);
+  } catch (_) {
+    return json({ ok: false, error: "suggestion_unavailable" }, 503);
+  }
 }
 
 function renderPublicBookingUnavailablePage(lang, status = 404) {
@@ -4982,6 +5133,7 @@ async function handlePublicBookingPreview(url, env) {
       }
       .fx-field {
         display: block;
+        position: relative;
       }
       .fx-field-full {
         grid-column: 1 / -1;
@@ -5008,6 +5160,42 @@ async function handlePublicBookingPreview(url, env) {
         box-shadow: 0 0 0 2px rgba(212,175,74,0.2);
       }
       .fx-textarea { resize: vertical; min-height: 96px; }
+      .fx-suggest-list {
+        position: absolute;
+        z-index: 30;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        max-height: 230px;
+        overflow-y: auto;
+        border: 1px solid #6f5a2a;
+        border-radius: 10px;
+        background: #111728;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+      }
+      .fx-suggest-item {
+        width: 100%;
+        border: none;
+        border-bottom: 1px solid #2b3147;
+        background: transparent;
+        color: #e7edff;
+        text-align: left;
+        padding: 9px 10px;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .fx-suggest-item:last-child {
+        border-bottom: none;
+      }
+      .fx-suggest-item:hover {
+        background: #1a2237;
+      }
+      .fx-suggest-empty {
+        padding: 9px 10px;
+        color: #aeb8d0;
+        font-size: 12px;
+      }
       .fx-actions {
         display: grid;
         gap: 8px;
@@ -5105,10 +5293,12 @@ async function handlePublicBookingPreview(url, env) {
                     <label class="fx-field fx-field-full">
                       <span class="fx-label">${escapeHtml(copy.fieldFrom)}</span>
                       <input id="public-field-from" class="fx-input" type="text" required />
+                      <div id="public-from-suggestions" class="fx-suggest-list" style="display:none;"></div>
                     </label>
                     <label class="fx-field fx-field-full">
                       <span class="fx-label">${escapeHtml(copy.fieldTo)}</span>
                       <input id="public-field-to" class="fx-input" type="text" required />
+                      <div id="public-to-suggestions" class="fx-suggest-list" style="display:none;"></div>
                     </label>
                     <label class="fx-field">
                       <span class="fx-label">${escapeHtml(copy.fieldPickupDate)}</span>
@@ -5198,7 +5388,10 @@ async function handlePublicBookingPreview(url, env) {
                 quoteFirst: copy.quoteFirst,
                 bookingReference: copy.bookingReference,
                 unavailableForBooking: copy.unavailableForBooking,
+                suggestionUnavailable: copy.suggestionUnavailable,
+                suggestionNoResults: copy.suggestionNoResults,
               })};
+              const currentLang = ${JSON.stringify(lang)};
 
               const quoteBtn = document.getElementById("public-quote-btn");
               const bookBtn = document.getElementById("public-book-btn");
@@ -5221,8 +5414,12 @@ async function handlePublicBookingPreview(url, env) {
               const fieldPax = document.getElementById("public-field-pax");
               const fieldBags = document.getElementById("public-field-bags");
               const fieldNotes = document.getElementById("public-field-notes");
+              const fromSuggestEl = document.getElementById("public-from-suggestions");
+              const toSuggestEl = document.getElementById("public-to-suggestions");
 
               let lastQuotePayload = null;
+              let fromSuggestTimer = null;
+              let toSuggestTimer = null;
 
               function esc(value) {
                 return String(value == null ? "" : value)
@@ -5286,6 +5483,90 @@ async function handlePublicBookingPreview(url, env) {
                 const num = Number(value);
                 if (!Number.isFinite(num)) return "-";
                 return "EUR " + num.toFixed(2);
+              }
+
+              function hideSuggestions(container) {
+                if (!container) return;
+                container.style.display = "none";
+                container.innerHTML = "";
+              }
+
+              function renderSuggestions(container, inputField, suggestions) {
+                if (!container) return;
+                if (!Array.isArray(suggestions) || !suggestions.length) {
+                  hideSuggestions(container);
+                  return;
+                }
+                const html = suggestions.slice(0, 5).map(function (item, index) {
+                  const label = esc(item && (item.label || item.address) ? (item.label || item.address) : "");
+                  const address = esc(item && item.address ? item.address : "");
+                  const subtitleParts = [];
+                  if (item && item.postcode) subtitleParts.push(String(item.postcode));
+                  if (item && item.city) subtitleParts.push(String(item.city));
+                  if (item && item.country) subtitleParts.push(String(item.country));
+                  const subtitle = esc(subtitleParts.join(" "));
+                  return (
+                    '<button class="fx-suggest-item" data-idx="' + index + '" type="button">' +
+                      '<div>' + label + '</div>' +
+                      (subtitle || address ? '<div style="margin-top:2px;color:#aeb8d0;font-size:11px;">' + (subtitle || address) + '</div>' : '') +
+                    "</button>"
+                  );
+                }).join("");
+                container.innerHTML = html;
+                container.style.display = "block";
+                const buttons = container.querySelectorAll(".fx-suggest-item");
+                buttons.forEach(function (button) {
+                  button.addEventListener("click", function () {
+                    const idx = Number(button.getAttribute("data-idx") || "-1");
+                    const selected = suggestions[idx];
+                    if (!selected) return;
+                    const nextValue = String(selected.address || selected.label || "").trim();
+                    if (nextValue) inputField.value = nextValue;
+                    hideSuggestions(container);
+                  });
+                });
+              }
+
+              function scheduleSuggest(field, inputField, container) {
+                if (!inputField || !container) return;
+                const query = String(inputField.value || "").trim();
+                if (field === "from") {
+                  if (fromSuggestTimer) clearTimeout(fromSuggestTimer);
+                } else if (field === "to") {
+                  if (toSuggestTimer) clearTimeout(toSuggestTimer);
+                }
+                if (!companyCode || query.length < 3) {
+                  hideSuggestions(container);
+                  return;
+                }
+                const run = async function () {
+                  try {
+                    const params = new URLSearchParams();
+                    params.set("company_code", companyCode);
+                    params.set("q", query);
+                    params.set("field", field);
+                    params.set("lang", currentLang || "nl");
+                    params.set("limit", "5");
+                    const response = await fetch("/public/address/suggest?" + params.toString(), {
+                      method: "GET",
+                    });
+                    const out = await response.json().catch(function () {
+                      return { ok: false, suggestions: [] };
+                    });
+                    if (!response.ok || !out || out.ok !== true) {
+                      hideSuggestions(container);
+                      return;
+                    }
+                    renderSuggestions(container, inputField, Array.isArray(out.suggestions) ? out.suggestions : []);
+                  } catch (_) {
+                    hideSuggestions(container);
+                  }
+                };
+                if (field === "from") {
+                  fromSuggestTimer = setTimeout(run, 280);
+                } else if (field === "to") {
+                  toSuggestTimer = setTimeout(run, 280);
+                }
               }
 
               function buildPickupIso(dateValue, timeValue) {
@@ -5446,6 +5727,24 @@ async function handlePublicBookingPreview(url, env) {
               quoteBtn.addEventListener("click", onQuoteRequest);
               bookBtn.addEventListener("click", onBookRequest);
               resetBtn.addEventListener("click", onResetFlow);
+              fieldFrom.addEventListener("input", function () {
+                scheduleSuggest("from", fieldFrom, fromSuggestEl);
+              });
+              fieldTo.addEventListener("input", function () {
+                scheduleSuggest("to", fieldTo, toSuggestEl);
+              });
+              fieldFrom.addEventListener("blur", function () {
+                setTimeout(function () { hideSuggestions(fromSuggestEl); }, 120);
+              });
+              fieldTo.addEventListener("blur", function () {
+                setTimeout(function () { hideSuggestions(toSuggestEl); }, 120);
+              });
+              fieldFrom.addEventListener("focus", function () {
+                scheduleSuggest("from", fieldFrom, fromSuggestEl);
+              });
+              fieldTo.addEventListener("focus", function () {
+                scheduleSuggest("to", fieldTo, toSuggestEl);
+              });
               if (!companyCode) {
                 quoteBtn.disabled = true;
                 bookBtn.disabled = true;
@@ -6839,6 +7138,13 @@ GET /oauth/callback
           url,
         });
         return json(quoteResult.out, quoteResult.status);
+      }
+
+      if (url.pathname === "/public/address/suggest") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicAddressSuggest(url, env);
       }
 
       if (url.pathname === "/public/quote" && request.method === "POST") {
