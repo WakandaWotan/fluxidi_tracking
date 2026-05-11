@@ -399,6 +399,58 @@ class DriverSessionStore {
     }
   }
 
+  Future<void> saveBackendDriverLoginSession({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required String driverName,
+    required String companyDisplayName,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final normalizedDriverId = driverId.trim();
+    final normalizedDriverName = driverName.trim();
+    final normalizedCompanyDisplayName = companyDisplayName.trim();
+    if (normalizedTenantId.isEmpty ||
+        normalizedCompanyId.isEmpty ||
+        normalizedDriverId.isEmpty) {
+      debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=missing_required');
+      return;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    final fallbackName = normalizedCompanyDisplayName.isEmpty
+        ? normalizedDriverId
+        : '$normalizedCompanyDisplayName chauffeur';
+    final session = ActiveDriverSession(
+      driverId: normalizedDriverId,
+      employeeNumber: normalizedDriverId,
+      fullName: normalizedDriverName.isEmpty
+          ? fallbackName
+          : normalizedDriverName,
+      phone: '',
+      loggedInAt: now,
+      updatedAt: now,
+      tenantId: normalizedTenantId,
+      companyId: normalizedCompanyId,
+      linkMethod: 'public_driver_login',
+    );
+    try {
+      final file = await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _cache = session;
+      _cacheScopeKey = '$normalizedTenantId::$normalizedCompanyId';
+      activeDriverSessionNotifier.value = session;
+      debugPrint(
+        '[DRIVER_SESSION][SAVE_BACKEND] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=public_driver_login path=${file.path}',
+      );
+    } catch (e) {
+      debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
+    }
+  }
+
   Future<void> clear() async {
     try {
       final scope = _activeScope();

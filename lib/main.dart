@@ -3479,6 +3479,22 @@ class ChauffeurLoginPage extends StatefulWidget {
   State<ChauffeurLoginPage> createState() => _ChauffeurLoginPageState();
 }
 
+class _BackendDriverLoginResult {
+  const _BackendDriverLoginResult({
+    required this.tenantId,
+    required this.companyId,
+    required this.driverId,
+    required this.driverName,
+    required this.companyDisplayName,
+  });
+
+  final String tenantId;
+  final String companyId;
+  final String driverId;
+  final String driverName;
+  final String companyDisplayName;
+}
+
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _companyCtrl = TextEditingController();
@@ -3516,6 +3532,35 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
+    final enteredCompanyCode = _normalizeCompanyCode(_companyCtrl.text);
+    final enteredDriverCode = _idCtrl.text.trim();
+    final backendLogin = await _loginDriverWithBackend(
+      companyCode: enteredCompanyCode,
+      driverCode: enteredDriverCode,
+    );
+    if (backendLogin != null) {
+      await DriverSessionStore.instance.saveBackendDriverLoginSession(
+        tenantId: backendLogin.tenantId,
+        companyId: backendLogin.companyId,
+        driverId: backendLogin.driverId,
+        driverName: backendLogin.driverName,
+        companyDisplayName: backendLogin.companyDisplayName,
+      );
+      debugPrint(
+        '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(backendLogin.tenantId)} company=${_maskLoginCode(backendLogin.companyId)} driver=${_maskLoginCode(backendLogin.driverId)}',
+      );
+      debugPrint(
+        '[DRIVER_LOGIN][OK] source=backend driver=${_maskLoginCode(backendLogin.driverId)}',
+      );
+      if (!mounted) return;
+      setState(() => _busy = false);
+      setAppRole(AppRole.driver);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DriverHomePage()),
+      );
+      return;
+    }
+    debugPrint('[DRIVER_LOGIN][FALLBACK_LOCAL] reason=backend_failed');
     final companyScope = _findCompanyScopeForDriverLogin(
       enteredCompanyCode: _companyCtrl.text,
       drivers: driversNotifier.value,
@@ -3594,6 +3639,74 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const DriverHomePage()),
     );
+  }
+
+  Future<_BackendDriverLoginResult?> _loginDriverWithBackend({
+    required String companyCode,
+    required String driverCode,
+  }) async {
+    final normalizedCompanyCode = _normalizeCompanyCode(companyCode);
+    final normalizedDriverCode = driverCode.trim();
+    if (normalizedCompanyCode.isEmpty || normalizedDriverCode.isEmpty) {
+      return null;
+    }
+    debugPrint(
+      '[DRIVER_LOGIN][BACKEND_REQ] company=${_maskLoginCode(normalizedCompanyCode)}',
+    );
+    final uri = Uri.parse('${appConfig.bookingBaseUrl}/public/driver/login');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'company_code': normalizedCompanyCode,
+              'driver_code': normalizedDriverCode,
+              'companyCode': normalizedCompanyCode,
+              'driverCode': normalizedDriverCode,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = (body['role'] ?? '').toString().trim().toLowerCase();
+      final tenantId = (body['tenant_id'] ?? '').toString().trim();
+      final companyId = (body['company_id'] ?? '').toString().trim();
+      final driverId = (body['driver_id'] ?? '').toString().trim();
+      final driverName = (body['driver_name'] ?? '').toString().trim();
+      final companyDisplayName = (body['company_display_name'] ?? '')
+          .toString()
+          .trim();
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          ok &&
+          role == 'driver' &&
+          tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          driverId.isNotEmpty) {
+        debugPrint(
+          '[DRIVER_LOGIN][BACKEND_OK] driver=${_maskLoginCode(driverId)}',
+        );
+        return _BackendDriverLoginResult(
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          driverName: driverName,
+          companyDisplayName: companyDisplayName,
+        );
+      }
+      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode}');
+      return null;
+    } catch (_) {
+      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=exception');
+      return null;
+    }
   }
 
   ({String? companyId, String reason, String activeCompanyMasked})
@@ -4137,10 +4250,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                       children: [
                         Text(
                           _t(
-                            nl: 'Vul de bedrijfscode en je chauffeurcode in.',
-                            en: 'Enter the company ID and your driver code.',
-                            fr: 'Entrez le code entreprise et votre code chauffeur.',
-                            es: 'Introduce el código de empresa y tu código de conductor.',
+                            nl: 'Vul de bedrijfscode en je chauffeurcode in. Werkt ook op een nieuw toestel zodra de chauffeur door het bedrijf is aangemaakt.',
+                            en: 'Enter the company ID and your driver code. This also works on a new device once the driver has been created by the company.',
+                            fr: 'Entrez le code entreprise et votre code chauffeur. Cela fonctionne aussi sur un nouvel appareil dès que le chauffeur est créé par l’entreprise.',
+                            es: 'Introduce el código de empresa y tu código de conductor. Esto también funciona en un dispositivo nuevo cuando la empresa ya creó al conductor.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.85),
