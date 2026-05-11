@@ -4493,6 +4493,13 @@ function publicPreviewCopy(lang) {
       heading: "Boek uw rit online",
       description:
         "Gebruik deze pagina om rechtstreeks een rit aan te vragen bij dit bedrijf.",
+      backToHome: "Terug naar startpagina",
+      calculatorChip: "Fluxidi calculator",
+      calculatorTitle: "Ritprijs berekenen",
+      calculatorSubtitle: "Bereken en boek ritten met een premium app-ervaring.",
+      cardRouteTitle: "Van → Naar",
+      cardCustomerTitle: "Klantgegevens",
+      cardServiceTitle: "Service",
       cta: "Boekingsformulier volgt binnenkort",
       formTitle: "Ritgegevens",
       formSubtitle: "Vul uw gegevens in en bereken direct de prijs.",
@@ -4506,7 +4513,7 @@ function publicPreviewCopy(lang) {
       fieldPax: "Passagiers",
       fieldBags: "Bagage",
       fieldNotes: "Opmerkingen (optioneel)",
-      quoteButton: "Prijs berekenen",
+      quoteButton: "Bereken mijn ritprijs",
       bookButton: "Boeking aanvragen",
       resetButton: "Nieuwe quote",
       quoteLoading: "Prijs wordt berekend...",
@@ -4535,6 +4542,13 @@ function publicPreviewCopy(lang) {
       heading: "Book your ride online",
       description:
         "Use this page to request a ride directly with this company.",
+      backToHome: "Back to homepage",
+      calculatorChip: "Fluxidi calculator",
+      calculatorTitle: "Calculate ride price",
+      calculatorSubtitle: "Calculate and book rides with a premium app experience.",
+      cardRouteTitle: "From → To",
+      cardCustomerTitle: "Customer details",
+      cardServiceTitle: "Service",
       cta: "Booking form coming soon",
       formTitle: "Trip details",
       formSubtitle: "Enter your trip details and calculate your price instantly.",
@@ -4548,7 +4562,7 @@ function publicPreviewCopy(lang) {
       fieldPax: "Passengers",
       fieldBags: "Luggage",
       fieldNotes: "Notes (optional)",
-      quoteButton: "Calculate price",
+      quoteButton: "Calculate my ride price",
       bookButton: "Request booking",
       resetButton: "New quote",
       quoteLoading: "Calculating price...",
@@ -4577,6 +4591,13 @@ function publicPreviewCopy(lang) {
       heading: "Réservez votre trajet en ligne",
       description:
         "Utilisez cette page pour demander une course directement auprès de cette entreprise.",
+      backToHome: "Retour à la page d'accueil",
+      calculatorChip: "Calculateur Fluxidi",
+      calculatorTitle: "Calculer le prix du trajet",
+      calculatorSubtitle: "Calculez et réservez vos trajets avec une expérience premium.",
+      cardRouteTitle: "Départ → Destination",
+      cardCustomerTitle: "Données client",
+      cardServiceTitle: "Service",
       cta: "Formulaire de réservation bientôt disponible",
       formTitle: "Détails du trajet",
       formSubtitle: "Saisissez votre trajet et calculez votre prix immédiatement.",
@@ -4590,7 +4611,7 @@ function publicPreviewCopy(lang) {
       fieldPax: "Passagers",
       fieldBags: "Bagages",
       fieldNotes: "Remarques (optionnel)",
-      quoteButton: "Calculer le prix",
+      quoteButton: "Calculer le prix du trajet",
       bookButton: "Demander la réservation",
       resetButton: "Nouveau devis",
       quoteLoading: "Calcul du prix en cours...",
@@ -4619,6 +4640,13 @@ function publicPreviewCopy(lang) {
       heading: "Reserva tu viaje en línea",
       description:
         "Usa esta página para solicitar un viaje directamente con esta empresa.",
+      backToHome: "Volver a la página de inicio",
+      calculatorChip: "Calculadora Fluxidi",
+      calculatorTitle: "Calcular precio del viaje",
+      calculatorSubtitle: "Calcula y reserva viajes con una experiencia premium.",
+      cardRouteTitle: "Origen → Destino",
+      cardCustomerTitle: "Datos del cliente",
+      cardServiceTitle: "Servicio",
       cta: "Formulario de reserva próximamente",
       formTitle: "Detalles del viaje",
       formSubtitle: "Introduce tu viaje y calcula el precio al instante.",
@@ -4632,7 +4660,7 @@ function publicPreviewCopy(lang) {
       fieldPax: "Pasajeros",
       fieldBags: "Equipaje",
       fieldNotes: "Notas (opcional)",
-      quoteButton: "Calcular precio",
+      quoteButton: "Calcular mi precio",
       bookButton: "Solicitar reserva",
       resetButton: "Nueva cotización",
       quoteLoading: "Calculando precio...",
@@ -4835,91 +4863,326 @@ async function handlePublicBookingPreview(url, env) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(copy.pageTitle)} - ${escapeHtml(displayName)}</title>
+    <style>
+      :root {
+        --fx-bg: #07090f;
+        --fx-card: #0f121d;
+        --fx-card-soft: #111626;
+        --fx-text: #edf2ff;
+        --fx-subtle: #aab4cc;
+        --fx-border: #3e3320;
+        --fx-border-soft: #2b3348;
+        --fx-gold: #d4af4a;
+        --fx-gold-strong: #f0c85d;
+        --fx-gold-dark: #30230f;
+        --fx-ok: #31b66b;
+      }
+      * { box-sizing: border-box; }
+      .fx-page {
+        margin: 0;
+        background:
+          radial-gradient(circle at 15% -10%, rgba(212,175,74,0.18), transparent 32%),
+          radial-gradient(circle at 90% -5%, rgba(212,175,74,0.08), transparent 28%),
+          var(--fx-bg);
+        color: var(--fx-text);
+        font-family: Inter, Segoe UI, system-ui, -apple-system, sans-serif;
+      }
+      .fx-main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 20px 14px 32px;
+      }
+      .fx-hero {
+        background: linear-gradient(180deg, rgba(24, 31, 52, 0.9), rgba(14, 18, 30, 0.95));
+        border: 1px solid #2a3248;
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 18px 34px rgba(0,0,0,0.35);
+      }
+      .fx-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(212,175,74,0.52);
+        background: rgba(54, 42, 18, 0.45);
+        color: #f8dc8f;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 11px;
+        letter-spacing: 0.4px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .fx-topline {
+        color: var(--fx-subtle);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      .fx-title {
+        margin: 10px 0 6px;
+        font-size: 29px;
+        line-height: 1.15;
+      }
+      .fx-subtitle {
+        margin: 0;
+        color: var(--fx-subtle);
+        font-size: 14px;
+        line-height: 1.48;
+      }
+      .fx-meta {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .fx-meta-pill {
+        border: 1px solid var(--fx-border-soft);
+        background: #12182a;
+        color: #d7def4;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .fx-lang-row {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .fx-form-wrap {
+        margin-top: 14px;
+      }
+      .fx-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+        align-items: start;
+      }
+      .fx-left-stack {
+        display: grid;
+        gap: 12px;
+      }
+      .fx-card {
+        background: linear-gradient(180deg, var(--fx-card-soft), var(--fx-card));
+        border: 1px solid var(--fx-border);
+        border-radius: 16px;
+        padding: 14px;
+        box-shadow: inset 0 0 0 1px rgba(212,175,74,0.04), 0 8px 22px rgba(0,0,0,0.24);
+      }
+      .fx-card-title {
+        margin: 0 0 10px;
+        font-size: 16px;
+        color: #f2ddb0;
+      }
+      .fx-input-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .fx-field {
+        display: block;
+      }
+      .fx-field-full {
+        grid-column: 1 / -1;
+      }
+      .fx-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: #c2cbe3;
+      }
+      .fx-input, .fx-textarea {
+        width: 100%;
+        border: 1px solid #5b4a24;
+        border-radius: 12px;
+        padding: 10px 11px;
+        background: #0b0f19;
+        color: #f3f6ff;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+      .fx-input:focus, .fx-textarea:focus {
+        border-color: var(--fx-gold-strong);
+        box-shadow: 0 0 0 2px rgba(212,175,74,0.2);
+      }
+      .fx-textarea { resize: vertical; min-height: 96px; }
+      .fx-actions {
+        display: grid;
+        gap: 8px;
+      }
+      .fx-btn {
+        border: none;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: filter 120ms ease, opacity 120ms ease;
+      }
+      .fx-btn:hover { filter: brightness(1.04); }
+      .fx-btn-primary {
+        background: linear-gradient(180deg, #e4bf59, #cda440);
+        color: #1d1507;
+      }
+      .fx-btn-secondary {
+        background: linear-gradient(180deg, #d6b362, #bb953b);
+        color: #1d1507;
+      }
+      .fx-btn-tertiary {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+      }
+      .fx-status,
+      .fx-quote,
+      .fx-booking {
+        margin-top: 12px;
+        border-radius: 12px;
+        padding: 12px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .fx-status {
+        border: 1px solid #4a3f26;
+        background: #1a1f2f;
+        color: #dce5ff;
+      }
+      .fx-quote {
+        border: 1px solid #5b4a24;
+        background: linear-gradient(180deg, #171e2e, #121927);
+        color: #f2e3bc;
+      }
+      .fx-booking {
+        border: 1px solid #6a5224;
+        background: linear-gradient(180deg, #1b202f, #141925);
+        color: #ffecbf;
+      }
+      .fx-contact {
+        margin-top: 14px;
+        background: #111729;
+        border: 1px solid #2b3348;
+        border-radius: 16px;
+        padding: 14px;
+      }
+      @media (max-width: 900px) {
+        .fx-main { padding: 16px 12px 26px; }
+        .fx-title { font-size: 24px; }
+        .fx-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 640px) {
+        .fx-input-grid { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
-  <body style="margin:0;background:#0B1020;color:#E8EEFF;font-family:Inter,Segoe UI,system-ui,-apple-system,sans-serif;">
-    <main style="max-width:760px;margin:0 auto;padding:22px 16px 28px;">
-      <section style="background:#121A30;border:1px solid #26314F;border-radius:16px;padding:18px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-          <div>
-            <div style="font-size:12px;color:#AEB8D0;">Fluxidi</div>
-            <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
-            ${
-              companyCodeForUi
-                ? `<div style="margin-top:6px;font-size:12px;color:#AEB8D0;"><strong>${escapeHtml(copy.codeLabel)}:</strong> ${escapeHtml(companyCodeForUi)}</div>`
-                : ""
-            }
-          </div>
-          <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
-            ${escapeHtml(localizedStatus)}
-          </span>
+  <body class="fx-page">
+    <main class="fx-main">
+      <section class="fx-hero">
+        <div class="fx-chip">${escapeHtml(copy.calculatorChip || "Fluxidi calculator")}</div>
+        <div class="fx-topline">${escapeHtml(copy.backToHome || "")}</div>
+        <h1 class="fx-title">${escapeHtml(copy.calculatorTitle || copy.heading)}</h1>
+        <p class="fx-subtitle">${escapeHtml(copy.calculatorSubtitle || copy.description)}</p>
+
+        <div class="fx-meta">
+          <span class="fx-meta-pill">${escapeHtml(displayName)}</span>
+          ${
+            companyCodeForUi
+              ? `<span class="fx-meta-pill">${escapeHtml(copy.codeLabel)}: ${escapeHtml(companyCodeForUi)}</span>`
+              : ""
+          }
+          <span class="fx-meta-pill">${escapeHtml(localizedStatus)}</span>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
-        <h2 style="margin:18px 0 8px;font-size:21px;line-height:1.28;">${escapeHtml(copy.heading)}</h2>
-        <p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.5;">${escapeHtml(copy.description)}</p>
-        <section style="margin-top:16px;background:#0F172B;border:1px solid #253252;border-radius:14px;padding:14px;">
-          <h3 style="margin:0 0 6px;font-size:17px;line-height:1.3;">${escapeHtml(copy.formTitle)}</h3>
-          <p style="margin:0 0 12px;color:#9EABCB;font-size:13px;line-height:1.45;">${escapeHtml(copy.formSubtitle)}</p>
-          <form id="public-booking-form" style="display:flex;flex-wrap:wrap;gap:10px;" onsubmit="return false;">
-            <label style="display:block;flex:1 1 280px;min-width:220px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldFrom)}</span>
-              <input id="public-field-from" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 280px;min-width:220px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldTo)}</span>
-              <input id="public-field-to" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 150px;min-width:150px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPickupDate)}</span>
-              <input id="public-field-date" type="date" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 130px;min-width:130px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPickupTime)}</span>
-              <input id="public-field-time" type="time" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 200px;min-width:180px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldName)}</span>
-              <input id="public-field-name" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 200px;min-width:180px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPhone)}</span>
-              <input id="public-field-phone" type="tel" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 220px;min-width:200px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldEmail)}</span>
-              <input id="public-field-email" type="email" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 110px;min-width:110px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPax)}</span>
-              <input id="public-field-pax" type="number" min="1" step="1" value="1" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 110px;min-width:110px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldBags)}</span>
-              <input id="public-field-bags" type="number" min="0" step="1" value="0" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
-            </label>
-            <label style="display:block;flex:1 1 100%;min-width:220px;">
-              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldNotes)}</span>
-              <textarea id="public-field-notes" rows="3" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;resize:vertical;"></textarea>
-            </label>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;width:100%;margin-top:2px;">
-              <button id="public-quote-btn" type="button" style="flex:1 1 180px;border:none;border-radius:10px;padding:12px 14px;background:#16A34A;color:#F5FFF8;font-size:14px;font-weight:700;cursor:pointer;">
-                ${escapeHtml(copy.quoteButton)}
-              </button>
-              <button id="public-book-btn" type="button" disabled style="flex:1 1 180px;border:none;border-radius:10px;padding:12px 14px;background:#C59F3A;color:#17120A;font-size:14px;font-weight:700;cursor:not-allowed;opacity:0.7;">
-                ${escapeHtml(copy.bookButton)}
-              </button>
-              <button id="public-reset-btn" type="button" style="flex:1 1 140px;border:1px solid #334166;border-radius:10px;padding:12px 14px;background:#121B31;color:#D9E3FF;font-size:14px;font-weight:700;cursor:pointer;">
-                ${escapeHtml(copy.resetButton)}
-              </button>
+        <div class="fx-lang-row">${langChips}</div>
+
+        <div class="fx-form-wrap">
+          <form id="public-booking-form" onsubmit="return false;">
+            <div class="fx-grid">
+              <div class="fx-left-stack">
+                <section class="fx-card">
+                  <h3 class="fx-card-title">${escapeHtml(copy.cardRouteTitle || copy.formTitle)}</h3>
+                  <div class="fx-input-grid">
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldFrom)}</span>
+                      <input id="public-field-from" class="fx-input" type="text" required />
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldTo)}</span>
+                      <input id="public-field-to" class="fx-input" type="text" required />
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPickupDate)}</span>
+                      <input id="public-field-date" class="fx-input" type="date" required />
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPickupTime)}</span>
+                      <input id="public-field-time" class="fx-input" type="time" required />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="fx-card">
+                  <h3 class="fx-card-title">${escapeHtml(copy.cardCustomerTitle || "Customer")}</h3>
+                  <div class="fx-input-grid">
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldName)}</span>
+                      <input id="public-field-name" class="fx-input" type="text" required />
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPhone)}</span>
+                      <input id="public-field-phone" class="fx-input" type="tel" required />
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldEmail)}</span>
+                      <input id="public-field-email" class="fx-input" type="email" />
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldNotes)}</span>
+                      <textarea id="public-field-notes" class="fx-textarea" rows="3"></textarea>
+                    </label>
+                  </div>
+                </section>
+              </div>
+
+              <section class="fx-card">
+                <h3 class="fx-card-title">${escapeHtml(copy.cardServiceTitle || "Service")}</h3>
+                <div class="fx-input-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldPax)}</span>
+                    <input id="public-field-pax" class="fx-input" type="number" min="1" step="1" value="1" />
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldBags)}</span>
+                    <input id="public-field-bags" class="fx-input" type="number" min="0" step="1" value="0" />
+                  </label>
+                </div>
+
+                <div class="fx-actions" style="margin-top:12px;">
+                  <button id="public-quote-btn" class="fx-btn fx-btn-primary" type="button">
+                    ${escapeHtml(copy.quoteButton)}
+                  </button>
+                  <button id="public-book-btn" class="fx-btn fx-btn-secondary" type="button" disabled>
+                    ${escapeHtml(copy.bookButton)}
+                  </button>
+                  <button id="public-reset-btn" class="fx-btn fx-btn-tertiary" type="button">
+                    ${escapeHtml(copy.resetButton)}
+                  </button>
+                </div>
+
+                <div id="public-booking-status" class="fx-status" style="display:none;"></div>
+              </section>
             </div>
           </form>
-          <div id="public-booking-status" style="margin-top:12px;display:none;border:1px solid #2C3A5C;border-radius:10px;padding:10px 11px;background:#111A2E;color:#CFD8F2;font-size:13px;line-height:1.45;"></div>
-          <div id="public-quote-panel" style="margin-top:12px;display:none;border:1px solid #294233;border-radius:10px;padding:12px;background:#10221A;color:#DDF7E8;">
-            <div style="font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.estimatedPrice)}:</strong> <span id="public-quote-price">-</span></div>
-            <div style="margin-top:6px;font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.distance)}:</strong> <span id="public-quote-distance">-</span></div>
-            <div style="margin-top:6px;font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.duration)}:</strong> <span id="public-quote-duration">-</span></div>
-            <div id="public-quote-note-wrap" style="margin-top:6px;font-size:13px;line-height:1.4;display:none;"><strong>Info:</strong> <span id="public-quote-note"></span></div>
+
+          <div id="public-quote-panel" class="fx-quote" style="display:none;">
+            <div><strong>${escapeHtml(copy.estimatedPrice)}:</strong> <span id="public-quote-price">-</span></div>
+            <div style="margin-top:6px;"><strong>${escapeHtml(copy.distance)}:</strong> <span id="public-quote-distance">-</span></div>
+            <div style="margin-top:6px;"><strong>${escapeHtml(copy.duration)}:</strong> <span id="public-quote-duration">-</span></div>
+            <div id="public-quote-note-wrap" style="margin-top:6px;display:none;"><strong>Info:</strong> <span id="public-quote-note"></span></div>
           </div>
-          <div id="public-booking-result" style="margin-top:12px;display:none;border:1px solid #355C3C;border-radius:10px;padding:12px;background:#12331F;color:#CFF5D7;font-size:13px;line-height:1.45;"></div>
+
+          <div id="public-booking-result" class="fx-booking" style="display:none;"></div>
+        </div>
           <script>
             (function () {
               const companyCode = ${JSON.stringify(companyCodeForUi || "")};
@@ -5192,15 +5455,15 @@ async function handlePublicBookingPreview(url, env) {
               }
             })();
           </script>
-        </section>
+        </div>
       </section>
       ${
         hasContact
-          ? `<section style="margin-top:14px;background:#121A30;border:1px solid #26314F;border-radius:16px;padding:16px;">
+          ? `<section class="fx-contact">
         <h3 style="margin:0 0 10px;font-size:16px;">${escapeHtml(copy.contactTitle)}</h3>
         ${contactEmail ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.email)}:</strong> ${escapeHtml(contactEmail)}</div>` : ""}
         ${contactPhone ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.phone)}:</strong> ${escapeHtml(contactPhone)}</div>` : ""}
-        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${contactWebsiteHref ? `<a href="${escapeHtml(contactWebsiteHref)}" target="_blank" rel="noopener noreferrer" style="color:#9DD0FF;text-decoration:underline;">${escapeHtml(contactWebsite)}</a>` : escapeHtml(contactWebsite)}</div>` : ""}
+        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${contactWebsiteHref ? `<a href="${escapeHtml(contactWebsiteHref)}" target="_blank" rel="noopener noreferrer" style="color:#f0c85d;text-decoration:underline;">${escapeHtml(contactWebsite)}</a>` : escapeHtml(contactWebsite)}</div>` : ""}
       </section>`
           : ""
       }
