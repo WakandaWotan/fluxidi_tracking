@@ -4021,68 +4021,199 @@ function publicPreviewCopy(lang) {
   const dictionary = {
     nl: {
       pageTitle: "Publieke boekingspagina",
-      heading: "Online boeken wordt binnenkort beschikbaar.",
+      heading: "Boek uw rit online",
       description:
-        "Deze publieke boekingspagina is voorbereid voor websiteboekingen, QR-codes en sociale media.",
-      cta: "Boeking binnenkort beschikbaar",
+        "Gebruik deze pagina om rechtstreeks een rit aan te vragen bij dit bedrijf.",
+      cta: "Boekingsformulier volgt binnenkort",
+      codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
       phone: "Telefoon",
       website: "Website",
+      unavailable: "Deze boekingspagina is niet beschikbaar.",
     },
     en: {
       pageTitle: "Public booking page",
-      heading: "Online booking will be available soon.",
+      heading: "Book your ride online",
       description:
-        "This public booking page is prepared for website bookings, QR codes and social media.",
-      cta: "Booking coming soon",
+        "Use this page to request a ride directly with this company.",
+      cta: "Booking form coming soon",
+      codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
       phone: "Phone",
       website: "Website",
+      unavailable: "This booking page is unavailable.",
     },
     fr: {
       pageTitle: "Page de réservation publique",
-      heading: "La réservation en ligne sera bientôt disponible.",
+      heading: "Réservez votre trajet en ligne",
       description:
-        "Cette page de réservation publique est préparée pour les réservations via site web, QR codes et réseaux sociaux.",
-      cta: "Réservation bientôt disponible",
+        "Utilisez cette page pour demander une course directement auprès de cette entreprise.",
+      cta: "Formulaire de réservation bientôt disponible",
+      codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
       phone: "Téléphone",
       website: "Site web",
+      unavailable: "Cette page de réservation n’est pas disponible.",
     },
     es: {
       pageTitle: "Página pública de reserva",
-      heading: "La reserva online estará disponible pronto.",
+      heading: "Reserva tu viaje en línea",
       description:
-        "Esta página pública de reserva está preparada para reservas desde la web, códigos QR y redes sociales.",
-      cta: "Reserva próximamente",
+        "Usa esta página para solicitar un viaje directamente con esta empresa.",
+      cta: "Formulario de reserva próximamente",
+      codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
       phone: "Teléfono",
       website: "Sitio web",
+      unavailable: "Esta página de reservas no está disponible.",
     },
   };
   return dictionary[lang] || dictionary.nl;
 }
 
+function _publicWebsiteHref(rawWebsite) {
+  const value = sanitizeTenantString(rawWebsite, 240).trim();
+  if (!value) return "";
+  if (/\s/.test(value)) return "";
+  const lower = value.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:")) return "";
+  if (lower.startsWith("http://") || lower.startsWith("https://")) return value;
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return "";
+  return `https://${value}`;
+}
+
+function renderPublicBookingUnavailablePage(lang, status = 404) {
+  const copy = publicPreviewCopy(lang);
+  return html(
+    `<!doctype html><html lang="${escapeHtml(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(copy.pageTitle)}</title></head><body style="margin:0;background:#0B1020;color:#E8EEFF;font-family:Inter,Segoe UI,system-ui,-apple-system,sans-serif;"><main style="max-width:680px;margin:0 auto;padding:24px 16px;"><section style="background:#121A30;border:1px solid #26314F;border-radius:16px;padding:18px;"><h1 style="margin:0 0 10px;font-size:22px;line-height:1.2;">${escapeHtml(copy.unavailable)}</h1><p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.45;">${escapeHtml(copy.pageTitle)}</p></section></main></body></html>`,
+    status,
+  );
+}
+
+async function _buildPublicBookingGatewayPayload({
+  scope,
+  companyCode = "",
+  displayNameHint = "",
+} = {}, env) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const business =
+    businessProfile && typeof businessProfile === "object"
+      ? businessProfile
+      : {};
+  const displayName = pickFirstPublicValue(
+    displayNameHint,
+    business.companyName,
+    business.legalName,
+    business.name,
+    business.displayName,
+    "Fluxidi",
+  );
+  const defaultLanguage = pickFirstPublicValue(
+    business.locale,
+    "nl",
+  ).toLowerCase();
+  return {
+    ok: true,
+    phase: "public_booking_gateway_v2a",
+    booking_enabled: false,
+    public_booking_status: "prepared",
+    company_code: sanitizeTenantString(companyCode, 80),
+    display_name: displayName || "Fluxidi",
+    default_language: defaultLanguage || "nl",
+    supported_languages: ["nl", "en", "fr", "es"],
+    public_contact: {
+      email: pickFirstPublicValue(
+        business.companyEmail,
+        business.email,
+        business.supportEmail,
+        business.bookingEmail,
+      ),
+      phone: pickFirstPublicValue(
+        business.phone,
+        business.companyPhone,
+      ),
+      website: pickFirstPublicValue(business.website),
+    },
+    branding: {
+      logo_url: pickFirstPublicValue(business.logoUrl),
+      primary_color: pickFirstPublicValue(
+        business.primaryColor,
+        business.primary_color,
+      ),
+      accent_color: pickFirstPublicValue(
+        business.accentColor,
+        business.accent_color,
+      ),
+    },
+  };
+}
+
 async function handlePublicBookingPreview(url, env) {
-  const rawCompanyId =
-    url.searchParams.get("company_id") ??
-    url.searchParams.get("companyId") ??
-    "";
-  const companyId = sanitizePublicCompanyId(rawCompanyId);
-  if (!companyId) {
-    return html(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:system-ui;background:#0B1020;color:#fff;padding:24px"><h1 style="font-size:20px;margin:0 0 8px">missing_company_id</h1><p style="margin:0;color:#AEB8D0">Provide ?company_id=...</p></body></html>`,
-      400,
-    );
+  const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
+  let resolvedScope = null;
+  let resolvedCompanyCode = "";
+  let resolvedDisplayName = "";
+  const rawCode = sanitizeTenantString(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+    80,
+  );
+  if (rawCode) {
+    const codeValidation = validatePublicCompanyCode(rawCode);
+    if (!codeValidation.ok) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+    if (!record || record.linking_enabled !== true) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    resolvedScope = {
+      tenant_id: sanitizeTenantString(record.tenant_id, 80),
+      company_id: sanitizeTenantString(record.company_id, 80),
+    };
+    resolvedCompanyCode = sanitizeTenantString(record.company_code, 80);
+    resolvedDisplayName = sanitizeTenantString(record.display_name, 160);
+  } else {
+    // Backward-compatible fallback for internal/testing links that still use company_id.
+    const rawCompanyId =
+      url.searchParams.get("company_id") ??
+      url.searchParams.get("companyId") ??
+      "";
+    const companyId = sanitizePublicCompanyId(rawCompanyId);
+    if (!companyId) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    resolvedScope = { tenant_id: companyId, company_id: companyId };
   }
 
-  const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
   const copy = publicPreviewCopy(lang);
-  const data = await buildPublicBootstrapPayload(companyId, env);
+  const data = await _buildPublicBookingGatewayPayload(
+    {
+      scope: resolvedScope,
+      companyCode: resolvedCompanyCode,
+      displayNameHint: resolvedDisplayName,
+    },
+    env,
+  );
+  if (!data || data.ok !== true) {
+    return renderPublicBookingUnavailablePage(lang, 404);
+  }
   const localizedStatus = publicStatusLabel(lang, data?.public_booking_status);
   const displayName = sanitizeTenantString(data?.display_name || "Fluxidi", 120);
   const contact = data?.public_contact && typeof data.public_contact === "object"
@@ -4091,7 +4222,9 @@ async function handlePublicBookingPreview(url, env) {
   const contactEmail = sanitizeTenantString(contact.email, 240);
   const contactPhone = sanitizeTenantString(contact.phone, 120);
   const contactWebsite = sanitizeTenantString(contact.website, 240);
+  const contactWebsiteHref = _publicWebsiteHref(contactWebsite);
   const hasContact = !!(contactEmail || contactPhone || contactWebsite);
+  const companyCodeForUi = sanitizeTenantString(data?.company_code, 80);
   const supportedLanguages = Array.isArray(data?.supported_languages)
     ? data.supported_languages.filter((code) => ["nl", "en", "fr", "es"].includes(String(code || "").toLowerCase()))
     : ["nl", "en", "fr", "es"];
@@ -4101,7 +4234,11 @@ async function handlePublicBookingPreview(url, env) {
     .filter((code, idx, arr) => code && arr.indexOf(code) === idx)
     .map((code) => {
       const active = code === lang;
-      const href = `/public/book?company_id=${encodeURIComponent(companyId)}&lang=${encodeURIComponent(code)}`;
+      const href = companyCodeForUi
+        ? `/public/book?company_code=${encodeURIComponent(companyCodeForUi)}&lang=${encodeURIComponent(code)}`
+        : `/public/book?company_id=${encodeURIComponent(
+            sanitizeTenantString(resolvedScope?.company_id, 80),
+          )}&lang=${encodeURIComponent(code)}`;
       return `<a href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
     })
     .join("");
@@ -4121,6 +4258,11 @@ async function handlePublicBookingPreview(url, env) {
           <div>
             <div style="font-size:12px;color:#AEB8D0;">Fluxidi</div>
             <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
+            ${
+              companyCodeForUi
+                ? `<div style="margin-top:6px;font-size:12px;color:#AEB8D0;"><strong>${escapeHtml(copy.codeLabel)}:</strong> ${escapeHtml(companyCodeForUi)}</div>`
+                : ""
+            }
           </div>
           <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
             ${escapeHtml(localizedStatus)}
@@ -4139,7 +4281,7 @@ async function handlePublicBookingPreview(url, env) {
         <h3 style="margin:0 0 10px;font-size:16px;">${escapeHtml(copy.contactTitle)}</h3>
         ${contactEmail ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.email)}:</strong> ${escapeHtml(contactEmail)}</div>` : ""}
         ${contactPhone ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.phone)}:</strong> ${escapeHtml(contactPhone)}</div>` : ""}
-        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${escapeHtml(contactWebsite)}</div>` : ""}
+        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${contactWebsiteHref ? `<a href="${escapeHtml(contactWebsiteHref)}" target="_blank" rel="noopener noreferrer" style="color:#9DD0FF;text-decoration:underline;">${escapeHtml(contactWebsite)}</a>` : escapeHtml(contactWebsite)}</div>` : ""}
       </section>`
           : ""
       }
@@ -5749,6 +5891,12 @@ GET /oauth/callback
           return: returnQuote,
           breakdown: mainPricing.breakdown
         });
+      }
+
+      // PUBLIC BOOKING GATEWAY ALIAS
+      // Keep GET /book as a public gateway route while POST /book remains booking creation.
+      if (url.pathname === "/book" && request.method === "GET") {
+        return handlePublicBookingPreview(url, env);
       }
 
       // LEAD
