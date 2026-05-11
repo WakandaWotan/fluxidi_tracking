@@ -697,6 +697,7 @@ bool get _effectiveFluxidiDevPairingBypass =>
 
 /// Endpoints (adjust if your Worker uses different paths)
 const String kListBookingsPath = '/bookings';
+const String kDriverBookingsPath = '/driver/bookings';
 const String kGetBookingPath =
     '/track/booking'; // returns booking + quote/pricing
 const String kTrackingBookingPath =
@@ -3487,6 +3488,8 @@ class _BackendDriverLoginResult {
     required this.driverName,
     required this.companyDisplayName,
     required this.assignedVehicleId,
+    required this.driverSessionToken,
+    required this.expiresInSeconds,
   });
 
   final String tenantId;
@@ -3495,6 +3498,8 @@ class _BackendDriverLoginResult {
   final String driverName;
   final String companyDisplayName;
   final String assignedVehicleId;
+  final String driverSessionToken;
+  final int? expiresInSeconds;
 }
 
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
@@ -3548,6 +3553,8 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         driverName: backendLogin.driverName,
         companyDisplayName: backendLogin.companyDisplayName,
         assignedVehicleId: backendLogin.assignedVehicleId,
+        driverSessionToken: backendLogin.driverSessionToken,
+        expiresInSeconds: backendLogin.expiresInSeconds,
       );
       debugPrint(
         '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(backendLogin.tenantId)} company=${_maskLoginCode(backendLogin.companyId)} driver=${_maskLoginCode(backendLogin.driverId)}',
@@ -3694,6 +3701,14 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                   '')
               .toString()
               .trim();
+      final driverSessionToken =
+          (body['driver_session_token'] ?? body['driverSessionToken'] ?? '')
+              .toString()
+              .trim();
+      final expiresInRaw = (body['expires_in'] ?? body['expiresIn'] ?? '')
+          .toString()
+          .trim();
+      final expiresInSeconds = int.tryParse(expiresInRaw);
       if (response.statusCode >= 200 &&
           response.statusCode < 300 &&
           ok &&
@@ -3711,6 +3726,8 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
           driverName: driverName,
           companyDisplayName: companyDisplayName,
           assignedVehicleId: assignedVehicleId,
+          driverSessionToken: driverSessionToken,
+          expiresInSeconds: expiresInSeconds,
         );
       }
       debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode}');
@@ -23020,16 +23037,60 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final primaryUri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        kListBookingsPath,
-        extraQuery: <String, String>{'limit': '50', 't': '$ts'},
-      );
+      final activeDriverSession = activeDriverSessionNotifier.value;
+      final driverTokenMode =
+          appRoleNotifier.value == AppRole.driver &&
+          (activeDriverSession?.linkMethod ?? '').trim().toLowerCase() ==
+              'public_driver_login';
+      final driverSessionToken = (activeDriverSession?.driverSessionToken ?? '')
+          .trim();
+      Uri primaryUri;
+      Map<String, String> requestHeaders;
+      final useDriverToken = driverTokenMode && driverSessionToken.isNotEmpty;
+      if (useDriverToken) {
+        primaryUri = Uri.parse(
+          '$kBookingBaseUrl$kDriverBookingsPath',
+        ).replace(queryParameters: <String, String>{'limit': '50', 't': '$ts'});
+        requestHeaders = <String, String>{
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $driverSessionToken',
+        };
+        debugPrint('[RIDES][REFRESH][MODE] source=driver_token');
+      } else {
+        primaryUri = _withActiveBookingScope(
+          kBookingBaseUrl,
+          kListBookingsPath,
+          extraQuery: <String, String>{'limit': '50', 't': '$ts'},
+        );
+        requestHeaders = _headers(admin: true);
+        if (driverTokenMode) {
+          debugPrint(
+            '[RIDES][REFRESH][MODE] source=admin_fallback reason=no_driver_token',
+          );
+        }
+      }
       debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
-      final res = await http.get(primaryUri, headers: _headers(admin: true));
+      final res = await http.get(primaryUri, headers: requestHeaders);
       debugPrint(
         '[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}',
       );
+
+      if (useDriverToken && res.statusCode == 401) {
+        debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
+        _stopBookingPolling(reason: 'driver_token_auth_expired');
+        if (!mounted) return;
+        setState(() {
+          _bookingsError = _tr(
+            nl: 'Je chauffeurssessie is verlopen. Log opnieuw in.',
+            en: 'Your driver session expired. Please log in again.',
+            fr: 'Votre session chauffeur a expire. Reconnectez-vous.',
+            es: 'Tu sesion de conductor ha caducado. Inicia sesion de nuevo.',
+          );
+          _loadingBookings = false;
+        });
+        _markBookingsUiDirty();
+        return;
+      }
 
       if (res.statusCode != 200) {
         throw Exception('HTTP ${res.statusCode}: ${res.body}');

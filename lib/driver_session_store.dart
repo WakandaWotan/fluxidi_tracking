@@ -20,6 +20,8 @@ class ActiveDriverSession {
     this.companyId,
     this.companyCode,
     this.assignedVehicleId,
+    this.driverSessionToken,
+    this.driverSessionExpiresAtUtc,
     this.linkMethod,
     this.expiresAt,
   });
@@ -34,11 +36,16 @@ class ActiveDriverSession {
   final String? companyId;
   final String? companyCode;
   final String? assignedVehicleId;
+  final String? driverSessionToken;
+  final String? driverSessionExpiresAtUtc;
   final String? linkMethod;
   final String? expiresAt;
 
   bool get isVerifiedPairingSession =>
       (linkMethod ?? '').trim().toLowerCase() == 'driver_pairing_code';
+
+  bool get isPublicDriverLoginSession =>
+      (linkMethod ?? '').trim().toLowerCase() == 'public_driver_login';
 
   DateTime? get expiresAtUtc {
     final raw = (expiresAt ?? '').trim();
@@ -59,6 +66,10 @@ class ActiveDriverSession {
     if ((companyCode ?? '').trim().isNotEmpty) 'companyCode': companyCode,
     if ((assignedVehicleId ?? '').trim().isNotEmpty)
       'assignedVehicleId': assignedVehicleId,
+    if ((driverSessionToken ?? '').trim().isNotEmpty)
+      'driverSessionToken': driverSessionToken,
+    if ((driverSessionExpiresAtUtc ?? '').trim().isNotEmpty)
+      'driverSessionExpiresAtUtc': driverSessionExpiresAtUtc,
     if ((linkMethod ?? '').trim().isNotEmpty) 'linkMethod': linkMethod,
     if ((expiresAt ?? '').trim().isNotEmpty) 'expiresAt': expiresAt,
   };
@@ -83,6 +94,15 @@ class ActiveDriverSession {
       assignedVehicleId:
           readOptional('assignedVehicleId') ??
           readOptional('assigned_vehicle_id'),
+      driverSessionToken:
+          readOptional('driverSessionToken') ??
+          readOptional('driver_session_token'),
+      driverSessionExpiresAtUtc:
+          readOptional('driverSessionExpiresAtUtc') ??
+          readOptional('driver_session_expires_at_utc') ??
+          readOptional('driverSessionExpiresAt') ??
+          readOptional('driver_session_expires_at') ??
+          readOptional('expires_at'),
       linkMethod: readOptional('linkMethod'),
       expiresAt: readOptional('expiresAt'),
     );
@@ -288,6 +308,17 @@ class DriverSessionStore {
       }
       return s.driverId.trim().isNotEmpty && s.employeeNumber.trim().isNotEmpty;
     }
+    if (s.isPublicDriverLoginSession) {
+      final expiresRaw = (s.driverSessionExpiresAtUtc ?? '').trim();
+      if (expiresRaw.isNotEmpty) {
+        final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
+        if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+          return false;
+        }
+      }
+      return s.driverId.trim().isNotEmpty &&
+          (s.driverSessionToken ?? '').trim().isNotEmpty;
+    }
     for (final d in drivers) {
       if (d.id != s.driverId) continue;
       if (!d.isActive) return false;
@@ -406,6 +437,9 @@ class DriverSessionStore {
     required String driverName,
     required String companyDisplayName,
     String? assignedVehicleId,
+    String? driverSessionToken,
+    int? expiresInSeconds,
+    DateTime? expiresAtUtc,
   }) async {
     final normalizedTenantId = tenantId.trim();
     final normalizedCompanyId = companyId.trim();
@@ -413,6 +447,7 @@ class DriverSessionStore {
     final normalizedDriverName = driverName.trim();
     final normalizedCompanyDisplayName = companyDisplayName.trim();
     final normalizedAssignedVehicleId = (assignedVehicleId ?? '').trim();
+    final normalizedDriverSessionToken = (driverSessionToken ?? '').trim();
     if (normalizedTenantId.isEmpty ||
         normalizedCompanyId.isEmpty ||
         normalizedDriverId.isEmpty) {
@@ -420,6 +455,15 @@ class DriverSessionStore {
       return;
     }
     final now = DateTime.now().toUtc().toIso8601String();
+    String? resolvedTokenExpiryUtc;
+    if (expiresAtUtc != null) {
+      resolvedTokenExpiryUtc = expiresAtUtc.toUtc().toIso8601String();
+    } else if ((expiresInSeconds ?? 0) > 0) {
+      resolvedTokenExpiryUtc = DateTime.now()
+          .toUtc()
+          .add(Duration(seconds: expiresInSeconds!))
+          .toIso8601String();
+    }
     final fallbackName = normalizedCompanyDisplayName.isEmpty
         ? normalizedDriverId
         : '$normalizedCompanyDisplayName chauffeur';
@@ -437,6 +481,10 @@ class DriverSessionStore {
       assignedVehicleId: normalizedAssignedVehicleId.isEmpty
           ? null
           : normalizedAssignedVehicleId,
+      driverSessionToken: normalizedDriverSessionToken.isEmpty
+          ? null
+          : normalizedDriverSessionToken,
+      driverSessionExpiresAtUtc: resolvedTokenExpiryUtc,
       linkMethod: 'public_driver_login',
     );
     try {
