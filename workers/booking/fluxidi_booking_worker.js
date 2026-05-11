@@ -1646,6 +1646,9 @@ const COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX = ":v1";
 const COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS = 10 * 60;
 const COMPANY_DRIVER_LINK_MAX_TTL_SECONDS = 30 * 60;
 const COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS = 5;
+const PUBLIC_DRIVER_SESSION_KEY_PREFIX = "public_driver:session:";
+const PUBLIC_DRIVER_SESSION_KEY_SUFFIX = ":v1";
+const PUBLIC_DRIVER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function normalizePublicCompanyCode(value) {
   let text = sanitizeTenantString(value, 80).trim().toUpperCase();
@@ -1962,6 +1965,12 @@ function _companyDriverLinkActiveKey(companyCode) {
   return `${COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX}`;
 }
 
+function _publicDriverSessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${PUBLIC_DRIVER_SESSION_KEY_PREFIX}${safeHash}${PUBLIC_DRIVER_SESSION_KEY_SUFFIX}`;
+}
+
 function _companyDriverLinkChallengeId() {
   return (crypto?.randomUUID ? crypto.randomUUID() : `dcl_${Date.now()}_${Math.random()}`)
     .replace(/[^a-zA-Z0-9_-]+/g, "");
@@ -1977,6 +1986,78 @@ function _generateDriverPairingCode(length = 6) {
     out += alphabet[value % alphabet.length];
   }
   return out;
+}
+
+function _generateOpaqueToken(byteLength = 32) {
+  const size = Math.max(24, Math.min(96, Math.round(Number(byteLength) || 32)));
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return `dst_${base64urlEncodeBytes(bytes)}`;
+}
+
+async function _hashDriverSessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
+function _extractBearerToken(request) {
+  const auth = request?.headers?.get?.("authorization") || "";
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  const token = sanitizeTenantString(match?.[1], 512);
+  return token || "";
+}
+
+function _publicDriverAuthFail() {
+  return json({ ok: false, error: "unauthorized" }, 401);
+}
+
+async function _loadPublicDriverSessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashDriverSessionToken(token);
+  if (!tokenHash) return null;
+  const key = _publicDriverSessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = sanitizeTenantString(record.role, 24).toLowerCase();
+  if (role !== "driver") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const driverId = sanitizeTenantString(record.driver_id ?? record.driverId, 96);
+  const driverName = sanitizeTenantString(record.driver_name ?? record.driverName, 160);
+  const companyDisplayName = sanitizeTenantString(
+    record.company_display_name ?? record.companyDisplayName,
+    160,
+  );
+  const assignedVehicleId = sanitizeTenantString(
+    record.assigned_vehicle_id ?? record.assignedVehicleId,
+    96,
+  );
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId || !driverId) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    role: "driver",
+    tenant_id: tenantId,
+    company_id: companyId,
+    driver_id: driverId,
+    driver_name: driverName,
+    company_display_name: companyDisplayName,
+    assigned_vehicle_id: assignedVehicleId,
+    expires_at: expiresAt,
+  };
 }
 
 async function _sha256Hex(text) {
@@ -2986,6 +3067,38 @@ async function handlePublicDriverLogin(body, env) {
     companyRecord.display_name ?? companyRecord.company_name ?? companyRecord.companyName,
     160,
   );
+  const sessionToken = _generateOpaqueToken(32);
+  const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
+  const sessionKey = _publicDriverSessionKey(sessionTokenHash);
+  if (!sessionKey) {
+    return _publicDriverLoginFail("session_key_invalid");
+  }
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + PUBLIC_DRIVER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    sessionKey,
+    JSON.stringify({
+      role: "driver",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      driver_id: driverId,
+      driver_name: driverName,
+      company_display_name: companyDisplayName,
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      issued_at: issuedAt,
+      expires_at: expiresAt,
+      link_method: "public_driver_login",
+    }),
+    { expirationTtl: PUBLIC_DRIVER_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[DRIVER_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
+  );
   console.log(
     `[PUBLIC_DRIVER_LOGIN][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
   );
@@ -3004,6 +3117,10 @@ async function handlePublicDriverLogin(body, env) {
             assignedVehicleId: assignedVehicleId,
           }
         : {}),
+      driver_session_token: sessionToken,
+      driverSessionToken: sessionToken,
+      expires_in: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
+      expiresIn: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
     },
     200,
   );
@@ -5115,6 +5232,49 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicDriverLogin(body, env);
+      }
+
+      if (url.pathname === "/driver/bookings") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const session = await _loadPublicDriverSessionFromRequest(request, env);
+        if (!session) {
+          console.log("[DRIVER_BOOKINGS][DENY] reason=unauthorized");
+          return _publicDriverAuthFail();
+        }
+        const limit = Number(url.searchParams.get("limit") || "50");
+        const includeHistory =
+          (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const tenantScope = normalizeFleetTenantScope({
+          tenant_id: session.tenant_id,
+          company_id: session.company_id,
+        });
+        console.log(
+          `[DRIVER_BOOKINGS][REQ] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)}`,
+        );
+        const items = await listBookingsAuthoritative(env, {
+          limit,
+          includeHistory,
+          tenantScope,
+        });
+        const filtered = items.filter((item) => {
+          const assignedDriverId = bookingAssignedDriverId(item);
+          const assignedVehicleId = bookingAssignedVehicleId(item);
+          if (assignedDriverId && assignedDriverId === session.driver_id) return true;
+          if (
+            session.assigned_vehicle_id &&
+            assignedVehicleId &&
+            assignedVehicleId === session.assigned_vehicle_id
+          ) {
+            return true;
+          }
+          return false;
+        });
+        console.log(
+          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${filtered.length}`,
+        );
+        return json({ ok: true, items: filtered, count: filtered.length }, 200);
       }
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
