@@ -2714,6 +2714,475 @@ function readAndValidateCompanyLinkCode(body, url) {
   return { ok: true, code: codeValidation.code };
 }
 
+function _readPublicCompanyCodeFromBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, code: "", error: "invalid_company_code" };
+  }
+  const raw = _scopeText(
+    body?.company_code ??
+      body?.companyCode ??
+      body?.payload?.company_code ??
+      body?.payload?.companyCode ??
+      "",
+  );
+  return validatePublicCompanyCode(raw);
+}
+
+async function _resolvePublicCompanyBookingScope(env, body) {
+  const codeValidation = _readPublicCompanyCodeFromBody(body);
+  if (!codeValidation.ok) {
+    return { ok: false, status: 400, error: "invalid_company_code" };
+  }
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!record || record.linking_enabled !== true) {
+    return { ok: false, status: 404, error: "company_not_found" };
+  }
+  const tenantId = sanitizeTenantString(record.tenant_id, 80);
+  const companyId = sanitizeTenantString(record.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, status: 404, error: "company_not_found" };
+  }
+  return {
+    ok: true,
+    company_code: codeValidation.code,
+    scope: {
+      tenant_id: tenantId,
+      company_id: companyId,
+      hasScope: true,
+    },
+  };
+}
+
+function _derivePublicDateAndTimeFromPickupIso(pickupIsoRaw) {
+  const pickupIso = safeStr(pickupIsoRaw, 80);
+  if (!pickupIso) return { date: "", time: "" };
+  const parts = brusselsDateTimePartsFromIso(pickupIso);
+  let date = safeStr(parts?.date, 24);
+  let time = safeStr(parts?.time, 16);
+  if (!date || !time) {
+    const m1 = pickupIso.match(/^([0-9]{4}-[0-9]{2}-[0-9]{2})[T ]([0-9]{2}:[0-9]{2})/);
+    if (m1) {
+      date = m1[1];
+      time = m1[2];
+    }
+  }
+  if (!date || !time) {
+    const m2 = pickupIso.match(/^([0-9]{2})\/([0-9]{2})\/([0-9]{4})[ T]([0-9]{2}:[0-9]{2})/);
+    if (m2) {
+      date = `${m2[1]}/${m2[2]}/${m2[3]}`;
+      time = m2[4];
+    }
+  }
+  return { date, time };
+}
+
+function _sanitizePublicStopsList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => safeStr(entry, 200))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function _normalizePublicQuoteBody(body, resolvedScope) {
+  const from = safeStr(body?.from, 320);
+  const to = safeStr(body?.to, 320);
+  const pickupIso = safeStr(body?.pickup_iso ?? body?.pickupIso, 80);
+  let date = safeStr(body?.date, 24);
+  let time = safeStr(body?.time, 16);
+  if ((!date || !time) && pickupIso) {
+    const derived = _derivePublicDateAndTimeFromPickupIso(pickupIso);
+    date = date || derived.date;
+    time = time || derived.time;
+  }
+  if (!from || !to) return { ok: false, error: "missing_required_fields", missing: ["from", "to"] };
+  if ((!date || !time) && !pickupIso) {
+    return { ok: false, error: "missing_required_fields", missing: ["pickup_iso"] };
+  }
+  if (!date || !time) {
+    return {
+      ok: false,
+      error: "invalid_pickup_iso",
+      message: "Could not derive date/time from pickup_iso. Provide pickup_iso or date/time.",
+    };
+  }
+  const paxRaw = Number(body?.pax);
+  const bagsRaw = Number(body?.bags);
+  const normalized = {
+    from,
+    to,
+    date,
+    time,
+    pickup_iso: pickupIso,
+    pickupIso: pickupIso,
+    pax: Number.isFinite(paxRaw) ? Math.max(1, Math.round(paxRaw)) : 1,
+    bags: Number.isFinite(bagsRaw) ? Math.max(0, Math.round(bagsRaw)) : 0,
+    notes: safeStr(body?.notes, 1200),
+    customer_name: safeStr(body?.customer_name ?? body?.customerName, 160),
+    customerName: safeStr(body?.customer_name ?? body?.customerName, 160),
+    customer_phone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
+    customerPhone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
+    service: safeStr(body?.service, 40),
+    tier: safeStr(body?.tier, 40),
+    wait_min: parseDurationMin(
+      body?.wait_min ?? body?.waitMin ?? body?.wait_minutes ?? body?.waiting_min ?? body?.wait,
+      0,
+    ),
+    stops: _sanitizePublicStopsList(body?.stops),
+    tenant_id: resolvedScope.scope.tenant_id,
+    tenantId: resolvedScope.scope.tenant_id,
+    company_id: resolvedScope.scope.company_id,
+    companyId: resolvedScope.scope.company_id,
+    company_code: resolvedScope.company_code,
+    companyCode: resolvedScope.company_code,
+  };
+  return { ok: true, payload: normalized };
+}
+
+function _normalizePublicBookBody(body, resolvedScope) {
+  const quoteBody = _normalizePublicQuoteBody(body, resolvedScope);
+  if (!quoteBody.ok) return quoteBody;
+  const customerName = safeStr(body?.customer_name ?? body?.customerName, 160);
+  const customerPhone = safeStr(body?.customer_phone ?? body?.customerPhone, 64);
+  const customerEmail = safeStr(body?.customer_email ?? body?.customerEmail, 180);
+  const missing = [];
+  if (!customerName) missing.push("customer_name");
+  if (!customerPhone) missing.push("customer_phone");
+  if (missing.length) return { ok: false, error: "missing_required_fields", missing };
+  const payload = {
+    ...quoteBody.payload,
+    customer_name: customerName,
+    customerName: customerName,
+    customer_phone: customerPhone,
+    customerPhone: customerPhone,
+    customer_email: customerEmail,
+    customerEmail: customerEmail,
+    custName: customerName,
+    custPhone: customerPhone,
+    custEmail: customerEmail,
+    name: customerName,
+    phone: customerPhone,
+    email: customerEmail,
+    language: safeStr(body?.language ?? body?.lang, 16),
+    lang: safeStr(body?.lang ?? body?.language, 16),
+  };
+  return { ok: true, payload };
+}
+
+const PUBLIC_INTERNAL_RESPONSE_KEYS = new Set([
+  "tenant_id",
+  "tenantid",
+  "company_id",
+  "companyid",
+  "company_session_token",
+  "companysessiontoken",
+  "driver_session_token",
+  "driversessiontoken",
+  "session_token",
+  "sessiontoken",
+  "admin_token",
+  "admintoken",
+  "authorization",
+]);
+
+function _stripInternalScopeFromPublicResponse(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => _stripInternalScopeFromPublicResponse(entry));
+  }
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const lower = String(key).toLowerCase();
+    if (PUBLIC_INTERNAL_RESPONSE_KEYS.has(lower)) continue;
+    if (lower.endsWith("_token") || lower.endsWith("token")) continue;
+    out[key] = _stripInternalScopeFromPublicResponse(entry);
+  }
+  return out;
+}
+
+function _projectPublicBookResponse(out, companyCode) {
+  if (!out || typeof out !== "object") {
+    return { ok: false, error: "booking_failed", company_code: companyCode };
+  }
+  if (!out.ok) {
+    return {
+      ok: false,
+      error: safeStr(out.error, 180) || "booking_failed",
+      company_code: companyCode,
+    };
+  }
+  const bookingId = safeStr(out.booking_id ?? out.bookingId ?? out.public_booking_id, 80);
+  const publicReference = safeStr(
+    out.public_booking_reference ??
+      out.publicBookingReference ??
+      out.booking_reference ??
+      out.bookingReference ??
+      out.public_reference ??
+      out.publicReference,
+    80,
+  );
+  const resolvedReference = publicReference || bookingId;
+  return {
+    ok: true,
+    company_code: companyCode,
+    booking_id: bookingId || resolvedReference || "",
+    public_booking_reference: resolvedReference || "",
+    booking_reference: resolvedReference || "",
+  };
+}
+
+async function _handleQuoteRequestInternal({ body, env, request, url }) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { status: 400, out: { ok: false, error: "Invalid JSON body" } };
+  }
+
+  if (!body.from || !body.to || !body.date || !body.time) {
+    return { status: 400, out: { ok: false, error: "Missing fields: from, to, date, time" } };
+  }
+
+  const requestedPublicPartnerId = _extractRequestedPublicPartnerId({ url, body });
+  let quoteScope = null;
+  let routedPublicPartner = null;
+  if (requestedPublicPartnerId) {
+    routedPublicPartner = await resolvePublicPartnerBookingScope(
+      env,
+      requestedPublicPartnerId,
+    );
+    if (!routedPublicPartner?.ok) {
+      return {
+        status: routedPublicPartner?.status || 400,
+        out: { ok: false, error: routedPublicPartner?.error || "invalid public partner" },
+      };
+    }
+    quoteScope = {
+      tenant_id: routedPublicPartner.tenant_id,
+      company_id: routedPublicPartner.company_id,
+      hasScope: true,
+    };
+  } else {
+    const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+    quoteScope = resolveExplicitBookingRequestScope({
+      request,
+      url,
+      body,
+      allowLegacyFallback: allowLegacyScopeFallback,
+    });
+  }
+  if (!quoteScope?.hasScope) {
+    return {
+      status: 400,
+      out: quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+    };
+  }
+  body = {
+    ...body,
+    tenant_id: quoteScope.tenant_id,
+    tenantId: quoteScope.tenant_id,
+    company_id: quoteScope.company_id,
+    companyId: quoteScope.company_id,
+    ...(routedPublicPartner?.ok
+      ? {
+          public_partner_id: routedPublicPartner.partner_id,
+          publicPartnerId: routedPublicPartner.partner_id,
+          partner_id: routedPublicPartner.partner_id,
+          partnerId: routedPublicPartner.partner_id,
+        }
+      : {}),
+  };
+  const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
+  const vat_rate = clampNumber(
+    pricingProfile?.vat_rate,
+    clampNumber(body.vat_rate, 0.06, 0, 1),
+    0,
+    1,
+  );
+
+  // Enforce business rules (Tesla Model 3)
+  const pax = clampInt(body.pax, 1, 3);
+  const bags = Math.max(0, clampInt(body.bags, 0, 99));
+
+  const tier = normalizeTier(body.tier || "comfort");
+  const service = normalizeService(body.service || "passenger");
+
+  // Stops + wait (tolerant input)
+  const stops = normalizeStops(body); // array of stop addresses
+  const wait_min = parseDurationMin(body.wait_min ?? body.wait_minutes ?? body.waiting_min ?? body.wait, 0);
+  const stop_count = stops.length;
+
+  // ✅ Business detection (NEW)
+  const biz = normalizeBusiness(body);
+  const business_detected = !!biz.vat_number;
+  const invoice_requested = business_detected ? true : !!biz.invoice_requested;
+  const fromPoint = readExplicitCoordinatePair(body, "from");
+  const toPoint = readExplicitCoordinatePair(body, "to");
+
+  // Route WITH waypoints + per-leg breakdown
+  const routeOut = await routeFromTextsWithStopsDetailed({
+    fromText: body.from,
+    toText: body.to,
+    fromPoint,
+    toPoint,
+    stopsTexts: stops,
+    token: env.MAPBOX_TOKEN
+  });
+  const route_source =
+    routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
+      ? "coordinates"
+      : (routeOut.fromSource === "coordinates" || routeOut.toSource === "coordinates")
+        ? "mixed"
+        : "text";
+
+  const route = routeOut.route;
+  const legs = routeOut.legs || [];
+
+  const distance_km = round1(route.distance / 1000);
+  const duration_route_min = Math.round(route.duration / 60);
+
+  const mainWhen = normalizeWhen(body.date, body.time);
+  const quoteReturnRequested = _fixedFareReturnRequested(body);
+  const quoteExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(body, quoteScope);
+  const quoteFixedFareEligible =
+    _isAirportFixedFareEligiblePayload(body) &&
+    quoteExplicitScopeAllowed &&
+    quoteReturnRequested !== true;
+  let fixedFareQuoteResult = {
+    matched: false,
+    pricing_source: "route_calc",
+    fixed_fare_applied: false,
+    fixed_fare_rule_id: null,
+    pricing: null,
+  };
+  if (quoteFixedFareEligible) {
+    fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
+      pricingProfile,
+      fallbackVatRate: vat_rate,
+      returnRequested: quoteReturnRequested,
+    });
+  }
+  const quoteUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
+  const quotePricingSource = quoteUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+  const quoteFixedFareApplied = quoteUsesFixedFare;
+  const quoteFixedFareRuleId = quoteUsesFixedFare
+    ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
+    : null;
+
+  // Pricing: server truth
+  const mainPricing = quoteUsesFixedFare
+    ? fixedFareQuoteResult.pricing
+    : calcPrice({
+      distance_km,
+      duration_min: duration_route_min,
+      tier,
+      service,
+      when: mainWhen,
+      time_str: body.time,
+      pax,
+      bags,
+      vat_rate,
+      stop_count,
+      wait_min,
+      pricing_profile: pricingProfile,
+      apply_return_fee: false,
+    });
+
+  // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
+  let returnQuote = null;
+  try {
+    if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
+      const rf = body.return_from || body.to;
+      const rt = body.return_to || body.from;
+      if (!rf || !rt) throw new Error("Missing return_from/return_to");
+      const retRouteOut = await routeFromTextsWithStopsDetailed({
+        fromText: rf,
+        toText: rt,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN
+      });
+
+      const retRoute = retRouteOut.route;
+      const retDistance_km = round1(retRoute.distance / 1000);
+      const retDuration_min = Math.round(retRoute.duration / 60);
+      const retWhen = normalizeWhen(body.return_date, body.return_time);
+
+      const retPricing = calcPrice({
+        distance_km: retDistance_km,
+        duration_min: retDuration_min,
+        tier,
+        service,
+        when: retWhen,
+        time_str: body.return_time,
+        pax,
+        bags,
+        vat_rate,
+        stop_count: 0,
+        wait_min: 0,
+        pricing_profile: pricingProfile,
+        apply_return_fee: true,
+      });
+
+      returnQuote = {
+        distance_km: retDistance_km,
+        duration_min: retDuration_min,
+        price_ex_vat: retPricing.price_ex_vat,
+        price_vat: retPricing.price_vat,
+        price_incl_vat: retPricing.price_incl_vat,
+        note: retPricing.note
+      };
+    }
+  } catch (e) {
+    // If return quote fails, we keep main quote and simply omit returnQuote
+    returnQuote = null;
+  }
+
+  return {
+    status: 200,
+    out: {
+      ok: true,
+      inputs: {
+        from: body.from,
+        to: body.to,
+        date: body.date,
+        time: body.time,
+        tier,
+        service,
+        pax,
+        bags,
+        vat_rate,
+        stop_count,
+        wait_min,
+        stops,
+        route_source,
+
+        // ✅ business fields echoed back
+        business_detected,
+        invoice_requested,
+        company_name: biz.company_name || "",
+        vat_number: biz.vat_number || ""
+      },
+      distance_km,
+      duration_min: duration_route_min,
+      legs,
+
+      price_ex_vat: mainPricing.price_ex_vat,
+      price_vat: mainPricing.price_vat,
+      price_incl_vat: mainPricing.price_incl_vat,
+      note: mainPricing.note,
+      pricing_profile: pricingProfile,
+      pricing_source: quotePricingSource,
+      fixed_fare_applied: quoteFixedFareApplied,
+      fixed_fare_rule_id: quoteFixedFareRuleId,
+
+      // totals (main + optional return)
+      total_price_ex_vat: round2((mainPricing.price_ex_vat || 0) + (returnQuote ? (returnQuote.price_ex_vat || 0) : 0)),
+      total_price_vat: round2((mainPricing.price_vat || 0) + (returnQuote ? (returnQuote.price_vat || 0) : 0)),
+      total_price_incl_vat: round2((mainPricing.price_incl_vat || 0) + (returnQuote ? (returnQuote.price_incl_vat || 0) : 0)),
+
+      return: returnQuote,
+      breakdown: mainPricing.breakdown
+    },
+  };
+}
+
 function _readCompanyLinkBodyPhone(body) {
   return sanitizeTenantString(
     body?.registered_phone_e164 ?? body?.registeredPhoneE164,
@@ -5650,247 +6119,67 @@ GET /oauth/callback
         let body = {};
         try { body = await request.json(); }
         catch { return json({ ok: false, error: "Invalid JSON body" }, 400); }
+        const quoteResult = await _handleQuoteRequestInternal({
+          body,
+          env,
+          request,
+          url,
+        });
+        return json(quoteResult.out, quoteResult.status);
+      }
 
-        if (!body.from || !body.to || !body.date || !body.time) {
-          return json({ ok: false, error: "Missing fields: from, to, date, time" }, 400);
+      if (url.pathname === "/public/quote" && request.method === "POST") {
+        const body = await safeJson(request);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
         }
-
-        const requestedPublicPartnerId = _extractRequestedPublicPartnerId({ url, body });
-        let quoteScope = null;
-        let routedPublicPartner = null;
-        if (requestedPublicPartnerId) {
-          routedPublicPartner = await resolvePublicPartnerBookingScope(
-            env,
-            requestedPublicPartnerId,
-          );
-          if (!routedPublicPartner?.ok) {
-            return json({ ok: false, error: routedPublicPartner?.error || "invalid public partner" }, routedPublicPartner?.status || 400);
-          }
-          quoteScope = {
-            tenant_id: routedPublicPartner.tenant_id,
-            company_id: routedPublicPartner.company_id,
-            hasScope: true,
-          };
-        } else {
-          const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
-          quoteScope = resolveExplicitBookingRequestScope({
-            request,
-            url,
-            body,
-            allowLegacyFallback: allowLegacyScopeFallback,
-          });
+        const bodyKeys = Object.keys(body).slice(0, 16).join(",");
+        const publicCode = _readPublicCompanyCodeFromBody(body);
+        console.log(
+          `[PUBLIC_QUOTE][INPUT] keys=${bodyKeys || "none"} company_code=${publicCode?.ok ? publicCode.code : "invalid"}`,
+        );
+        const resolvedScope = await _resolvePublicCompanyBookingScope(env, body);
+        if (!resolvedScope.ok) {
+          return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
         }
-        if (!quoteScope?.hasScope) {
+        const normalized = _normalizePublicQuoteBody(body, resolvedScope);
+        if (!normalized.ok) {
           return json(
-            quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            {
+              ok: false,
+              error: normalized.error || "invalid_request",
+              ...(Array.isArray(normalized.missing) ? { missing: normalized.missing } : {}),
+              ...(normalized.message ? { message: normalized.message } : {}),
+            },
             400,
           );
         }
-        body = {
-          ...body,
-          tenant_id: quoteScope.tenant_id,
-          tenantId: quoteScope.tenant_id,
-          company_id: quoteScope.company_id,
-          companyId: quoteScope.company_id,
-          ...(routedPublicPartner?.ok
-            ? {
-                public_partner_id: routedPublicPartner.partner_id,
-                publicPartnerId: routedPublicPartner.partner_id,
-                partner_id: routedPublicPartner.partner_id,
-                partnerId: routedPublicPartner.partner_id,
-              }
-            : {}),
-        };
-        const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
-        const vat_rate = clampNumber(
-          pricingProfile?.vat_rate,
-          clampNumber(body.vat_rate, 0.06, 0, 1),
-          0,
-          1,
+        const quotePayloadKeys = Object.keys(normalized.payload).slice(0, 24).join(",");
+        const hasTenantAliases = !!(
+          safeStr(normalized.payload?.tenant_id, 80) &&
+          safeStr(normalized.payload?.tenantId, 80) &&
+          safeStr(normalized.payload?.company_id, 80) &&
+          safeStr(normalized.payload?.companyId, 80)
         );
-
-        // Enforce business rules (Tesla Model 3)
-        const pax = clampInt(body.pax, 1, 3);
-        const bags = Math.max(0, clampInt(body.bags, 0, 99));
-
-        const tier = normalizeTier(body.tier || "comfort");
-        const service = normalizeService(body.service || "passenger");
-
-        // Stops + wait (tolerant input)
-        const stops = normalizeStops(body); // array of stop addresses
-        const wait_min = parseDurationMin(body.wait_min ?? body.wait_minutes ?? body.waiting_min ?? body.wait, 0);
-        const stop_count = stops.length;
-        
-
-        // ✅ Business detection (NEW)
-        const biz = normalizeBusiness(body);
-        const business_detected = !!biz.vat_number;
-        const invoice_requested = business_detected ? true : !!biz.invoice_requested;
-        const fromPoint = readExplicitCoordinatePair(body, "from");
-        const toPoint = readExplicitCoordinatePair(body, "to");
-
-        // Route WITH waypoints + per-leg breakdown
-        const routeOut = await routeFromTextsWithStopsDetailed({
-          fromText: body.from,
-          toText: body.to,
-          fromPoint,
-          toPoint,
-          stopsTexts: stops,
-          token: env.MAPBOX_TOKEN
+        console.log(
+          `[PUBLIC_QUOTE][FORWARD] keys=${quotePayloadKeys || "none"} scope_aliases=${hasTenantAliases ? "yes" : "no"}`,
+        );
+        const quoteResult = await _handleQuoteRequestInternal({
+          body: normalized.payload,
+          env,
+          request,
+          url,
         });
-        const route_source =
-          routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
-            ? "coordinates"
-            : (routeOut.fromSource === "coordinates" || routeOut.toSource === "coordinates")
-              ? "mixed"
-              : "text";
-
-        const route = routeOut.route;
-        const legs = routeOut.legs || [];
-
-        const distance_km = round1(route.distance / 1000);
-        const duration_route_min = Math.round(route.duration / 60);
-
-        const mainWhen = normalizeWhen(body.date, body.time);
-        const quoteReturnRequested = _fixedFareReturnRequested(body);
-        const quoteExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(body, quoteScope);
-        const quoteFixedFareEligible =
-          _isAirportFixedFareEligiblePayload(body) &&
-          quoteExplicitScopeAllowed &&
-          quoteReturnRequested !== true;
-        let fixedFareQuoteResult = {
-          matched: false,
-          pricing_source: "route_calc",
-          fixed_fare_applied: false,
-          fixed_fare_rule_id: null,
-          pricing: null,
-        };
-        if (quoteFixedFareEligible) {
-          fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
-            pricingProfile,
-            fallbackVatRate: vat_rate,
-            returnRequested: quoteReturnRequested,
-          });
+        const quoteOut = quoteResult?.out || { ok: false, error: "quote_failed" };
+        console.log(
+          `[PUBLIC_QUOTE][RES] status=${Number(quoteResult?.status || 500)} error=${safeStr(quoteOut?.error, 80) || "none"}`,
+        );
+        const safeQuote = _stripInternalScopeFromPublicResponse(quoteOut);
+        if (safeQuote && typeof safeQuote === "object" && !Array.isArray(safeQuote)) {
+          safeQuote.company_code = resolvedScope.company_code;
+          safeQuote.companyCode = resolvedScope.company_code;
         }
-        const quoteUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
-        const quotePricingSource = quoteUsesFixedFare ? "airport_fixed_fare" : "route_calc";
-        const quoteFixedFareApplied = quoteUsesFixedFare;
-        const quoteFixedFareRuleId = quoteUsesFixedFare
-          ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
-          : null;
-
-        // Pricing: server truth
-        const mainPricing = quoteUsesFixedFare
-          ? fixedFareQuoteResult.pricing
-          : calcPrice({
-            distance_km,
-            duration_min: duration_route_min,
-            tier,
-            service,
-            when: mainWhen,
-            time_str: body.time,
-            pax,
-            bags,
-            vat_rate,
-            stop_count,
-            wait_min,
-            pricing_profile: pricingProfile,
-            apply_return_fee: false,
-          });
-
-        // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
-        let returnQuote = null;
-        try {
-          if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
-            const rf = body.return_from || body.to;
-            const rt = body.return_to || body.from;
-            if (!rf || !rt) throw new Error('Missing return_from/return_to');
-            const retRouteOut = await routeFromTextsWithStopsDetailed({
-              fromText: rf,
-              toText: rt,
-              stopsTexts: [],
-              token: env.MAPBOX_TOKEN
-            });
-
-            const retRoute = retRouteOut.route;
-            const retDistance_km = round1(retRoute.distance / 1000);
-            const retDuration_min = Math.round(retRoute.duration / 60);
-            const retWhen = normalizeWhen(body.return_date, body.return_time);
-
-            const retPricing = calcPrice({
-              distance_km: retDistance_km,
-              duration_min: retDuration_min,
-              tier,
-              service,
-              when: retWhen,
-              time_str: body.return_time,
-              pax,
-              bags,
-              vat_rate,
-              stop_count: 0,
-              wait_min: 0,
-              pricing_profile: pricingProfile,
-              apply_return_fee: true,
-            });
-
-            returnQuote = {
-              distance_km: retDistance_km,
-              duration_min: retDuration_min,
-              price_ex_vat: retPricing.price_ex_vat,
-              price_vat: retPricing.price_vat,
-              price_incl_vat: retPricing.price_incl_vat,
-              note: retPricing.note
-            };
-          }
-        } catch (e) {
-          // If return quote fails, we keep main quote and simply omit returnQuote
-          returnQuote = null;
-        }
-
-        return json({
-          ok: true,
-          inputs: {
-            from: body.from,
-            to: body.to,
-            date: body.date,
-            time: body.time,
-            tier,
-            service,
-            pax,
-            bags,
-            vat_rate,
-            stop_count,
-            wait_min,
-            stops,
-            route_source,
-
-            // ✅ business fields echoed back
-            business_detected,
-            invoice_requested,
-            company_name: biz.company_name || "",
-            vat_number: biz.vat_number || ""
-          },
-          distance_km,
-          duration_min: duration_route_min,
-          legs,
-
-          price_ex_vat: mainPricing.price_ex_vat,
-          price_vat: mainPricing.price_vat,
-          price_incl_vat: mainPricing.price_incl_vat,
-          note: mainPricing.note,
-          pricing_profile: pricingProfile,
-          pricing_source: quotePricingSource,
-          fixed_fare_applied: quoteFixedFareApplied,
-          fixed_fare_rule_id: quoteFixedFareRuleId,
-
-          // totals (main + optional return)
-          total_price_ex_vat: round2((mainPricing.price_ex_vat || 0) + (returnQuote ? (returnQuote.price_ex_vat || 0) : 0)),
-          total_price_vat: round2((mainPricing.price_vat || 0) + (returnQuote ? (returnQuote.price_vat || 0) : 0)),
-          total_price_incl_vat: round2((mainPricing.price_incl_vat || 0) + (returnQuote ? (returnQuote.price_incl_vat || 0) : 0)),
-
-          return: returnQuote,
-          breakdown: mainPricing.breakdown
-        });
+        return json(safeQuote, Number(quoteResult?.status || 500));
       }
 
       // PUBLIC BOOKING GATEWAY ALIAS
@@ -6158,10 +6447,43 @@ GET /oauth/callback
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
       if (url.pathname === "/public/book") {
-        if (request.method !== "GET") {
+        if (request.method === "GET") {
+          return handlePublicBookingPreview(url, env);
+        }
+        if (request.method !== "POST") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
-        return handlePublicBookingPreview(url, env);
+        const body = await safeJson(request);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
+        }
+        const bodyKeys = Object.keys(body).slice(0, 16).join(",");
+        const publicCode = _readPublicCompanyCodeFromBody(body);
+        console.log(
+          `[PUBLIC_BOOK][INPUT] keys=${bodyKeys || "none"} company_code=${publicCode?.ok ? publicCode.code : "invalid"}`,
+        );
+        const resolvedScope = await _resolvePublicCompanyBookingScope(env, body);
+        if (!resolvedScope.ok) {
+          return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
+        }
+        const normalized = _normalizePublicBookBody(body, resolvedScope);
+        if (!normalized.ok) {
+          return json(
+            {
+              ok: false,
+              error: normalized.error || "invalid_request",
+              ...(Array.isArray(normalized.missing) ? { missing: normalized.missing } : {}),
+              ...(normalized.message ? { message: normalized.message } : {}),
+            },
+            400,
+          );
+        }
+        const bookingOut = await handleBooking(normalized.payload, env, request);
+        const projected = _projectPublicBookResponse(
+          _stripInternalScopeFromPublicResponse(bookingOut),
+          resolvedScope.company_code,
+        );
+        return json(projected, projected.ok ? 200 : 400);
       }
 
       // PUBLIC MEDIA (read-only, path-limited)
