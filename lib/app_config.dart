@@ -985,7 +985,7 @@ const String kTenantId = 'fluxidi';
 const String kCompanyId = kTenantId;
 const String kPublicBookingBaseUrl = String.fromEnvironment(
   'PUBLIC_BOOKING_BASE_URL',
-  defaultValue: 'https://fluxidi.com/book',
+  defaultValue: 'https://fluxidi-booking-api.fluxidi.workers.dev',
 );
 
 enum AppRole { customer, driver, companyAdmin, dispatcher }
