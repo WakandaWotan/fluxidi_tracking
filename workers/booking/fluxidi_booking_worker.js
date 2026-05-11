@@ -1646,6 +1646,9 @@ const COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX = ":v1";
 const COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS = 10 * 60;
 const COMPANY_DRIVER_LINK_MAX_TTL_SECONDS = 30 * 60;
 const COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS = 5;
+const COMPANY_SESSION_KEY_PREFIX = "company_admin:session:";
+const COMPANY_SESSION_KEY_SUFFIX = ":v1";
+const COMPANY_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const PUBLIC_DRIVER_SESSION_KEY_PREFIX = "public_driver:session:";
 const PUBLIC_DRIVER_SESSION_KEY_SUFFIX = ":v1";
 const PUBLIC_DRIVER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -1987,6 +1990,12 @@ function _publicDriverSessionKey(tokenHash) {
   return `${PUBLIC_DRIVER_SESSION_KEY_PREFIX}${safeHash}${PUBLIC_DRIVER_SESSION_KEY_SUFFIX}`;
 }
 
+function _companySessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${COMPANY_SESSION_KEY_PREFIX}${safeHash}${COMPANY_SESSION_KEY_SUFFIX}`;
+}
+
 function _companyDriverLinkChallengeId() {
   return (crypto?.randomUUID ? crypto.randomUUID() : `dcl_${Date.now()}_${Math.random()}`)
     .replace(/[^a-zA-Z0-9_-]+/g, "");
@@ -2004,14 +2013,22 @@ function _generateDriverPairingCode(length = 6) {
   return out;
 }
 
-function _generateOpaqueToken(byteLength = 32) {
+function _generateOpaqueToken(byteLength = 32, prefix = "dst_") {
   const size = Math.max(24, Math.min(96, Math.round(Number(byteLength) || 32)));
   const bytes = new Uint8Array(size);
   crypto.getRandomValues(bytes);
-  return `dst_${base64urlEncodeBytes(bytes)}`;
+  const normalizedPrefix = sanitizeTenantString(prefix, 16).trim() || "dst_";
+  return `${normalizedPrefix}${base64urlEncodeBytes(bytes)}`;
 }
 
 async function _hashDriverSessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
+async function _hashCompanySessionToken(token) {
   const normalized = sanitizeTenantString(token, 512);
   if (!normalized) return "";
   const hash = await _sha256Hex(normalized);
@@ -2026,6 +2043,10 @@ function _extractBearerToken(request) {
 }
 
 function _publicDriverAuthFail() {
+  return json({ ok: false, error: "unauthorized" }, 401);
+}
+
+function _companyAuthFail() {
   return json({ ok: false, error: "unauthorized" }, 401);
 }
 
@@ -2072,6 +2093,46 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
     driver_name: driverName,
     company_display_name: companyDisplayName,
     assigned_vehicle_id: assignedVehicleId,
+    expires_at: expiresAt,
+  };
+}
+
+async function _loadCompanySessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashCompanySessionToken(token);
+  if (!tokenHash) return null;
+  const key = _companySessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = sanitizeTenantString(record.role, 40).toLowerCase();
+  if (role !== "company_admin") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const companyCode = sanitizeTenantString(record.company_code ?? record.companyCode, 80);
+  const companyDisplayName = sanitizeTenantString(
+    record.company_display_name ?? record.companyDisplayName,
+    160,
+  );
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    role: "company_admin",
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: companyCode,
+    company_display_name: companyDisplayName,
     expires_at: expiresAt,
   };
 }
@@ -2462,7 +2523,48 @@ async function handlePublicCompanyLinkVerify(body, env) {
     expirationTtl: remainingSeconds,
   });
   await env.BOOKING_KV.delete(activeKey);
-  return json(_projectCompanyAdminSessionPayload(companyRecord, nowIso), 200);
+  const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ??
+      companyRecord.company_name ??
+      companyRecord.companyName ??
+      basePayload?.company?.display_name,
+    160,
+  );
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+      company_id: sanitizeTenantString(companyRecord.company_id, 80),
+      company_code: sanitizeTenantString(companyRecord.company_code ?? codeRead.code, 80),
+      company_display_name: companyDisplayName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_pairing",
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[COMPANY_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(companyRecord.tenant_id)} company=${_maskPublicDriverLoginValue(companyRecord.company_id)} code=${_maskPublicDriverLoginValue(companyRecord.company_code ?? codeRead.code)}`,
+  );
+  return json(
+    {
+      ...basePayload,
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+    },
+    200,
+  );
 }
 
 async function readAdminCompanyLinkBody(request) {
@@ -3229,6 +3331,193 @@ async function handlePublicDriverLogin(body, env) {
       driverSessionToken: sessionToken,
       expires_in: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
       expiresIn: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
+    },
+    200,
+  );
+}
+
+async function handleCompanyBootstrap(request, env) {
+  const session = await _loadCompanySessionFromRequest(request, env);
+  if (!session) {
+    console.log("[COMPANY_BOOTSTRAP][DENY] reason=unauthorized");
+    return _companyAuthFail();
+  }
+  const scope = normalizeFleetTenantScope({
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  });
+  if (!scope?.tenant_id || !scope?.company_id) {
+    console.log("[COMPANY_BOOTSTRAP][DENY] reason=invalid_scope");
+    return _companyAuthFail();
+  }
+  console.log(
+    `[COMPANY_BOOTSTRAP][REQ] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)}`,
+  );
+
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const taxProfile = await loadTaxProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const pricingProfile = await _loadTenantPricingProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const subscriptionProfile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const communicationTemplates = await loadCommunicationTemplates(env, scope, null, {
+    allowTenantLegacyFallback: false,
+  });
+
+  const fleetRead = await _loadFleetInventoryRawForScope(env, scope, {
+    allowLegacyFallback: false,
+  });
+  const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+  const vehicles = [];
+  for (const row of vehiclesRaw) {
+    if (!row || typeof row !== "object") continue;
+    const normalized = _normalizeVehicleEntry(row, { scope });
+    if (!normalized) continue;
+    const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+      row.vehicle_photo_url ??
+        row.vehiclePhotoUrl ??
+        row.public_photo_url ??
+        row.publicPhotoUrl ??
+        row.photo_url ??
+        row.photoUrl ??
+        row.media?.photo_url ??
+        row.media?.photoUrl,
+    );
+    vehicles.push({
+      ...normalized,
+      ...(vehiclePhotoUrl
+        ? {
+            vehicle_photo_url: vehiclePhotoUrl,
+            vehiclePhotoUrl: vehiclePhotoUrl,
+          }
+        : {}),
+    });
+  }
+
+  const driverIndex = await _loadDriverIndexRecord(env, scope);
+  const driverEntries = Object.values(driverIndex?.drivers || {});
+  const drivers = [];
+  for (const entry of driverEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    const driverId = sanitizeTenantString(entry.driver_id ?? entry.driverId ?? entry.id, 96);
+    if (!driverId) continue;
+    const displayName = sanitizeTenantString(
+      entry.display_name ?? entry.displayName ?? entry.driver_name ?? entry.driverName,
+      160,
+    );
+    const phone = sanitizeTenantString(entry.phone, 64);
+    const assignedVehicleId = sanitizeTenantString(
+      entry.assigned_vehicle_id ?? entry.assignedVehicleId,
+      96,
+    );
+    const driverPhotoUrl = _normalizeSafeRemoteMediaRef(
+      entry.driver_photo_url ??
+        entry.driverPhotoUrl ??
+        entry.public_portrait_url ??
+        entry.publicPortraitUrl ??
+        entry.profile_photo_url ??
+        entry.profilePhotoUrl,
+    );
+    const rawLoginCode = sanitizeTenantString(
+      entry.driver_code ??
+        entry.driverCode ??
+        entry.login_code ??
+        entry.loginCode ??
+        entry.employee_number ??
+        entry.employeeNumber ??
+        entry.chauffeur_code ??
+        entry.chauffeurCode,
+      80,
+    );
+    const hasLoginCode =
+      rawLoginCode.length > 0 ||
+      sanitizeTenantString(entry.driver_code_hash ?? entry.driverCodeHash, 200).length > 0;
+    const driverCodeLast4 = rawLoginCode.length >= 4 ? rawLoginCode.slice(-4) : "";
+    drivers.push({
+      driver_id: driverId,
+      driverId: driverId,
+      display_name: displayName,
+      displayName: displayName,
+      ...(phone ? { phone } : {}),
+      is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      isActive: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      ...(driverPhotoUrl
+        ? {
+            driver_photo_url: driverPhotoUrl,
+            driverPhotoUrl: driverPhotoUrl,
+            public_portrait_url: driverPhotoUrl,
+            publicPortraitUrl: driverPhotoUrl,
+          }
+        : {}),
+      has_login_code: hasLoginCode,
+      hasLoginCode: hasLoginCode,
+      ...(driverCodeLast4
+        ? {
+            driver_code_last4: driverCodeLast4,
+            driverCodeLast4: driverCodeLast4,
+          }
+        : {}),
+    });
+  }
+
+  const companyCode = sanitizeTenantString(session.company_code, 80);
+  const companyDisplayName = sanitizeTenantString(
+    session.company_display_name ??
+      businessProfile?.companyName ??
+      businessProfile?.legalName,
+    160,
+  );
+  const companyLogoUrl = _normalizeSafeRemoteMediaRef(
+    businessProfile?.publicLogoUrl ??
+      businessProfile?.public_logo_url ??
+      businessProfile?.logoUrl ??
+      businessProfile?.logo_url,
+  );
+  console.log(
+    `[COMPANY_BOOTSTRAP][RES] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} vehicles=${vehicles.length} drivers=${drivers.length}`,
+  );
+  return json(
+    {
+      ok: true,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      ...(companyCode
+        ? {
+            company_code: companyCode,
+            companyCode: companyCode,
+          }
+        : {}),
+      company: {
+        display_name: companyDisplayName,
+        ...(companyCode ? { company_code: companyCode } : {}),
+      },
+      business_profile: businessProfile,
+      tax_profile: taxProfile,
+      pricing_profile: pricingProfile,
+      subscription_profile: subscriptionProfile,
+      communication_templates: communicationTemplates,
+      vehicles,
+      drivers,
+      media: {
+        ...(companyLogoUrl
+          ? {
+              company_logo_url: companyLogoUrl,
+              companyLogoUrl: companyLogoUrl,
+            }
+          : {}),
+      },
     },
     200,
   );
@@ -5383,6 +5672,13 @@ GET /oauth/callback
           `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${filtered.length}`,
         );
         return json({ ok: true, items: filtered, count: filtered.length }, 200);
+      }
+
+      if (url.pathname === "/company/bootstrap") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleCompanyBootstrap(request, env);
       }
 
       // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
