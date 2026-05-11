@@ -16,6 +16,12 @@ class ActiveDriverSession {
     required this.phone,
     required this.loggedInAt,
     required this.updatedAt,
+    this.tenantId,
+    this.companyId,
+    this.companyCode,
+    this.assignedVehicleId,
+    this.linkMethod,
+    this.expiresAt,
   });
 
   final String driverId;
@@ -24,6 +30,22 @@ class ActiveDriverSession {
   final String phone;
   final String loggedInAt;
   final String updatedAt;
+  final String? tenantId;
+  final String? companyId;
+  final String? companyCode;
+  final String? assignedVehicleId;
+  final String? linkMethod;
+  final String? expiresAt;
+
+  bool get isVerifiedPairingSession =>
+      (linkMethod ?? '').trim().toLowerCase() == 'driver_pairing_code';
+
+  DateTime? get expiresAtUtc {
+    final raw = (expiresAt ?? '').trim();
+    if (raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    return parsed?.toUtc();
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'driverId': driverId,
@@ -32,10 +54,22 @@ class ActiveDriverSession {
     'phone': phone,
     'loggedInAt': loggedInAt,
     'updatedAt': updatedAt,
+    if ((tenantId ?? '').trim().isNotEmpty) 'tenantId': tenantId,
+    if ((companyId ?? '').trim().isNotEmpty) 'companyId': companyId,
+    if ((companyCode ?? '').trim().isNotEmpty) 'companyCode': companyCode,
+    if ((assignedVehicleId ?? '').trim().isNotEmpty)
+      'assignedVehicleId': assignedVehicleId,
+    if ((linkMethod ?? '').trim().isNotEmpty) 'linkMethod': linkMethod,
+    if ((expiresAt ?? '').trim().isNotEmpty) 'expiresAt': expiresAt,
   };
 
   factory ActiveDriverSession.fromJson(Map<String, dynamic> json) {
     String read(String key) => (json[key] ?? '').toString().trim();
+    String? readOptional(String key) {
+      final value = (json[key] ?? '').toString().trim();
+      return value.isEmpty ? null : value;
+    }
+
     return ActiveDriverSession(
       driverId: read('driverId'),
       employeeNumber: read('employeeNumber'),
@@ -43,6 +77,14 @@ class ActiveDriverSession {
       phone: read('phone'),
       loggedInAt: read('loggedInAt'),
       updatedAt: read('updatedAt'),
+      tenantId: readOptional('tenantId'),
+      companyId: readOptional('companyId'),
+      companyCode: readOptional('companyCode'),
+      assignedVehicleId:
+          readOptional('assignedVehicleId') ??
+          readOptional('assigned_vehicle_id'),
+      linkMethod: readOptional('linkMethod'),
+      expiresAt: readOptional('expiresAt'),
     );
   }
 }
@@ -150,6 +192,27 @@ class DriverSessionStore {
     return s;
   }
 
+  Future<ActiveDriverSession?> _readLatestScopedSessionFallback() async {
+    final root = await _stateRootDir();
+    ActiveDriverSession? best;
+    DateTime? bestStamp;
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      if (!entity.path.endsWith('$_fileName')) continue;
+      final session = await _readSession(entity);
+      if (session == null) continue;
+      final stamp =
+          DateTime.tryParse(session.updatedAt)?.toUtc() ??
+          DateTime.tryParse(session.loggedInAt)?.toUtc() ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      if (best == null || stamp.isAfter(bestStamp!)) {
+        best = session;
+        bestStamp = stamp;
+      }
+    }
+    return best;
+  }
+
   /// Load parsed session without validation (may be stale).
   Future<ActiveDriverSession?> load() async {
     try {
@@ -172,16 +235,26 @@ class DriverSessionStore {
 
       final legacyFile = await _legacyFile();
       final legacy = await _readSession(legacyFile);
-      if (legacy == null) return null;
-
-      if (scope != null && scopedFile != null) {
-        await scopedFile.writeAsString(jsonEncode(legacy.toJson()));
-        debugPrint(
-          '[DRIVER_SESSION][MIGRATE_LEGACY] tenant=${scope.tenantId} company=${scope.companyId} driver=${_maskIdForLog(legacy.driverId)} from=${legacyFile.path} to=${scopedFile.path}',
-        );
+      if (legacy != null) {
+        if (scope != null && scopedFile != null) {
+          await scopedFile.writeAsString(jsonEncode(legacy.toJson()));
+          debugPrint(
+            '[DRIVER_SESSION][MIGRATE_LEGACY] tenant=${scope.tenantId} company=${scope.companyId} driver=${_maskIdForLog(legacy.driverId)} from=${legacyFile.path} to=${scopedFile.path}',
+          );
+        }
+        _cache = legacy;
+        return legacy;
       }
-      _cache = legacy;
-      return legacy;
+
+      final latestScoped = await _readLatestScopedSessionFallback();
+      if (latestScoped != null) {
+        debugPrint(
+          '[DRIVER_SESSION][LOAD_FALLBACK] driver=${_maskIdForLog(latestScoped.driverId)} reason=latest_scoped_without_active_company',
+        );
+        _cache = latestScoped;
+        return latestScoped;
+      }
+      return null;
     } catch (e) {
       debugPrint('[DRIVER_LOGIN][WARN] corrupt_session reason=parse_failed');
       return null;
@@ -208,6 +281,13 @@ class DriverSessionStore {
     List<DriverProfile> drivers,
     ActiveDriverSession s,
   ) {
+    if (s.isVerifiedPairingSession) {
+      final expiresAt = s.expiresAtUtc;
+      if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) {
+        return false;
+      }
+      return s.driverId.trim().isNotEmpty && s.employeeNumber.trim().isNotEmpty;
+    }
     for (final d in drivers) {
       if (d.id != s.driverId) continue;
       if (!d.isActive) return false;
@@ -225,6 +305,7 @@ class DriverSessionStore {
     ActiveDriverSession? previous,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
+    final activeScope = _activeScope();
     final session = ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -232,6 +313,8 @@ class DriverSessionStore {
       phone: driver.phone,
       loggedInAt: previous?.loggedInAt ?? now,
       updatedAt: now,
+      tenantId: activeScope?.tenantId,
+      companyId: activeScope?.companyId,
     );
     try {
       final file = await _file();
@@ -249,6 +332,68 @@ class DriverSessionStore {
         );
       }
       activeDriverSessionNotifier.value = session;
+    } catch (e) {
+      debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
+    }
+  }
+
+  Future<void> saveVerifiedDriverPairingSession({
+    required String tenantId,
+    required String companyId,
+    required String companyCode,
+    required String driverId,
+    required String driverName,
+    required String employeeNumber,
+    String? assignedVehicleId,
+    DateTime? issuedAt,
+    DateTime? expiresAt,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final normalizedCompanyCode = companyCode.trim().toUpperCase();
+    final normalizedDriverId = driverId.trim();
+    final normalizedDriverName = driverName.trim();
+    final normalizedEmployeeNumber = employeeNumber.trim();
+    final normalizedAssignedVehicleId = (assignedVehicleId ?? '').trim();
+    if (normalizedTenantId.isEmpty ||
+        normalizedCompanyId.isEmpty ||
+        normalizedCompanyCode.isEmpty ||
+        normalizedDriverId.isEmpty ||
+        normalizedEmployeeNumber.isEmpty) {
+      debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=missing_required');
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final session = ActiveDriverSession(
+      driverId: normalizedDriverId,
+      employeeNumber: normalizedEmployeeNumber,
+      fullName: normalizedDriverName.isEmpty
+          ? normalizedEmployeeNumber
+          : normalizedDriverName,
+      phone: '',
+      loggedInAt: (issuedAt ?? now).toUtc().toIso8601String(),
+      updatedAt: now.toIso8601String(),
+      tenantId: normalizedTenantId,
+      companyId: normalizedCompanyId,
+      companyCode: normalizedCompanyCode,
+      assignedVehicleId: normalizedAssignedVehicleId.isEmpty
+          ? null
+          : normalizedAssignedVehicleId,
+      linkMethod: 'driver_pairing_code',
+      expiresAt: expiresAt?.toUtc().toIso8601String(),
+    );
+    try {
+      final file = await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _cache = session;
+      _cacheScopeKey = '$normalizedTenantId::$normalizedCompanyId';
+      activeDriverSessionNotifier.value = session;
+      debugPrint(
+        '[DRIVER_SESSION][SAVE_VERIFIED] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=driver_pairing_code path=${file.path}',
+      );
     } catch (e) {
       debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
     }
