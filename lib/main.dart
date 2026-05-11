@@ -3481,6 +3481,7 @@ class ChauffeurLoginPage extends StatefulWidget {
 
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   final _formKey = GlobalKey<FormState>();
+  final _companyCtrl = TextEditingController();
   final _idCtrl = TextEditingController();
   bool _busy = false;
   String? _lookupError;
@@ -3495,6 +3496,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   @override
   void initState() {
     super.initState();
+    _companyCtrl.addListener(() {
+      if (_lookupError != null) setState(() => _lookupError = null);
+    });
     _idCtrl.addListener(() {
       if (_lookupError != null) setState(() => _lookupError = null);
     });
@@ -3502,6 +3506,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
 
   @override
   void dispose() {
+    _companyCtrl.dispose();
     _idCtrl.dispose();
     super.dispose();
   }
@@ -3511,7 +3516,29 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    final activeCompanyId = _activeCompanyIdForDriverLogin();
+    final companyScope = _findCompanyScopeForDriverLogin(
+      enteredCompanyCode: _companyCtrl.text,
+      drivers: driversNotifier.value,
+    );
+    debugPrint(
+      '[DRIVER_LOGIN][COMPANY_LOOKUP] entered=${_maskLoginCode(_companyCtrl.text)} active_company=${companyScope.activeCompanyMasked} match=${companyScope.reason}',
+    );
+    if (companyScope.companyId == null) {
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=company_not_found');
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _lookupError = _t(
+            nl: 'Bedrijf niet gevonden. Controleer de bedrijfscode.',
+            en: 'Company not found. Check the company ID.',
+            fr: 'Entreprise introuvable. Vérifiez le code entreprise.',
+            es: 'Empresa no encontrada. Comprueba el código de empresa.',
+          );
+        });
+      }
+      return;
+    }
+    final activeCompanyId = companyScope.companyId!;
     final lookup = _findLocalDriverForLogin(
       entered: _idCtrl.text,
       activeCompanyId: activeCompanyId,
@@ -3521,7 +3548,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       '[DRIVER_LOGIN][LOOKUP] entered=${_maskLoginCode(_idCtrl.text)} drivers_total=${driversNotifier.value.length} active_company=${activeCompanyId.isEmpty ? "none" : _maskLoginCode(activeCompanyId)} candidates=${lookup.visibleCandidates} match=${lookup.match == null ? "none" : lookup.reason}',
     );
     if (lookup.match == null) {
-      debugPrint('[DRIVER_LOGIN][FAIL] reason=${lookup.reason}');
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=driver_not_found');
       if (mounted) {
         setState(() {
           _busy = false;
@@ -3558,6 +3585,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       previous: prev,
     );
     DriverSessionStore.instance.logOk(normalizedMatch.id);
+    debugPrint(
+      '[DRIVER_LOGIN][OK] driverId=${_maskLoginCode(normalizedMatch.id)}',
+    );
     if (!mounted) return;
     setState(() => _busy = false);
     setAppRole(AppRole.driver);
@@ -3566,21 +3596,71 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     );
   }
 
+  ({String? companyId, String reason, String activeCompanyMasked})
+  _findCompanyScopeForDriverLogin({
+    required String enteredCompanyCode,
+    required List<DriverProfile> drivers,
+  }) {
+    final normalized = _normalizeCompanyCode(enteredCompanyCode);
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    final activeCompany = fromProfile.isNotEmpty
+        ? fromProfile
+        : (fromSession.isNotEmpty ? fromSession : '');
+
+    if (normalized.isEmpty) {
+      return (
+        companyId: null,
+        reason: 'empty_input',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    bool matches(String candidate) =>
+        candidate.trim().isNotEmpty &&
+        _sameCode(_normalizeCompanyCode(candidate), normalized);
+
+    if (matches(fromProfile)) {
+      return (
+        companyId: fromProfile,
+        reason: 'active_profile_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+    if (matches(fromSession)) {
+      return (
+        companyId: fromSession,
+        reason: 'active_session_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    final knownDriverCompanies = drivers
+        .map((d) => d.companyId?.trim() ?? '')
+        .where((c) => c.isNotEmpty)
+        .toSet();
+    for (final company in knownDriverCompanies) {
+      if (!matches(company)) continue;
+      return (
+        companyId: company,
+        reason: 'driver_scope_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    return (
+      companyId: null,
+      reason: 'company_not_found',
+      activeCompanyMasked: _maskLoginCode(activeCompany),
+    );
+  }
+
   String _normalizeCompanyCode(String raw) {
     var value = raw.trim().toUpperCase();
     value = value.replaceAll(RegExp(r'\s+'), '-');
     value = value.replaceAll(RegExp(r'-+'), '-');
     return value;
-  }
-
-  String _activeCompanyIdForDriverLogin() {
-    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
-    if (fromProfile.isNotEmpty) return fromProfile;
-    final fromSession =
-        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-    if (fromSession.isNotEmpty) return fromSession;
-    final resolved = resolvedCompanyId.trim();
-    return resolved;
   }
 
   String _normalizeLoginCode(String raw) => raw.trim().toLowerCase();
@@ -4057,10 +4137,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                       children: [
                         Text(
                           _t(
-                            nl: 'Vul je chauffeurcode in om je ritten te openen.',
-                            en: 'Enter your driver code to open your rides.',
-                            fr: 'Saisissez votre code chauffeur pour ouvrir vos courses.',
-                            es: 'Introduce tu código de conductor para abrir tus viajes.',
+                            nl: 'Vul de bedrijfscode en je chauffeurcode in.',
+                            en: 'Enter the company ID and your driver code.',
+                            fr: 'Entrez le code entreprise et votre code chauffeur.',
+                            es: 'Introduce el código de empresa y tu código de conductor.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.85),
@@ -4068,6 +4148,46 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           ),
                         ),
                         const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _companyCtrl,
+                          enabled: !_busy,
+                          style: const TextStyle(color: Colors.white),
+                          textCapitalization: TextCapitalization.characters,
+                          textInputAction: TextInputAction.next,
+                          decoration: InputDecoration(
+                            labelText: _t(
+                              nl: 'Bedrijfscode',
+                              en: 'Company ID',
+                              fr: 'Code entreprise',
+                              es: 'Código de empresa',
+                            ),
+                            labelStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF141B2F),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 14,
+                            ),
+                          ),
+                          validator: (v) {
+                            if ((v ?? '').trim().isEmpty) {
+                              return _t(
+                                nl: 'Vul je bedrijfscode in.',
+                                en: 'Enter your company ID.',
+                                fr: 'Saisissez votre code entreprise.',
+                                es: 'Introduce tu código de empresa.',
+                              );
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
                         TextFormField(
                           controller: _idCtrl,
                           enabled: !_busy,
@@ -4145,10 +4265,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                                 )
                               : Text(
                                   _t(
-                                    nl: 'Inloggen',
-                                    en: 'Log in',
-                                    fr: 'Se connecter',
-                                    es: 'Iniciar sesión',
+                                    nl: 'Inloggen als chauffeur',
+                                    en: 'Log in as driver',
+                                    fr: 'Se connecter comme chauffeur',
+                                    es: 'Iniciar sesión como conductor',
                                   ),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
@@ -8380,6 +8500,18 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
+  String _displayCompanyLoginCode(DriverProfile driver) {
+    final scoped = driver.companyId?.trim() ?? '';
+    if (scoped.isNotEmpty) return scoped;
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) return fromSession;
+    final resolved = resolvedCompanyId.trim();
+    return resolved;
+  }
+
   String _driverCardInitials(DriverProfile driver) {
     final raw = _displayDriverName(driver.fullName).trim();
     if (raw.isEmpty) return 'D';
@@ -9011,6 +9143,16 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                 ],
                               ),
                               const SizedBox(height: 8),
+                              _line(
+                                _t(
+                                  nl: 'Bedrijfscode',
+                                  en: 'Company ID',
+                                  fr: 'Code entreprise',
+                                  es: 'Código de empresa',
+                                ),
+                                _displayCompanyLoginCode(d),
+                                icon: Icons.business_outlined,
+                              ),
                               _line(
                                 _t(
                                   nl: 'Chauffeurcode',
