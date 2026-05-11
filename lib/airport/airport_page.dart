@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 
@@ -2484,18 +2484,6 @@ class _AirportPageState extends State<AirportPage> {
     ).showSnackBar(SnackBar(content: Text(snackBarMessage)));
   }
 
-  String _activeTenantCompanyId() {
-    final localCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
-    if (localCompanyId.isNotEmpty) {
-      return localCompanyId;
-    }
-    final resolved = resolvedCompanyId.trim();
-    if (resolved.isNotEmpty) {
-      return resolved;
-    }
-    return kTenantId;
-  }
-
   String _fmtDateYmd(DateTime dt) =>
       '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
 
@@ -2531,7 +2519,9 @@ class _AirportPageState extends State<AirportPage> {
     if (parsedDate == null) {
       return null;
     }
-    final tenantCompanyId = _activeTenantCompanyId();
+    final effectiveScope = resolveEffectiveTenantCompanyScope(
+      allowDriverFallback: true,
+    );
     final fromText = isToAirport
         ? _pickupAddressController.text.trim()
         : '${selectedAirport.name}, ${selectedAirport.countryName}';
@@ -2563,10 +2553,10 @@ class _AirportPageState extends State<AirportPage> {
       'service': 'AIRPORT',
       'pax': _passengers,
       'bags': _bags,
-      'tenant_id': tenantCompanyId,
-      'company_id': tenantCompanyId,
-      'tenantId': tenantCompanyId,
-      'companyId': tenantCompanyId,
+      'tenant_id': effectiveScope.tenantId,
+      'company_id': effectiveScope.companyId,
+      'tenantId': effectiveScope.tenantId,
+      'companyId': effectiveScope.companyId,
       'airport_direction': isToAirport ? 'to_airport' : 'from_airport',
       'airport_id': selectedAirport.id,
       'airport_iata': selectedAirport.iata,
