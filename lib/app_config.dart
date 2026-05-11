@@ -1171,6 +1171,13 @@ void addDriver(DriverProfile driver) {
   _persistLocalTenantState();
   final scopeId = _fleetScopeIdFromLocalState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
+  unawaited(
+    syncDriverIndexEntryToBackend(
+      normalizedDriver,
+      tenantId: scopeId,
+      companyId: scopeId,
+    ),
+  );
 }
 
 void updateDriver(String id, DriverProfile updated) {
@@ -1181,6 +1188,13 @@ void updateDriver(String id, DriverProfile updated) {
   _persistLocalTenantState();
   final scopeId = _fleetScopeIdFromLocalState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
+  unawaited(
+    syncDriverIndexEntryToBackend(
+      normalizedUpdated,
+      tenantId: scopeId,
+      companyId: scopeId,
+    ),
+  );
 }
 
 DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
@@ -1192,6 +1206,24 @@ DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
 }
 
 void deleteDriver(String id) {
+  DriverProfile? existingDriver;
+  for (final d in driversNotifier.value) {
+    if (d.id == id) {
+      existingDriver = d;
+      break;
+    }
+  }
+  final scopeId = _fleetScopeIdFromLocalState();
+  if (existingDriver != null) {
+    unawaited(
+      syncDriverIndexEntryToBackend(
+        existingDriver,
+        tenantId: scopeId,
+        companyId: scopeId,
+        isActiveOverride: false,
+      ),
+    );
+  }
   driversNotifier.value = driversNotifier.value
       .where((d) => d.id != id)
       .toList(growable: false);
@@ -1199,7 +1231,6 @@ void deleteDriver(String id) {
       .map((v) => v.driverId == id ? v.copyWith(driverId: null) : v)
       .toList(growable: false);
   _persistLocalTenantState();
-  final scopeId = _fleetScopeIdFromLocalState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
 }
 
@@ -1827,6 +1858,56 @@ Future<bool> syncFleetInventoryToBackend({
     return true;
   } catch (_) {
     // Keep local-first UX stable even when backend sync fails.
+    return false;
+  }
+}
+
+Future<bool> syncDriverIndexEntryToBackend(
+  DriverProfile driver, {
+  String? tenantId,
+  String? companyId,
+  bool? isActiveOverride,
+}) async {
+  try {
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final endpoint = _withAdminTenantCompanyScope(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/company/drivers/index/upsert',
+      ),
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
+    );
+    final driverId = driver.id.trim();
+    if (driverId.isEmpty) return false;
+    final driverCode = driver.employeeNumber.trim();
+    final payload = <String, dynamic>{
+      ...scope,
+      'driver_id': driverId,
+      'driverId': driverId,
+      'display_name': driver.fullName.trim(),
+      'displayName': driver.fullName.trim(),
+      'driver_name': driver.fullName.trim(),
+      'driverName': driver.fullName.trim(),
+      'employee_number': driverCode,
+      'employeeNumber': driverCode,
+      'driver_code': driverCode,
+      'driverCode': driverCode,
+      'login_code': driverCode,
+      'loginCode': driverCode,
+      'chauffeur_code': driverCode,
+      'chauffeurCode': driverCode,
+      'phone': driver.phone.trim(),
+      'is_active': isActiveOverride ?? driver.isActive,
+      'isActive': isActiveOverride ?? driver.isActive,
+    };
+    final response = await http
+        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 12));
+    return response.statusCode >= 200 && response.statusCode < 300;
+  } catch (_) {
     return false;
   }
 }
