@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/app_config.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
 String _localScopeSegment(String value) {
@@ -21,10 +21,8 @@ String _maskScopeId(String value) {
 }
 
 ({String tenantId, String companyId}) _activeLocalScope() {
-  final resolvedId = resolvedCompanyId.trim();
-  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
-  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
-  return (tenantId: tenantId, companyId: companyId);
+  final scope = resolveEffectiveTenantCompanyScope(allowDriverFallback: true);
+  return (tenantId: scope.tenantId, companyId: scope.companyId);
 }
 
 class StoredCustomerBooking {
@@ -1020,6 +1018,16 @@ class CustomerBookingsStore {
         .toList(growable: false);
   }
 
+  bool _allowLegacyWithoutScopeForScope({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final activeTenant = tenantId.trim();
+    final activeCompany = companyId.trim();
+    if (activeTenant.isEmpty || activeCompany.isEmpty) return false;
+    return activeTenant == activeCompany && activeTenant == kTenantId.trim();
+  }
+
   StoredCustomerBooking _coerceScope(
     StoredCustomerBooking item, {
     required String tenantId,
@@ -1095,6 +1103,10 @@ class CustomerBookingsStore {
     try {
       final tenantId = scope.tenantId.trim();
       final companyId = scope.companyId.trim();
+      final allowLegacyWithoutScope = _allowLegacyWithoutScopeForScope(
+        tenantId: tenantId,
+        companyId: companyId,
+      );
       _cacheScopeKey = scopeKey;
       final scopedFile = await _file();
       final scopedItems = await _readFileItems(scopedFile);
@@ -1104,7 +1116,7 @@ class CustomerBookingsStore {
                   scopedItems,
                   tenantId: tenantId,
                   companyId: companyId,
-                  allowLegacyWithoutScope: true,
+                  allowLegacyWithoutScope: allowLegacyWithoutScope,
                 )
                 .map(
                   (item) => _coerceScope(
@@ -1129,7 +1141,7 @@ class CustomerBookingsStore {
                 legacyItems,
                 tenantId: tenantId,
                 companyId: companyId,
-                allowLegacyWithoutScope: true,
+                allowLegacyWithoutScope: false,
               )
               .map(
                 (item) => _coerceScope(
