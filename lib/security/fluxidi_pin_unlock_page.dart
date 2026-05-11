@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -18,11 +20,17 @@ class FluxidiPinUnlockPage extends StatefulWidget {
 }
 
 class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
+  static const int _maxFailedAttempts = 5;
+  static const Duration _retryBlockDuration = Duration(seconds: 30);
+
   final TextEditingController _pinController = TextEditingController();
   bool _busy = false;
   String? _error;
   String? _firstPin;
   bool _confirmStep = false;
+  int _failedAttempts = 0;
+  DateTime? _blockedUntilUtc;
+  Timer? _retryBlockTimer;
 
   String _t({
     required String nl,
@@ -39,12 +47,83 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
 
   @override
   void dispose() {
+    _retryBlockTimer?.cancel();
     _pinController.dispose();
     super.dispose();
   }
 
+  int _retryBlockSecondsRemaining() {
+    final blockedUntil = _blockedUntilUtc;
+    if (blockedUntil == null) return 0;
+    final diff = blockedUntil.difference(DateTime.now().toUtc()).inSeconds;
+    return diff > 0 ? diff : 0;
+  }
+
+  bool get _isRetryBlocked => _retryBlockSecondsRemaining() > 0;
+
+  String _retryBlockedMessage() {
+    final seconds = _retryBlockSecondsRemaining();
+    return _t(
+      nl: 'Te veel foutieve pogingen. Probeer opnieuw over ${seconds}s.',
+      en: 'Too many failed attempts. Try again in ${seconds}s.',
+      fr: 'Trop de tentatives échouées. Réessayez dans ${seconds}s.',
+      es: 'Demasiados intentos fallidos. Inténtalo de nuevo en ${seconds}s.',
+    );
+  }
+
+  void _startRetryBlockTicker() {
+    _retryBlockTimer?.cancel();
+    _retryBlockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_retryBlockSecondsRemaining() <= 0) {
+        timer.cancel();
+        setState(() {
+          _blockedUntilUtc = null;
+          _error = null;
+        });
+        return;
+      }
+      setState(() {
+        _error = _retryBlockedMessage();
+      });
+    });
+  }
+
+  void _registerFailedUnlockAttempt() {
+    _failedAttempts += 1;
+    _pinController.clear();
+    if (_failedAttempts >= _maxFailedAttempts) {
+      _failedAttempts = 0;
+      _blockedUntilUtc = DateTime.now().toUtc().add(_retryBlockDuration);
+      _error = _retryBlockedMessage();
+      _startRetryBlockTicker();
+      return;
+    }
+    _error = _t(
+      nl: 'Onjuiste PIN.',
+      en: 'Invalid PIN.',
+      fr: 'PIN incorrect.',
+      es: 'PIN incorrecto.',
+    );
+  }
+
+  void _clearFailedUnlockState() {
+    _failedAttempts = 0;
+    _blockedUntilUtc = null;
+    _retryBlockTimer?.cancel();
+  }
+
   Future<void> _submit() async {
     if (_busy) return;
+    if (!widget.setupMode && _isRetryBlocked) {
+      setState(() {
+        _error = _retryBlockedMessage();
+      });
+      return;
+    }
     final pin = _pinController.text.trim();
     if (!FluxidiAppLockStore.instance.isValidPinFormat(pin)) {
       setState(() {
@@ -91,6 +170,16 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
         await FluxidiAppLockStore.instance.setPin(pin);
         if (!mounted) return;
         widget.onUnlocked();
+      } on FluxidiAppLockStorageUnavailableException {
+        if (!mounted) return;
+        setState(() {
+          _error = _t(
+            nl: 'Beveiligde opslag is niet beschikbaar. PIN-lock kan nu niet worden ingesteld.',
+            en: 'Secure storage is unavailable. PIN lock cannot be set right now.',
+            fr: 'Le stockage sécurisé est indisponible. Le verrou PIN ne peut pas être configuré maintenant.',
+            es: 'El almacenamiento seguro no está disponible. El bloqueo PIN no se puede configurar ahora.',
+          );
+        });
       } catch (_) {
         if (!mounted) return;
         setState(() {
@@ -114,19 +203,24 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
       _error = null;
     });
     try {
-      final ok = await FluxidiAppLockStore.instance.verifyPin(pin);
+      final result = await FluxidiAppLockStore.instance.verifyPinDetailed(pin);
       if (!mounted) return;
-      if (!ok) {
+      if (!result.storageAvailable) {
         setState(() {
           _error = _t(
-            nl: 'Onjuiste PIN.',
-            en: 'Invalid PIN.',
-            fr: 'PIN incorrect.',
-            es: 'PIN incorrecto.',
+            nl: 'Beveiligde opslag is niet beschikbaar. Sluit de app niet af en probeer later opnieuw.',
+            en: 'Secure storage is unavailable. Do not close the app and try again later.',
+            fr: 'Le stockage sécurisé est indisponible. Ne fermez pas l’application et réessayez plus tard.',
+            es: 'El almacenamiento seguro no está disponible. No cierres la app e inténtalo de nuevo más tarde.',
           );
         });
         return;
       }
+      if (!result.ok) {
+        setState(_registerFailedUnlockAttempt);
+        return;
+      }
+      _clearFailedUnlockState();
       widget.onUnlocked();
     } finally {
       if (mounted) {
