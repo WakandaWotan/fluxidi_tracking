@@ -1146,6 +1146,7 @@ String _fleetScopeIdFromLocalState() {
 void addVehicle(VehicleProfile vehicle) {
   vehiclesNotifier.value = <VehicleProfile>[...vehiclesNotifier.value, vehicle];
   _persistLocalTenantState();
+  unawaited(syncLocalCompanyInventoryToBackend(reason: 'vehicle_save'));
 }
 
 void updateVehicle(String id, VehicleProfile updated) {
@@ -1153,6 +1154,7 @@ void updateVehicle(String id, VehicleProfile updated) {
       .map((v) => v.id == id ? updated : v)
       .toList(growable: false);
   _persistLocalTenantState();
+  unawaited(syncLocalCompanyInventoryToBackend(reason: 'vehicle_save'));
 }
 
 void deleteVehicle(String id) {
@@ -1169,15 +1171,7 @@ void addDriver(DriverProfile driver) {
     normalizedDriver,
   ];
   _persistLocalTenantState();
-  final scopeId = _fleetScopeIdFromLocalState();
-  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
-  unawaited(
-    syncDriverIndexEntryToBackend(
-      normalizedDriver,
-      tenantId: scopeId,
-      companyId: scopeId,
-    ),
-  );
+  unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
 }
 
 void updateDriver(String id, DriverProfile updated) {
@@ -1186,15 +1180,7 @@ void updateDriver(String id, DriverProfile updated) {
       .map((d) => d.id == id ? normalizedUpdated : d)
       .toList(growable: false);
   _persistLocalTenantState();
-  final scopeId = _fleetScopeIdFromLocalState();
-  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
-  unawaited(
-    syncDriverIndexEntryToBackend(
-      normalizedUpdated,
-      tenantId: scopeId,
-      companyId: scopeId,
-    ),
-  );
+  unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
 }
 
 DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
@@ -1232,6 +1218,48 @@ void deleteDriver(String id) {
       .toList(growable: false);
   _persistLocalTenantState();
   unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
+}
+
+void removeDriverLocallyAfterBackendDelete(
+  String id, {
+  String? tenantId,
+  String? companyId,
+}) {
+  final driverId = id.trim();
+  if (driverId.isEmpty) return;
+
+  final hadDriver = driversNotifier.value.any((d) => d.id == driverId);
+  final hadVehicleLinks = vehiclesNotifier.value.any(
+    (v) => v.driverId == driverId,
+  );
+  if (!hadDriver && !hadVehicleLinks) return;
+
+  driversNotifier.value = driversNotifier.value
+      .where((d) => d.id != driverId)
+      .toList(growable: false);
+  vehiclesNotifier.value = vehiclesNotifier.value
+      .map((v) => v.driverId == driverId ? v.copyWith(driverId: null) : v)
+      .toList(growable: false);
+
+  _persistLocalTenantState();
+
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  unawaited(
+    syncFleetInventoryToBackend(
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
+    ),
+  );
+  unawaited(
+    syncLocalCompanyInventoryToBackend(
+      reason: 'driver_delete',
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
+    ),
+  );
 }
 
 String _languageCode(AppLanguage l) {
@@ -1675,6 +1703,7 @@ const String _fleetSyncAdminToken = String.fromEnvironment(
   'ADMIN_TOKEN',
   defaultValue: '',
 );
+bool _companyInventorySyncInFlight = false;
 
 Map<String, String> _adminJsonHeaders() {
   final headers = <String, String>{'Content-Type': 'application/json'};
@@ -1684,6 +1713,13 @@ Map<String, String> _adminJsonHeaders() {
     headers['x-admin-token'] = token;
   }
   return headers;
+}
+
+String _maskCompanyScopeForLog(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '—';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
 }
 
 Map<String, String> _resolveAdminTenantCompanyScope({
@@ -1760,18 +1796,44 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
     }
   }
   final assignedDriver = linkedDriver == null
-      ? null
+      ? ((v.driverId ?? '').trim().isEmpty
+            ? null
+            : <String, dynamic>{
+                'driver_id': v.driverId!.trim(),
+                'driverId': v.driverId!.trim(),
+                'id': v.driverId!.trim(),
+              })
       : <String, dynamic>{
           'driver_id': linkedDriver.id.trim(),
+          'driverId': linkedDriver.id.trim(),
+          'id': linkedDriver.id.trim(),
           'name': linkedDriver.fullName.trim(),
+          'display_name': linkedDriver.fullName.trim(),
+          'displayName': linkedDriver.fullName.trim(),
           'phone': linkedDriver.phone.trim(),
         };
   return <String, dynamic>{
     'vehicle_id': v.id.trim(),
+    'vehicleId': v.id.trim(),
+    'vehicle_name': v.vehicleName.trim(),
+    'vehicleName': v.vehicleName.trim(),
+    'brand_model': v.brandModel.trim(),
+    'brandModel': v.brandModel.trim(),
+    'license_plate': v.licensePlate.trim(),
+    'licensePlate': v.licensePlate.trim(),
+    'exploitation_license_number': v.exploitationLicenseNumber.trim(),
+    'exploitationLicenseNumber': v.exploitationLicenseNumber.trim(),
+    'vehicle_registration_number': v.vehicleRegistrationNumber.trim(),
+    'vehicleRegistrationNumber': v.vehicleRegistrationNumber.trim(),
+    'color': v.color.trim(),
     'is_active': v.isActive,
+    'isActive': v.isActive,
     'tier': v.tierId.trim().toLowerCase(),
+    'tierId': v.tierId.trim().toLowerCase(),
     'passenger_capacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
+    'passengerCapacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'luggage_capacity': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
+    'luggageCapacity': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
     'tenant_id': (v.companyId?.trim().isNotEmpty ?? false)
         ? v.companyId!.trim()
         : resolvedTenant,
@@ -1784,7 +1846,135 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
     'companyId': (v.companyId?.trim().isNotEmpty ?? false)
         ? v.companyId!.trim()
         : resolvedCompany,
+    if (v.primaryPhotoRef.trim().isNotEmpty) ...{
+      'primary_photo_ref': v.primaryPhotoRef.trim(),
+      'primaryPhotoRef': v.primaryPhotoRef.trim(),
+      'photo_ref': v.primaryPhotoRef.trim(),
+      'photoRef': v.primaryPhotoRef.trim(),
+    },
+    if (v.galleryPhotoRefs.isNotEmpty) ...{
+      'gallery_photo_refs': v.galleryPhotoRefs
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false),
+      'galleryPhotoRefs': v.galleryPhotoRefs
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false),
+    },
+    if ((v.publicPhotoUrl ?? '').trim().isNotEmpty) ...{
+      'public_photo_url': v.publicPhotoUrl!.trim(),
+      'publicPhotoUrl': v.publicPhotoUrl!.trim(),
+      'vehicle_photo_url': v.publicPhotoUrl!.trim(),
+      'vehiclePhotoUrl': v.publicPhotoUrl!.trim(),
+    },
     if (assignedDriver != null) 'assigned_driver': assignedDriver,
+    if ((v.driverId ?? '').trim().isNotEmpty) ...{
+      'assigned_driver_id': v.driverId!.trim(),
+      'assignedDriverId': v.driverId!.trim(),
+      'driver_id': v.driverId!.trim(),
+      'driverId': v.driverId!.trim(),
+    },
+  };
+}
+
+Map<String, dynamic> _encodeDriverForBackendIndexPayload(
+  DriverProfile driver, {
+  required String tenantId,
+  required String companyId,
+  String? assignedVehicleIdOverride,
+  bool? isActiveOverride,
+}) {
+  String? normalizedDriverPhoneForBackend(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+    if (!raw.startsWith('+')) return null;
+    final digitsOnly = raw.substring(1).replaceAll(RegExp(r'[^0-9]'), '');
+    final normalized = '+$digitsOnly';
+    if (!RegExp(r'^\+\d{8,15}$').hasMatch(normalized)) return null;
+    return normalized;
+  }
+
+  String? normalizedPublicDriverPhotoUrl(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return null;
+    if (text.startsWith('https://') || text.startsWith('http://')) {
+      return text;
+    }
+    if (text.startsWith('/public/media/') || text.startsWith('public-media/')) {
+      return text;
+    }
+    return null;
+  }
+
+  String? assignedVehicleId = assignedVehicleIdOverride?.trim();
+  if (assignedVehicleId != null && assignedVehicleId.isEmpty) {
+    assignedVehicleId = null;
+  }
+  for (final vehicle in vehiclesNotifier.value) {
+    if (vehicle.driverId == driver.id) {
+      final candidate = vehicle.id.trim();
+      if (candidate.isNotEmpty) {
+        assignedVehicleId = candidate;
+        break;
+      }
+    }
+  }
+
+  final driverId = driver.id.trim();
+  final driverCode = driver.employeeNumber.trim();
+  final normalizedPhone = normalizedDriverPhoneForBackend(driver.phone);
+  final safePublicDriverPhotoUrl = normalizedPublicDriverPhotoUrl(
+    driver.publicPortraitUrl,
+  );
+  return <String, dynamic>{
+    'tenant_id': tenantId,
+    'company_id': companyId,
+    'tenantId': tenantId,
+    'companyId': companyId,
+    'driver_id': driverId,
+    'driverId': driverId,
+    'id': driverId,
+    'display_name': driver.fullName.trim(),
+    'displayName': driver.fullName.trim(),
+    'driver_name': driver.fullName.trim(),
+    'driverName': driver.fullName.trim(),
+    'full_name': driver.fullName.trim(),
+    'fullName': driver.fullName.trim(),
+    'name': driver.fullName.trim(),
+    'employee_number': driverCode,
+    'employeeNumber': driverCode,
+    'driver_code': driverCode,
+    'driverCode': driverCode,
+    'login_code': driverCode,
+    'loginCode': driverCode,
+    'chauffeur_code': driverCode,
+    'chauffeurCode': driverCode,
+    if (normalizedPhone != null) 'phone': normalizedPhone,
+    'is_active': isActiveOverride ?? driver.isActive,
+    'isActive': isActiveOverride ?? driver.isActive,
+    'taxi_driver_card_number': driver.taxiDriverCardNumber.trim(),
+    'taxiDriverCardNumber': driver.taxiDriverCardNumber.trim(),
+    'taxi_driver_card_expiry': driver.taxiDriverCardExpiry.trim(),
+    'taxiDriverCardExpiry': driver.taxiDriverCardExpiry.trim(),
+    'public_profile_enabled': driver.publicProfileEnabled,
+    'publicProfileEnabled': driver.publicProfileEnabled,
+    'public_photo_enabled': driver.publicPhotoEnabled,
+    'publicPhotoEnabled': driver.publicPhotoEnabled,
+    if ((driver.publicDisplayName ?? '').trim().isNotEmpty) ...{
+      'public_display_name': driver.publicDisplayName!.trim(),
+      'publicDisplayName': driver.publicDisplayName!.trim(),
+    },
+    if (assignedVehicleId != null) ...{
+      'assigned_vehicle_id': assignedVehicleId,
+      'assignedVehicleId': assignedVehicleId,
+    },
+    if (safePublicDriverPhotoUrl != null) ...{
+      'public_portrait_url': safePublicDriverPhotoUrl,
+      'publicPortraitUrl': safePublicDriverPhotoUrl,
+      'driver_photo_url': safePublicDriverPhotoUrl,
+      'driverPhotoUrl': safePublicDriverPhotoUrl,
+    },
   };
 }
 
@@ -1882,55 +2072,202 @@ Future<bool> syncDriverIndexEntryToBackend(
     );
     final driverId = driver.id.trim();
     if (driverId.isEmpty) return false;
-    final driverCode = driver.employeeNumber.trim();
-    String? normalizedPublicDriverPhotoUrl(String? value) {
-      final text = (value ?? '').trim();
-      if (text.isEmpty) return null;
-      if (text.startsWith('https://') || text.startsWith('http://')) {
-        return text;
-      }
-      if (text.startsWith('/public/media/') ||
-          text.startsWith('public-media/')) {
-        return text;
-      }
-      return null;
-    }
-
-    final safePublicDriverPhotoUrl = normalizedPublicDriverPhotoUrl(
-      driver.publicPortraitUrl,
+    final payload = _encodeDriverForBackendIndexPayload(
+      driver,
+      tenantId: scope['tenant_id'] ?? kTenantId,
+      companyId: scope['company_id'] ?? kTenantId,
+      isActiveOverride: isActiveOverride,
     );
-    final payload = <String, dynamic>{
-      ...scope,
-      'driver_id': driverId,
-      'driverId': driverId,
-      'display_name': driver.fullName.trim(),
-      'displayName': driver.fullName.trim(),
-      'driver_name': driver.fullName.trim(),
-      'driverName': driver.fullName.trim(),
-      'employee_number': driverCode,
-      'employeeNumber': driverCode,
-      'driver_code': driverCode,
-      'driverCode': driverCode,
-      'login_code': driverCode,
-      'loginCode': driverCode,
-      'chauffeur_code': driverCode,
-      'chauffeurCode': driverCode,
-      'phone': driver.phone.trim(),
-      'is_active': isActiveOverride ?? driver.isActive,
-      'isActive': isActiveOverride ?? driver.isActive,
-      if (safePublicDriverPhotoUrl != null) ...{
-        'public_portrait_url': safePublicDriverPhotoUrl,
-        'publicPortraitUrl': safePublicDriverPhotoUrl,
-        'driver_photo_url': safePublicDriverPhotoUrl,
-        'driverPhotoUrl': safePublicDriverPhotoUrl,
-      },
-    };
     final response = await http
         .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
         .timeout(const Duration(seconds: 12));
     return response.statusCode >= 200 && response.statusCode < 300;
   } catch (_) {
     return false;
+  }
+}
+
+Future<void> syncLocalCompanyInventoryToBackend({
+  required String reason,
+  String? tenantId,
+  String? companyId,
+}) async {
+  if (_companyInventorySyncInFlight) return;
+  final token = _fleetSyncAdminToken.trim();
+  if (token.isEmpty) return;
+  final localScopeId = _fleetScopeIdFromLocalState().trim();
+  final resolvedTenant = (tenantId ?? companyId ?? localScopeId).trim();
+  final resolvedCompany = (companyId ?? tenantId ?? localScopeId).trim();
+  if (resolvedTenant.isEmpty || resolvedCompany.isEmpty) return;
+
+  final scopedVehicles = vehiclesNotifier.value
+      .where(
+        (v) =>
+            (v.companyId?.trim().isEmpty ?? true) ||
+            v.companyId!.trim() == resolvedCompany,
+      )
+      .toList(growable: false);
+  final scopedDrivers = driversNotifier.value
+      .where(
+        (d) =>
+            (d.companyId?.trim().isEmpty ?? true) ||
+            d.companyId!.trim() == resolvedCompany,
+      )
+      .toList(growable: false);
+
+  final vehicleLinkByDriverId = <String, String>{};
+  var vehicleLinks = 0;
+  for (final vehicle in scopedVehicles) {
+    final driverId = (vehicle.driverId ?? '').trim();
+    final vehicleId = vehicle.id.trim();
+    if (driverId.isEmpty || vehicleId.isEmpty) continue;
+    vehicleLinks += 1;
+    vehicleLinkByDriverId.putIfAbsent(driverId, () => vehicleId);
+  }
+  var driverVehicleLinks = 0;
+  for (final driver in scopedDrivers) {
+    if (vehicleLinkByDriverId.containsKey(driver.id.trim())) {
+      driverVehicleLinks += 1;
+    }
+  }
+
+  _companyInventorySyncInFlight = true;
+  debugPrint(
+    '[COMPANY_SYNC][START] reason=$reason vehicles=${scopedVehicles.length} drivers=${scopedDrivers.length} company=${_maskCompanyScopeForLog(resolvedCompany)}',
+  );
+  debugPrint(
+    '[COMPANY_SYNC][LOCAL_COUNTS] vehicles=${vehiclesNotifier.value.length} drivers=${driversNotifier.value.length} scopedVehicles=${scopedVehicles.length} scopedDrivers=${scopedDrivers.length}',
+  );
+  debugPrint(
+    '[COMPANY_SYNC][LINKS] vehicleLinks=$vehicleLinks driverVehicleLinks=$driverVehicleLinks',
+  );
+  try {
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: resolvedTenant,
+      companyId: resolvedCompany,
+    );
+
+    if (scopedVehicles.isNotEmpty) {
+      try {
+        final endpoint = _withAdminTenantCompanyScope(
+          Uri.parse('${appConfig.bookingBaseUrl}/admin/fleet/vehicles'),
+          tenantId: scope['tenant_id'],
+          companyId: scope['company_id'],
+        );
+        final fleetPayload = scopedVehicles
+            .map(
+              (vehicle) => _encodeVehicleForBackendFleet(
+                vehicle,
+                tenantId: scope['tenant_id'] ?? kTenantId,
+                companyId: scope['company_id'] ?? kTenantId,
+              ),
+            )
+            .where((e) => (e['vehicle_id'] as String).isNotEmpty)
+            .toList(growable: false);
+        final response = await http
+            .post(
+              endpoint,
+              headers: _adminJsonHeaders(),
+              body: jsonEncode(<String, dynamic>{
+                ...scope,
+                'vehicles': fleetPayload,
+              }),
+            )
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          debugPrint(
+            '[COMPANY_SYNC][VEHICLES_OK] count=${fleetPayload.length}',
+          );
+        } else {
+          debugPrint(
+            '[COMPANY_SYNC][VEHICLES_ERROR] status=${response.statusCode} message=non_2xx',
+          );
+        }
+      } catch (_) {
+        debugPrint(
+          '[COMPANY_SYNC][VEHICLES_ERROR] status=network message=exception',
+        );
+      }
+    }
+
+    if (scopedDrivers.isNotEmpty) {
+      String maskDriverIdForLog(String value) {
+        final text = value.trim();
+        if (text.isEmpty) return 'unknown';
+        if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+        return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+      }
+
+      var okCount = 0;
+      var skippedCount = 0;
+      var failedCount = 0;
+      for (final driver in scopedDrivers) {
+        final driverId = driver.id.trim();
+        final maskedDriver = maskDriverIdForLog(driverId);
+        if (driverId.isEmpty) {
+          skippedCount += 1;
+          debugPrint(
+            '[COMPANY_SYNC][DRIVER_SKIP] reason=missing_driver_id driver=unknown',
+          );
+          continue;
+        }
+        try {
+          final endpoint = _withAdminTenantCompanyScope(
+            Uri.parse(
+              '${appConfig.bookingBaseUrl}/admin/company/drivers/index/upsert',
+            ),
+            tenantId: scope['tenant_id'],
+            companyId: scope['company_id'],
+          );
+          final payload = _encodeDriverForBackendIndexPayload(
+            driver,
+            tenantId: scope['tenant_id'] ?? kTenantId,
+            companyId: scope['company_id'] ?? kTenantId,
+            assignedVehicleIdOverride: vehicleLinkByDriverId[driver.id.trim()],
+          );
+          final response = await http
+              .post(
+                endpoint,
+                headers: _adminJsonHeaders(),
+                body: jsonEncode(payload),
+              )
+              .timeout(const Duration(seconds: 12));
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            okCount += 1;
+            debugPrint('[COMPANY_SYNC][DRIVER_OK] driver=$maskedDriver');
+          } else {
+            failedCount += 1;
+            String reason = 'non_2xx';
+            try {
+              final decoded = jsonDecode(response.body);
+              if (decoded is Map) {
+                final maybeReason =
+                    (decoded['reason'] ?? decoded['error'] ?? '')
+                        .toString()
+                        .trim();
+                if (maybeReason.isNotEmpty) {
+                  reason = maybeReason;
+                }
+              }
+            } catch (_) {}
+            debugPrint(
+              '[COMPANY_SYNC][DRIVER_ERROR] status=${response.statusCode} reason=$reason driver=$maskedDriver',
+            );
+          }
+        } catch (_) {
+          failedCount += 1;
+          debugPrint(
+            '[COMPANY_SYNC][DRIVER_ERROR] status=network reason=exception driver=$maskedDriver',
+          );
+        }
+      }
+      debugPrint(
+        '[COMPANY_SYNC][DRIVERS_DONE] ok=$okCount skipped=$skippedCount failed=$failedCount',
+      );
+    }
+  } finally {
+    _companyInventorySyncInFlight = false;
+    debugPrint('[COMPANY_SYNC][DONE]');
   }
 }
 
@@ -2102,6 +2439,627 @@ Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   final saved = decoded['subscription_profile'];
   if (saved is! Map) throw Exception('Missing subscription_profile');
   return BackendSubscriptionProfile.fromJson(Map<String, dynamic>.from(saved));
+}
+
+int? _lastCompanyBootstrapHttpStatusCode;
+int? get lastCompanyBootstrapHttpStatusCode =>
+    _lastCompanyBootstrapHttpStatusCode;
+
+Future<Map<String, dynamic>?> fetchCompanyBootstrapWithToken({
+  required String companySessionToken,
+}) async {
+  final token = companySessionToken.trim();
+  if (token.isEmpty) return null;
+  _lastCompanyBootstrapHttpStatusCode = null;
+  final endpoint = Uri.parse('${appConfig.bookingBaseUrl}/company/bootstrap');
+  try {
+    final res = await http
+        .get(
+          endpoint,
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
+    _lastCompanyBootstrapHttpStatusCode = res.statusCode;
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    return map['ok'] == true ? map : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<bool> hydrateCompanyStateFromBootstrap(
+  Map<String, dynamic> bootstrap,
+) async {
+  if (bootstrap['ok'] != true) return false;
+  try {
+    String textAny(List<dynamic> values) {
+      for (final value in values) {
+        final text = (value ?? '').toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
+    int intAny(List<dynamic> values, int fallback) {
+      for (final value in values) {
+        if (value is int) return value;
+        if (value is num) return value.round();
+        final parsed = int.tryParse((value ?? '').toString().trim());
+        if (parsed != null) return parsed;
+      }
+      return fallback;
+    }
+
+    double doubleAny(List<dynamic> values, double fallback) {
+      for (final value in values) {
+        if (value is double) return value;
+        if (value is num) return value.toDouble();
+        final parsed = double.tryParse(
+          (value ?? '').toString().trim().replaceAll(',', '.'),
+        );
+        if (parsed != null && parsed.isFinite) return parsed;
+      }
+      return fallback;
+    }
+
+    bool boolAny(List<dynamic> values, bool fallback) {
+      for (final value in values) {
+        if (value is bool) return value;
+        final text = (value ?? '').toString().trim().toLowerCase();
+        if (text == 'true' || text == '1' || text == 'yes') return true;
+        if (text == 'false' || text == '0' || text == 'no') return false;
+      }
+      return fallback;
+    }
+
+    String? safeRemoteMediaRef(String raw) {
+      final text = raw.trim();
+      if (text.isEmpty) return null;
+      if (text.startsWith('https://') || text.startsWith('http://')) {
+        return text;
+      }
+      if (text.startsWith('/public/media/') ||
+          text.startsWith('public-media/')) {
+        return text;
+      }
+      return null;
+    }
+
+    String? safeVehiclePhotoRef(String raw) {
+      final text = raw.trim();
+      if (text.isEmpty) return null;
+      final lower = text.toLowerCase();
+      if (lower.startsWith('https://') || lower.startsWith('http://')) {
+        return text;
+      }
+      if (lower.startsWith('/public/media/') ||
+          lower.startsWith('public-media/')) {
+        return text;
+      }
+      if (lower.startsWith('assets/')) return text;
+      return null;
+    }
+
+    List<String> safeVehiclePhotoRefsFromAny(List<dynamic> values) {
+      for (final value in values) {
+        if (value is! List) continue;
+        final out = <String>[];
+        for (final row in value) {
+          final ref = safeVehiclePhotoRef((row ?? '').toString());
+          if (ref == null || out.contains(ref)) continue;
+          out.add(ref);
+          if (out.length >= 12) break;
+        }
+        if (out.isNotEmpty) return out;
+      }
+      return const <String>[];
+    }
+
+    String maskScopeForLog(String value) {
+      final text = value.trim();
+      if (text.isEmpty) return '—';
+      if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+      return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+    }
+
+    final tenantId = textAny(<dynamic>[
+      bootstrap['tenant_id'],
+      bootstrap['tenantId'],
+    ]);
+    final companyId = textAny(<dynamic>[
+      bootstrap['company_id'],
+      bootstrap['companyId'],
+      tenantId,
+    ]);
+    final bootstrapScopeCompanyId = companyId.trim().isNotEmpty
+        ? companyId.trim()
+        : tenantId.trim();
+
+    final businessMap = bootstrap['business_profile'] is Map
+        ? Map<String, dynamic>.from(bootstrap['business_profile'] as Map)
+        : <String, dynamic>{};
+    final taxMap = bootstrap['tax_profile'] is Map
+        ? Map<String, dynamic>.from(bootstrap['tax_profile'] as Map)
+        : <String, dynamic>{};
+    final pricingMap = bootstrap['pricing_profile'] is Map
+        ? Map<String, dynamic>.from(bootstrap['pricing_profile'] as Map)
+        : <String, dynamic>{};
+    final mediaMap = bootstrap['media'] is Map
+        ? Map<String, dynamic>.from(bootstrap['media'] as Map)
+        : <String, dynamic>{};
+
+    BackendBusinessProfile? backendBusinessProfile;
+    if (businessMap.isNotEmpty) {
+      backendBusinessProfile = BackendBusinessProfile.fromJson(businessMap);
+      localBackendBusinessProfileNotifier.value = backendBusinessProfile;
+    }
+    BackendTaxProfile? backendTaxProfile;
+    if (taxMap.isNotEmpty) {
+      backendTaxProfile = BackendTaxProfile.fromJson(taxMap);
+      localBackendTaxProfileNotifier.value = backendTaxProfile;
+    }
+
+    final current = businessSettingsNotifier.value;
+    final backend =
+        backendBusinessProfile ?? localBackendBusinessProfileNotifier.value;
+    final effectiveTax =
+        backendTaxProfile ?? localBackendTaxProfileNotifier.value;
+    final logoUrl = safeRemoteMediaRef(
+      textAny(<dynamic>[
+        mediaMap['company_logo_url'],
+        mediaMap['companyLogoUrl'],
+        backend?.publicLogoUrl,
+      ]),
+    );
+    final companyName = textAny(<dynamic>[
+      backend?.companyName,
+      (bootstrap['company'] is Map)
+          ? (bootstrap['company'] as Map)['display_name']
+          : null,
+      current.companyName,
+    ]);
+    final supportEmail = textAny(<dynamic>[
+      businessMap['supportEmail'],
+      businessMap['support_email'],
+      businessMap['email'],
+      backend?.email,
+      current.supportEmail,
+    ]);
+    final supportPhone = textAny(<dynamic>[
+      businessMap['phone'],
+      backend?.phone,
+      current.supportPhone,
+    ]);
+    final bookingEmail = textAny(<dynamic>[
+      businessMap['bookingEmail'],
+      businessMap['booking_email'],
+      backend?.bookingEmail,
+      current.bookingSender,
+    ]);
+    final replyTo = textAny(<dynamic>[
+      businessMap['replyToEmail'],
+      businessMap['reply_to_email'],
+      businessMap['notificationEmail'],
+      businessMap['notification_email'],
+      supportEmail,
+      current.bookingReplyTo,
+    ]);
+    final address = <String>[
+      textAny(<dynamic>[businessMap['address'], backend?.address]),
+      textAny(<dynamic>[businessMap['postcode'], backend?.postcode]),
+      textAny(<dynamic>[businessMap['city'], backend?.city]),
+      textAny(<dynamic>[businessMap['country'], backend?.country]),
+    ].where((e) => e.isNotEmpty).join('\n');
+
+    final nextSettings = current.copyWith(
+      companyName: companyName,
+      supportEmail: supportEmail,
+      supportPhone: supportPhone,
+      vatCompanyNumber: textAny(<dynamic>[
+        businessMap['vatNumber'],
+        businessMap['vat_number'],
+        backend?.vatNumber,
+        current.vatCompanyNumber,
+      ]),
+      address: address.isEmpty ? current.address : address,
+      bookingSender: bookingEmail,
+      bookingReplyTo: replyTo,
+      whatsappNumber: supportPhone,
+      logoAssetPath: logoUrl ?? current.logoAssetPath,
+      pricingBaseFare: doubleAny(<dynamic>[
+        pricingMap['base_fare'],
+        pricingMap['baseFare'],
+      ], current.pricingBaseFare),
+      pricingPerKm: doubleAny(<dynamic>[
+        pricingMap['price_per_km'],
+        pricingMap['pricePerKm'],
+      ], current.pricingPerKm),
+      pricingPerMinute: doubleAny(<dynamic>[
+        pricingMap['price_per_minute'],
+        pricingMap['pricePerMinute'],
+      ], current.pricingPerMinute),
+      pricingMinimumFare: doubleAny(<dynamic>[
+        pricingMap['minimum_fare'],
+        pricingMap['minimumFare'],
+      ], current.pricingMinimumFare),
+      pricingWaitPerMinute: doubleAny(<dynamic>[
+        pricingMap['wait_per_minute'],
+        pricingMap['waitPerMinute'],
+      ], current.pricingWaitPerMinute),
+      pricingReturnEnabled: boolAny(<dynamic>[
+        pricingMap['return_enabled'],
+        pricingMap['returnEnabled'],
+      ], current.pricingReturnEnabled),
+      pricingReturnFee: doubleAny(<dynamic>[
+        pricingMap['return_fee'],
+        pricingMap['returnFee'],
+      ], current.pricingReturnFee),
+      pricingFuelSurcharge: doubleAny(<dynamic>[
+        pricingMap['fuel_surcharge'],
+        pricingMap['fuelSurcharge'],
+      ], current.pricingFuelSurcharge),
+      pricingVatRate: doubleAny(<dynamic>[
+        pricingMap['vat_rate'],
+        pricingMap['vatRate'],
+        effectiveTax?.vatRate,
+      ], current.pricingVatRate),
+      pricingVatMode: textAny(<dynamic>[
+        pricingMap['vat_mode'],
+        pricingMap['vatMode'],
+        effectiveTax?.vatDisplayMode,
+        current.pricingVatMode,
+      ]),
+    );
+    updateBusinessSettings(nextSettings);
+
+    String pickTextPreferRemote(String remote, String local) =>
+        remote.trim().isNotEmpty ? remote.trim() : local;
+
+    VehicleProfile mergeVehiclePreferLocal(
+      VehicleProfile remote,
+      VehicleProfile local,
+    ) {
+      return remote.copyWith(
+        vehicleName: pickTextPreferRemote(
+          remote.vehicleName,
+          local.vehicleName,
+        ),
+        brandModel: pickTextPreferRemote(remote.brandModel, local.brandModel),
+        licensePlate: pickTextPreferRemote(
+          remote.licensePlate,
+          local.licensePlate,
+        ),
+        exploitationLicenseNumber: pickTextPreferRemote(
+          remote.exploitationLicenseNumber,
+          local.exploitationLicenseNumber,
+        ),
+        vehicleRegistrationNumber: pickTextPreferRemote(
+          remote.vehicleRegistrationNumber,
+          local.vehicleRegistrationNumber,
+        ),
+        color: pickTextPreferRemote(remote.color, local.color),
+        passengerCapacity: remote.passengerCapacity > 0
+            ? remote.passengerCapacity
+            : local.passengerCapacity,
+        luggageCapacity: remote.luggageCapacity > 0
+            ? remote.luggageCapacity
+            : local.luggageCapacity,
+        tierId: pickTextPreferRemote(remote.tierId, local.tierId),
+        driverId: (remote.driverId ?? '').trim().isNotEmpty
+            ? remote.driverId
+            : local.driverId,
+        companyId: (remote.companyId ?? '').trim().isNotEmpty
+            ? remote.companyId
+            : local.companyId,
+        primaryPhotoRef: pickTextPreferRemote(
+          remote.primaryPhotoRef,
+          local.primaryPhotoRef,
+        ),
+        galleryPhotoRefs: remote.galleryPhotoRefs.isNotEmpty
+            ? remote.galleryPhotoRefs
+            : local.galleryPhotoRefs,
+        publicPhotoUrl: ((remote.publicPhotoUrl ?? '').trim().isNotEmpty)
+            ? remote.publicPhotoUrl
+            : local.publicPhotoUrl,
+      );
+    }
+
+    DriverProfile mergeDriverPreferLocal(
+      DriverProfile remote,
+      DriverProfile local,
+    ) {
+      return remote.copyWith(
+        fullName: pickTextPreferRemote(remote.fullName, local.fullName),
+        employeeNumber: pickTextPreferRemote(
+          remote.employeeNumber,
+          local.employeeNumber,
+        ),
+        phone: pickTextPreferRemote(remote.phone, local.phone),
+        taxiDriverCardNumber: pickTextPreferRemote(
+          remote.taxiDriverCardNumber,
+          local.taxiDriverCardNumber,
+        ),
+        taxiDriverCardExpiry: pickTextPreferRemote(
+          remote.taxiDriverCardExpiry,
+          local.taxiDriverCardExpiry,
+        ),
+        companyId: (remote.companyId ?? '').trim().isNotEmpty
+            ? remote.companyId
+            : local.companyId,
+        publicDisplayName: ((remote.publicDisplayName ?? '').trim().isNotEmpty)
+            ? remote.publicDisplayName
+            : local.publicDisplayName,
+        publicPortraitUrl: ((remote.publicPortraitUrl ?? '').trim().isNotEmpty)
+            ? remote.publicPortraitUrl
+            : local.publicPortraitUrl,
+      );
+    }
+
+    var rawVehiclesCount = 0;
+    var mappedVehiclesCount = 0;
+    final vehiclesRaw = bootstrap['vehicles'];
+    if (vehiclesRaw is List) {
+      rawVehiclesCount = vehiclesRaw.length;
+      final existingVehiclesById = <String, VehicleProfile>{
+        for (final item in vehiclesNotifier.value)
+          if (item.id.trim().isNotEmpty) item.id.trim(): item,
+      };
+      final nextVehicles = <VehicleProfile>[];
+      final remoteVehicleIds = <String>{};
+      for (final row in vehiclesRaw) {
+        if (row is! Map) continue;
+        final map = Map<String, dynamic>.from(row);
+        final vehicleId = textAny(<dynamic>[
+          map['vehicle_id'],
+          map['vehicleId'],
+          map['id'],
+        ]);
+        if (vehicleId.isEmpty) continue;
+        remoteVehicleIds.add(vehicleId);
+        final assignedDriver = map['assigned_driver'] is Map
+            ? Map<String, dynamic>.from(map['assigned_driver'] as Map)
+            : <String, dynamic>{};
+        final vehiclePhotoUrl = safeRemoteMediaRef(
+          textAny(<dynamic>[
+            map['public_photo_url'],
+            map['publicPhotoUrl'],
+            map['vehicle_photo_url'],
+            map['vehiclePhotoUrl'],
+            map['photo_url'],
+            map['photoUrl'],
+          ]),
+        );
+        final primaryPhotoRef = safeVehiclePhotoRef(
+          textAny(<dynamic>[
+            map['primary_photo_ref'],
+            map['primaryPhotoRef'],
+            map['photo_ref'],
+            map['photoRef'],
+            map['public_photo_url'],
+            map['publicPhotoUrl'],
+            map['vehicle_photo_url'],
+            map['vehiclePhotoUrl'],
+          ]),
+        );
+        final galleryPhotoRefs = safeVehiclePhotoRefsFromAny(<dynamic>[
+          map['gallery_photo_refs'],
+          map['galleryPhotoRefs'],
+        ]);
+        final assignedDriverId = textAny(<dynamic>[
+          assignedDriver['driver_id'],
+          assignedDriver['driverId'],
+          assignedDriver['id'],
+          map['driver_id'],
+          map['driverId'],
+          map['assigned_driver_id'],
+          map['assignedDriverId'],
+        ]);
+        final vehicleCompanyId = textAny(<dynamic>[
+          map['company_id'],
+          map['companyId'],
+          bootstrapScopeCompanyId,
+        ]);
+        final remoteVehicle = VehicleProfile(
+          id: vehicleId,
+          vehicleName: textAny(<dynamic>[
+            map['vehicle_name'],
+            map['vehicleName'],
+            map['name'],
+            vehicleId,
+          ]),
+          brandModel: textAny(<dynamic>[
+            map['brand_model'],
+            map['brandModel'],
+            '',
+          ]),
+          licensePlate: textAny(<dynamic>[
+            map['license_plate'],
+            map['licensePlate'],
+            '',
+          ]),
+          exploitationLicenseNumber: textAny(<dynamic>[
+            map['exploitation_license_number'],
+            map['exploitationLicenseNumber'],
+            '',
+          ]),
+          vehicleRegistrationNumber: textAny(<dynamic>[
+            map['vehicle_registration_number'],
+            map['vehicleRegistrationNumber'],
+            '',
+          ]),
+          color: textAny(<dynamic>[map['color'], '']),
+          passengerCapacity: intAny(<dynamic>[
+            map['passenger_capacity'],
+            map['passengerCapacity'],
+          ], 0),
+          luggageCapacity: intAny(<dynamic>[
+            map['luggage_capacity'],
+            map['luggageCapacity'],
+          ], 0),
+          tierId: textAny(<dynamic>[
+            map['tier'],
+            map['tier_id'],
+            map['tierId'],
+            'comfort',
+          ]),
+          isActive: boolAny(<dynamic>[map['is_active'], map['isActive']], true),
+          driverId: assignedDriverId.isEmpty ? null : assignedDriverId,
+          companyId: vehicleCompanyId.isEmpty
+              ? (bootstrapScopeCompanyId.isEmpty
+                    ? null
+                    : bootstrapScopeCompanyId)
+              : vehicleCompanyId,
+          primaryPhotoRef: primaryPhotoRef ?? '',
+          galleryPhotoRefs: galleryPhotoRefs,
+          publicPhotoUrl: vehiclePhotoUrl,
+        );
+        final existingVehicle = existingVehiclesById[vehicleId];
+        nextVehicles.add(
+          existingVehicle == null
+              ? remoteVehicle
+              : mergeVehiclePreferLocal(remoteVehicle, existingVehicle),
+        );
+      }
+      for (final local in vehiclesNotifier.value) {
+        final localId = local.id.trim();
+        if (localId.isEmpty || remoteVehicleIds.contains(localId)) continue;
+        final localCompany = (local.companyId ?? '').trim();
+        if (localCompany.isNotEmpty &&
+            localCompany != bootstrapScopeCompanyId) {
+          continue;
+        }
+        nextVehicles.add(local);
+      }
+      mappedVehiclesCount = nextVehicles.length;
+      vehiclesNotifier.value = nextVehicles;
+    }
+
+    var rawDriversCount = 0;
+    var mappedDriversCount = 0;
+    final driversRaw = bootstrap['drivers'];
+    if (driversRaw is List) {
+      rawDriversCount = driversRaw.length;
+      final existingDriversById = <String, DriverProfile>{
+        for (final item in driversNotifier.value)
+          if (item.id.trim().isNotEmpty) item.id.trim(): item,
+      };
+      final nextDrivers = <DriverProfile>[];
+      final remoteDriverIds = <String>{};
+      for (final row in driversRaw) {
+        if (row is! Map) continue;
+        final map = Map<String, dynamic>.from(row);
+        final driverId = textAny(<dynamic>[
+          map['driver_id'],
+          map['driverId'],
+          map['id'],
+        ]);
+        if (driverId.isEmpty) continue;
+        remoteDriverIds.add(driverId);
+        final fullName = textAny(<dynamic>[
+          map['display_name'],
+          map['displayName'],
+          map['public_display_name'],
+          map['publicDisplayName'],
+          map['driver_name'],
+          map['driverName'],
+          driverId,
+        ]);
+        final driverPhotoUrl = safeRemoteMediaRef(
+          textAny(<dynamic>[
+            map['driver_photo_url'],
+            map['driverPhotoUrl'],
+            map['public_portrait_url'],
+            map['publicPortraitUrl'],
+          ]),
+        );
+        final driverCompanyId = textAny(<dynamic>[
+          map['tenant_id'],
+          map['tenantId'],
+          map['company_id'],
+          map['companyId'],
+          bootstrapScopeCompanyId,
+        ]);
+        final remoteDriver = DriverProfile(
+          id: driverId,
+          fullName: fullName,
+          employeeNumber: textAny(<dynamic>[
+            map['employee_number'],
+            map['employeeNumber'],
+            driverId,
+          ]),
+          phone: textAny(<dynamic>[map['phone'], '']),
+          taxiDriverCardNumber: textAny(<dynamic>[
+            map['taxi_driver_card_number'],
+            map['taxiDriverCardNumber'],
+            '',
+          ]),
+          taxiDriverCardExpiry: textAny(<dynamic>[
+            map['taxi_driver_card_expiry'],
+            map['taxiDriverCardExpiry'],
+            '',
+          ]),
+          isActive: boolAny(<dynamic>[map['is_active'], map['isActive']], true),
+          companyId: driverCompanyId.isEmpty
+              ? (bootstrapScopeCompanyId.isEmpty
+                    ? null
+                    : bootstrapScopeCompanyId)
+              : driverCompanyId,
+          publicProfileEnabled: boolAny(<dynamic>[
+            map['public_profile_enabled'],
+            map['publicProfileEnabled'],
+          ], false),
+          publicPhotoEnabled: boolAny(<dynamic>[
+            map['public_photo_enabled'],
+            map['publicPhotoEnabled'],
+          ], false),
+          publicDisplayName: () {
+            final value = textAny(<dynamic>[
+              map['public_display_name'],
+              map['publicDisplayName'],
+            ]);
+            return value.isEmpty ? null : value;
+          }(),
+          publicPortraitUrl: driverPhotoUrl,
+        );
+        final existingDriver = existingDriversById[driverId];
+        nextDrivers.add(
+          existingDriver == null
+              ? remoteDriver
+              : mergeDriverPreferLocal(remoteDriver, existingDriver),
+        );
+      }
+      for (final local in driversNotifier.value) {
+        final localId = local.id.trim();
+        if (localId.isEmpty || remoteDriverIds.contains(localId)) continue;
+        final localCompany = (local.companyId ?? '').trim();
+        if (localCompany.isNotEmpty &&
+            localCompany != bootstrapScopeCompanyId) {
+          continue;
+        }
+        nextDrivers.add(local);
+      }
+      mappedDriversCount = nextDrivers.length;
+      driversNotifier.value = nextDrivers;
+    }
+
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][HYDRATE_COUNTS] rawVehicles=$rawVehiclesCount mappedVehicles=$mappedVehiclesCount rawDrivers=$rawDriversCount mappedDrivers=$mappedDriversCount company=${maskScopeForLog(bootstrapScopeCompanyId)}',
+    );
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][NOTIFIERS] vehicles=${vehiclesNotifier.value.length} drivers=${driversNotifier.value.length}',
+    );
+
+    await _persistLocalTenantState();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 Future<Map<String, dynamic>> publishBackendPublicPartnerProfile({

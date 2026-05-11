@@ -240,6 +240,188 @@ Map<String, String> _adminHeaders() {
   return <String, String>{'Authorization': 'Bearer $t', 'x-admin-token': t};
 }
 
+String _maskScopeForLog(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '—';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _firstBootstrapText(List<dynamic> values) {
+  for (final value in values) {
+    final text = (value ?? '').toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+Future<void> _applyCompanyProfileFromBootstrapPayload(
+  Map<String, dynamic> bootstrap,
+) async {
+  final current = companyProfileNotifier.value;
+  if (current == null) return;
+  final companyMap = bootstrap['company'] is Map
+      ? Map<String, dynamic>.from(bootstrap['company'] as Map)
+      : <String, dynamic>{};
+  final businessMap = bootstrap['business_profile'] is Map
+      ? Map<String, dynamic>.from(bootstrap['business_profile'] as Map)
+      : <String, dynamic>{};
+  final companyName = _firstBootstrapText(<dynamic>[
+    companyMap['display_name'],
+    businessMap['companyName'],
+    businessMap['company_name'],
+    businessMap['legalName'],
+    businessMap['legal_name'],
+    current.companyName,
+  ]);
+  final countryCode = _firstBootstrapText(<dynamic>[
+    companyMap['country'],
+    businessMap['country'],
+    current.countryCode,
+  ]);
+  final updated = current.copyWith(
+    companyName: companyName,
+    phone: _firstBootstrapText(<dynamic>[businessMap['phone'], current.phone]),
+    vatNumber: _firstBootstrapText(<dynamic>[
+      businessMap['vatNumber'],
+      businessMap['vat_number'],
+      current.vatNumber,
+    ]),
+    addressLine: _firstBootstrapText(<dynamic>[
+      businessMap['address'],
+      current.addressLine,
+    ]),
+    postalCode: _firstBootstrapText(<dynamic>[
+      businessMap['postcode'],
+      current.postalCode,
+    ]),
+    city: _firstBootstrapText(<dynamic>[businessMap['city'], current.city]),
+    countryCode: countryCode.isEmpty ? current.countryCode : countryCode,
+    companyEmail: _firstBootstrapText(<dynamic>[
+      businessMap['companyEmail'],
+      businessMap['company_email'],
+      businessMap['email'],
+      current.companyEmail,
+    ]),
+    supportEmail: _firstBootstrapText(<dynamic>[
+      businessMap['supportEmail'],
+      businessMap['support_email'],
+      businessMap['email'],
+      current.supportEmail,
+    ]),
+    billingEmail: _firstBootstrapText(<dynamic>[
+      businessMap['billingEmail'],
+      businessMap['billing_email'],
+      businessMap['invoiceEmail'],
+      businessMap['invoice_email'],
+      current.billingEmail,
+    ]),
+    bookingEmail: _firstBootstrapText(<dynamic>[
+      businessMap['bookingEmail'],
+      businessMap['booking_email'],
+      current.bookingEmail,
+    ]),
+    notificationEmail: _firstBootstrapText(<dynamic>[
+      businessMap['notificationEmail'],
+      businessMap['notification_email'],
+      businessMap['replyToEmail'],
+      businessMap['reply_to_email'],
+      current.notificationEmail,
+    ]),
+    updatedAt: DateTime.now().toUtc().toIso8601String(),
+    isActive: true,
+  );
+  await CompanySessionStore.instance.persistProfile(updated);
+  CompanySessionStore.instance.applyProfileToBusinessNotifier(updated);
+}
+
+Future<bool> _hydrateCompanyBootstrapFromActiveSession({
+  required String reason,
+  bool clearOnUnauthorized = false,
+}) async {
+  final session = activeCompanySessionNotifier.value;
+  final token = (session?.companySessionToken ?? '').trim();
+  if (token.isEmpty) return false;
+  debugPrint(
+    '[COMPANY_BOOTSTRAP][REQ] source=$reason company=${_maskScopeForLog(session?.companyId ?? "")}',
+  );
+  final bootstrap = await fetchCompanyBootstrapWithToken(
+    companySessionToken: token,
+  );
+  if (bootstrap == null) {
+    final status = lastCompanyBootstrapHttpStatusCode;
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=${status ?? "unknown"}',
+    );
+    if (status == 401 && clearOnUnauthorized) {
+      await CompanySessionStore.instance.clearLocalCompanyState();
+    }
+    return false;
+  }
+  final hydrated = await hydrateCompanyStateFromBootstrap(bootstrap);
+  if (!hydrated) {
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=hydrate_failed',
+    );
+    return false;
+  }
+  await _applyCompanyProfileFromBootstrapPayload(bootstrap);
+  debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
+  return true;
+}
+
+String _activeCompanyScopeIdForSync() {
+  final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (fromProfile.isNotEmpty) return fromProfile;
+  final fromSession =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (fromSession.isNotEmpty) return fromSession;
+  final fallback = resolvedCompanyId.trim();
+  if (fallback.isNotEmpty) return fallback;
+  return kTenantId;
+}
+
+bool _hasRicherLocalCompanyInventoryForBackfill() {
+  if (vehiclesNotifier.value.length > 1 || driversNotifier.value.length > 1) {
+    return true;
+  }
+  for (final vehicle in vehiclesNotifier.value) {
+    if (vehicle.brandModel.trim().isNotEmpty ||
+        vehicle.licensePlate.trim().isNotEmpty ||
+        vehicle.exploitationLicenseNumber.trim().isNotEmpty ||
+        vehicle.vehicleRegistrationNumber.trim().isNotEmpty ||
+        vehicle.primaryPhotoRef.trim().isNotEmpty ||
+        vehicle.galleryPhotoRefs.isNotEmpty ||
+        (vehicle.publicPhotoUrl ?? '').trim().isNotEmpty ||
+        (vehicle.driverId ?? '').trim().isNotEmpty) {
+      return true;
+    }
+  }
+  for (final driver in driversNotifier.value) {
+    if (driver.taxiDriverCardNumber.trim().isNotEmpty ||
+        driver.taxiDriverCardExpiry.trim().isNotEmpty ||
+        (driver.publicPortraitUrl ?? '').trim().isNotEmpty ||
+        (driver.publicDisplayName ?? '').trim().isNotEmpty ||
+        driver.publicProfileEnabled ||
+        driver.publicPhotoEnabled) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void _triggerCompanyInventoryBackfillRestore({required String reason}) {
+  if (!_hasRicherLocalCompanyInventoryForBackfill()) return;
+  final scopeId = _activeCompanyScopeIdForSync();
+  unawaited(
+    syncLocalCompanyInventoryToBackend(
+      reason: reason,
+      tenantId: scopeId,
+      companyId: scopeId,
+    ),
+  );
+}
+
 // Pending Mollie payment tracking lives in lib/payment_return.dart and is
 // re-exported above so existing references in this file (and other modules)
 // keep working unchanged.
@@ -249,6 +431,13 @@ Future<void> main() async {
   await loadLocalTenantState();
   await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
+  if (CompanySessionStore.instance.hasValidCompanyContext) {
+    await _hydrateCompanyBootstrapFromActiveSession(
+      reason: 'startup_restore',
+      clearOnUnauthorized: true,
+    );
+    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+  }
   if (CompanySessionStore.instance.hasValidCompanyContext) {
     setAppRole(AppRole.companyAdmin);
     _startInCompanyAdminHome = true;
@@ -2930,6 +3119,15 @@ class RoleEntryPage extends StatelessWidget {
     final expiresAt = DateTime.tryParse(
       _safePairingText(payload['expires_at']),
     );
+    final companySessionToken = _safePairingText(
+      payload['company_session_token'] ?? payload['companySessionToken'],
+    );
+    final expiresInSeconds = int.tryParse(
+      _safePairingText(payload['expires_in'] ?? payload['expiresIn']),
+    );
+    final linkMethod = _safePairingText(
+      payload['link_method'] ?? payload['linkMethod'],
+    );
     await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
       tenantId: tenantId,
       companyId: companyId,
@@ -2938,7 +3136,16 @@ class RoleEntryPage extends StatelessWidget {
       countryCode: countryCode,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
+      companySessionToken: companySessionToken,
+      expiresInSeconds: expiresInSeconds,
+      linkMethod: linkMethod,
     );
+    if (companySessionToken.isNotEmpty) {
+      await _hydrateCompanyBootstrapFromActiveSession(
+        reason: 'pairing_success',
+      );
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    }
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
     setAppRole(AppRole.companyAdmin);
@@ -2976,7 +3183,9 @@ class RoleEntryPage extends StatelessWidget {
       companyName: companyName,
       countryCode: country,
       issuedAt: DateTime.now().toUtc(),
+      linkMethod: 'dev_pairing_bypass',
     );
+    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
     setAppRole(AppRole.companyAdmin);
@@ -3034,6 +3243,13 @@ class RoleEntryPage extends StatelessWidget {
 
   Future<void> _goBusiness(BuildContext context) async {
     await CompanySessionStore.instance.bootstrap();
+    if (CompanySessionStore.instance.hasValidCompanyContext) {
+      await _hydrateCompanyBootstrapFromActiveSession(
+        reason: 'role_entry',
+        clearOnUnauthorized: true,
+      );
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    }
     if (!context.mounted) return;
     if (CompanySessionStore.instance.hasValidCompanyContext) {
       setAppRole(AppRole.companyAdmin);
@@ -8694,6 +8910,186 @@ class CompanyDriverManagementPage extends StatelessWidget {
     return resolved;
   }
 
+  String _maskDriverForLog(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return 'unknown';
+    if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+    return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+  }
+
+  ({String tenantId, String companyId}) _activeCompanyScopeForDriverDelete(
+    DriverProfile driver,
+  ) {
+    final scoped = driver.companyId?.trim() ?? '';
+    if (scoped.isNotEmpty) {
+      return (tenantId: scoped, companyId: scoped);
+    }
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) {
+      return (tenantId: fromProfile, companyId: fromProfile);
+    }
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) {
+      return (tenantId: fromSession, companyId: fromSession);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return (tenantId: kTenantId, companyId: kTenantId);
+  }
+
+  Future<void> _deleteDriverFromBackendAndLocal(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final driverId = driver.id.trim();
+    final scope = _activeCompanyScopeForDriverDelete(driver);
+    final maskedDriver = _maskDriverForLog(driverId);
+    final maskedCompany = _maskScopeForLog(scope.companyId);
+    debugPrint(
+      '[DRIVER_DELETE][REQ] driver=$maskedDriver company=$maskedCompany',
+    );
+
+    final endpoint =
+        Uri.parse(
+          '$kBookingBaseUrl/admin/company/drivers/index/delete',
+        ).replace(
+          queryParameters: <String, String>{
+            'tenant_id': scope.tenantId,
+            'company_id': scope.companyId,
+          },
+        );
+    final headers = <String, String>{
+      ..._adminHeaders(),
+      'Content-Type': 'application/json',
+    };
+    final payload = <String, dynamic>{
+      'tenant_id': scope.tenantId,
+      'company_id': scope.companyId,
+      'driver_id': driverId,
+    };
+
+    try {
+      final response = await http
+          .post(endpoint, headers: headers, body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        bool deleted = false;
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            deleted = decoded['deleted'] == true;
+          }
+        } catch (_) {}
+        removeDriverLocallyAfterBackendDelete(
+          driverId,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        debugPrint('[DRIVER_DELETE][OK] driver=$maskedDriver deleted=$deleted');
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Chauffeur verwijderd.',
+                en: 'Driver removed.',
+                fr: 'Chauffeur supprimé.',
+                es: 'Conductor eliminado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      String reason = 'request_failed';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          final text = (decoded['reason'] ?? decoded['error'] ?? '')
+              .toString()
+              .trim();
+          if (text.isNotEmpty) reason = text;
+        }
+      } catch (_) {}
+      debugPrint(
+        '[DRIVER_DELETE][ERROR] status=${response.statusCode} reason=$reason driver=$maskedDriver',
+      );
+    } catch (_) {
+      debugPrint(
+        '[DRIVER_DELETE][ERROR] status=network reason=exception driver=$maskedDriver',
+      );
+    }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Chauffeur kon niet verwijderd worden.',
+            en: 'Driver could not be removed.',
+            fr: 'Impossible de supprimer le chauffeur.',
+            es: 'No se pudo eliminar el conductor.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteDriver(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t(
+            nl: 'Chauffeur verwijderen?',
+            en: 'Remove driver?',
+            fr: 'Supprimer le chauffeur ?',
+            es: '¿Eliminar conductor?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze chauffeur wordt uit de actieve bedrijfslijst verwijderd. Ritgeschiedenis blijft bewaard.',
+            en: 'This driver will be removed from the active company list. Ride history will be kept.',
+            fr: 'Ce chauffeur sera supprimé de la liste active de l’entreprise. L’historique des courses sera conservé.',
+            es: 'Este conductor se eliminará de la lista activa de la empresa. El historial de viajes se conservará.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Remove',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!context.mounted) return;
+    await _deleteDriverFromBackendAndLocal(context, driver);
+  }
+
   String _driverCardInitials(DriverProfile driver) {
     final raw = _displayDriverName(driver.fullName).trim();
     if (raw.isEmpty) return 'D';
@@ -8718,8 +9114,32 @@ class CompanyDriverManagementPage extends StatelessWidget {
     }
   }
 
+  String? _driverCardNetworkPhotoUrl(DriverProfile driver) {
+    bool isHttpUrl(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
+    }
+
+    final profilePhotoPath = driver.profilePhotoPath?.trim() ?? '';
+    if (isHttpUrl(profilePhotoPath)) return profilePhotoPath;
+    final publicPortraitUrl = driver.publicPortraitUrl?.trim() ?? '';
+    if (isHttpUrl(publicPortraitUrl)) return publicPortraitUrl;
+    return null;
+  }
+
   Widget _driverCardAvatar(DriverProfile driver) {
     final photoPath = _driverCardPhotoPath(driver);
+    final networkUrl = _driverCardNetworkPhotoUrl(driver);
+    Widget initialsFallback() => Center(
+      child: Text(
+        _driverCardInitials(driver),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: 13,
+        ),
+      ),
+    );
     return Container(
       width: 52,
       height: 52,
@@ -8729,31 +9149,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
         border: Border.all(color: _gold.withOpacity(0.5)),
       ),
       child: ClipOval(
-        child: photoPath == null
-            ? Center(
-                child: Text(
-                  _driverCardInitials(driver),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
-                ),
-              )
-            : Image.file(
+        child: photoPath != null
+            ? Image.file(
                 File(photoPath),
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(
-                  child: Text(
-                    _driverCardInitials(driver),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ),
+                errorBuilder: (_, __, ___) => initialsFallback(),
+              )
+            : (networkUrl != null
+                  ? Image.network(
+                      networkUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => initialsFallback(),
+                    )
+                  : initialsFallback()),
       ),
     );
   }
@@ -9319,6 +9727,35 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                             : Colors.white70,
                                         fontSize: 11.6,
                                         fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () =>
+                                        _confirmDeleteDriver(context, d),
+                                    tooltip: _t(
+                                      nl: 'Chauffeur verwijderen',
+                                      en: 'Remove driver',
+                                      fr: 'Supprimer le chauffeur',
+                                      es: 'Eliminar conductor',
+                                    ),
+                                    icon: Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                      color: Colors.redAccent.withOpacity(0.92),
+                                    ),
+                                    splashRadius: 20,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 36,
+                                      minHeight: 36,
+                                    ),
+                                    padding: const EdgeInsets.all(6),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2A1518),
+                                      side: BorderSide(
+                                        color: Colors.redAccent.withOpacity(
+                                          0.35,
+                                        ),
                                       ),
                                     ),
                                   ),
