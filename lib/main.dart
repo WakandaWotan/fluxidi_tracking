@@ -49,6 +49,7 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'airport/airport_page.dart';
 import 'events/events_page.dart';
 
@@ -2058,6 +2059,12 @@ class FluxidiDriverApp extends StatelessWidget {
       ),
     );
 
+    final Widget startupTarget = _startInCompanyAdminHome
+        ? const BusinessHomePage()
+        : (_startInDriverHome ? const DriverHomePage() : const RoleEntryPage());
+    final bool shouldGateStartupSession =
+        _startInCompanyAdminHome || _startInDriverHome;
+
     return ValueListenableBuilder(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => MaterialApp(
@@ -2067,11 +2074,10 @@ class FluxidiDriverApp extends StatelessWidget {
         builder: (context, child) {
           return FluxidiFrame(child: child ?? const SizedBox.shrink());
         },
-        home: _startInCompanyAdminHome
-            ? const BusinessHomePage()
-            : (_startInDriverHome
-                  ? const DriverHomePage()
-                  : const RoleEntryPage()),
+        home: FluxidiAppLockGatePage(
+          target: startupTarget,
+          shouldGate: shouldGateStartupSession,
+        ),
       ),
     );
   }
