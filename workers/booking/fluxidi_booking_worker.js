@@ -4494,6 +4494,35 @@ function publicPreviewCopy(lang) {
       description:
         "Gebruik deze pagina om rechtstreeks een rit aan te vragen bij dit bedrijf.",
       cta: "Boekingsformulier volgt binnenkort",
+      formTitle: "Ritgegevens",
+      formSubtitle: "Vul uw gegevens in en bereken direct de prijs.",
+      fieldFrom: "Vertrekadres",
+      fieldTo: "Bestemmingsadres",
+      fieldPickupDate: "Ophaaldatum",
+      fieldPickupTime: "Ophaaltijd",
+      fieldName: "Uw naam",
+      fieldPhone: "Telefoonnummer",
+      fieldEmail: "E-mail (optioneel)",
+      fieldPax: "Passagiers",
+      fieldBags: "Bagage",
+      fieldNotes: "Opmerkingen (optioneel)",
+      quoteButton: "Prijs berekenen",
+      bookButton: "Boeking aanvragen",
+      resetButton: "Nieuwe quote",
+      quoteLoading: "Prijs wordt berekend...",
+      quoteSuccess: "Prijsberekening voltooid. U kunt nu de boeking aanvragen.",
+      quoteError: "Kon prijs niet berekenen. Controleer uw gegevens en probeer opnieuw.",
+      bookingLoading: "Boeking wordt verwerkt...",
+      bookingSuccess: "Boeking succesvol aangevraagd.",
+      bookingError: "Boeking kon niet worden aangemaakt. Probeer opnieuw.",
+      estimatedPrice: "Geschatte prijs",
+      distance: "Afstand",
+      duration: "Reisduur",
+      bookingReference: "Boekingsreferentie",
+      requiredFieldsMissing: "Vul alle verplichte velden in.",
+      invalidPickupDateTime: "Ongeldige ophaaldatum of -tijd.",
+      quoteFirst: "Bereken eerst een prijs voordat u boekt.",
+      unavailableForBooking: "Deze pagina kan momenteel geen boekingen verwerken.",
       codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
@@ -4507,6 +4536,35 @@ function publicPreviewCopy(lang) {
       description:
         "Use this page to request a ride directly with this company.",
       cta: "Booking form coming soon",
+      formTitle: "Trip details",
+      formSubtitle: "Enter your trip details and calculate your price instantly.",
+      fieldFrom: "Pickup address",
+      fieldTo: "Destination address",
+      fieldPickupDate: "Pickup date",
+      fieldPickupTime: "Pickup time",
+      fieldName: "Your name",
+      fieldPhone: "Phone number",
+      fieldEmail: "Email (optional)",
+      fieldPax: "Passengers",
+      fieldBags: "Luggage",
+      fieldNotes: "Notes (optional)",
+      quoteButton: "Calculate price",
+      bookButton: "Request booking",
+      resetButton: "New quote",
+      quoteLoading: "Calculating price...",
+      quoteSuccess: "Price calculated. You can now request your booking.",
+      quoteError: "Could not calculate the price. Please check your input and try again.",
+      bookingLoading: "Submitting booking...",
+      bookingSuccess: "Booking request submitted successfully.",
+      bookingError: "Could not create booking. Please try again.",
+      estimatedPrice: "Estimated price",
+      distance: "Distance",
+      duration: "Duration",
+      bookingReference: "Booking reference",
+      requiredFieldsMissing: "Please fill in all required fields.",
+      invalidPickupDateTime: "Invalid pickup date or time.",
+      quoteFirst: "Calculate a quote before requesting a booking.",
+      unavailableForBooking: "This page is currently unavailable for bookings.",
       codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
@@ -4520,6 +4578,35 @@ function publicPreviewCopy(lang) {
       description:
         "Utilisez cette page pour demander une course directement auprès de cette entreprise.",
       cta: "Formulaire de réservation bientôt disponible",
+      formTitle: "Détails du trajet",
+      formSubtitle: "Saisissez votre trajet et calculez votre prix immédiatement.",
+      fieldFrom: "Adresse de départ",
+      fieldTo: "Adresse de destination",
+      fieldPickupDate: "Date de prise en charge",
+      fieldPickupTime: "Heure de prise en charge",
+      fieldName: "Votre nom",
+      fieldPhone: "Numéro de téléphone",
+      fieldEmail: "E-mail (optionnel)",
+      fieldPax: "Passagers",
+      fieldBags: "Bagages",
+      fieldNotes: "Remarques (optionnel)",
+      quoteButton: "Calculer le prix",
+      bookButton: "Demander la réservation",
+      resetButton: "Nouveau devis",
+      quoteLoading: "Calcul du prix en cours...",
+      quoteSuccess: "Prix calculé. Vous pouvez maintenant demander la réservation.",
+      quoteError: "Impossible de calculer le prix. Vérifiez vos données et réessayez.",
+      bookingLoading: "Envoi de la réservation...",
+      bookingSuccess: "Demande de réservation envoyée avec succès.",
+      bookingError: "Impossible de créer la réservation. Veuillez réessayer.",
+      estimatedPrice: "Prix estimé",
+      distance: "Distance",
+      duration: "Durée",
+      bookingReference: "Référence de réservation",
+      requiredFieldsMissing: "Veuillez remplir tous les champs obligatoires.",
+      invalidPickupDateTime: "Date ou heure de prise en charge invalide.",
+      quoteFirst: "Calculez d'abord un devis avant de réserver.",
+      unavailableForBooking: "Cette page ne peut pas traiter de réservation pour le moment.",
       codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
@@ -4533,6 +4620,35 @@ function publicPreviewCopy(lang) {
       description:
         "Usa esta página para solicitar un viaje directamente con esta empresa.",
       cta: "Formulario de reserva próximamente",
+      formTitle: "Detalles del viaje",
+      formSubtitle: "Introduce tu viaje y calcula el precio al instante.",
+      fieldFrom: "Dirección de recogida",
+      fieldTo: "Dirección de destino",
+      fieldPickupDate: "Fecha de recogida",
+      fieldPickupTime: "Hora de recogida",
+      fieldName: "Tu nombre",
+      fieldPhone: "Número de teléfono",
+      fieldEmail: "Correo (opcional)",
+      fieldPax: "Pasajeros",
+      fieldBags: "Equipaje",
+      fieldNotes: "Notas (opcional)",
+      quoteButton: "Calcular precio",
+      bookButton: "Solicitar reserva",
+      resetButton: "Nueva cotización",
+      quoteLoading: "Calculando precio...",
+      quoteSuccess: "Precio calculado. Ya puedes solicitar la reserva.",
+      quoteError: "No se pudo calcular el precio. Revisa los datos e inténtalo de nuevo.",
+      bookingLoading: "Enviando reserva...",
+      bookingSuccess: "Solicitud de reserva enviada correctamente.",
+      bookingError: "No se pudo crear la reserva. Inténtalo de nuevo.",
+      estimatedPrice: "Precio estimado",
+      distance: "Distancia",
+      duration: "Duración",
+      bookingReference: "Referencia de reserva",
+      requiredFieldsMissing: "Completa todos los campos obligatorios.",
+      invalidPickupDateTime: "Fecha u hora de recogida no válida.",
+      quoteFirst: "Calcula primero una cotización antes de reservar.",
+      unavailableForBooking: "Esta página no puede procesar reservas en este momento.",
       codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
@@ -4599,7 +4715,7 @@ async function _buildPublicBookingGatewayPayload({
   return {
     ok: true,
     phase: "public_booking_gateway_v2a",
-    booking_enabled: false,
+    booking_enabled: true,
     public_booking_status: "prepared",
     company_code: sanitizeTenantString(companyCode, 80),
     display_name: displayName || "Fluxidi",
@@ -4740,9 +4856,343 @@ async function handlePublicBookingPreview(url, env) {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
         <h2 style="margin:18px 0 8px;font-size:21px;line-height:1.28;">${escapeHtml(copy.heading)}</h2>
         <p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.5;">${escapeHtml(copy.description)}</p>
-        <button type="button" disabled style="margin-top:16px;width:100%;border:none;border-radius:12px;padding:13px 16px;background:#28324C;color:#A4AFCB;font-size:15px;font-weight:700;cursor:not-allowed;opacity:0.95;">
-          ${escapeHtml(copy.cta)}
-        </button>
+        <section style="margin-top:16px;background:#0F172B;border:1px solid #253252;border-radius:14px;padding:14px;">
+          <h3 style="margin:0 0 6px;font-size:17px;line-height:1.3;">${escapeHtml(copy.formTitle)}</h3>
+          <p style="margin:0 0 12px;color:#9EABCB;font-size:13px;line-height:1.45;">${escapeHtml(copy.formSubtitle)}</p>
+          <form id="public-booking-form" style="display:flex;flex-wrap:wrap;gap:10px;" onsubmit="return false;">
+            <label style="display:block;flex:1 1 280px;min-width:220px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldFrom)}</span>
+              <input id="public-field-from" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 280px;min-width:220px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldTo)}</span>
+              <input id="public-field-to" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 150px;min-width:150px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPickupDate)}</span>
+              <input id="public-field-date" type="date" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 130px;min-width:130px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPickupTime)}</span>
+              <input id="public-field-time" type="time" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 200px;min-width:180px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldName)}</span>
+              <input id="public-field-name" type="text" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 200px;min-width:180px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPhone)}</span>
+              <input id="public-field-phone" type="tel" required style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 220px;min-width:200px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldEmail)}</span>
+              <input id="public-field-email" type="email" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 110px;min-width:110px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldPax)}</span>
+              <input id="public-field-pax" type="number" min="1" step="1" value="1" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 110px;min-width:110px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldBags)}</span>
+              <input id="public-field-bags" type="number" min="0" step="1" value="0" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;" />
+            </label>
+            <label style="display:block;flex:1 1 100%;min-width:220px;">
+              <span style="display:block;margin-bottom:6px;font-size:12px;color:#AEB8D0;">${escapeHtml(copy.fieldNotes)}</span>
+              <textarea id="public-field-notes" rows="3" style="width:100%;box-sizing:border-box;border:1px solid #2A3655;border-radius:10px;padding:10px 11px;background:#0A1326;color:#EAF0FF;font-size:14px;resize:vertical;"></textarea>
+            </label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;width:100%;margin-top:2px;">
+              <button id="public-quote-btn" type="button" style="flex:1 1 180px;border:none;border-radius:10px;padding:12px 14px;background:#16A34A;color:#F5FFF8;font-size:14px;font-weight:700;cursor:pointer;">
+                ${escapeHtml(copy.quoteButton)}
+              </button>
+              <button id="public-book-btn" type="button" disabled style="flex:1 1 180px;border:none;border-radius:10px;padding:12px 14px;background:#C59F3A;color:#17120A;font-size:14px;font-weight:700;cursor:not-allowed;opacity:0.7;">
+                ${escapeHtml(copy.bookButton)}
+              </button>
+              <button id="public-reset-btn" type="button" style="flex:1 1 140px;border:1px solid #334166;border-radius:10px;padding:12px 14px;background:#121B31;color:#D9E3FF;font-size:14px;font-weight:700;cursor:pointer;">
+                ${escapeHtml(copy.resetButton)}
+              </button>
+            </div>
+          </form>
+          <div id="public-booking-status" style="margin-top:12px;display:none;border:1px solid #2C3A5C;border-radius:10px;padding:10px 11px;background:#111A2E;color:#CFD8F2;font-size:13px;line-height:1.45;"></div>
+          <div id="public-quote-panel" style="margin-top:12px;display:none;border:1px solid #294233;border-radius:10px;padding:12px;background:#10221A;color:#DDF7E8;">
+            <div style="font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.estimatedPrice)}:</strong> <span id="public-quote-price">-</span></div>
+            <div style="margin-top:6px;font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.distance)}:</strong> <span id="public-quote-distance">-</span></div>
+            <div style="margin-top:6px;font-size:13px;line-height:1.4;"><strong>${escapeHtml(copy.duration)}:</strong> <span id="public-quote-duration">-</span></div>
+            <div id="public-quote-note-wrap" style="margin-top:6px;font-size:13px;line-height:1.4;display:none;"><strong>Info:</strong> <span id="public-quote-note"></span></div>
+          </div>
+          <div id="public-booking-result" style="margin-top:12px;display:none;border:1px solid #355C3C;border-radius:10px;padding:12px;background:#12331F;color:#CFF5D7;font-size:13px;line-height:1.45;"></div>
+          <script>
+            (function () {
+              const companyCode = ${JSON.stringify(companyCodeForUi || "")};
+              const uiText = ${JSON.stringify({
+                quoteLoading: copy.quoteLoading,
+                quoteSuccess: copy.quoteSuccess,
+                quoteError: copy.quoteError,
+                bookingLoading: copy.bookingLoading,
+                bookingSuccess: copy.bookingSuccess,
+                bookingError: copy.bookingError,
+                requiredFieldsMissing: copy.requiredFieldsMissing,
+                invalidPickupDateTime: copy.invalidPickupDateTime,
+                quoteFirst: copy.quoteFirst,
+                bookingReference: copy.bookingReference,
+                unavailableForBooking: copy.unavailableForBooking,
+              })};
+
+              const quoteBtn = document.getElementById("public-quote-btn");
+              const bookBtn = document.getElementById("public-book-btn");
+              const resetBtn = document.getElementById("public-reset-btn");
+              const statusEl = document.getElementById("public-booking-status");
+              const resultEl = document.getElementById("public-booking-result");
+              const quotePanelEl = document.getElementById("public-quote-panel");
+              const quotePriceEl = document.getElementById("public-quote-price");
+              const quoteDistanceEl = document.getElementById("public-quote-distance");
+              const quoteDurationEl = document.getElementById("public-quote-duration");
+              const quoteNoteWrapEl = document.getElementById("public-quote-note-wrap");
+              const quoteNoteEl = document.getElementById("public-quote-note");
+              const fieldFrom = document.getElementById("public-field-from");
+              const fieldTo = document.getElementById("public-field-to");
+              const fieldDate = document.getElementById("public-field-date");
+              const fieldTime = document.getElementById("public-field-time");
+              const fieldName = document.getElementById("public-field-name");
+              const fieldPhone = document.getElementById("public-field-phone");
+              const fieldEmail = document.getElementById("public-field-email");
+              const fieldPax = document.getElementById("public-field-pax");
+              const fieldBags = document.getElementById("public-field-bags");
+              const fieldNotes = document.getElementById("public-field-notes");
+
+              let lastQuotePayload = null;
+
+              function esc(value) {
+                return String(value == null ? "" : value)
+                  .replace(/&/g, "&amp;")
+                  .replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;")
+                  .replace(/"/g, "&quot;")
+                  .replace(/'/g, "&#39;");
+              }
+
+              function setStatus(message, tone) {
+                const text = String(message || "").trim();
+                if (!text) {
+                  statusEl.style.display = "none";
+                  statusEl.textContent = "";
+                  return;
+                }
+                statusEl.style.display = "block";
+                statusEl.textContent = text;
+                if (tone === "error") {
+                  statusEl.style.borderColor = "#69414A";
+                  statusEl.style.background = "#2A1720";
+                  statusEl.style.color = "#FFD1D9";
+                } else if (tone === "success") {
+                  statusEl.style.borderColor = "#355C3C";
+                  statusEl.style.background = "#12331F";
+                  statusEl.style.color = "#CFF5D7";
+                } else {
+                  statusEl.style.borderColor = "#2C3A5C";
+                  statusEl.style.background = "#111A2E";
+                  statusEl.style.color = "#CFD8F2";
+                }
+              }
+
+              function setBusy(isBusy, mode) {
+                quoteBtn.disabled = !!isBusy;
+                resetBtn.disabled = !!isBusy;
+                if (isBusy && mode === "quote") {
+                  bookBtn.disabled = true;
+                } else if (isBusy && mode === "book") {
+                  bookBtn.disabled = true;
+                } else {
+                  bookBtn.disabled = !lastQuotePayload;
+                }
+                quoteBtn.style.opacity = quoteBtn.disabled ? "0.7" : "1";
+                quoteBtn.style.cursor = quoteBtn.disabled ? "not-allowed" : "pointer";
+                bookBtn.style.opacity = bookBtn.disabled ? "0.7" : "1";
+                bookBtn.style.cursor = bookBtn.disabled ? "not-allowed" : "pointer";
+                resetBtn.style.opacity = resetBtn.disabled ? "0.7" : "1";
+                resetBtn.style.cursor = resetBtn.disabled ? "not-allowed" : "pointer";
+              }
+
+              function normalizeInt(value, fallback, minValue) {
+                const num = Number(value);
+                if (!Number.isFinite(num)) return fallback;
+                const rounded = Math.round(num);
+                return Math.max(minValue, rounded);
+              }
+
+              function formatMoney(value) {
+                const num = Number(value);
+                if (!Number.isFinite(num)) return "-";
+                return "EUR " + num.toFixed(2);
+              }
+
+              function buildPickupIso(dateValue, timeValue) {
+                if (!dateValue || !timeValue) return "";
+                // Interpret the selected date/time as local browser time, then serialize to ISO.
+                const localCandidate = new Date(String(dateValue) + "T" + String(timeValue));
+                if (!Number.isFinite(localCandidate.getTime())) return "";
+                return localCandidate.toISOString();
+              }
+
+              function readCommonPublicPayload() {
+                const from = String(fieldFrom.value || "").trim();
+                const to = String(fieldTo.value || "").trim();
+                const pickupDate = String(fieldDate.value || "").trim();
+                const pickupTime = String(fieldTime.value || "").trim();
+                if (!from || !to || !pickupDate || !pickupTime) {
+                  return { ok: false, error: uiText.requiredFieldsMissing };
+                }
+                const pickupIso = buildPickupIso(pickupDate, pickupTime);
+                if (!pickupIso) {
+                  return { ok: false, error: uiText.invalidPickupDateTime };
+                }
+                const payload = {
+                  company_code: companyCode,
+                  from,
+                  to,
+                  pickup_iso: pickupIso,
+                  pax: normalizeInt(fieldPax.value, 1, 1),
+                  bags: normalizeInt(fieldBags.value, 0, 0),
+                };
+                const notes = String(fieldNotes.value || "").trim();
+                if (notes) payload.notes = notes;
+                return { ok: true, payload };
+              }
+
+              async function onQuoteRequest() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                const base = readCommonPublicPayload();
+                if (!base.ok) {
+                  setStatus(base.error || uiText.quoteError, "error");
+                  return;
+                }
+                resultEl.style.display = "none";
+                resultEl.innerHTML = "";
+                setBusy(true, "quote");
+                setStatus(uiText.quoteLoading, "info");
+                try {
+                  const response = await fetch("/public/quote", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(base.payload),
+                  });
+                  const out = await response.json().catch(function () {
+                    return { ok: false, error: "quote_failed" };
+                  });
+                  if (!response.ok || !out || out.ok !== true) {
+                    const errorCode = String(out && out.error ? out.error : "quote_failed");
+                    setStatus(uiText.quoteError + " (" + errorCode + ")", "error");
+                    quotePanelEl.style.display = "none";
+                    lastQuotePayload = null;
+                    setBusy(false);
+                    return;
+                  }
+                  const amount = out.total_price_incl_vat != null ? out.total_price_incl_vat : out.price_incl_vat;
+                  quotePriceEl.textContent = formatMoney(amount);
+                  quoteDistanceEl.textContent = out.distance_km != null ? String(out.distance_km) + " km" : "-";
+                  quoteDurationEl.textContent = out.duration_min != null ? String(out.duration_min) + " min" : "-";
+                  const note = String(out.note || "").trim();
+                  if (note) {
+                    quoteNoteWrapEl.style.display = "block";
+                    quoteNoteEl.textContent = note;
+                  } else {
+                    quoteNoteWrapEl.style.display = "none";
+                    quoteNoteEl.textContent = "";
+                  }
+                  quotePanelEl.style.display = "block";
+                  lastQuotePayload = base.payload;
+                  setStatus(uiText.quoteSuccess, "success");
+                } catch (_) {
+                  quotePanelEl.style.display = "none";
+                  lastQuotePayload = null;
+                  setStatus(uiText.quoteError, "error");
+                } finally {
+                  setBusy(false);
+                }
+              }
+
+              async function onBookRequest() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                if (!lastQuotePayload) {
+                  setStatus(uiText.quoteFirst, "error");
+                  return;
+                }
+                const customerName = String(fieldName.value || "").trim();
+                const customerPhone = String(fieldPhone.value || "").trim();
+                const customerEmail = String(fieldEmail.value || "").trim();
+                if (!customerName || !customerPhone) {
+                  setStatus(uiText.requiredFieldsMissing, "error");
+                  return;
+                }
+                const bookPayload = {
+                  ...lastQuotePayload,
+                  customer_name: customerName,
+                  customer_phone: customerPhone,
+                };
+                if (customerEmail) {
+                  bookPayload.customer_email = customerEmail;
+                }
+                setBusy(true, "book");
+                setStatus(uiText.bookingLoading, "info");
+                try {
+                  const response = await fetch("/public/book", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(bookPayload),
+                  });
+                  const out = await response.json().catch(function () {
+                    return { ok: false, error: "booking_failed" };
+                  });
+                  if (!response.ok || !out || out.ok !== true) {
+                    const errorCode = String(out && out.error ? out.error : "booking_failed");
+                    setStatus(uiText.bookingError + " (" + errorCode + ")", "error");
+                    return;
+                  }
+                  const bookingRef = String(
+                    out.public_booking_reference ||
+                    out.booking_reference ||
+                    out.booking_id ||
+                    "",
+                  ).trim();
+                  resultEl.style.display = "block";
+                  resultEl.innerHTML =
+                    "<strong>" + esc(uiText.bookingSuccess) + "</strong><br>" +
+                    "<span>" + esc(uiText.bookingReference) + ":</span> <strong>" + esc(bookingRef || "-") + "</strong>";
+                  setStatus(uiText.bookingSuccess, "success");
+                } catch (_) {
+                  setStatus(uiText.bookingError, "error");
+                } finally {
+                  setBusy(false);
+                }
+              }
+
+              function onResetFlow() {
+                lastQuotePayload = null;
+                quotePanelEl.style.display = "none";
+                resultEl.style.display = "none";
+                resultEl.innerHTML = "";
+                setStatus("", "info");
+                setBusy(false);
+              }
+
+              quoteBtn.addEventListener("click", onQuoteRequest);
+              bookBtn.addEventListener("click", onBookRequest);
+              resetBtn.addEventListener("click", onResetFlow);
+              if (!companyCode) {
+                quoteBtn.disabled = true;
+                bookBtn.disabled = true;
+                setStatus(uiText.unavailableForBooking, "error");
+              } else {
+                setBusy(false);
+              }
+            })();
+          </script>
+        </section>
       </section>
       ${
         hasContact
