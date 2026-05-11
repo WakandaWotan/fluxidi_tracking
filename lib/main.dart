@@ -2956,6 +2956,177 @@ class RoleEntryPage extends StatelessWidget {
     return result;
   }
 
+  Future<String?> _promptCompanyActivationCode(BuildContext context) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Activatiecode invoeren',
+                  en: 'Enter activation code',
+                  fr: "Saisir le code d'activation",
+                  es: 'Introducir código de activación',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul je activatiecode in. Voorbeeld: FLX-4821-123456',
+                      en: 'Enter your activation code. Example: FLX-4821-123456',
+                      fr: "Saisissez votre code d'activation. Exemple : FLX-4821-123456",
+                      es: 'Introduce tu código de activación. Ejemplo: FLX-4821-123456',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: controller,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Activatiecode',
+                        en: 'Activation code',
+                        fr: "Code d'activation",
+                        es: 'Código de activación',
+                      ),
+                      labelStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final activationCode = controller.text.trim();
+                    if (activationCode.isEmpty) {
+                      setDialogState(
+                        () => errorText = _t(
+                          nl: 'Vul je activatiecode in.',
+                          en: 'Enter your activation code.',
+                          fr: "Saisissez votre code d'activation.",
+                          es: 'Introduce tu código de activación.',
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(activationCode);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Toestel koppelen',
+                      en: 'Link device',
+                      fr: 'Lier l’appareil',
+                      es: 'Vincular dispositivo',
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_companyPairingOnboardingIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                      en: 'I want to enter my company details',
+                      fr: 'Je veux saisir les données de mon entreprise',
+                      es: 'Quiero introducir los datos de mi empresa',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  ({String companyCode, String pairingCode})? _parseCompanyActivationCode(
+    String input,
+  ) {
+    final raw = input.trim();
+    if (raw.isEmpty) return null;
+    final normalized = raw
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (normalized.isEmpty) return null;
+    final parts = normalized
+        .split('-')
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length < 2) return null;
+    final pairingCode = parts.last.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) return null;
+    final companyCodeCandidate = parts
+        .sublist(0, parts.length - 1)
+        .join('-')
+        .trim();
+    if (companyCodeCandidate.isEmpty) return null;
+    final normalizedCompanyCode = _normalizeHumanCompanyId(
+      companyCodeCandidate,
+    );
+    final companyValidationError = _validateHumanCompanyId(
+      normalizedCompanyCode,
+    );
+    if (companyValidationError != null) return null;
+    return (companyCode: normalizedCompanyCode, pairingCode: pairingCode);
+  }
+
   Future<void> _showCompanyPairingSuccessDialog(BuildContext context) {
     return showDialog<void>(
       context: context,
@@ -3259,34 +3430,28 @@ class RoleEntryPage extends StatelessWidget {
       return;
     }
     while (true) {
-      final companyId = await _promptExistingCompanyId(context);
-      if (!context.mounted || companyId == null) return;
-      if (companyId == _companyPairingOnboardingIntent) {
+      final activationCode = await _promptCompanyActivationCode(context);
+      if (!context.mounted || activationCode == null) return;
+      if (activationCode == _companyPairingOnboardingIntent) {
         _openBusinessOnboarding(context);
         return;
       }
-      final resolved = await _resolveCompanyCode(companyId);
-      if (!context.mounted) return;
-      if (resolved['ok'] != true) {
-        final errorCode = _safePairingText(resolved['error']).toLowerCase();
+      final parsed = _parseCompanyActivationCode(activationCode);
+      if (parsed == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+                en: 'Invalid activation code. Use for example FLX-4821-123456.',
+                fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+                es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
+              ),
+            ),
+          ),
         );
-        return;
+        continue;
       }
-      final resolvedCompanyCode =
-          _safePairingText(resolved['company_code']).isEmpty
-          ? companyId
-          : _safePairingText(resolved['company_code']);
-      final confirmed = await _confirmResolvedCompanyPreview(
-        context,
-        companyCode: resolvedCompanyCode,
-        displayName: _safePairingText(resolved['display_name']),
-        country: _safePairingText(resolved['country']),
-        maskedPhone: _safePairingText(resolved['masked_phone']),
-      );
-      if (!context.mounted || confirmed == null) return;
-      if (!confirmed) continue;
       if (_effectiveFluxidiDevPairingBypass) {
         final bypassConfirmed = await _showCompanyPairingTestModeDialog(
           context,
@@ -3294,9 +3459,9 @@ class RoleEntryPage extends StatelessWidget {
         if (!context.mounted || bypassConfirmed != true) return;
         final opened = await _openDevBypassCompanySession(
           context,
-          resolvedCompanyCode: resolvedCompanyCode,
-          resolvedDisplayName: _safePairingText(resolved['display_name']),
-          resolvedCountry: _safePairingText(resolved['country']),
+          resolvedCompanyCode: parsed.companyCode,
+          resolvedDisplayName: parsed.companyCode,
+          resolvedCountry: '',
         );
         if (!context.mounted) return;
         if (!opened) {
@@ -3308,11 +3473,9 @@ class RoleEntryPage extends StatelessWidget {
         }
         return;
       }
-      final pairingCode = await _promptCompanyPairingCode(context);
-      if (!context.mounted || pairingCode == null) return;
       final verified = await _verifyCompanyPairingCode(
-        companyCode: resolvedCompanyCode,
-        pairingCode: pairingCode,
+        companyCode: parsed.companyCode,
+        pairingCode: parsed.pairingCode,
       );
       if (!context.mounted) return;
       if (verified['ok'] != true) {
@@ -5899,6 +6062,451 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  String _normalizeActivationCompanyCode(String raw) {
+    var text = raw.trim().toUpperCase();
+    if (text.isEmpty) return '';
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'[^A-Z0-9-]'), '');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    text = text.replaceAll(RegExp(r'^-+|-+$'), '');
+    return text;
+  }
+
+  bool _isValidActivationCompanyCode(String value) {
+    final code = _normalizeActivationCompanyCode(value);
+    if (code.length < 4 || code.length > 24) return false;
+    if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(code)) return false;
+    if (!RegExp(r'[A-Z0-9]').hasMatch(code)) return false;
+    final parts = code.split('-').where((p) => p.trim().isNotEmpty).toList();
+    if (parts.length != 2) return false;
+    if (!RegExp(r'^[A-Z0-9]{2,10}$').hasMatch(parts[0])) return false;
+    if (!RegExp(r'^[A-Z0-9]{2,12}$').hasMatch(parts[1])) return false;
+    return true;
+  }
+
+  ({String tenantId, String companyId})?
+  _activeCompanyScopeForPairingCodeCreate() {
+    final sessionCompany =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompany.isNotEmpty) {
+      return (tenantId: sessionCompany, companyId: sessionCompany);
+    }
+    final profileCompany = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (profileCompany.isNotEmpty) {
+      return (tenantId: profileCompany, companyId: profileCompany);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return null;
+  }
+
+  String? _activeCompanyCodeForPairingCodeCreate() {
+    final sessionCode = _normalizeActivationCompanyCode(
+      activeCompanySessionNotifier.value?.companyCode ?? '',
+    );
+    if (_isValidActivationCompanyCode(sessionCode)) return sessionCode;
+    return null;
+  }
+
+  String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> payload) {
+    String readTopLevel() {
+      return _normalizeActivationCompanyCode(
+        (payload['company_code'] ?? payload['companyCode'] ?? '').toString(),
+      );
+    }
+
+    String readCompanyNode() {
+      final companyNode = payload['company'];
+      if (companyNode is! Map) return '';
+      final map = Map<String, dynamic>.from(companyNode);
+      return _normalizeActivationCompanyCode(
+        (map['company_code'] ??
+                map['companyCode'] ??
+                map['code'] ??
+                map['public_company_code'] ??
+                map['publicCompanyCode'] ??
+                '')
+            .toString(),
+      );
+    }
+
+    final top = readTopLevel();
+    if (_isValidActivationCompanyCode(top)) return top;
+    final fromCompany = readCompanyNode();
+    if (_isValidActivationCompanyCode(fromCompany)) return fromCompany;
+    return null;
+  }
+
+  Future<({String? companyCode, String source})>
+  _resolvePublicCompanyCodeForPairingCodeCreate() async {
+    final fromSession = _activeCompanyCodeForPairingCodeCreate();
+    if (fromSession != null) {
+      return (companyCode: fromSession, source: 'session');
+    }
+
+    final session = activeCompanySessionNotifier.value;
+    final token = (session?.companySessionToken ?? '').trim();
+    if (token.isEmpty) {
+      return (companyCode: null, source: 'none');
+    }
+
+    try {
+      final bootstrap = await fetchCompanyBootstrapWithToken(
+        companySessionToken: token,
+      );
+      if (bootstrap is Map<String, dynamic>) {
+        final fromBootstrap = _publicCompanyCodeFromBootstrapPayload(bootstrap);
+        if (fromBootstrap != null) {
+          if (session != null) {
+            activeCompanySessionNotifier.value = session.copyWith(
+              companyCode: fromBootstrap,
+            );
+          }
+          return (companyCode: fromBootstrap, source: 'bootstrap');
+        }
+      }
+    } catch (_) {}
+    return (companyCode: null, source: 'none');
+  }
+
+  Future<void> _showNewDeviceActivationCodeDialog(BuildContext context) async {
+    final adminToken = kAdminToken.trim();
+    if (adminToken.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Toestelkoppeling is nu niet beschikbaar.',
+              en: 'Device pairing is currently unavailable.',
+              fr: 'Le jumelage d’appareil est actuellement indisponible.',
+              es: 'La vinculación de dispositivo no está disponible actualmente.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final scope = _activeCompanyScopeForPairingCodeCreate();
+    final codeResolution =
+        await _resolvePublicCompanyCodeForPairingCodeCreate();
+    final companyCode = codeResolution.companyCode;
+    debugPrint(
+      '[PAIR_CODE_CREATE][SCOPE] has_scope=${scope != null} has_public_code=${companyCode != null} source=${codeResolution.source}',
+    );
+    if (scope == null || companyCode == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Verifieer dit bedrijf eerst voordat u nieuwe toestellen kunt koppelen.',
+              en: 'Verify this company first before pairing new devices.',
+              fr: 'Vérifiez d’abord cette entreprise avant d’associer de nouveaux appareils.',
+              es: 'Verifica primero esta empresa antes de vincular nuevos dispositivos.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.3,
+                color: kFluxidiYellow.withOpacity(0.95),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Activatiecode aanmaken...',
+                  en: 'Generating activation code...',
+                  fr: 'Génération du code d’activation...',
+                  es: 'Generando código de activación...',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    Map<String, dynamic> payload = const <String, dynamic>{};
+    int statusCode = -1;
+    try {
+      final endpoint =
+          Uri.parse('$kBookingBaseUrl/admin/company/link-code/create').replace(
+            queryParameters: <String, String>{
+              'tenant_id': scope.tenantId,
+              'company_id': scope.companyId,
+            },
+          );
+      debugPrint(
+        '[PAIR_CODE_CREATE][REQ] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)} code=$companyCode',
+      );
+      final response = await http
+          .post(
+            endpoint,
+            headers: _adminHeaders(),
+            body: jsonEncode(<String, dynamic>{
+              'tenant_id': scope.tenantId,
+              'company_id': scope.companyId,
+              'company_code': companyCode,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      statusCode = response.statusCode;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        payload = Map<String, dynamic>.from(decoded);
+      }
+      debugPrint(
+        '[PAIR_CODE_CREATE][RES] status=$statusCode ok=${payload['ok'] == true}',
+      );
+    } catch (_) {}
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    final ok = statusCode >= 200 && statusCode < 300 && payload['ok'] == true;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Activatiecode kon niet worden aangemaakt. Probeer opnieuw.',
+              en: 'Could not generate activation code. Please try again.',
+              fr: 'Impossible de générer le code d’activation. Réessayez.',
+              es: 'No se pudo generar el código de activación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final returnedCompanyCode = _normalizeActivationCompanyCode(
+      (payload['company_code'] ?? companyCode).toString(),
+    );
+    final pairingCode = (payload['pairing_code'] ?? '').toString().trim();
+    if (!_isValidActivationCompanyCode(returnedCompanyCode) ||
+        !RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Activatiecode kon niet worden aangemaakt. Probeer opnieuw.',
+              en: 'Could not generate activation code. Please try again.',
+              fr: 'Impossible de générer le code d’activation. Réessayez.',
+              es: 'No se pudo generar el código de activación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final activationCode = '$returnedCompanyCode-$pairingCode';
+    final expiresAt = (payload['expires_at'] ?? '').toString().trim();
+    final expiresInSeconds = int.tryParse(
+      (payload['expires_in_seconds'] ?? '').toString().trim(),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        title: Text(
+          _t(
+            nl: 'Nieuw toestel koppelen',
+            en: 'Pair new device',
+            fr: 'Associer un nouvel appareil',
+            es: 'Vincular nuevo dispositivo',
+          ),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(
+                nl: 'Open Fluxidi op het nieuwe toestel en voer deze activatiecode in.',
+                en: 'Open Fluxidi on the new device and enter this activation code.',
+                fr: 'Ouvrez Fluxidi sur le nouvel appareil et saisissez ce code d’activation.',
+                es: 'Abre Fluxidi en el nuevo dispositivo e introduce este código de activación.',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.82),
+                fontSize: 12.5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A1A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
+              ),
+              child: SelectableText(
+                activationCode,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  letterSpacing: 0.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            if (expiresAt.isNotEmpty || expiresInSeconds != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                expiresAt.isNotEmpty
+                    ? _t(
+                        nl: 'Vervalt op: $expiresAt',
+                        en: 'Expires at: $expiresAt',
+                        fr: 'Expire le : $expiresAt',
+                        es: 'Caduca el: $expiresAt',
+                      )
+                    : _t(
+                        nl: 'Geldig voor ongeveer ${expiresInSeconds ?? 0} seconden.',
+                        en: 'Valid for about ${expiresInSeconds ?? 0} seconds.',
+                        fr: 'Valable pendant environ ${expiresInSeconds ?? 0} secondes.',
+                        es: 'Válido durante aproximadamente ${expiresInSeconds ?? 0} segundos.',
+                      ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 11.8,
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: activationCode));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _t(
+                      nl: 'Activatiecode gekopieerd.',
+                      en: 'Activation code copied.',
+                      fr: 'Code d’activation copié.',
+                      es: 'Código de activación copiado.',
+                    ),
+                  ),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+            ),
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: Text(
+              _t(nl: 'Kopiëren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _verifyCompanyFromBusinessHome(BuildContext context) async {
+    const roleEntry = RoleEntryPage();
+    final activationCode = await roleEntry._promptCompanyActivationCode(
+      context,
+    );
+    if (!context.mounted || activationCode == null) return;
+    if (activationCode == RoleEntryPage._companyPairingOnboardingIntent) return;
+    final parsed = roleEntry._parseCompanyActivationCode(activationCode);
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+              en: 'Invalid activation code. Use for example FLX-4821-123456.',
+              fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+              es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final verified = await roleEntry._verifyCompanyPairingCode(
+      companyCode: parsed.companyCode,
+      pairingCode: parsed.pairingCode,
+    );
+    if (!context.mounted) return;
+    if (verified['ok'] != true) {
+      final errorCode = roleEntry
+          ._safePairingText(verified['error'])
+          .toLowerCase();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(roleEntry._companyPairingErrorText(errorCode))),
+      );
+      return;
+    }
+
+    final payload = verified['payload'] is Map
+        ? Map<String, dynamic>.from(verified['payload'] as Map)
+        : <String, dynamic>{};
+    await roleEntry._showCompanyPairingSuccessDialog(context);
+    if (!context.mounted) return;
+    final opened = await roleEntry._openVerifiedCompanySession(
+      context,
+      payload,
+    );
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            roleEntry._companyPairingErrorText('verification_failed'),
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
     return Container(
       padding: padding ?? const EdgeInsets.all(12),
@@ -5928,6 +6536,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
+    final publicCompanyCode = _activeCompanyCodeForPairingCodeCreate();
+    final hasPublicCompanyCode = publicCompanyCode != null;
     final companyName = profile?.companyName.trim().isNotEmpty == true
         ? profile!.companyName.trim()
         : 'Fluxidi';
@@ -5973,6 +6583,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               _openCompanyDetails(context);
               return;
             }
+            if (value == 'verify_company') {
+              unawaited(_verifyCompanyFromBusinessHome(context));
+              return;
+            }
+            if (value == 'pair_new_device') {
+              unawaited(_showNewDeviceActivationCodeDialog(context));
+              return;
+            }
             if (value == 'switch') {
               _switchCompany(context);
             }
@@ -5984,8 +6602,49 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _statusPill(profile, compact: true),
+                    if (hasPublicCompanyCode)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF12331F),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFF4ADE80).withOpacity(0.45),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Geverifieerd',
+                            en: 'Verified',
+                            fr: 'Vérifiée',
+                            es: 'Verificada',
+                          ),
+                          style: const TextStyle(
+                            color: Color(0xFFB8F5C8),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 10.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      )
+                    else
+                      _statusPill(profile, compact: true),
                     const SizedBox(height: 8),
+                    if (publicCompanyCode != null) ...[
+                      Text(
+                        '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11.5,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     Text(
                       '${_t(nl: 'Bedrijfs-ID', en: 'Company ID', fr: 'ID entreprise', es: 'ID empresa')}: ${profile.companyId}',
                       style: const TextStyle(
@@ -6004,7 +6663,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         fontSize: 11.5,
                       ),
                     ),
-                    if (profile.showsPendingVerificationNotice) ...[
+                    if (!hasPublicCompanyCode &&
+                        profile.showsPendingVerificationNotice) ...[
                       const SizedBox(height: 6),
                       Text(
                         profile.verificationPendingNotice(
@@ -6032,6 +6692,30 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
               ),
             ),
+            if (!hasPublicCompanyCode)
+              PopupMenuItem<String>(
+                value: 'verify_company',
+                child: Text(
+                  _t(
+                    nl: 'Bedrijf verifiëren',
+                    en: 'Verify company',
+                    fr: 'Vérifier l’entreprise',
+                    es: 'Verificar empresa',
+                  ),
+                ),
+              ),
+            if (hasPublicCompanyCode)
+              PopupMenuItem<String>(
+                value: 'pair_new_device',
+                child: Text(
+                  _t(
+                    nl: 'Nieuw toestel koppelen',
+                    en: 'Pair new device',
+                    fr: 'Associer un nouvel appareil',
+                    es: 'Vincular nuevo dispositivo',
+                  ),
+                ),
+              ),
             PopupMenuItem<String>(
               value: 'switch',
               child: Text(
