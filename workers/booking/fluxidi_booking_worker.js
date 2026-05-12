@@ -3931,6 +3931,20 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
       basePayload?.company?.display_name,
     160,
   );
+  const recoveredDeviceLabel = sanitizeTenantString(
+    challenge.device_label ?? challenge.deviceLabel,
+    120,
+  );
+  const recoveredDeviceType = sanitizeTenantString(
+    challenge.device_type ?? challenge.deviceType,
+    40,
+  ).toLowerCase();
+  const recoveredDevicePlatform = sanitizeTenantString(
+    challenge.device_platform ?? challenge.devicePlatform ?? recoveredDeviceType,
+    40,
+  ).toLowerCase();
+  const recoveryClientFingerprintHash = sanitizeTenantString(clientFingerprintHash, 160)
+    .toLowerCase();
   await env.BOOKING_KV.put(
     companySessionKey,
     JSON.stringify({
@@ -3942,9 +3956,27 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
       issued_at: nowIso,
       expires_at: expiresAt,
       link_method: "public_company_recovery",
+      recovered_at: nowIso,
+      device_label: recoveredDeviceLabel,
+      device_type: recoveredDeviceType,
+      device_platform: recoveredDevicePlatform,
+      recovery_client_fingerprint_hash: recoveryClientFingerprintHash,
     }),
     { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
   );
+  const challengeAuditRemainingSeconds = Math.max(
+    1,
+    Math.floor((expiresAtMs - Date.now()) / 1000),
+  );
+  challenge.recovered_at = nowIso;
+  challenge.link_method = "public_company_recovery";
+  challenge.device_label = recoveredDeviceLabel;
+  challenge.device_type = recoveredDeviceType;
+  challenge.device_platform = recoveredDevicePlatform;
+  challenge.recovery_client_fingerprint_hash = recoveryClientFingerprintHash;
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: challengeAuditRemainingSeconds,
+  });
   console.log(
     `[COMPANY_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} link_method=public_company_recovery`,
   );
