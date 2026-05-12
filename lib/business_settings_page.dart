@@ -3624,8 +3624,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         profile: profile,
                       );
                       final hasPublicCompanyCode = publicCompanyCode != null;
+                      final effectivePublicCompanyCode = hasPublicCompanyCode
+                          ? publicCompanyCode
+                          : '';
                       final publicBookingUrl = hasPublicCompanyCode
-                          ? _preparedPublicBookingUrl(publicCompanyCode)
+                          ? _preparedPublicBookingUrl(effectivePublicCompanyCode)
                           : '';
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3687,6 +3690,92 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 color: Colors.white.withOpacity(0.78),
                                 fontSize: 12.5,
                                 height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0B0B0B),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFD4AF4A).withOpacity(0.45),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _t(
+                                      nl: 'Publieke bedrijfscode',
+                                      en: 'Public company code',
+                                      fr: 'Code entreprise public',
+                                      es: 'Código público de empresa',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.72),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: SelectableText(
+                                          effectivePublicCompanyCode,
+                                          style: const TextStyle(
+                                            color: Color(0xFFF0C85D),
+                                            fontFamily: 'monospace',
+                                            fontSize: 13.2,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      TextButton.icon(
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: effectivePublicCompanyCode,
+                                            ),
+                                          );
+                                          if (!context.mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                _t(
+                                                  nl: 'Publieke bedrijfscode gekopieerd',
+                                                  en: 'Public company code copied',
+                                                  fr: 'Code entreprise public copié',
+                                                  es: 'Código público de empresa copiado',
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(
+                                          Icons.copy_outlined,
+                                          size: 16,
+                                        ),
+                                        label: Text(
+                                          _t(
+                                            nl: 'Kopieer code',
+                                            en: 'Copy code',
+                                            fr: 'Copier le code',
+                                            es: 'Copiar código',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             ),
                             const SizedBox(height: 10),
@@ -3779,6 +3868,61 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                       en: 'Share',
                                       fr: 'Partager',
                                       es: 'Compartir',
+                                    ),
+                                  ),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    try {
+                                      final uri = Uri.parse(publicBookingUrl);
+                                      final launched = await launchUrl(
+                                        uri,
+                                        mode: LaunchMode.externalApplication,
+                                      );
+                                      if (!launched && context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              _t(
+                                                nl: 'Publieke boekingslink kon niet geopend worden.',
+                                                en: 'Could not open public booking link.',
+                                                fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                                es: 'No se pudo abrir el enlace público de reserva.',
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    } catch (_) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Publieke boekingslink kon niet geopend worden.',
+                                              en: 'Could not open public booking link.',
+                                              fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                              es: 'No se pudo abrir el enlace público de reserva.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(
+                                    Icons.open_in_new_outlined,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Open link',
+                                      en: 'Open link',
+                                      fr: 'Ouvrir le lien',
+                                      es: 'Abrir enlace',
                                     ),
                                   ),
                                 ),
