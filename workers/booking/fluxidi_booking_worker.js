@@ -2843,6 +2843,24 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
     customerName: safeStr(body?.customer_name ?? body?.customerName, 160),
     customer_phone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
     customerPhone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
+    from_raw: safeStr(
+      body?.from_raw ?? body?.fromRaw ?? body?.from_input ?? body?.fromInput,
+      320,
+    ),
+    to_raw: safeStr(
+      body?.to_raw ?? body?.toRaw ?? body?.to_input ?? body?.toInput,
+      320,
+    ),
+    from_label: safeStr(
+      body?.from_label ?? body?.fromLabel ?? body?.origin_label ?? body?.originLabel,
+      320,
+    ),
+    to_label: safeStr(
+      body?.to_label ?? body?.toLabel ?? body?.destination_label ?? body?.destinationLabel,
+      320,
+    ),
+    from_full_address: safeStr(body?.from_full_address ?? body?.fromFullAddress, 360),
+    to_full_address: safeStr(body?.to_full_address ?? body?.toFullAddress, 360),
     service: safeStr(body?.service, 40),
     tier: safeStr(body?.tier, 40),
     wait_min: parseDurationMin(
@@ -2857,6 +2875,18 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
     company_code: resolvedScope.company_code,
     companyCode: resolvedScope.company_code,
   };
+  const fromLat = parseFiniteCoordinateNumber(body?.from_lat ?? body?.fromLat);
+  const fromLng = parseFiniteCoordinateNumber(body?.from_lng ?? body?.fromLng);
+  const toLat = parseFiniteCoordinateNumber(body?.to_lat ?? body?.toLat);
+  const toLng = parseFiniteCoordinateNumber(body?.to_lng ?? body?.toLng);
+  if (Number.isFinite(fromLat) && Number.isFinite(fromLng)) {
+    normalized.from_lat = fromLat;
+    normalized.from_lng = fromLng;
+  }
+  if (Number.isFinite(toLat) && Number.isFinite(toLng)) {
+    normalized.to_lat = toLat;
+    normalized.to_lng = toLng;
+  }
   return { ok: true, payload: normalized };
 }
 
@@ -4925,15 +4955,60 @@ function _publicMapboxContextCountry(feature) {
   return "";
 }
 
+function _pickBestPublicAddressLabel(source) {
+  if (!source || typeof source !== "object") return "";
+  const candidates = [
+    source.place_name,
+    source.placeName,
+    source.formatted_address,
+    source.formattedAddress,
+    source.full_address,
+    source.fullAddress,
+    source.label,
+    source.address,
+    source.name,
+    source.text,
+  ];
+  for (const candidate of candidates) {
+    const text = sanitizeTenantString(candidate, 320);
+    if (text) return text;
+  }
+  return "";
+}
+
 function _normalizePublicAddressSuggestion(feature) {
   const center = Array.isArray(feature?.center) ? feature.center : [];
   const lng = Number(center[0]);
   const lat = Number(center[1]);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   const id = sanitizeTenantString(feature?.id, 120);
-  const label = sanitizeTenantString(
-    feature?.place_name ?? feature?.placeName ?? feature?.text ?? "",
+  const placeName = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? "",
+    320,
+  );
+  const formattedAddress = sanitizeTenantString(
+    feature?.formatted_address ?? feature?.formattedAddress ?? "",
+    320,
+  );
+  const fullAddress = sanitizeTenantString(
+    feature?.full_address ?? feature?.fullAddress ?? "",
+    320,
+  );
+  const name = sanitizeTenantString(
+    feature?.name ?? feature?.text ?? "",
     240,
+  );
+  const label = sanitizeTenantString(
+    _pickBestPublicAddressLabel({
+      place_name: placeName,
+      formatted_address: formattedAddress,
+      full_address: fullAddress,
+      label: feature?.label,
+      address: feature?.address,
+      name,
+      text: feature?.text,
+    }),
+    320,
   );
   if (!label) return null;
   const street = sanitizeTenantString(feature?.text, 120);
@@ -4951,6 +5026,10 @@ function _normalizePublicAddressSuggestion(feature) {
     id,
     label,
     address,
+    place_name: placeName || label,
+    formatted_address: formattedAddress || label,
+    full_address: fullAddress || formattedAddress || placeName || label,
+    name: name || street || label,
     city,
     postcode,
     country,
@@ -4975,10 +5054,30 @@ function _normalizePublicAddressReverseFeature(feature, fallbackLat, fallbackLng
     240,
   );
   if (!label) return null;
+  const placeName = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? "",
+    320,
+  );
+  const formattedAddress = sanitizeTenantString(
+    feature?.formatted_address ?? feature?.formattedAddress ?? "",
+    320,
+  );
+  const fullAddress = sanitizeTenantString(
+    feature?.full_address ?? feature?.fullAddress ?? "",
+    320,
+  );
+  const name = sanitizeTenantString(
+    feature?.name ?? feature?.text ?? "",
+    240,
+  );
   return {
     id: sanitizeTenantString(feature?.id, 120),
     label,
     address: label,
+    place_name: placeName || label,
+    formatted_address: formattedAddress || label,
+    full_address: fullAddress || formattedAddress || placeName || label,
+    name: name || label,
     city: "",
     postcode: "",
     country: "",
@@ -5109,6 +5208,16 @@ async function handlePublicAddressReverse(url, env) {
       ok: true,
       address: sanitizeTenantString(result.address || result.label, 240),
       label: sanitizeTenantString(result.label || result.address, 240),
+      place_name: sanitizeTenantString(result.place_name || result.label || result.address, 320),
+      formatted_address: sanitizeTenantString(
+        result.formatted_address || result.place_name || result.label || result.address,
+        320,
+      ),
+      full_address: sanitizeTenantString(
+        result.full_address || result.formatted_address || result.place_name || result.label || result.address,
+        320,
+      ),
+      name: sanitizeTenantString(result.name || result.label || result.address, 240),
       city: sanitizeTenantString(result.city, 120),
       postcode: sanitizeTenantString(result.postcode, 24),
       country: sanitizeTenantString(result.country, 8),
@@ -5943,6 +6052,8 @@ async function handlePublicBookingPreview(url, env) {
               let lastQuoteSignature = "";
               let fromSuggestTimer = null;
               let toSuggestTimer = null;
+              let fromResolved = null;
+              let toResolved = null;
 
               function esc(value) {
                 return String(value == null ? "" : value)
@@ -5951,6 +6062,45 @@ async function handlePublicBookingPreview(url, env) {
                   .replace(/>/g, "&gt;")
                   .replace(/"/g, "&quot;")
                   .replace(/'/g, "&#39;");
+              }
+
+              function maybeFiniteNumber(value) {
+                const n = Number(value);
+                return Number.isFinite(n) ? n : null;
+              }
+
+              function pickBestAddressLabel(obj) {
+                if (!obj || typeof obj !== "object") return "";
+                const candidates = [
+                  obj.place_name,
+                  obj.formatted_address,
+                  obj.full_address,
+                  obj.label,
+                  obj.address,
+                  obj.name,
+                ];
+                for (const candidate of candidates) {
+                  const text = String(candidate || "").trim();
+                  if (text) return text;
+                }
+                return "";
+              }
+
+              function normalizeResolvedAddress(obj) {
+                if (!obj || typeof obj !== "object") return null;
+                return {
+                  place_name: String(obj.place_name || "").trim(),
+                  formatted_address: String(obj.formatted_address || "").trim(),
+                  full_address: String(obj.full_address || "").trim(),
+                  label: String(obj.label || "").trim(),
+                  address: String(obj.address || "").trim(),
+                  name: String(obj.name || "").trim(),
+                  city: String(obj.city || "").trim(),
+                  postcode: String(obj.postcode || "").trim(),
+                  country: String(obj.country || "").trim(),
+                  lat: maybeFiniteNumber(obj.lat),
+                  lng: maybeFiniteNumber(obj.lng),
+                };
               }
 
               function setStatus(message, tone) {
@@ -6126,7 +6276,10 @@ async function handlePublicBookingPreview(url, env) {
                   return;
                 }
                 const html = suggestions.slice(0, 5).map(function (item, index) {
-                  const label = esc(item && (item.label || item.address) ? (item.label || item.address) : "");
+                  const label = esc(
+                    pickBestAddressLabel(item) ||
+                      (item && (item.label || item.address) ? (item.label || item.address) : ""),
+                  );
                   const address = esc(item && item.address ? item.address : "");
                   const subtitleParts = [];
                   if (item && item.postcode) subtitleParts.push(String(item.postcode));
@@ -6148,8 +6301,16 @@ async function handlePublicBookingPreview(url, env) {
                     const idx = Number(button.getAttribute("data-idx") || "-1");
                     const selected = suggestions[idx];
                     if (!selected) return;
-                    const nextValue = String(selected.address || selected.label || "").trim();
+                    const nextValue = String(
+                      pickBestAddressLabel(selected) || selected.label || selected.address || "",
+                    ).trim();
                     if (nextValue) inputField.value = nextValue;
+                    const resolved = normalizeResolvedAddress(selected);
+                    if (inputField === fieldFrom || container === fromSuggestEl) {
+                      fromResolved = resolved;
+                    } else if (inputField === fieldTo || container === toSuggestEl) {
+                      toResolved = resolved;
+                    }
                     hideSuggestions(container);
                     markQuoteStaleIfNeeded();
                   });
@@ -6229,6 +6390,40 @@ async function handlePublicBookingPreview(url, env) {
                   pax: normalizeInt(fieldPax.value, 1, 1),
                   bags: normalizeInt(fieldBags.value, 0, 0),
                 };
+                payload.from_raw = from;
+                payload.to_raw = to;
+                const fromResolvedLabel = pickBestAddressLabel(fromResolved);
+                const toResolvedLabel = pickBestAddressLabel(toResolved);
+                if (fromResolvedLabel) payload.from_label = fromResolvedLabel;
+                if (toResolvedLabel) payload.to_label = toResolvedLabel;
+                const fromFullAddress = String(
+                  (fromResolved && (
+                    fromResolved.full_address ||
+                    fromResolved.formatted_address ||
+                    fromResolved.place_name ||
+                    fromResolved.label ||
+                    fromResolved.address
+                  )) || "",
+                ).trim();
+                const toFullAddress = String(
+                  (toResolved && (
+                    toResolved.full_address ||
+                    toResolved.formatted_address ||
+                    toResolved.place_name ||
+                    toResolved.label ||
+                    toResolved.address
+                  )) || "",
+                ).trim();
+                if (fromFullAddress) payload.from_full_address = fromFullAddress;
+                if (toFullAddress) payload.to_full_address = toFullAddress;
+                if (fromResolved && Number.isFinite(fromResolved.lat) && Number.isFinite(fromResolved.lng)) {
+                  payload.from_lat = Number(fromResolved.lat);
+                  payload.from_lng = Number(fromResolved.lng);
+                }
+                if (toResolved && Number.isFinite(toResolved.lat) && Number.isFinite(toResolved.lng)) {
+                  payload.to_lat = Number(toResolved.lat);
+                  payload.to_lng = Number(toResolved.lng);
+                }
                 const stop1 = String((fieldStop1 && fieldStop1.value) || "").trim();
                 if (stop1) payload.stops = [stop1];
                 const notes = String(fieldNotes.value || "").trim();
@@ -6421,12 +6616,15 @@ async function handlePublicBookingPreview(url, env) {
                       setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
                       return;
                     }
-                    const nextValue = String(out.address || out.label || "").trim();
+                    const nextValue = String(
+                      pickBestAddressLabel(out) || out.label || out.address || "",
+                    ).trim();
                     if (!nextValue) {
                       setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
                       return;
                     }
                     fieldFrom.value = nextValue;
+                    fromResolved = normalizeResolvedAddress(out);
                     hideSuggestions(fromSuggestEl);
                     markQuoteStaleIfNeeded();
                     setStatus(uiText.locationFound || uiText.quoteChangedRecalculate, "success");
@@ -6471,11 +6669,13 @@ async function handlePublicBookingPreview(url, env) {
               bookBtn.addEventListener("click", onBookRequest);
               resetBtn.addEventListener("click", onResetFlow);
               fieldFrom.addEventListener("input", function () {
+                fromResolved = null;
                 markQuoteStaleIfNeeded();
                 scheduleSuggest("from", fieldFrom, fromSuggestEl);
               });
               fieldFrom.addEventListener("change", markQuoteStaleIfNeeded);
               fieldTo.addEventListener("input", function () {
+                toResolved = null;
                 markQuoteStaleIfNeeded();
                 scheduleSuggest("to", fieldTo, toSuggestEl);
               });
