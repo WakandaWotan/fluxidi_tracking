@@ -2587,6 +2587,7 @@ class RoleEntryPage extends StatelessWidget {
 
   static const String _companyPairingOnboardingIntent =
       '__open_company_onboarding__';
+  static const String _companyRecoveryIntent = '__open_company_recovery__';
 
   Future<String?> _promptExistingCompanyId(BuildContext context) async {
     final controller = TextEditingController();
@@ -2716,6 +2717,22 @@ class RoleEntryPage extends StatelessWidget {
                       en: 'Next',
                       fr: 'Suivant',
                       es: 'Siguiente',
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(_companyRecoveryIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik heb mijn toestel niet meer',
+                      en: 'Recover company account',
+                      fr: 'Je n’ai plus mon appareil',
+                      es: 'Ya no tengo mi dispositivo',
                     ),
                   ),
                 ),
@@ -2874,6 +2891,416 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   String _safePairingText(dynamic value) => (value ?? '').toString().trim();
+
+  bool _looksLikeEmail(String value) {
+    final email = value.trim().toLowerCase();
+    if (email.isEmpty) return false;
+    return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email);
+  }
+
+  Future<Map<String, String>?> _promptCompanyRecoveryStart(
+    BuildContext context,
+  ) async {
+    final companyController = TextEditingController();
+    final emailController = TextEditingController();
+    String? companyError;
+    String? emailError;
+    final result = await showDialog<Map<String, String>?>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bedrijf herstellen',
+                  en: 'Recover company account',
+                  fr: 'Récupérer le compte entreprise',
+                  es: 'Recuperar cuenta de empresa',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul je Fluxidi-code en geregistreerde e-mail in.',
+                      en: 'Enter your Fluxidi code and registered email.',
+                      fr: 'Saisissez votre code Fluxidi et e-mail enregistré.',
+                      es: 'Introduce tu código Fluxidi y correo registrado.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: companyController,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Fluxidi-code',
+                        en: 'Fluxidi code',
+                        fr: 'Code Fluxidi',
+                        es: 'Código Fluxidi',
+                      ),
+                      errorText: companyError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (companyError != null) {
+                        setDialogState(() => companyError = null);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Geregistreerde e-mail',
+                        en: 'Registered email',
+                        fr: 'E-mail enregistré',
+                        es: 'Correo registrado',
+                      ),
+                      errorText: emailError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (emailError != null) {
+                        setDialogState(() => emailError = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final code = _normalizeHumanCompanyId(
+                      companyController.text,
+                    );
+                    final codeError = _validateHumanCompanyId(code);
+                    final email = emailController.text.trim().toLowerCase();
+                    final validEmail = _looksLikeEmail(email);
+                    if (codeError != null || !validEmail) {
+                      setDialogState(() {
+                        companyError = codeError;
+                        emailError = validEmail
+                            ? null
+                            : _t(
+                                nl: 'Vul een geldig e-mailadres in.',
+                                en: 'Enter a valid email address.',
+                                fr: 'Saisissez une adresse e-mail valide.',
+                                es: 'Introduce un correo electrónico válido.',
+                              );
+                      });
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(<String, String>{
+                      'companyCode': code,
+                      'email': email,
+                    });
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Start herstel',
+                      en: 'Start recovery',
+                      fr: 'Démarrer la récupération',
+                      es: 'Iniciar recuperación',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    companyController.dispose();
+    emailController.dispose();
+    return result;
+  }
+
+  Future<String?> _promptCompanyRecoveryOtp(
+    BuildContext context, {
+    String? maskedEmail,
+    String? debugOtp,
+  }) async {
+    final otpController = TextEditingController(text: debugOtp ?? '');
+    String? errorText;
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bevestig herstelcode',
+                  en: 'Confirm recovery code',
+                  fr: 'Confirmer le code de récupération',
+                  es: 'Confirmar código de recuperación',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul de code in die naar je e-mail is gestuurd.',
+                      en: 'Enter the code sent to your email.',
+                      fr: 'Saisissez le code envoyé à votre e-mail.',
+                      es: 'Introduce el código enviado a tu correo.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  if ((maskedEmail ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      (maskedEmail ?? '').trim(),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Herstelcode',
+                        en: 'Recovery code',
+                        fr: 'Code de récupération',
+                        es: 'Código de recuperación',
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final otp = otpController.text.trim();
+                    if (!RegExp(r'^\d{4,8}$').hasMatch(otp)) {
+                      setDialogState(
+                        () => errorText = _t(
+                          nl: 'Vul een geldige herstelcode in.',
+                          en: 'Enter a valid recovery code.',
+                          fr: 'Saisissez un code de récupération valide.',
+                          es: 'Introduce un código de recuperación válido.',
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(otp);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Bevestigen',
+                      en: 'Verify',
+                      fr: 'Vérifier',
+                      es: 'Verificar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    otpController.dispose();
+    return result;
+  }
+
+  Future<void> _runCompanyRecoveryFlow(BuildContext context) async {
+    final startInput = await _promptCompanyRecoveryStart(context);
+    if (!context.mounted || startInput == null) return;
+    final companyCode = _safePairingText(startInput['companyCode']);
+    final email = _safePairingText(startInput['email']).toLowerCase();
+    if (companyCode.isEmpty || !_looksLikeEmail(email)) return;
+    Map<String, dynamic> started;
+    try {
+      started = await startPublicCompanyRecovery(
+        payload: <String, dynamic>{
+          'company_code': companyCode,
+          'email': email,
+          'device_label': 'Nieuw toestel',
+          'device_type': 'mobile',
+        },
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel starten lukt niet. Probeer opnieuw.',
+              en: 'Could not start recovery. Please try again.',
+              fr: 'Impossible de démarrer la récupération. Réessayez.',
+              es: 'No se pudo iniciar la recuperación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final challengeId = _safePairingText(
+      started['challenge_id'] ?? started['challengeId'],
+    );
+    if (challengeId.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstelcode kon niet worden gestart. Probeer opnieuw.',
+              en: 'Recovery could not be started. Please retry.',
+              fr: 'La récupération n’a pas pu démarrer. Réessayez.',
+              es: 'No se pudo iniciar la recuperación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final otp = await _promptCompanyRecoveryOtp(
+      context,
+      maskedEmail: _safePairingText(
+        started['masked_email'] ?? started['maskedEmail'],
+      ),
+      debugOtp: _safePairingText(
+        started['recovery_code'] ?? started['recoveryCode'],
+      ),
+    );
+    if (!context.mounted || otp == null) return;
+    Map<String, dynamic> verified;
+    try {
+      verified = await verifyPublicCompanyRecovery(
+        payload: <String, dynamic>{
+          'challenge_id': challengeId,
+          'company_code': companyCode,
+          'email': email,
+          'otp': otp,
+          'device_label': 'Nieuw toestel',
+          'device_type': 'mobile',
+        },
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel mislukt. Controleer code en e-mail en probeer opnieuw.',
+              en: 'Recovery failed. Check code and email and try again.',
+              fr: 'La récupération a échoué. Vérifiez le code et l’e-mail puis réessayez.',
+              es: 'La recuperación falló. Verifica el código y el correo e inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final opened = await _openVerifiedCompanySession(context, verified, true);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel mislukt. Probeer opnieuw.',
+              en: 'Recovery failed. Please try again.',
+              fr: 'La récupération a échoué. Réessayez.',
+              es: 'La recuperación falló. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
 
   Future<Map<String, dynamic>> _resolveCompanyCode(String companyCode) async {
     final uri = Uri.parse(
@@ -3340,8 +3767,9 @@ class RoleEntryPage extends StatelessWidget {
 
   Future<bool> _openVerifiedCompanySession(
     BuildContext context,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, [
+    bool enforcePinGateOnEntry = false,
+  ]) async {
     if (payload['ok'] != true) return false;
     if (_safePairingText(payload['role']) != 'companyAdmin') return false;
     final tenantId = _safePairingText(payload['tenant_id']);
@@ -3389,9 +3817,15 @@ class RoleEntryPage extends StatelessWidget {
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
     setAppRole(AppRole.companyAdmin);
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
-    );
+    final Widget nextPage = enforcePinGateOnEntry
+        ? const FluxidiAppLockGatePage(
+            target: BusinessHomePage(),
+            shouldGate: true,
+          )
+        : const BusinessHomePage();
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute<void>(builder: (_) => nextPage));
     return true;
   }
 
@@ -3503,6 +3937,10 @@ class RoleEntryPage extends StatelessWidget {
       if (!context.mounted || activationCode == null) return;
       if (activationCode == _companyPairingOnboardingIntent) {
         _openBusinessOnboarding(context);
+        return;
+      }
+      if (activationCode == _companyRecoveryIntent) {
+        await _runCompanyRecoveryFlow(context);
         return;
       }
       final parsed = _parseCompanyActivationCode(activationCode);
@@ -6223,7 +6661,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     try {
       await Future<void>.delayed(const Duration(milliseconds: 30));
-      final renderObject = repaintBoundaryKey.currentContext?.findRenderObject();
+      final renderObject = repaintBoundaryKey.currentContext
+          ?.findRenderObject();
       if (renderObject is! RenderRepaintBoundary) {
         messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
         return;
@@ -6263,14 +6702,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         SnackBar(
           content: Text(
             _t(
-              nl:
-                  'Publieke bedrijfscode ontbreekt. Verifieer je bedrijf eerst via Bedrijfsinstellingen.',
-              en:
-                  'Public company code is missing. Verify your company first via Business Settings.',
-              fr:
-                  'Le code entreprise public est manquant. Vérifiez d’abord votre entreprise via les Paramètres entreprise.',
-              es:
-                  'Falta el código público de empresa. Verifica primero tu empresa en Ajustes de empresa.',
+              nl: 'Publieke bedrijfscode ontbreekt. Verifieer je bedrijf eerst via Bedrijfsinstellingen.',
+              en: 'Public company code is missing. Verify your company first via Business Settings.',
+              fr: 'Le code entreprise public est manquant. Vérifiez d’abord votre entreprise via les Paramètres entreprise.',
+              es: 'Falta el código público de empresa. Verifica primero tu empresa en Ajustes de empresa.',
             ),
           ),
         ),
@@ -6282,7 +6717,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       publicCompanyCode,
     );
     final qrCardBoundaryKey = GlobalKey();
-    final profileName = (companyProfileNotifier.value?.companyName ?? '').trim();
+    final profileName = (companyProfileNotifier.value?.companyName ?? '')
+        .trim();
     final qrCardTitle = profileName.isNotEmpty ? profileName : 'Fluxidi';
 
     await showModalBottomSheet<void>(
@@ -6332,14 +6768,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     const SizedBox(height: 8),
                     Text(
                       _t(
-                        nl:
-                            'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
-                        en:
-                            'Share this link or QR code with customers so they can book directly.',
-                        fr:
-                            'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
-                        es:
-                            'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
+                        nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
+                        en: 'Share this link or QR code with customers so they can book directly.',
+                        fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
+                        es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
                       ),
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.72),
@@ -6485,9 +6917,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                                 ),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color: const Color(0xFF2A2A2A).withOpacity(
-                                    0.78,
-                                  ),
+                                  color: const Color(
+                                    0xFF2A2A2A,
+                                  ).withOpacity(0.78),
                                   fontSize: 10.0,
                                   fontWeight: FontWeight.w600,
                                   height: 1.22,
@@ -6606,12 +7038,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                                     content: Text(
                                       _t(
                                         nl: 'Publieke boekingslink kon niet geopend worden.',
-                                        en:
-                                            'Could not open public booking link.',
-                                        fr:
-                                            'Impossible d’ouvrir le lien de réservation public.',
-                                        es:
-                                            'No se pudo abrir el enlace público de reserva.',
+                                        en: 'Could not open public booking link.',
+                                        fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                        es: 'No se pudo abrir el enlace público de reserva.',
                                       ),
                                     ),
                                   ),
@@ -6624,19 +7053,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                                   content: Text(
                                     _t(
                                       nl: 'Publieke boekingslink kon niet geopend worden.',
-                                      en:
-                                          'Could not open public booking link.',
-                                      fr:
-                                          'Impossible d’ouvrir le lien de réservation public.',
-                                      es:
-                                          'No se pudo abrir el enlace público de reserva.',
+                                      en: 'Could not open public booking link.',
+                                      fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                      es: 'No se pudo abrir el enlace público de reserva.',
                                     ),
                                   ),
                                 ),
                               );
                             }
                           },
-                          icon: const Icon(Icons.open_in_new_outlined, size: 16),
+                          icon: const Icon(
+                            Icons.open_in_new_outlined,
+                            size: 16,
+                          ),
                           label: Text(
                             _t(
                               nl: 'Open link',

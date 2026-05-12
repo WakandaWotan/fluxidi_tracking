@@ -1690,6 +1690,14 @@ const COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY = "company_link:counter:public_code:v
 const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
 const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_RECOVERY_CHALLENGE_KEY_PREFIX = "company_recovery:challenge:";
+const COMPANY_RECOVERY_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_RECOVERY_MAX_ATTEMPTS = 5;
+const COMPANY_RECOVERY_START_RATE_KEY_PREFIX = "company_recovery:rate:start:";
+const COMPANY_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
+const COMPANY_RECOVERY_START_RATE_MAX = 5;
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX = "company_link:admin_pairing:challenge:";
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX = "company_link:admin_pairing:active:";
@@ -1815,6 +1823,104 @@ function _companyLinkChallengeKey(challengeId) {
 function _companyLinkChallengeId() {
   return (crypto?.randomUUID ? crypto.randomUUID() : `cl_${Date.now()}_${Math.random()}`)
     .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _companyRecoveryChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${COMPANY_RECOVERY_CHALLENGE_KEY_PREFIX}${safeChallengeId}${COMPANY_RECOVERY_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyRecoveryChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cr_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _normalizeRecoveryEmail(value) {
+  const email = sanitizeTenantString(value, 240).toLowerCase();
+  return isValidEmail(email) ? email : "";
+}
+
+function _maskEmailForPublic(email) {
+  const normalized = _normalizeRecoveryEmail(email);
+  if (!normalized) return "";
+  const [localPart = "", domainPart = ""] = normalized.split("@");
+  if (!localPart || !domainPart) return "";
+  const domainHead = domainPart[0] || "•";
+  const domainTail = domainPart.slice(-3) || "•••";
+  if (localPart.length <= 2) return `${localPart[0] || "•"}•@${domainHead}••${domainTail}`;
+  return `${localPart[0]}•••${localPart.slice(-1)}@${domainHead}••${domainTail}`;
+}
+
+function _generateCompanyRecoveryOtp() {
+  const values = new Uint8Array(6);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += String(value % 10);
+  }
+  return out;
+}
+
+async function _hashRecoveryStartRateKeyPart(email) {
+  const normalized = _normalizeRecoveryEmail(email);
+  if (!normalized) return "";
+  return _sha256Hex(normalized);
+}
+
+function _companyRecoveryStartRateKey(companyCode, emailHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedHash) return "";
+  return `${COMPANY_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${COMPANY_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _collectBusinessProfileRecoveryEmails(businessProfile) {
+  if (!businessProfile || typeof businessProfile !== "object" || Array.isArray(businessProfile)) {
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  const candidates = [
+    businessProfile.companyEmail,
+    businessProfile.company_email,
+    businessProfile.email,
+    businessProfile.ownerEmail,
+    businessProfile.owner_email,
+    businessProfile.notificationEmail,
+    businessProfile.notification_email,
+    businessProfile.bookingEmail,
+    businessProfile.booking_email,
+    businessProfile.billingEmail,
+    businessProfile.billing_email,
+    businessProfile.invoiceEmail,
+    businessProfile.invoice_email,
+    businessProfile.supportEmail,
+    businessProfile.support_email,
+    businessProfile.replyToEmail,
+    businessProfile.reply_to_email,
+  ];
+  for (const raw of candidates) {
+    const normalized = _normalizeRecoveryEmail(raw);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function _projectPublicRecoveryStartResponse(challengeId, email) {
+  const maskedEmail = _maskEmailForPublic(email);
+  return {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId,
+    verification_channel: "email_otp",
+    expires_in_seconds: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+    ...(maskedEmail ? { masked_email: maskedEmail, maskedEmail: maskedEmail } : {}),
+    message: "If the details are correct, a verification code has been sent.",
+  };
 }
 
 function _looksLikeE164Phone(value) {
@@ -3359,6 +3465,259 @@ async function handlePublicCompanyRegister(body, env) {
           : {}),
       },
       business_profile: businessProfile,
+    },
+    200,
+  );
+}
+
+async function handlePublicCompanyRecoveryStart(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const challengeId = _companyRecoveryChallengeId();
+  const companyCode = normalizePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(
+    body.email ?? body.company_email ?? body.companyEmail ?? body.owner_email ?? body.ownerEmail,
+  );
+  const genericResponse = _projectPublicRecoveryStartResponse(challengeId, email);
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!codeValidation.ok || !email) {
+    return json(genericResponse, 200);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json(genericResponse, 200);
+  }
+  const scope = {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    return json(genericResponse, 200);
+  }
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
+  const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
+  if (!emailMatches) {
+    return json(genericResponse, 200);
+  }
+
+  const emailHash = await _hashRecoveryStartRateKeyPart(email);
+  const rateKey = _companyRecoveryStartRateKey(codeValidation.code, emailHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= COMPANY_RECOVERY_START_RATE_MAX) {
+      return json(genericResponse, 200);
+    }
+    const nextCount = count + 1;
+    await env.BOOKING_KV.put(
+      rateKey,
+      JSON.stringify({
+        count: nextCount,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS },
+    );
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
+  const challengeKey = _companyRecoveryChallengeKey(challengeId);
+  if (!challengeKey) return json(genericResponse, 200);
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    company_code: codeValidation.code,
+    email_hash: await _sha256Hex(email),
+    otp_hash: otpHash,
+    attempts: 0,
+    max_attempts: COMPANY_RECOVERY_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+    verification_channel: "email_otp",
+    device_label: sanitizeTenantString(body.device_label ?? body.deviceLabel, 120),
+    device_type: sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase(),
+  };
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+  });
+
+  const out = { ...genericResponse };
+  if (sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1") {
+    out.recovery_code = otp;
+    out.recoveryCode = otp;
+  }
+  return json(out, 200);
+}
+
+async function handlePublicCompanyRecoveryVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(
+    body.email ?? body.company_email ?? body.companyEmail ?? body.owner_email ?? body.ownerEmail,
+  );
+  const otp = sanitizeTenantString(
+    body.otp ?? body.recovery_code ?? body.recoveryCode ?? body.code_otp,
+    24,
+  ).replace(/\s+/g, "");
+  if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _companyRecoveryChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_RECOVERY_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
+  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`))
+    .toLowerCase();
+  const emailOk = _constantTimeEquals(expectedEmailHash, candidateEmailHash);
+  const otpOk = _constantTimeEquals(expectedOtpHash, candidateOtpHash);
+  if (!emailOk || !otpOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+
+  const tenantId = sanitizeTenantString(challenge.tenant_id, 80);
+  const companyId = sanitizeTenantString(challenge.company_id, 80);
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (
+    !companyRecord ||
+    companyRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyRecord.company_id, 80) !== companyId
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
+  const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
+  if (!emailMatches) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+
+  const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ??
+      companyRecord.company_name ??
+      companyRecord.companyName ??
+      basePayload?.company?.display_name,
+    160,
+  );
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: tenantId,
+      company_id: companyId,
+      company_code: sanitizeTenantString(companyRecord.company_code ?? codeValidation.code, 80),
+      company_display_name: companyDisplayName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_recovery",
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+  return json(
+    {
+      ...basePayload,
+      link_method: "public_company_recovery",
+      linkMethod: "public_company_recovery",
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      business_profile: businessProfile,
+      vat_verification_status: sanitizeTenantString(
+        businessProfile?.vatVerificationStatus ?? businessProfile?.vat_verification_status,
+        40,
+      ),
+      peppol_readiness_status: sanitizeTenantString(
+        businessProfile?.peppolReadinessStatus ?? businessProfile?.peppol_readiness_status,
+        40,
+      ),
+      chiron_readiness_status: sanitizeTenantString(
+        businessProfile?.chironReadinessStatus ?? businessProfile?.chiron_readiness_status,
+        40,
+      ),
     },
     200,
   );
@@ -10029,6 +10388,22 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCompanyRegister(body, env);
+      }
+
+      if (url.pathname === "/public/company/recovery/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRecoveryStart(body, env);
+      }
+
+      if (url.pathname === "/public/company/recovery/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRecoveryVerify(body, env);
       }
 
       if (url.pathname === "/public/company/link/start") {
