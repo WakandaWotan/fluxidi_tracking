@@ -4118,6 +4118,13 @@ class RoleEntryPage extends StatelessWidget {
                 builder: (context, constraints) {
                   final veryCompact = constraints.maxHeight < 680;
                   final narrow = constraints.maxWidth < 390;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(
+                    constraints.maxWidth,
+                  );
+                  final tabletLikeViewport =
+                      (screenClass == FluxidiScreenClass.tablet ||
+                          screenClass == FluxidiScreenClass.desktop) &&
+                      constraints.maxHeight >= 700;
                   final contentHorizontalPadding = narrow ? 14.0 : 18.0;
                   final logoTop = veryCompact ? -26.0 : -32.0;
                   final languageTop = veryCompact ? 4.0 : 6.0;
@@ -4132,7 +4139,9 @@ class RoleEntryPage extends StatelessWidget {
                       constraints.maxWidth * (narrow ? 0.62 : 0.55),
                     ),
                   );
-                  final contentTop = veryCompact ? 112.0 : 136.0;
+                  final contentTop =
+                      (veryCompact ? 112.0 : 136.0) +
+                      (tabletLikeViewport ? 24.0 : 0.0);
 
                   final roleCardHeight = veryCompact ? 92.0 : 98.0;
                   final cardGap = veryCompact ? 5.0 : 6.0;
