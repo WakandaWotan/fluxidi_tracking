@@ -1698,6 +1698,10 @@ const COMPANY_RECOVERY_START_RATE_KEY_PREFIX = "company_recovery:rate:start:";
 const COMPANY_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
 const COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
 const COMPANY_RECOVERY_START_RATE_MAX = 5;
+const COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX = "company_recovery:rate:verify:";
+const COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
+const COMPANY_RECOVERY_VERIFY_RATE_MAX = 20;
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX = "company_link:admin_pairing:challenge:";
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX = "company_link:admin_pairing:active:";
@@ -1873,6 +1877,44 @@ function _companyRecoveryStartRateKey(companyCode, emailHash) {
   const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
   if (!normalizedCode || !normalizedHash) return "";
   return `${COMPANY_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${COMPANY_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedEmailHash || !normalizedClientHash) return "";
+  return `${COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX}${normalizedCode}:${normalizedEmailHash}:${normalizedClientHash}${COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+async function _companyRecoveryVerifyClientHash(request) {
+  if (!request?.headers?.get) return "unknown";
+  const cfConnectingIp = sanitizeTenantString(
+    request.headers.get("cf-connecting-ip"),
+    120,
+  );
+  const xForwardedForRaw = sanitizeTenantString(
+    request.headers.get("x-forwarded-for"),
+    240,
+  );
+  const xRealIp = sanitizeTenantString(request.headers.get("x-real-ip"), 120);
+  const userAgent = sanitizeTenantString(request.headers.get("user-agent"), 240);
+  const cfRay = sanitizeTenantString(request.headers.get("cf-ray"), 120);
+  const xForwardedFor = xForwardedForRaw
+    .split(",")
+    .map((part) => sanitizeTenantString(part, 120))
+    .find((part) => !!part) || "";
+  const fingerprintSource = [
+    cfConnectingIp,
+    xForwardedFor,
+    xRealIp,
+    userAgent,
+    cfRay,
+  ]
+    .filter(Boolean)
+    .join("|");
+  if (!fingerprintSource) return "unknown";
+  return _sha256Hex(fingerprintSource);
 }
 
 function _collectBusinessProfileRecoveryEmails(businessProfile) {
@@ -3675,7 +3717,7 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   return json(out, 200);
 }
 
-async function handlePublicCompanyRecoveryVerify(body, env) {
+async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
@@ -3696,6 +3738,36 @@ async function handlePublicCompanyRecoveryVerify(body, env) {
   ).replace(/\s+/g, "");
   if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
     return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
+  const clientFingerprintHash = await _companyRecoveryVerifyClientHash(request);
+  const verifyRateKey = _companyRecoveryVerifyRateKey(
+    codeValidation.code,
+    candidateEmailHash,
+    clientFingerprintHash,
+  );
+  if (verifyRateKey) {
+    const rawRate = await env.BOOKING_KV.get(verifyRateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= COMPANY_RECOVERY_VERIFY_RATE_MAX) {
+      console.log(
+        `[COMPANY_RECOVERY][VERIFY_RATE][BLOCKED] company=${_maskPublicDriverLoginValue(codeValidation.code)} reason=rate_limited`,
+      );
+      return json({ ok: false, error: "verification_failed" }, 403);
+    }
+    await env.BOOKING_KV.put(
+      verifyRateKey,
+      JSON.stringify({
+        count: count + 1,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS },
+    );
   }
   const challengeKey = _companyRecoveryChallengeKey(challengeId);
   if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
@@ -3728,7 +3800,6 @@ async function handlePublicCompanyRecoveryVerify(body, env) {
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
-  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
   const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
   const candidateOtpHash = (await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`))
     .toLowerCase();
@@ -10509,7 +10580,7 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const body = await safeJson(request);
-        return handlePublicCompanyRecoveryVerify(body, env);
+        return handlePublicCompanyRecoveryVerify(body, env, request);
       }
 
       if (url.pathname === "/public/company/link/start") {
