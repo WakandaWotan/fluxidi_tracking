@@ -431,9 +431,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
     return BackendBusinessProfile(
       companyCode: pick(local.companyCode, server.companyCode),
-      publicCompanyCode: pick(local.publicCompanyCode, server.publicCompanyCode),
-      publicCompanySlug: pick(local.publicCompanySlug, server.publicCompanySlug),
-      publicDisplayCode: pick(local.publicDisplayCode, server.publicDisplayCode),
+      publicCompanyCode: pick(
+        local.publicCompanyCode,
+        server.publicCompanyCode,
+      ),
+      publicCompanySlug: pick(
+        local.publicCompanySlug,
+        server.publicCompanySlug,
+      ),
+      publicDisplayCode: pick(
+        local.publicDisplayCode,
+        server.publicDisplayCode,
+      ),
       companyName: pick(local.companyName, server.companyName),
       legalName: pick(local.legalName, server.legalName),
       vatNumber: pick(local.vatNumber, server.vatNumber),
@@ -3118,8 +3127,29 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final publicCompanyCode = _activePublicCompanyCode();
     if (publicCompanyCode == null) return _SetupStatus.incomplete;
     final prepared = _preparedPublicBookingUrl(publicCompanyCode);
-    if (_nonEmpty(prepared)) return _SetupStatus.attention;
-    return _SetupStatus.comingSoon;
+    if (_nonEmpty(prepared)) return _SetupStatus.complete;
+    return _SetupStatus.attention;
+  }
+
+  String _publicLinkSetupSubtitle() {
+    switch (_publicLinkStatus()) {
+      case _SetupStatus.complete:
+        return _t(
+          nl: 'Klaar om te delen via link en QR',
+          en: 'Ready to share via link and QR',
+          fr: 'Prêt à partager via lien et QR',
+          es: 'Listo para compartir por enlace y QR',
+        );
+      case _SetupStatus.attention:
+      case _SetupStatus.incomplete:
+      case _SetupStatus.comingSoon:
+        return _t(
+          nl: 'Publieke code of link ontbreekt',
+          en: 'Public code or link is missing',
+          fr: 'Code public ou lien manquant',
+          es: 'Falta el código público o el enlace',
+        );
+    }
   }
 
   List<_SetupItem> _setupItems() {
@@ -3211,12 +3241,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Lien de réservation public',
           es: 'Enlace público de reserva',
         ),
-        subtitle: _t(
-          nl: 'Voorbereid, nog niet live',
-          en: 'Prepared, not live yet',
-          fr: 'Préparé, pas encore en ligne',
-          es: 'Preparado, aún no en vivo',
-        ),
+        subtitle: _publicLinkSetupSubtitle(),
         icon: Icons.link_outlined,
         status: _publicLinkStatus(),
       ),
@@ -3675,7 +3700,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           ? publicCompanyCode
                           : '';
                       final publicBookingUrl = hasPublicCompanyCode
-                          ? _preparedPublicBookingUrl(effectivePublicCompanyCode)
+                          ? _preparedPublicBookingUrl(
+                              effectivePublicCompanyCode,
+                            )
                           : '';
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3750,7 +3777,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 color: const Color(0xFF0B0B0B),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: const Color(0xFFD4AF4A).withOpacity(0.45),
+                                  color: const Color(
+                                    0xFFD4AF4A,
+                                  ).withOpacity(0.45),
                                 ),
                               ),
                               child: Column(
