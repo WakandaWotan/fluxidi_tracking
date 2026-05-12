@@ -5595,6 +5595,7 @@ async function handlePublicBookingPreview(url, env) {
   const contactWebsiteHref = _publicWebsiteHref(contactWebsite);
   const hasContact = !!(contactEmail || contactPhone || contactWebsite);
   const companyCodeForUi = sanitizeTenantString(data?.company_code, 80);
+  const companyIdForUi = sanitizeTenantString(resolvedScope?.company_id, 80);
   const supportedLanguages = Array.isArray(data?.supported_languages)
     ? data.supported_languages.filter((code) => ["nl", "en", "fr", "es"].includes(String(code || "").toLowerCase()))
     : ["nl", "en", "fr", "es"];
@@ -5609,7 +5610,7 @@ async function handlePublicBookingPreview(url, env) {
         : `/public/book?company_id=${encodeURIComponent(
             sanitizeTenantString(resolvedScope?.company_id, 80),
           )}&lang=${encodeURIComponent(code)}`;
-      return `<a href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
+      return `<a class="fx-lang-link" data-lang="${escapeHtml(code)}" href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
     })
     .join("");
 
@@ -6223,6 +6224,7 @@ async function handlePublicBookingPreview(url, env) {
           <script>
             (function () {
               const companyCode = ${JSON.stringify(companyCodeForUi || "")};
+              const companyId = ${JSON.stringify(companyIdForUi || "")};
               const uiText = ${JSON.stringify({
                 quoteLoading: copy.quoteLoading,
                 quoteSuccess: copy.quoteSuccess,
@@ -6283,6 +6285,8 @@ async function handlePublicBookingPreview(url, env) {
                 fieldBags: copy.fieldBags,
               })};
               const currentLang = ${JSON.stringify(lang)};
+              const publicGatewayStateKey =
+                "fx_public_booking_state_v1:" + String(companyCode || companyId || "default");
 
               const quoteBtn = document.getElementById("public-quote-btn");
               const bookBtn = document.getElementById("public-book-btn");
@@ -6439,6 +6443,112 @@ async function handlePublicBookingPreview(url, env) {
                 const premiumSelected = isPremiumTierSelected();
                 if (fieldDrinkService) fieldDrinkService.disabled = !!isBusy || !premiumSelected;
                 if (fieldWorkTable) fieldWorkTable.disabled = !!isBusy || !premiumSelected;
+              }
+
+              function getSessionStorageSafe() {
+                try {
+                  if (typeof window === "undefined" || !window || !window.sessionStorage) return null;
+                  return window.sessionStorage;
+                } catch (_) {
+                  return null;
+                }
+              }
+
+              function clearPublicGatewayQuoteUi() {
+                lastQuotePayload = null;
+                lastQuoteSignature = "";
+                if (quotePanelEl) quotePanelEl.style.display = "none";
+                if (quoteDetailCardEl) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                }
+                if (resultEl) {
+                  resultEl.style.display = "none";
+                  resultEl.innerHTML = "";
+                }
+                setBusy(false);
+              }
+
+              function savePublicGatewayState() {
+                const storage = getSessionStorageSafe();
+                if (!storage) return;
+                try {
+                  const state = {
+                    from: String((fieldFrom && fieldFrom.value) || "").trim(),
+                    to: String((fieldTo && fieldTo.value) || "").trim(),
+                    fromResolved: fromResolved && typeof fromResolved === "object" ? fromResolved : null,
+                    toResolved: toResolved && typeof toResolved === "object" ? toResolved : null,
+                    date: String((fieldDate && fieldDate.value) || "").trim(),
+                    time: String((fieldTime && fieldTime.value) || "").trim(),
+                    service: String((fieldService && fieldService.value) || "").trim(),
+                    tier: String((fieldTier && fieldTier.value) || "").trim(),
+                    wait_min: String((fieldWaitMin && fieldWaitMin.value) || "").trim(),
+                    stop1: String((fieldStop1 && fieldStop1.value) || "").trim(),
+                    pax: String((fieldPax && fieldPax.value) || "").trim(),
+                    bags: String((fieldBags && fieldBags.value) || "").trim(),
+                    return_enabled: !!(fieldReturnEnabled && fieldReturnEnabled.checked),
+                    return_date: String((fieldReturnDate && fieldReturnDate.value) || "").trim(),
+                    return_time: String((fieldReturnTime && fieldReturnTime.value) || "").trim(),
+                    drink_service: !!(fieldDrinkService && fieldDrinkService.checked),
+                    work_table: !!(fieldWorkTable && fieldWorkTable.checked),
+                    customer_name: String((fieldName && fieldName.value) || "").trim(),
+                    customer_phone: String((fieldPhone && fieldPhone.value) || "").trim(),
+                    customer_email: String((fieldEmail && fieldEmail.value) || "").trim(),
+                    notes: String((fieldNotes && fieldNotes.value) || "").trim(),
+                    saved_at: new Date().toISOString(),
+                    lang: String(currentLang || "nl"),
+                  };
+                  storage.setItem(publicGatewayStateKey, JSON.stringify(state));
+                } catch (_) {
+                  // Best-effort only.
+                }
+              }
+
+              function restorePublicGatewayState() {
+                const storage = getSessionStorageSafe();
+                if (!storage) return false;
+                try {
+                  const raw = storage.getItem(publicGatewayStateKey);
+                  if (!raw) return false;
+                  const parsed = JSON.parse(raw);
+                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+                  if (fieldFrom && parsed.from != null) fieldFrom.value = String(parsed.from);
+                  if (fieldTo && parsed.to != null) fieldTo.value = String(parsed.to);
+                  fromResolved = parsed.fromResolved && typeof parsed.fromResolved === "object"
+                    ? normalizeResolvedAddress(parsed.fromResolved)
+                    : null;
+                  toResolved = parsed.toResolved && typeof parsed.toResolved === "object"
+                    ? normalizeResolvedAddress(parsed.toResolved)
+                    : null;
+                  if (fieldDate && parsed.date != null) fieldDate.value = String(parsed.date);
+                  if (fieldTime && parsed.time != null) fieldTime.value = String(parsed.time);
+                  if (fieldService && parsed.service != null) fieldService.value = String(parsed.service);
+                  if (fieldTier && parsed.tier != null) fieldTier.value = String(parsed.tier);
+                  if (fieldWaitMin && parsed.wait_min != null) fieldWaitMin.value = String(parsed.wait_min);
+                  if (fieldStop1 && parsed.stop1 != null) fieldStop1.value = String(parsed.stop1);
+                  if (fieldPax && parsed.pax != null) fieldPax.value = String(parsed.pax);
+                  if (fieldBags && parsed.bags != null) fieldBags.value = String(parsed.bags);
+                  if (fieldReturnEnabled) fieldReturnEnabled.checked = parsed.return_enabled === true;
+                  if (fieldReturnDate && parsed.return_date != null) fieldReturnDate.value = String(parsed.return_date);
+                  if (fieldReturnTime && parsed.return_time != null) fieldReturnTime.value = String(parsed.return_time);
+                  if (fieldDrinkService) fieldDrinkService.checked = parsed.drink_service === true;
+                  if (fieldWorkTable) fieldWorkTable.checked = parsed.work_table === true;
+                  if (fieldName && parsed.customer_name != null) fieldName.value = String(parsed.customer_name);
+                  if (fieldPhone && parsed.customer_phone != null) fieldPhone.value = String(parsed.customer_phone);
+                  if (fieldEmail && parsed.customer_email != null) fieldEmail.value = String(parsed.customer_email);
+                  if (fieldNotes && parsed.notes != null) fieldNotes.value = String(parsed.notes);
+
+                  syncReturnFieldsVisibility();
+                  syncPremiumOptionsVisibility();
+                  clearPublicGatewayQuoteUi();
+                  setStatus(
+                    uiText.quoteChangedRecalculate || uiText.quoteFirst || uiText.quoteError,
+                    "info",
+                  );
+                  return true;
+                } catch (_) {
+                  return false;
+                }
               }
 
               function normalizeInt(value, fallback, minValue) {
@@ -7315,6 +7425,17 @@ async function handlePublicBookingPreview(url, env) {
               if (currentLocationBtn) {
                 currentLocationBtn.addEventListener("click", onUseCurrentLocation);
               }
+              const langLinks = document.querySelectorAll(".fx-lang-link");
+              if (langLinks && langLinks.length) {
+                langLinks.forEach(function (link) {
+                  link.addEventListener("click", function () {
+                    savePublicGatewayState();
+                  });
+                });
+              }
+              if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") {
+                window.addEventListener("beforeunload", savePublicGatewayState);
+              }
               if (paxMinusBtn) {
                 paxMinusBtn.addEventListener("click", function () {
                   applyStepperValue(fieldPax, -1, 1);
@@ -7345,6 +7466,9 @@ async function handlePublicBookingPreview(url, env) {
                 timeNextBtn.addEventListener("click", setPickupTimeNextAvailable);
               }
               applyDateTimeDefaults();
+              syncReturnFieldsVisibility();
+              syncPremiumOptionsVisibility();
+              restorePublicGatewayState();
               syncReturnFieldsVisibility();
               syncPremiumOptionsVisibility();
               if (!companyCode) {
