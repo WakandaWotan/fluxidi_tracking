@@ -1840,6 +1840,13 @@ function _companyRecoveryChallengeId() {
     .replace(/[^a-zA-Z0-9_-]+/g, "");
 }
 
+function _maskRecoveryChallengeId(value) {
+  const id = sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!id) return "-";
+  if (id.length <= 10) return `${id.slice(0, 2)}***${id.slice(-2)}`;
+  return `${id.slice(0, 6)}...${id.slice(-4)}`;
+}
+
 function _normalizeRecoveryEmail(value) {
   const email = sanitizeTenantString(value, 240).toLowerCase();
   return isValidEmail(email) ? email : "";
@@ -3594,13 +3601,22 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   const email = _normalizeRecoveryEmail(
     body.email ?? body.company_email ?? body.companyEmail ?? body.owner_email ?? body.ownerEmail,
   );
+  console.log(
+    `[COMPANY_RECOVERY][START][REQUESTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"}`,
+  );
   const genericResponse = _projectPublicRecoveryStartResponse(challengeId, email);
   const codeValidation = validatePublicCompanyCode(companyCode);
   if (!codeValidation.ok || !email) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"} bucket=invalid_input`,
+    );
     return json(genericResponse, 200);
   }
   const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
   if (!companyRecord || companyRecord.linking_enabled !== true) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=company_unavailable`,
+    );
     return json(genericResponse, 200);
   }
   const scope = {
@@ -3608,6 +3624,9 @@ async function handlePublicCompanyRecoveryStart(body, env) {
     company_id: sanitizeTenantString(companyRecord.company_id, 80),
   };
   if (!scope.tenant_id || !scope.company_id) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=scope_missing`,
+    );
     return json(genericResponse, 200);
   }
   const businessProfile = await loadBusinessProfile(env, scope, {
@@ -3616,6 +3635,9 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
   const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
   if (!emailMatches) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=email_unmatched`,
+    );
     return json(genericResponse, 200);
   }
 
@@ -3630,6 +3652,9 @@ async function handlePublicCompanyRecoveryStart(body, env) {
       ? Math.max(0, Math.round(Number(rateSource.count)))
       : 0;
     if (count >= COMPANY_RECOVERY_START_RATE_MAX) {
+      console.log(
+        `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=start_rate_limited`,
+      );
       return json(genericResponse, 200);
     }
     const nextCount = count + 1;
@@ -3649,7 +3674,12 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   const otp = _generateCompanyRecoveryOtp();
   const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
   const challengeKey = _companyRecoveryChallengeKey(challengeId);
-  if (!challengeKey) return json(genericResponse, 200);
+  if (!challengeKey) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=challenge_key_invalid`,
+    );
+    return json(genericResponse, 200);
+  }
   const challenge = {
     version: 1,
     challenge_id: challengeId,
@@ -3670,6 +3700,9 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
     expirationTtl: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
   });
+  console.log(
+    `[COMPANY_RECOVERY][START][ACCEPTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} ttl=${COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS}`,
+  );
 
   try {
     const emailSend = await _sendCompanyRecoveryOtpEmail({
@@ -3681,16 +3714,16 @@ async function handlePublicCompanyRecoveryStart(body, env) {
     });
     if (emailSend?.ok) {
       console.log(
-        `[COMPANY_RECOVERY][EMAIL][OK] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} id=${sanitizeTenantString(emailSend.id, 120) || "-"}`,
+        `[COMPANY_RECOVERY][EMAIL][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} provider_id=${sanitizeTenantString(emailSend.id, 120) || "-"} bucket=success`,
       );
     } else {
       console.log(
-        `[COMPANY_RECOVERY][EMAIL][WARN] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
+        `[COMPANY_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=send_failed reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
       );
     }
   } catch (err) {
     console.log(
-      `[COMPANY_RECOVERY][EMAIL][ERROR] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
+      `[COMPANY_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=send_exception reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
     );
   }
 
@@ -3736,7 +3769,13 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     body.otp ?? body.recovery_code ?? body.recoveryCode ?? body.code_otp,
     24,
   ).replace(/\s+/g, "");
+  console.log(
+    `[COMPANY_RECOVERY][VERIFY][REQUESTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
   if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
@@ -3756,7 +3795,7 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
       : 0;
     if (count >= COMPANY_RECOVERY_VERIFY_RATE_MAX) {
       console.log(
-        `[COMPANY_RECOVERY][VERIFY_RATE][BLOCKED] company=${_maskPublicDriverLoginValue(codeValidation.code)} reason=rate_limited`,
+        `[COMPANY_RECOVERY][VERIFY][THROTTLED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=throttled`,
       );
       return json({ ok: false, error: "verification_failed" }, 403);
     }
@@ -3770,9 +3809,17 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     );
   }
   const challengeKey = _companyRecoveryChallengeKey(challengeId);
-  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  if (!challengeKey) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_key_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
   const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
   if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_missing`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const nowMs = Date.now();
@@ -3797,6 +3844,19 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     nowMs >= expiresAtMs ||
     attempts >= maxAttempts
   ) {
+    let bucket = "challenge_state_invalid";
+    if (sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code) {
+      bucket = "company_mismatch";
+    } else if (sanitizeTenantString(challenge.consumed_at, 80)) {
+      bucket = "consumed";
+    } else if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+      bucket = "expired";
+    } else if (attempts >= maxAttempts) {
+      bucket = "max_attempts";
+    }
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=${bucket}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
@@ -3813,6 +3873,9 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
       expirationTtl: remainingSeconds,
     });
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_mismatch`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   challenge.attempts = attempts + 1;
@@ -3832,6 +3895,9 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     sanitizeTenantString(companyRecord.tenant_id, 80) !== tenantId ||
     sanitizeTenantString(companyRecord.company_id, 80) !== companyId
   ) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=scope_or_company_unavailable`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const scope = { tenant_id: tenantId, company_id: companyId };
@@ -3841,6 +3907,9 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
   const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
   const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
   if (!emailMatches) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=email_mismatch`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
 
@@ -3849,6 +3918,9 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
   const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
   const companySessionKey = _companySessionKey(companySessionTokenHash);
   if (!companySessionKey) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=session_key_unavailable`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
@@ -3872,6 +3944,9 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
       link_method: "public_company_recovery",
     }),
     { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[COMPANY_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} link_method=public_company_recovery`,
   );
   return json(
     {
