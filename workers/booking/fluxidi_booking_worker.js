@@ -2867,6 +2867,17 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
       body?.wait_min ?? body?.waitMin ?? body?.wait_minutes ?? body?.waiting_min ?? body?.wait,
       0,
     ),
+    return_enabled: (() => {
+      const raw =
+        body?.return_enabled ??
+        body?.returnEnabled ??
+        body?.return;
+      if (typeof raw === "boolean") return raw;
+      const normalizedRaw = safeStr(raw, 16).toLowerCase();
+      return normalizedRaw === "1" || normalizedRaw === "true" || normalizedRaw === "yes" || normalizedRaw === "on";
+    })(),
+    return_date: safeStr(body?.return_date ?? body?.returnDate, 24),
+    return_time: safeStr(body?.return_time ?? body?.returnTime, 16),
     stops: _sanitizePublicStopsList(stopsInput),
     tenant_id: resolvedScope.scope.tenant_id,
     tenantId: resolvedScope.scope.tenant_id,
@@ -3184,6 +3195,16 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     // If return quote fails, we keep main quote and simply omit returnQuote
     returnQuote = null;
   }
+  function moneyNumber(value) {
+    const n = Number(String(value ?? "0").replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  const mainEx = moneyNumber(mainPricing.price_ex_vat);
+  const mainVat = moneyNumber(mainPricing.price_vat);
+  const mainIncl = moneyNumber(mainPricing.price_incl_vat);
+  const retEx = returnQuote ? moneyNumber(returnQuote.price_ex_vat) : 0;
+  const retVat = returnQuote ? moneyNumber(returnQuote.price_vat) : 0;
+  const retIncl = returnQuote ? moneyNumber(returnQuote.price_incl_vat) : 0;
 
   return {
     status: 200,
@@ -3224,9 +3245,9 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       fixed_fare_rule_id: quoteFixedFareRuleId,
 
       // totals (main + optional return)
-      total_price_ex_vat: round2((mainPricing.price_ex_vat || 0) + (returnQuote ? (returnQuote.price_ex_vat || 0) : 0)),
-      total_price_vat: round2((mainPricing.price_vat || 0) + (returnQuote ? (returnQuote.price_vat || 0) : 0)),
-      total_price_incl_vat: round2((mainPricing.price_incl_vat || 0) + (returnQuote ? (returnQuote.price_incl_vat || 0) : 0)),
+      total_price_ex_vat: round2(mainEx + retEx),
+      total_price_vat: round2(mainVat + retVat),
+      total_price_incl_vat: round2(mainIncl + retIncl),
 
       return: returnQuote,
       breakdown: mainPricing.breakdown
@@ -4558,6 +4579,10 @@ function publicPreviewCopy(lang) {
       fieldTo: "Bestemmingsadres",
       fieldPickupDate: "Ophaaldatum",
       fieldPickupTime: "Ophaaltijd",
+      fieldReturnEnabled: "Retourrit",
+      fieldReturnDate: "Retourdatum",
+      fieldReturnTime: "Retouruur",
+      missingReturnDateTime: "Vul retourdatum en retouruur in.",
       quickToday: "Vandaag",
       quickTomorrow: "Morgen",
       quickNextTime: "+30 min",
@@ -4641,6 +4666,10 @@ function publicPreviewCopy(lang) {
       fieldTo: "Destination address",
       fieldPickupDate: "Pickup date",
       fieldPickupTime: "Pickup time",
+      fieldReturnEnabled: "Return trip",
+      fieldReturnDate: "Return date",
+      fieldReturnTime: "Return time",
+      missingReturnDateTime: "Enter return date and return time.",
       quickToday: "Today",
       quickTomorrow: "Tomorrow",
       quickNextTime: "+30 min",
@@ -4724,6 +4753,10 @@ function publicPreviewCopy(lang) {
       fieldTo: "Adresse de destination",
       fieldPickupDate: "Date de prise en charge",
       fieldPickupTime: "Heure de prise en charge",
+      fieldReturnEnabled: "Trajet retour",
+      fieldReturnDate: "Date retour",
+      fieldReturnTime: "Heure retour",
+      missingReturnDateTime: "Saisissez la date et l’heure du retour.",
       quickToday: "Aujourd'hui",
       quickTomorrow: "Demain",
       quickNextTime: "+30 min",
@@ -4807,6 +4840,10 @@ function publicPreviewCopy(lang) {
       fieldTo: "Dirección de destino",
       fieldPickupDate: "Fecha de recogida",
       fieldPickupTime: "Hora de recogida",
+      fieldReturnEnabled: "Viaje de regreso",
+      fieldReturnDate: "Fecha de regreso",
+      fieldReturnTime: "Hora de regreso",
+      missingReturnDateTime: "Introduce la fecha y hora de regreso.",
       quickToday: "Hoy",
       quickTomorrow: "Manana",
       quickNextTime: "+30 min",
@@ -5878,6 +5915,20 @@ async function handlePublicBookingPreview(url, env) {
                       <button id="public-date-tomorrow-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickTomorrow || "Tomorrow")}</button>
                       <button id="public-time-next-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickNextTime || "+30 min")}</button>
                     </div>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldReturnEnabled || "Return trip")}</span>
+                      <input id="public-field-return-enabled" type="checkbox" />
+                    </label>
+                    <div id="public-return-fields" class="fx-input-grid fx-field-full" style="display:none;grid-template-columns:repeat(2,minmax(0,1fr));">
+                      <label class="fx-field">
+                        <span class="fx-label">${escapeHtml(copy.fieldReturnDate || "Return date")}</span>
+                        <input id="public-field-return-date" class="fx-input" type="date" />
+                      </label>
+                      <label class="fx-field">
+                        <span class="fx-label">${escapeHtml(copy.fieldReturnTime || "Return time")}</span>
+                        <input id="public-field-return-time" class="fx-input" type="time" step="300" />
+                      </label>
+                    </div>
                   </div>
                 </section>
 
@@ -6009,6 +6060,7 @@ async function handlePublicBookingPreview(url, env) {
                 locationFound: copy.locationFound,
                 quoteChangedRecalculate: copy.quoteChangedRecalculate,
                 stopsDirect: copy.stopsDirect,
+                missingReturnDateTime: copy.missingReturnDateTime,
               })};
               const currentLang = ${JSON.stringify(lang)};
 
@@ -6027,6 +6079,10 @@ async function handlePublicBookingPreview(url, env) {
               const fieldTo = document.getElementById("public-field-to");
               const fieldDate = document.getElementById("public-field-date");
               const fieldTime = document.getElementById("public-field-time");
+              const fieldReturnEnabled = document.getElementById("public-field-return-enabled");
+              const fieldReturnDate = document.getElementById("public-field-return-date");
+              const fieldReturnTime = document.getElementById("public-field-return-time");
+              const returnFieldsEl = document.getElementById("public-return-fields");
               const fieldName = document.getElementById("public-field-name");
               const fieldPhone = document.getElementById("public-field-phone");
               const fieldEmail = document.getElementById("public-field-email");
@@ -6222,6 +6278,24 @@ async function handlePublicBookingPreview(url, env) {
                 if (fieldTime && !String(fieldTime.value || "").trim()) {
                   const localTarget = roundedNowPlusMinutes(30);
                   fieldTime.value = toLocalTimeInputValue(localTarget);
+                }
+              }
+
+              function syncReturnFieldsVisibility() {
+                if (!fieldReturnEnabled) return;
+                const enabled = !!fieldReturnEnabled.checked;
+                if (returnFieldsEl) {
+                  returnFieldsEl.style.display = enabled ? "grid" : "none";
+                }
+                if (fieldReturnDate) {
+                  fieldReturnDate.disabled = !enabled;
+                  if (enabled && !String(fieldReturnDate.value || "").trim() && fieldDate) {
+                    const pickupDate = String(fieldDate.value || "").trim();
+                    if (pickupDate) fieldReturnDate.value = pickupDate;
+                  }
+                }
+                if (fieldReturnTime) {
+                  fieldReturnTime.disabled = !enabled;
                 }
               }
 
@@ -6423,6 +6497,17 @@ async function handlePublicBookingPreview(url, env) {
                 if (toResolved && Number.isFinite(toResolved.lat) && Number.isFinite(toResolved.lng)) {
                   payload.to_lat = Number(toResolved.lat);
                   payload.to_lng = Number(toResolved.lng);
+                }
+                const returnEnabled = !!(fieldReturnEnabled && fieldReturnEnabled.checked);
+                payload.return_enabled = returnEnabled;
+                if (returnEnabled) {
+                  const returnDate = String((fieldReturnDate && fieldReturnDate.value) || "").trim();
+                  const returnTime = String((fieldReturnTime && fieldReturnTime.value) || "").trim();
+                  if (!returnDate || !returnTime) {
+                    return { ok: false, error: uiText.missingReturnDateTime || uiText.requiredFieldsMissing };
+                  }
+                  payload.return_date = returnDate;
+                  payload.return_time = returnTime;
                 }
                 const stop1 = String((fieldStop1 && fieldStop1.value) || "").trim();
                 if (stop1) payload.stops = [stop1];
@@ -6688,6 +6773,24 @@ async function handlePublicBookingPreview(url, env) {
               fieldDate.addEventListener("focus", function () { openNativePicker(fieldDate); });
               fieldTime.addEventListener("click", function () { openNativePicker(fieldTime); });
               fieldTime.addEventListener("focus", function () { openNativePicker(fieldTime); });
+              if (fieldReturnEnabled) {
+                fieldReturnEnabled.addEventListener("change", function () {
+                  syncReturnFieldsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+              }
+              if (fieldReturnDate) {
+                fieldReturnDate.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldReturnDate.addEventListener("change", markQuoteStaleIfNeeded);
+                fieldReturnDate.addEventListener("click", function () { openNativePicker(fieldReturnDate); });
+                fieldReturnDate.addEventListener("focus", function () { openNativePicker(fieldReturnDate); });
+              }
+              if (fieldReturnTime) {
+                fieldReturnTime.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldReturnTime.addEventListener("change", markQuoteStaleIfNeeded);
+                fieldReturnTime.addEventListener("click", function () { openNativePicker(fieldReturnTime); });
+                fieldReturnTime.addEventListener("focus", function () { openNativePicker(fieldReturnTime); });
+              }
               fieldPax.addEventListener("input", markQuoteStaleIfNeeded);
               fieldPax.addEventListener("change", markQuoteStaleIfNeeded);
               fieldBags.addEventListener("input", markQuoteStaleIfNeeded);
@@ -6753,6 +6856,7 @@ async function handlePublicBookingPreview(url, env) {
                 timeNextBtn.addEventListener("click", setPickupTimeNextAvailable);
               }
               applyDateTimeDefaults();
+              syncReturnFieldsVisibility();
               if (!companyCode) {
                 quoteBtn.disabled = true;
                 bookBtn.disabled = true;
