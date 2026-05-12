@@ -51,6 +51,7 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'airport/airport_page.dart';
 import 'events/events_page.dart';
@@ -3652,7 +3653,7 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   Future<void> _showCompanyPairingSuccessDialog(BuildContext context) {
-    return showDialog<void>(
+    return FluxidiResponsiveDialog.show<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -3671,6 +3672,7 @@ class RoleEntryPage extends StatelessWidget {
             ),
             style: const TextStyle(color: Colors.white),
           ),
+          scrollable: true,
           content: Text(
             _t(
               nl: 'Je toestel is veilig gekoppeld aan je bedrijf.',
