@@ -945,7 +945,21 @@ const DEFAULT_BUSINESS_PROFILE = {
   companyName: "Fluxidi Taxi",
   legalName: "Fluxidi Taxi",
   vatNumber: "",
+  vat_number: "",
+  vatVerificationStatus: "pending",
+  vat_verification_status: "pending",
   companyRegistrationNumber: "",
+  company_registration_number: "",
+  enterpriseNumber: "",
+  enterprise_number: "",
+  kboNumber: "",
+  kbo_number: "",
+  peppolIdentifier: "",
+  peppol_identifier: "",
+  peppolReadinessStatus: "missing_vat",
+  peppol_readiness_status: "missing_vat",
+  chironReadinessStatus: "pending",
+  chiron_readiness_status: "pending",
   address: "",
   postcode: "",
   city: "",
@@ -1145,12 +1159,56 @@ function normalizeBusinessProfile(input = {}) {
     DEFAULT_BUSINESS_PROFILE.email,
     160
   );
+  const enterpriseNumber = sanitizeTenantString(
+    source.enterpriseNumber ??
+      source.enterprise_number ??
+      source.kboNumber ??
+      source.kbo_number ??
+      "",
+    32,
+  ).replace(/\D+/g, "").slice(0, 10);
+  const peppolIdentifier = sanitizeTenantString(
+    source.peppolIdentifier ?? source.peppol_identifier ?? "",
+    48,
+  );
+  const vatVerificationStatus = sanitizeTenantString(
+    source.vatVerificationStatus ??
+      source.vat_verification_status ??
+      DEFAULT_BUSINESS_PROFILE.vatVerificationStatus,
+    32,
+  ).toLowerCase();
+  const peppolReadinessStatus = sanitizeTenantString(
+    source.peppolReadinessStatus ??
+      source.peppol_readiness_status ??
+      DEFAULT_BUSINESS_PROFILE.peppolReadinessStatus,
+    32,
+  ).toLowerCase();
+  const chironReadinessStatus = sanitizeTenantString(
+    source.chironReadinessStatus ??
+      source.chiron_readiness_status ??
+      DEFAULT_BUSINESS_PROFILE.chironReadinessStatus,
+    32,
+  ).toLowerCase();
   return {
     version: 1,
     companyName: sanitizeTenantString(source.companyName ?? DEFAULT_BUSINESS_PROFILE.companyName, 120),
     legalName: sanitizeTenantString(source.legalName ?? DEFAULT_BUSINESS_PROFILE.legalName, 160),
     vatNumber: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
-    companyRegistrationNumber: sanitizeTenantString(source.companyRegistrationNumber ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    vat_number: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
+    vatVerificationStatus,
+    vat_verification_status: vatVerificationStatus,
+    companyRegistrationNumber: sanitizeTenantString(source.companyRegistrationNumber ?? source.company_registration_number ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    company_registration_number: sanitizeTenantString(source.companyRegistrationNumber ?? source.company_registration_number ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    enterpriseNumber,
+    enterprise_number: enterpriseNumber,
+    kboNumber: enterpriseNumber,
+    kbo_number: enterpriseNumber,
+    peppolIdentifier,
+    peppol_identifier: peppolIdentifier,
+    peppolReadinessStatus,
+    peppol_readiness_status: peppolReadinessStatus,
+    chironReadinessStatus,
+    chiron_readiness_status: chironReadinessStatus,
     address: sanitizeTenantString(source.address ?? DEFAULT_BUSINESS_PROFILE.address, 220),
     postcode: sanitizeTenantString(source.postcode ?? source.postalCode ?? DEFAULT_BUSINESS_PROFILE.postcode, 24),
     city: sanitizeTenantString(source.city ?? DEFAULT_BUSINESS_PROFILE.city, 80),
@@ -2842,6 +2900,74 @@ function _isCompanyLinkSmsProviderConfigured(env) {
   return false;
 }
 
+function normalizeBelgianVatNumber(value) {
+  const raw = sanitizeTenantString(value, 96).toUpperCase();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s.-]+/g, "");
+  if (!compact) return "";
+  if (compact.startsWith("BE")) {
+    const digits = compact.slice(2).replace(/\D+/g, "");
+    if (digits.length !== 10) return "";
+    return `BE${digits}`;
+  }
+  const digits = compact.replace(/\D+/g, "");
+  if (digits.length === 10) return `BE${digits}`;
+  return "";
+}
+
+function belgianEnterpriseNumberFromVat(value) {
+  const vat = normalizeBelgianVatNumber(value);
+  if (!vat) return "";
+  return vat.slice(2);
+}
+
+function isLikelyBelgianVatNumber(value) {
+  return /^BE\d{10}$/.test(normalizeBelgianVatNumber(value));
+}
+
+function peppolIdentifierFromBelgianEnterpriseNumber(value) {
+  const digits = sanitizeTenantString(value, 40).replace(/\D+/g, "");
+  if (digits.length !== 10) return "";
+  return `0208:${digits}`;
+}
+
+function _generateInternalCompanyScopeId(companyName, attempt = 0) {
+  const slug = _normalizePublicCompanySlug(companyName, 24).toLowerCase();
+  const cleanSlug = sanitizeTenantString(slug, 40)
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const suffixSeed = crypto?.randomUUID
+    ? crypto.randomUUID()
+    : `reg_${Date.now()}_${Math.random()}`;
+  const suffix = sanitizeTenantString(suffixSeed, 120)
+    .replace(/[^a-zA-Z0-9]+/g, "")
+    .toLowerCase()
+    .slice(0, 10);
+  const numericAttempt = Math.max(0, Math.min(99, Math.round(Number(attempt) || 0)));
+  const id = `cmp_${cleanSlug || "company"}_${suffix || "seed"}${numericAttempt > 0 ? `_${numericAttempt}` : ""}`;
+  return sanitizeTenantString(id, 80).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80);
+}
+
+async function _allocateNewCompanyScopeForRegistration(env, companyName) {
+  if (!env?.BOOKING_KV) return null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const candidate = _generateInternalCompanyScopeId(companyName, attempt);
+    if (!_isSafeCompanyLinkScopePart(candidate)) continue;
+    const scope = {
+      tenant_id: candidate,
+      company_id: candidate,
+      hasScope: true,
+    };
+    const scopedKeys = buildScopedSettingsKeys(scope);
+    const profileKey = scopedKeys?.businessProfileKey || "";
+    if (!profileKey) continue;
+    const existing = await env.BOOKING_KV.get(profileKey, { type: "json" });
+    if (!existing) return scope;
+  }
+  return null;
+}
+
 /**
  * Private server-side link index record (never expose directly):
  * {
@@ -3000,6 +3126,241 @@ async function handlePublicCompanyLinkStart(body, env) {
       masked_phone: maskedPhone,
     },
     501,
+  );
+}
+
+async function handlePublicCompanyRegister(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  const companyName = sanitizeTenantString(
+    body.company_name ?? body.companyName,
+    120,
+  );
+  if (!companyName) {
+    return json({ ok: false, error: "missing_company_name" }, 400);
+  }
+
+  const email = sanitizeTenantString(
+    body.email ??
+      body.companyEmail ??
+      body.company_email ??
+      body.owner_email ??
+      body.ownerEmail,
+    160,
+  );
+  const phone = sanitizeTenantString(
+    body.phone ?? body.owner_phone ?? body.ownerPhone,
+    64,
+  );
+  const country = _normalizeCompanyLinkCountry(body.country) || "BE";
+  const isBelgianCompany = country === "BE";
+  const vatLikeInput = sanitizeTenantString(
+    body.vat_number ??
+      body.vatNumber ??
+      body.btw_number ??
+      body.btwNumber ??
+      body.enterprise_number ??
+      body.enterpriseNumber ??
+      body.kbo_number ??
+      body.kboNumber,
+    96,
+  );
+  const normalizedBelgianVat = normalizeBelgianVatNumber(vatLikeInput);
+  if (isBelgianCompany && vatLikeInput && !isLikelyBelgianVatNumber(vatLikeInput)) {
+    return json({ ok: false, error: "invalid_belgian_vat_number" }, 400);
+  }
+  const enterpriseNumber = belgianEnterpriseNumberFromVat(normalizedBelgianVat);
+  const peppolIdentifier = peppolIdentifierFromBelgianEnterpriseNumber(enterpriseNumber);
+  const vatVerificationStatus = "pending";
+  const peppolReadinessStatus = enterpriseNumber ? "prepared" : "missing_vat";
+  const chironReadinessStatus = "pending";
+
+  const scope = await _allocateNewCompanyScopeForRegistration(env, companyName);
+  if (!scope?.tenant_id || !scope?.company_id) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  console.log(
+    `[PUBLIC_COMPANY_REGISTER][REQ] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} country=${country}`,
+  );
+
+  let businessProfile = null;
+  try {
+    businessProfile = await saveBusinessProfile(
+      env,
+      {
+        companyName,
+        legalName: sanitizeTenantString(body.legal_name ?? body.legalName, 160),
+        vatNumber: normalizedBelgianVat || "",
+        vat_number: normalizedBelgianVat || "",
+        companyRegistrationNumber: enterpriseNumber || "",
+        company_registration_number: enterpriseNumber || "",
+        enterpriseNumber: enterpriseNumber || "",
+        enterprise_number: enterpriseNumber || "",
+        kboNumber: enterpriseNumber || "",
+        kbo_number: enterpriseNumber || "",
+        peppolIdentifier: peppolIdentifier || "",
+        peppol_identifier: peppolIdentifier || "",
+        vatVerificationStatus,
+        vat_verification_status: vatVerificationStatus,
+        peppolReadinessStatus,
+        peppol_readiness_status: peppolReadinessStatus,
+        chironReadinessStatus,
+        chiron_readiness_status: chironReadinessStatus,
+        address: sanitizeTenantString(body.address, 220),
+        postcode: sanitizeTenantString(body.postcode, 24),
+        city: sanitizeTenantString(body.city, 80),
+        country,
+        phone,
+        email,
+        companyEmail: email,
+        bookingEmail: email,
+        supportEmail: email,
+        notificationEmail: email,
+        billingEmail: email,
+      },
+      scope,
+      { allowTenantLegacyWrite: false },
+    );
+  } catch (err) {
+    console.log(
+      `[PUBLIC_COMPANY_REGISTER][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=save_business_profile_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+    );
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+    business_profile: businessProfile,
+    profile: businessProfile,
+    company_code:
+      businessProfile?.public_company_code ??
+      businessProfile?.publicCompanyCode ??
+      businessProfile?.company_code ??
+      businessProfile?.companyCode,
+    country,
+    source: "public_company_register",
+  });
+  if (!ensuredCode?.ok) {
+    console.log(
+      `[PUBLIC_COMPANY_REGISTER][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_generation_failed`,
+    );
+    return json({ ok: false, error: "company_code_generation_failed" }, 500);
+  }
+
+  const resolvedCompanyCode = sanitizeTenantString(
+    ensuredCode.company_code ?? ensuredCode.companyCode,
+    80,
+  );
+  const resolvedPublicCompanyCode = sanitizeTenantString(
+    ensuredCode.public_company_code ??
+      ensuredCode.publicCompanyCode ??
+      resolvedCompanyCode,
+    80,
+  );
+  const resolvedPublicCompanySlug = sanitizeTenantString(
+    ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+    80,
+  );
+  const resolvedPublicDisplayCode = sanitizeTenantString(
+    ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+    240,
+  );
+
+  const nowIso = new Date().toISOString();
+  const basePayload = _projectCompanyAdminSessionPayload(
+    {
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: resolvedCompanyCode,
+      display_name: companyName,
+      country,
+    },
+    nowIso,
+  );
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: resolvedCompanyCode,
+      companyCode: resolvedCompanyCode,
+      company_display_name: companyName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_register",
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+
+  console.log(
+    `[PUBLIC_COMPANY_REGISTER][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} code=${_maskPublicDriverLoginValue(resolvedCompanyCode)}`,
+  );
+
+  return json(
+    {
+      ...basePayload,
+      link_method: "public_company_register",
+      linkMethod: "public_company_register",
+      tenant_id: scope.tenant_id,
+      tenantId: scope.tenant_id,
+      company_id: scope.company_id,
+      companyId: scope.company_id,
+      company_code: resolvedCompanyCode,
+      companyCode: resolvedCompanyCode,
+      public_company_code: resolvedPublicCompanyCode,
+      publicCompanyCode: resolvedPublicCompanyCode,
+      ...(resolvedPublicCompanySlug
+        ? {
+            public_company_slug: resolvedPublicCompanySlug,
+            publicCompanySlug: resolvedPublicCompanySlug,
+          }
+        : {}),
+      ...(resolvedPublicDisplayCode
+        ? {
+            public_display_code: resolvedPublicDisplayCode,
+            publicDisplayCode: resolvedPublicDisplayCode,
+          }
+        : {}),
+      belgian_company: isBelgianCompany,
+      vat_number: normalizedBelgianVat || "",
+      enterprise_number: enterpriseNumber || "",
+      peppol_identifier: peppolIdentifier || "",
+      vat_verification_status: vatVerificationStatus,
+      peppol_readiness_status: peppolReadinessStatus,
+      chiron_readiness_status: chironReadinessStatus,
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      company: {
+        display_name: companyName,
+        company_code: resolvedCompanyCode,
+        companyCode: resolvedCompanyCode,
+        public_company_code: resolvedPublicCompanyCode,
+        publicCompanyCode: resolvedPublicCompanyCode,
+        ...(resolvedPublicDisplayCode
+          ? {
+              public_display_code: resolvedPublicDisplayCode,
+              publicDisplayCode: resolvedPublicDisplayCode,
+            }
+          : {}),
+      },
+      business_profile: businessProfile,
+    },
+    200,
   );
 }
 
@@ -9660,6 +10021,14 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handlePublicCompanyResolve(url, env);
+      }
+
+      if (url.pathname === "/public/company/register") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRegister(body, env);
       }
 
       if (url.pathname === "/public/company/link/start") {
