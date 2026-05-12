@@ -2593,7 +2593,7 @@ class RoleEntryPage extends StatelessWidget {
   Future<String?> _promptExistingCompanyId(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
-    final result = await showDialog<String>(
+    final result = await FluxidiResponsiveDialog.show<String>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -2614,6 +2614,7 @@ class RoleEntryPage extends StatelessWidget {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2771,7 +2772,7 @@ class RoleEntryPage extends StatelessWidget {
     required String country,
     required String maskedPhone,
   }) {
-    return showDialog<bool>(
+    return FluxidiResponsiveDialog.show<bool>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -2790,6 +2791,7 @@ class RoleEntryPage extends StatelessWidget {
             ),
             style: const TextStyle(color: Colors.white),
           ),
+          scrollable: true,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2906,7 +2908,7 @@ class RoleEntryPage extends StatelessWidget {
     final emailController = TextEditingController();
     String? companyError;
     String? emailError;
-    final result = await showDialog<Map<String, String>?>(
+    final result = await FluxidiResponsiveDialog.show<Map<String, String>?>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -2927,6 +2929,7 @@ class RoleEntryPage extends StatelessWidget {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3068,7 +3071,7 @@ class RoleEntryPage extends StatelessWidget {
   }) async {
     final otpController = TextEditingController(text: debugOtp ?? '');
     String? errorText;
-    final result = await showDialog<String>(
+    final result = await FluxidiResponsiveDialog.show<String>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -3089,6 +3092,7 @@ class RoleEntryPage extends StatelessWidget {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3335,7 +3339,7 @@ class RoleEntryPage extends StatelessWidget {
   Future<String?> _promptCompanyPairingCode(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
-    final result = await showDialog<String>(
+    final result = await FluxidiResponsiveDialog.show<String>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -3356,6 +3360,7 @@ class RoleEntryPage extends StatelessWidget {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3456,7 +3461,7 @@ class RoleEntryPage extends StatelessWidget {
   Future<String?> _promptCompanyActivationCode(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
-    final result = await showDialog<String>(
+    final result = await FluxidiResponsiveDialog.show<String>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -3701,7 +3706,7 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   Future<bool?> _showCompanyPairingTestModeDialog(BuildContext context) {
-    return showDialog<bool>(
+    return FluxidiResponsiveDialog.show<bool>(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
@@ -3720,6 +3725,7 @@ class RoleEntryPage extends StatelessWidget {
             ),
             style: const TextStyle(color: Colors.white),
           ),
+          scrollable: true,
           content: Text(
             _t(
               nl: 'Dit toestel wordt gekoppeld zonder verificatiecode. Gebruik dit alleen voor ontwikkeling en testen.',
