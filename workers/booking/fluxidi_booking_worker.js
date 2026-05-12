@@ -3653,7 +3653,22 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   }
 
   const out = { ...genericResponse };
-  if (sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1") {
+  const debugOtpRequested = sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1";
+  const explicitDebugOtpAllow = sanitizeTenantString(env?.FLUXIDI_ALLOW_DEBUG_OTP_ECHO, 16) === "1";
+  const environmentRaw = sanitizeTenantString(
+    env?.ENVIRONMENT ?? env?.NODE_ENV,
+    32,
+  ).toLowerCase();
+  const nonProductionEnvironmentDeclared =
+    !!environmentRaw && environmentRaw !== "production" && environmentRaw !== "prod";
+  const debugOtpEchoAllowed =
+    debugOtpRequested && (explicitDebugOtpAllow || nonProductionEnvironmentDeclared);
+  if (debugOtpRequested && !debugOtpEchoAllowed) {
+    console.log(
+      `[COMPANY_RECOVERY][DEBUG_OTP_ECHO][BLOCKED] company=${_maskPublicDriverLoginValue(codeValidation.code)} env=${environmentRaw || "unset"} allow_flag=${explicitDebugOtpAllow ? "1" : "0"}`,
+    );
+  }
+  if (debugOtpEchoAllowed) {
     out.recovery_code = otp;
     out.recoveryCode = otp;
   }
