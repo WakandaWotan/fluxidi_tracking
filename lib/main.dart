@@ -3476,55 +3476,125 @@ class RoleEntryPage extends StatelessWidget {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Vul je activatiecode in. Voorbeeld: FLX-4821-123456',
-                      en: 'Enter your activation code. Example: FLX-4821-123456',
-                      fr: "Saisissez votre code d'activation. Exemple : FLX-4821-123456",
-                      es: 'Introduce tu código de activación. Ejemplo: FLX-4821-123456',
-                    ),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.78),
-                      fontSize: 12,
-                      height: 1.3,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: controller,
-                    textCapitalization: TextCapitalization.characters,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      labelText: _t(
-                        nl: 'Activatiecode',
-                        en: 'Activation code',
-                        fr: "Code d'activation",
-                        es: 'Código de activación',
+              scrollable: true,
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Vul je activatiecode in. Voorbeeld: FLX-4821-123456',
+                        en: 'Enter your activation code. Example: FLX-4821-123456',
+                        fr: "Saisissez votre code d'activation. Exemple : FLX-4821-123456",
+                        es: 'Introduce tu código de activación. Ejemplo: FLX-4821-123456',
                       ),
-                      labelStyle: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.78),
+                        fontSize: 12,
+                        height: 1.3,
                       ),
-                      errorText: errorText,
-                      filled: true,
-                      fillColor: const Color(0xFF1A1A1A),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: kFluxidiYellow.withOpacity(0.38),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: controller,
+                      textCapitalization: TextCapitalization.characters,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Activatiecode',
+                          en: 'Activation code',
+                          fr: "Code d'activation",
+                          es: 'Código de activación',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        errorText: errorText,
+                        filled: true,
+                        fillColor: const Color(0xFF1A1A1A),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: kFluxidiYellow.withOpacity(0.38),
+                          ),
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setDialogState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () {
+                        final activationCode = controller.text.trim();
+                        if (activationCode.isEmpty) {
+                          setDialogState(
+                            () => errorText = _t(
+                              nl: 'Vul je activatiecode in.',
+                              en: 'Enter your activation code.',
+                              fr: "Saisissez votre code d'activation.",
+                              es: 'Introduce tu código de activación.',
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.of(dialogContext).pop(activationCode);
+                      },
+                      child: Text(
+                        _t(
+                          nl: 'Toestel koppelen',
+                          en: 'Link device',
+                          fr: 'Lier l’appareil',
+                          es: 'Vincular dispositivo',
                         ),
                       ),
                     ),
-                    onChanged: (_) {
-                      if (errorText != null) {
-                        setDialogState(() => errorText = null);
-                      }
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyRecoveryIntent),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Ik heb mijn toestel niet meer',
+                          en: 'Recover company account',
+                          fr: 'Je n’ai plus mon appareil',
+                          es: 'Ya no tengo mi dispositivo',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyPairingOnboardingIntent),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                          en: 'I want to enter my company details',
+                          fr: 'Je veux saisir les données de mon entreprise',
+                          es: 'Quiero introducir los datos de mi empresa',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
@@ -3535,48 +3605,6 @@ class RoleEntryPage extends StatelessWidget {
                       en: 'Cancel',
                       fr: 'Annuler',
                       es: 'Cancelar',
-                    ),
-                  ),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final activationCode = controller.text.trim();
-                    if (activationCode.isEmpty) {
-                      setDialogState(
-                        () => errorText = _t(
-                          nl: 'Vul je activatiecode in.',
-                          en: 'Enter your activation code.',
-                          fr: "Saisissez votre code d'activation.",
-                          es: 'Introduce tu código de activación.',
-                        ),
-                      );
-                      return;
-                    }
-                    Navigator.of(dialogContext).pop(activationCode);
-                  },
-                  child: Text(
-                    _t(
-                      nl: 'Toestel koppelen',
-                      en: 'Link device',
-                      fr: 'Lier l’appareil',
-                      es: 'Vincular dispositivo',
-                    ),
-                  ),
-                ),
-                OutlinedButton(
-                  onPressed: () => Navigator.of(
-                    dialogContext,
-                  ).pop(_companyPairingOnboardingIntent),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
-                  ),
-                  child: Text(
-                    _t(
-                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
-                      en: 'I want to enter my company details',
-                      fr: 'Je veux saisir les données de mon entreprise',
-                      es: 'Quiero introducir los datos de mi empresa',
                     ),
                   ),
                 ),
