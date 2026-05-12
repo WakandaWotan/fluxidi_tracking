@@ -2788,6 +2788,11 @@ function _sanitizePublicStopsList(value) {
 }
 
 function _normalizePublicQuoteBody(body, resolvedScope) {
+  function readPublicPremiumFlag(value) {
+    if (typeof value === "boolean") return value;
+    const raw = safeStr(value, 16).toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  }
   const from = safeStr(body?.from, 320);
   const to = safeStr(body?.to, 320);
   const pickupIso = safeStr(body?.pickup_iso ?? body?.pickupIso, 80);
@@ -2886,6 +2891,32 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
     company_code: resolvedScope.company_code,
     companyCode: resolvedScope.company_code,
   };
+  const normalizedTier = normalizeTier(normalized.tier || body?.tier || "comfort");
+  const drinkServiceRaw = body?.drink_service ?? body?.drinkService;
+  const workTableRaw = body?.work_table ?? body?.workTable;
+  if (normalizedTier === "premium") {
+    const drinkService = readPublicPremiumFlag(drinkServiceRaw);
+    const workTable = readPublicPremiumFlag(workTableRaw);
+    normalized.drink_service = drinkService;
+    normalized.work_table = workTable;
+    const extrasInput = Array.isArray(body?.extras)
+      ? body.extras
+      : [];
+    const extrasOut = [];
+    if (drinkService) extrasOut.push("drink_service");
+    if (workTable) extrasOut.push("work_table");
+    for (const entry of extrasInput) {
+      const key = safeStr(entry, 40).toLowerCase();
+      if (!key) continue;
+      if (key === "drink_service" || key === "work_table") {
+        if (!extrasOut.includes(key)) extrasOut.push(key);
+      }
+    }
+    if (extrasOut.length) normalized.extras = extrasOut;
+  } else {
+    normalized.drink_service = false;
+    normalized.work_table = false;
+  }
   const fromLat = parseFiniteCoordinateNumber(body?.from_lat ?? body?.fromLat);
   const fromLng = parseFiniteCoordinateNumber(body?.from_lng ?? body?.fromLng);
   const toLat = parseFiniteCoordinateNumber(body?.to_lat ?? body?.toLat);
@@ -4604,6 +4635,11 @@ function publicPreviewCopy(lang) {
       tierComfort: "Comfort",
       tierPrivate: "Private",
       tierPremium: "Premium",
+      premiumOptionsTitle: "Premium opties",
+      premiumOptionsHint: "Beschikbaar met Premium",
+      premiumOptionsRequired: "Kies minstens één Premium-optie.",
+      premiumOptionDrinkService: "Drankservice",
+      premiumOptionWorkTable: "Werktafel",
       fieldWaitMin: "Wachttijd",
       waitNone: "Geen wachttijd",
       wait15: "15 min",
@@ -4691,6 +4727,11 @@ function publicPreviewCopy(lang) {
       tierComfort: "Comfort",
       tierPrivate: "Private",
       tierPremium: "Premium",
+      premiumOptionsTitle: "Premium options",
+      premiumOptionsHint: "Available with Premium",
+      premiumOptionsRequired: "Choose at least one Premium option.",
+      premiumOptionDrinkService: "Drink service",
+      premiumOptionWorkTable: "Work table",
       fieldWaitMin: "Waiting time",
       waitNone: "No waiting",
       wait15: "15 min",
@@ -4778,6 +4819,11 @@ function publicPreviewCopy(lang) {
       tierComfort: "Comfort",
       tierPrivate: "Private",
       tierPremium: "Premium",
+      premiumOptionsTitle: "Options Premium",
+      premiumOptionsHint: "Disponible avec Premium",
+      premiumOptionsRequired: "Choisissez au moins une option Premium.",
+      premiumOptionDrinkService: "Service boissons",
+      premiumOptionWorkTable: "Table de travail",
       fieldWaitMin: "Temps d'attente",
       waitNone: "Pas d'attente",
       wait15: "15 min",
@@ -4865,6 +4911,11 @@ function publicPreviewCopy(lang) {
       tierComfort: "Comfort",
       tierPrivate: "Private",
       tierPremium: "Premium",
+      premiumOptionsTitle: "Opciones Premium",
+      premiumOptionsHint: "Disponible con Premium",
+      premiumOptionsRequired: "Elige al menos una opción Premium.",
+      premiumOptionDrinkService: "Servicio de bebidas",
+      premiumOptionWorkTable: "Mesa de trabajo",
       fieldWaitMin: "Tiempo de espera",
       waitNone: "Sin espera",
       wait15: "15 min",
@@ -5978,6 +6029,22 @@ async function handlePublicBookingPreview(url, env) {
                       <option value="premium">${escapeHtml(copy.tierPremium || "Premium")}</option>
                     </select>
                   </label>
+                  <div id="public-premium-options" class="fx-field fx-field-full" style="display:none;">
+                    <span class="fx-label">${escapeHtml(copy.premiumOptionsTitle || "Premium options")}</span>
+                    <div id="public-premium-options-hint" style="margin:4px 0 8px;color:#aeb8d0;font-size:12px;">
+                      ${escapeHtml(copy.premiumOptionsHint || "Available with Premium")}
+                    </div>
+                    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+                      <label style="display:flex;align-items:center;gap:6px;color:#e7edf8;font-size:13px;">
+                        <input id="public-field-drink-service" type="checkbox" disabled />
+                        <span>${escapeHtml(copy.premiumOptionDrinkService || "Drink service")}</span>
+                      </label>
+                      <label style="display:flex;align-items:center;gap:6px;color:#e7edf8;font-size:13px;">
+                        <input id="public-field-work-table" type="checkbox" disabled />
+                        <span>${escapeHtml(copy.premiumOptionWorkTable || "Work table")}</span>
+                      </label>
+                    </div>
+                  </div>
                   <label class="fx-field">
                     <span class="fx-label">${escapeHtml(copy.fieldWaitMin || "Waiting time")}</span>
                     <select id="public-field-wait-min" class="fx-input">
@@ -6061,6 +6128,7 @@ async function handlePublicBookingPreview(url, env) {
                 quoteChangedRecalculate: copy.quoteChangedRecalculate,
                 stopsDirect: copy.stopsDirect,
                 missingReturnDateTime: copy.missingReturnDateTime,
+                premiumOptionsRequired: copy.premiumOptionsRequired,
               })};
               const currentLang = ${JSON.stringify(lang)};
 
@@ -6090,6 +6158,10 @@ async function handlePublicBookingPreview(url, env) {
               const fieldBags = document.getElementById("public-field-bags");
               const fieldService = document.getElementById("public-field-service");
               const fieldTier = document.getElementById("public-field-tier");
+              const premiumOptionsEl = document.getElementById("public-premium-options");
+              const premiumOptionsHintEl = document.getElementById("public-premium-options-hint");
+              const fieldDrinkService = document.getElementById("public-field-drink-service");
+              const fieldWorkTable = document.getElementById("public-field-work-table");
               const fieldWaitMin = document.getElementById("public-field-wait-min");
               const fieldStop1 = document.getElementById("public-field-stop-1");
               const dateTodayBtn = document.getElementById("public-date-today-btn");
@@ -6211,6 +6283,9 @@ async function handlePublicBookingPreview(url, env) {
                   currentLocationBtn.style.opacity = currentLocationBtn.disabled ? "0.7" : "1";
                   currentLocationBtn.style.cursor = currentLocationBtn.disabled ? "not-allowed" : "pointer";
                 }
+                const premiumSelected = isPremiumTierSelected();
+                if (fieldDrinkService) fieldDrinkService.disabled = !!isBusy || !premiumSelected;
+                if (fieldWorkTable) fieldWorkTable.disabled = !!isBusy || !premiumSelected;
               }
 
               function normalizeInt(value, fallback, minValue) {
@@ -6299,6 +6374,24 @@ async function handlePublicBookingPreview(url, env) {
                 }
               }
 
+              function isPremiumTierSelected() {
+                return String((fieldTier && fieldTier.value) || "").trim().toLowerCase() === "premium";
+              }
+
+              function syncPremiumOptionsVisibility() {
+                const premium = isPremiumTierSelected();
+                if (premiumOptionsEl) premiumOptionsEl.style.display = premium ? "" : "none";
+                if (premiumOptionsHintEl) {
+                  premiumOptionsHintEl.style.display = premium ? "block" : "none";
+                }
+                if (fieldDrinkService) fieldDrinkService.disabled = !premium;
+                if (fieldWorkTable) fieldWorkTable.disabled = !premium;
+                if (!premium) {
+                  if (fieldDrinkService) fieldDrinkService.checked = false;
+                  if (fieldWorkTable) fieldWorkTable.checked = false;
+                }
+              }
+
               function normalizeQuoteSignatureText(value) {
                 return String(value || "")
                   .trim()
@@ -6317,6 +6410,8 @@ async function handlePublicBookingPreview(url, env) {
                   pickup_time: String(fieldTime.value || "").trim(),
                   service: normalizeQuoteSignatureText(fieldService && fieldService.value),
                   tier: normalizeQuoteSignatureText(fieldTier && fieldTier.value),
+                  drink_service: !!(fieldDrinkService && fieldDrinkService.checked),
+                  work_table: !!(fieldWorkTable && fieldWorkTable.checked),
                   wait_min: normalizeWaitMin(fieldWaitMin && fieldWaitMin.value),
                   stop1,
                   pax: normalizeInt(fieldPax.value, 1, 1),
@@ -6464,6 +6559,25 @@ async function handlePublicBookingPreview(url, env) {
                   pax: normalizeInt(fieldPax.value, 1, 1),
                   bags: normalizeInt(fieldBags.value, 0, 0),
                 };
+                const premiumSelected = payload.tier === "premium";
+                if (premiumSelected) {
+                  const drinkService = !!(fieldDrinkService && fieldDrinkService.checked);
+                  const workTable = !!(fieldWorkTable && fieldWorkTable.checked);
+                  if (!drinkService && !workTable) {
+                    return {
+                      ok: false,
+                      error:
+                        uiText.premiumOptionsRequired ||
+                        "Choose at least one Premium option.",
+                    };
+                  }
+                  payload.drink_service = drinkService;
+                  payload.work_table = workTable;
+                  const extras = [];
+                  if (drinkService) extras.push("drink_service");
+                  if (workTable) extras.push("work_table");
+                  if (extras.length) payload.extras = extras;
+                }
                 payload.from_raw = from;
                 payload.to_raw = to;
                 const fromResolvedLabel = pickBestAddressLabel(fromResolved);
@@ -6800,8 +6914,20 @@ async function handlePublicBookingPreview(url, env) {
                 fieldService.addEventListener("change", markQuoteStaleIfNeeded);
               }
               if (fieldTier) {
-                fieldTier.addEventListener("input", markQuoteStaleIfNeeded);
-                fieldTier.addEventListener("change", markQuoteStaleIfNeeded);
+                fieldTier.addEventListener("input", function () {
+                  syncPremiumOptionsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+                fieldTier.addEventListener("change", function () {
+                  syncPremiumOptionsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+              }
+              if (fieldDrinkService) {
+                fieldDrinkService.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldWorkTable) {
+                fieldWorkTable.addEventListener("change", markQuoteStaleIfNeeded);
               }
               if (fieldWaitMin) {
                 fieldWaitMin.addEventListener("input", markQuoteStaleIfNeeded);
@@ -6857,6 +6983,7 @@ async function handlePublicBookingPreview(url, env) {
               }
               applyDateTimeDefaults();
               syncReturnFieldsVisibility();
+              syncPremiumOptionsVisibility();
               if (!companyCode) {
                 quoteBtn.disabled = true;
                 bookBtn.disabled = true;
