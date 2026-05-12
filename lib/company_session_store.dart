@@ -37,6 +37,20 @@ String _normalizeImportedVerificationStatus(String? raw) {
   }
 }
 
+String _normalizePublicCompanyCode(String raw) {
+  return raw
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+}
+
+bool _isValidPublicCompanyCode(String code) {
+  if (code.isEmpty) return false;
+  return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+}
+
 /// Fallback tenant id when no local company profile exists (aligned with Worker `tenant_id`).
 const String kFallbackCompanyId = kTenantId;
 
@@ -758,6 +772,37 @@ class CompanySessionStore {
     } catch (_) {}
   }
 
+  Future<void> updateActiveSessionCompanyCode(
+    String companyCode, {
+    String source = 'session',
+  }) async {
+    final current = activeCompanySessionNotifier.value;
+    if (current == null) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=false source=$source');
+      return;
+    }
+    final normalized = _normalizePublicCompanyCode(companyCode);
+    if (!_isValidPublicCompanyCode(normalized)) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=false source=$source');
+      return;
+    }
+    if ((current.companyCode ?? '').trim() == normalized) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=true source=$source');
+      return;
+    }
+    final next = current.copyWith(companyCode: normalized);
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: current.companyId,
+        companyId: current.companyId,
+      );
+      await file.writeAsString(jsonEncode(next.toJson()));
+      _sessionMemory = next;
+      activeCompanySessionNotifier.value = next;
+      debugPrint('[COMPANY_CODE][HYDRATE] found=true source=$source');
+    } catch (_) {}
+  }
+
   static String slugifyCompanyName(String raw) {
     var s = raw.toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_');
     s = s.replaceAll(RegExp(r'[^a-z0-9_]+'), '');
@@ -870,10 +915,13 @@ class CompanySessionStore {
     final issuedIso = issued.toIso8601String();
     final normalizedCountry = countryCode.trim().toUpperCase();
     final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
-    final safeCode = (companyCode ?? '').trim().isEmpty
-        ? resolvedCompanyId
-        : (companyCode ?? '').trim();
-    final safeName = companyName.trim().isEmpty ? safeCode : companyName.trim();
+    final normalizedCode = _normalizePublicCompanyCode(companyCode ?? '');
+    final String? safeCode = _isValidPublicCompanyCode(normalizedCode)
+        ? normalizedCode
+        : null;
+    final safeName = companyName.trim().isEmpty
+        ? (safeCode ?? resolvedCompanyId)
+        : companyName.trim();
     final profile = CompanyProfile(
       companyId: resolvedCompanyId,
       companyName: safeName,

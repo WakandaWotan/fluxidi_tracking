@@ -335,6 +335,57 @@ Future<void> _applyCompanyProfileFromBootstrapPayload(
   CompanySessionStore.instance.applyProfileToBusinessNotifier(updated);
 }
 
+String _normalizePublicFluxidiCompanyCode(String raw) {
+  return raw
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+}
+
+bool _isValidPublicFluxidiCompanyCode(String code) {
+  if (code.isEmpty) return false;
+  return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+}
+
+String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> bootstrap) {
+  final fromTopLevel = _normalizePublicFluxidiCompanyCode(
+    (bootstrap['company_code'] ?? bootstrap['companyCode'] ?? '').toString(),
+  );
+  if (_isValidPublicFluxidiCompanyCode(fromTopLevel)) return fromTopLevel;
+
+  final companyNode = bootstrap['company'];
+  if (companyNode is Map) {
+    final companyMap = Map<String, dynamic>.from(companyNode);
+    final fromCompany = _normalizePublicFluxidiCompanyCode(
+      (companyMap['company_code'] ??
+              companyMap['companyCode'] ??
+              companyMap['public_company_code'] ??
+              companyMap['publicCompanyCode'] ??
+              '')
+          .toString(),
+    );
+    if (_isValidPublicFluxidiCompanyCode(fromCompany)) return fromCompany;
+  }
+  final businessProfileNode = bootstrap['business_profile'];
+  if (businessProfileNode is Map) {
+    final businessMap = Map<String, dynamic>.from(businessProfileNode);
+    final fromBusinessProfile = _normalizePublicFluxidiCompanyCode(
+      (businessMap['company_code'] ??
+              businessMap['companyCode'] ??
+              businessMap['public_company_code'] ??
+              businessMap['publicCompanyCode'] ??
+              '')
+          .toString(),
+    );
+    if (_isValidPublicFluxidiCompanyCode(fromBusinessProfile)) {
+      return fromBusinessProfile;
+    }
+  }
+  return null;
+}
+
 Future<bool> _hydrateCompanyBootstrapFromActiveSession({
   required String reason,
   bool clearOnUnauthorized = false,
@@ -364,6 +415,16 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
       '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=hydrate_failed',
     );
     return false;
+  }
+  final hydratedCompanyCode = _publicCompanyCodeFromBootstrapPayload(bootstrap);
+  debugPrint(
+    '[COMPANY_CODE][HYDRATE] found=${hydratedCompanyCode != null} source=bootstrap',
+  );
+  if (hydratedCompanyCode != null) {
+    await CompanySessionStore.instance.updateActiveSessionCompanyCode(
+      hydratedCompanyCode,
+      source: 'bootstrap',
+    );
   }
   await _applyCompanyProfileFromBootstrapPayload(bootstrap);
   debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
@@ -6538,9 +6599,36 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
     final publicCompanyCode = _activeCompanyCodeForPairingCodeCreate();
     final hasPublicCompanyCode = publicCompanyCode != null;
-    final companyName = profile?.companyName.trim().isNotEmpty == true
-        ? profile!.companyName.trim()
-        : 'Fluxidi';
+    String firstNonEmpty(List<String?> values) {
+      for (final value in values) {
+        final text = (value ?? '').trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
+    final profileJson = profile?.toJson();
+    final profilePublicDisplayName = profileJson is Map<String, dynamic>
+        ? firstNonEmpty(<String?>[
+            profileJson['publicDisplayName']?.toString(),
+            profileJson['public_display_name']?.toString(),
+          ])
+        : '';
+    final profileLegalName = profileJson is Map<String, dynamic>
+        ? firstNonEmpty(<String?>[
+            profileJson['legalName']?.toString(),
+            profileJson['legal_name']?.toString(),
+          ])
+        : '';
+    final companyIdentityName = firstNonEmpty(<String?>[
+      profile?.companyName,
+      profilePublicDisplayName,
+      profileLegalName,
+      publicCompanyCode,
+      profile?.companyId,
+      _t(nl: 'Bedrijf', en: 'Business', fr: 'Entreprise', es: 'Empresa'),
+    ]);
+    final companyName = companyIdentityName;
     final screenW = MediaQuery.of(context).size.width;
     const customerReferenceLogoWidth = 178.0;
     final businessLogoWidth = math.max(
@@ -6634,6 +6722,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     else
                       _statusPill(profile, compact: true),
                     const SizedBox(height: 8),
+                    Text(
+                      companyIdentityName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
                     if (publicCompanyCode != null) ...[
                       Text(
                         '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
@@ -6646,10 +6745,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       const SizedBox(height: 4),
                     ],
                     Text(
-                      '${_t(nl: 'Bedrijfs-ID', en: 'Company ID', fr: 'ID entreprise', es: 'ID empresa')}: ${profile.companyId}',
+                      '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
                       style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11.5,
+                        color: Colors.white54,
+                        fontSize: 10.5,
                         fontFamily: 'monospace',
                       ),
                     ),
