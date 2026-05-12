@@ -4662,6 +4662,35 @@ function publicPreviewCopy(lang) {
       estimatedPrice: "Geschatte prijs",
       distance: "Afstand",
       duration: "Reisduur",
+      offerDetailsTitle: "Offertedetails",
+      offerRoute: "Route",
+      offerDateTime: "Datum en tijd",
+      offerServiceCategory: "Service / categorie",
+      offerPassengersBaggage: "Passagiers / bagage",
+      offerSelectedExtras: "Geselecteerde extra's",
+      offerPriceBreakdown: "Prijsopbouw",
+      offerReturnTrip: "Retour",
+      offerReturnDateTime: "Retourdatum en -uur",
+      offerExclVat: "Excl. btw",
+      offerVat: "Btw",
+      offerInclVat: "Incl. btw",
+      offerTotalPrice: "Totaalprijs",
+      offerMainTrip: "Heenrit",
+      offerReturnSegment: "Terugrit",
+      offerNotAvailable: "-",
+      offerYes: "Ja",
+      offerNo: "Nee",
+      offerUnknownLabel: "Overige kosten",
+      offerBreakdownStartFee: "Starttarief",
+      offerBreakdownDistanceCost: "Afstandskosten",
+      offerBreakdownTimeCost: "Tijdskosten",
+      offerBreakdownWaiting: "Wachttijd",
+      offerBreakdownReturnFee: "Retourtoeslag",
+      offerBreakdownFuelSurcharge: "Brandstoftoeslag",
+      offerBreakdownBags: "Bagage",
+      offerBreakdownTierFee: "Categorie",
+      offerReturnDistance: "Afstand",
+      offerReturnDuration: "Reistijd",
       bookingReference: "Boekingsreferentie",
       requiredFieldsMissing: "Vul alle verplichte velden in.",
       invalidPickupDateTime: "Ongeldige ophaaldatum of -tijd.",
@@ -4754,6 +4783,35 @@ function publicPreviewCopy(lang) {
       estimatedPrice: "Estimated price",
       distance: "Distance",
       duration: "Duration",
+      offerDetailsTitle: "Quote details",
+      offerRoute: "Route",
+      offerDateTime: "Date and time",
+      offerServiceCategory: "Service / category",
+      offerPassengersBaggage: "Passengers / baggage",
+      offerSelectedExtras: "Selected extras",
+      offerPriceBreakdown: "Price breakdown",
+      offerReturnTrip: "Return",
+      offerReturnDateTime: "Return date and time",
+      offerExclVat: "Excl. VAT",
+      offerVat: "VAT",
+      offerInclVat: "Incl. VAT",
+      offerTotalPrice: "Total price",
+      offerMainTrip: "Outbound trip",
+      offerReturnSegment: "Return trip",
+      offerNotAvailable: "-",
+      offerYes: "Yes",
+      offerNo: "No",
+      offerUnknownLabel: "Other costs",
+      offerBreakdownStartFee: "Start fee",
+      offerBreakdownDistanceCost: "Distance cost",
+      offerBreakdownTimeCost: "Time cost",
+      offerBreakdownWaiting: "Waiting time",
+      offerBreakdownReturnFee: "Return surcharge",
+      offerBreakdownFuelSurcharge: "Fuel surcharge",
+      offerBreakdownBags: "Luggage",
+      offerBreakdownTierFee: "Category",
+      offerReturnDistance: "Distance",
+      offerReturnDuration: "Duration",
       bookingReference: "Booking reference",
       requiredFieldsMissing: "Please fill in all required fields.",
       invalidPickupDateTime: "Invalid pickup date or time.",
@@ -4846,6 +4904,35 @@ function publicPreviewCopy(lang) {
       estimatedPrice: "Prix estimé",
       distance: "Distance",
       duration: "Durée",
+      offerDetailsTitle: "Détails du devis",
+      offerRoute: "Trajet",
+      offerDateTime: "Date et heure",
+      offerServiceCategory: "Service / catégorie",
+      offerPassengersBaggage: "Passagers / bagages",
+      offerSelectedExtras: "Options sélectionnées",
+      offerPriceBreakdown: "Détail du prix",
+      offerReturnTrip: "Retour",
+      offerReturnDateTime: "Date et heure du retour",
+      offerExclVat: "HTVA",
+      offerVat: "TVA",
+      offerInclVat: "TVAC",
+      offerTotalPrice: "Prix total",
+      offerMainTrip: "Trajet aller",
+      offerReturnSegment: "Trajet retour",
+      offerNotAvailable: "-",
+      offerYes: "Oui",
+      offerNo: "Non",
+      offerUnknownLabel: "Autres frais",
+      offerBreakdownStartFee: "Frais de départ",
+      offerBreakdownDistanceCost: "Coût distance",
+      offerBreakdownTimeCost: "Coût temps",
+      offerBreakdownWaiting: "Temps d'attente",
+      offerBreakdownReturnFee: "Supplément retour",
+      offerBreakdownFuelSurcharge: "Supplément carburant",
+      offerBreakdownBags: "Bagages",
+      offerBreakdownTierFee: "Catégorie",
+      offerReturnDistance: "Distance",
+      offerReturnDuration: "Durée",
       bookingReference: "Référence de réservation",
       requiredFieldsMissing: "Veuillez remplir tous les champs obligatoires.",
       invalidPickupDateTime: "Date ou heure de prise en charge invalide.",
@@ -4938,6 +5025,35 @@ function publicPreviewCopy(lang) {
       estimatedPrice: "Precio estimado",
       distance: "Distancia",
       duration: "Duración",
+      offerDetailsTitle: "Detalles del presupuesto",
+      offerRoute: "Ruta",
+      offerDateTime: "Fecha y hora",
+      offerServiceCategory: "Servicio / categoría",
+      offerPassengersBaggage: "Pasajeros / equipaje",
+      offerSelectedExtras: "Extras seleccionados",
+      offerPriceBreakdown: "Desglose del precio",
+      offerReturnTrip: "Regreso",
+      offerReturnDateTime: "Fecha y hora de regreso",
+      offerExclVat: "Sin IVA",
+      offerVat: "IVA",
+      offerInclVat: "Con IVA",
+      offerTotalPrice: "Precio total",
+      offerMainTrip: "Viaje de ida",
+      offerReturnSegment: "Viaje de regreso",
+      offerNotAvailable: "-",
+      offerYes: "Sí",
+      offerNo: "No",
+      offerUnknownLabel: "Otros costes",
+      offerBreakdownStartFee: "Tarifa inicial",
+      offerBreakdownDistanceCost: "Coste por distancia",
+      offerBreakdownTimeCost: "Coste por tiempo",
+      offerBreakdownWaiting: "Tiempo de espera",
+      offerBreakdownReturnFee: "Recargo de regreso",
+      offerBreakdownFuelSurcharge: "Recargo de combustible",
+      offerBreakdownBags: "Equipaje",
+      offerBreakdownTierFee: "Categoría",
+      offerReturnDistance: "Distancia",
+      offerReturnDuration: "Duración",
       bookingReference: "Referencia de reserva",
       requiredFieldsMissing: "Completa todos los campos obligatorios.",
       invalidPickupDateTime: "Fecha u hora de recogida no válida.",
@@ -6099,6 +6215,7 @@ async function handlePublicBookingPreview(url, env) {
             <div style="margin-top:6px;"><strong>${escapeHtml(copy.distance)}:</strong> <span id="public-quote-distance">-</span></div>
             <div style="margin-top:6px;"><strong>${escapeHtml(copy.duration)}:</strong> <span id="public-quote-duration">-</span></div>
             <div id="public-quote-note-wrap" style="margin-top:6px;display:none;"><strong>Info:</strong> <span id="public-quote-note"></span></div>
+            <div id="public-quote-detail-card" style="display:none;"></div>
           </div>
 
           <div id="public-booking-result" class="fx-booking" style="display:none;"></div>
@@ -6129,6 +6246,41 @@ async function handlePublicBookingPreview(url, env) {
                 stopsDirect: copy.stopsDirect,
                 missingReturnDateTime: copy.missingReturnDateTime,
                 premiumOptionsRequired: copy.premiumOptionsRequired,
+                offerDetailsTitle: copy.offerDetailsTitle,
+                offerRoute: copy.offerRoute,
+                offerDateTime: copy.offerDateTime,
+                offerServiceCategory: copy.offerServiceCategory,
+                offerPassengersBaggage: copy.offerPassengersBaggage,
+                offerSelectedExtras: copy.offerSelectedExtras,
+                offerPriceBreakdown: copy.offerPriceBreakdown,
+                offerReturnTrip: copy.offerReturnTrip,
+                offerReturnDateTime: copy.offerReturnDateTime,
+                offerExclVat: copy.offerExclVat,
+                offerVat: copy.offerVat,
+                offerInclVat: copy.offerInclVat,
+                offerTotalPrice: copy.offerTotalPrice,
+                offerMainTrip: copy.offerMainTrip,
+                offerReturnSegment: copy.offerReturnSegment,
+                offerNotAvailable: copy.offerNotAvailable,
+                offerYes: copy.offerYes,
+                offerNo: copy.offerNo,
+                offerUnknownLabel: copy.offerUnknownLabel,
+                offerBreakdownStartFee: copy.offerBreakdownStartFee,
+                offerBreakdownDistanceCost: copy.offerBreakdownDistanceCost,
+                offerBreakdownTimeCost: copy.offerBreakdownTimeCost,
+                offerBreakdownWaiting: copy.offerBreakdownWaiting,
+                offerBreakdownReturnFee: copy.offerBreakdownReturnFee,
+                offerBreakdownFuelSurcharge: copy.offerBreakdownFuelSurcharge,
+                offerBreakdownBags: copy.offerBreakdownBags,
+                offerBreakdownTierFee: copy.offerBreakdownTierFee,
+                offerReturnDistance: copy.offerReturnDistance,
+                offerReturnDuration: copy.offerReturnDuration,
+                premiumOptionDrinkService: copy.premiumOptionDrinkService,
+                premiumOptionWorkTable: copy.premiumOptionWorkTable,
+                fieldService: copy.fieldService,
+                fieldTier: copy.fieldTier,
+                fieldPax: copy.fieldPax,
+                fieldBags: copy.fieldBags,
               })};
               const currentLang = ${JSON.stringify(lang)};
 
@@ -6143,6 +6295,7 @@ async function handlePublicBookingPreview(url, env) {
               const quoteDurationEl = document.getElementById("public-quote-duration");
               const quoteNoteWrapEl = document.getElementById("public-quote-note-wrap");
               const quoteNoteEl = document.getElementById("public-quote-note");
+              const quoteDetailCardEl = document.getElementById("public-quote-detail-card");
               const fieldFrom = document.getElementById("public-field-from");
               const fieldTo = document.getElementById("public-field-to");
               const fieldDate = document.getElementById("public-field-date");
@@ -6305,6 +6458,203 @@ async function handlePublicBookingPreview(url, env) {
                 const num = Number(value);
                 if (!Number.isFinite(num)) return "-";
                 return "EUR " + num.toFixed(2);
+              }
+
+              function renderQuoteDetailCard(out, payload) {
+                if (!quoteDetailCardEl) return;
+                if (!out || typeof out !== "object" || out.ok !== true) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                  return;
+                }
+                const safePayload = payload && typeof payload === "object" ? payload : {};
+                const inputs = out.inputs && typeof out.inputs === "object" ? out.inputs : {};
+                const notAvailable = String(uiText.offerNotAvailable || "-");
+                const routeFrom = String(inputs.from || safePayload.from || fieldFrom.value || "").trim();
+                const routeTo = String(inputs.to || safePayload.to || fieldTo.value || "").trim();
+                const routeText = routeFrom && routeTo ? (routeFrom + " -> " + routeTo) : notAvailable;
+                const dateText = String(inputs.date || safePayload.date || fieldDate.value || "").trim();
+                const timeText = String(inputs.time || safePayload.time || fieldTime.value || "").trim();
+                const dateTimeText = (dateText || timeText) ? [dateText, timeText].filter(Boolean).join(" ") : notAvailable;
+                const serviceRawInput = String(inputs.service || safePayload.service || fieldService.value || "").trim();
+                const serviceRaw = serviceRawInput.toLowerCase();
+                const tierRaw = String(inputs.tier || safePayload.tier || fieldTier.value || "").trim().toLowerCase();
+                const langCode = String(currentLang || "nl").toLowerCase();
+                const serviceLabelsByLang = {
+                  nl: {
+                    passenger: "Personenvervoer",
+                    person: "Personenvervoer",
+                    personenvervoer: "Personenvervoer",
+                    business: "Zakelijk vervoer",
+                    event: "Event vervoer",
+                    airport: "Luchthavenvervoer",
+                    hourly: "Uurservice",
+                    care: "Zorgvervoer",
+                  },
+                  en: {
+                    passenger: "Passenger transport",
+                    person: "Passenger transport",
+                    business: "Business transport",
+                    event: "Event transport",
+                    airport: "Airport transfer",
+                    hourly: "Hourly service",
+                    care: "Care transport",
+                  },
+                  fr: {
+                    passenger: "Transport de personnes",
+                    person: "Transport de personnes",
+                    business: "Transport professionnel",
+                    event: "Transport événementiel",
+                    airport: "Transfert aéroport",
+                    hourly: "Service horaire",
+                    care: "Transport médicalisé",
+                  },
+                  es: {
+                    passenger: "Transporte de pasajeros",
+                    person: "Transporte de pasajeros",
+                    business: "Transporte empresarial",
+                    event: "Transporte para eventos",
+                    airport: "Traslado al aeropuerto",
+                    hourly: "Servicio por horas",
+                    care: "Transporte asistencial",
+                  },
+                };
+                const tierLabelsByLang = {
+                  nl: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  en: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  fr: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  es: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                };
+                function looksHumanReadableLabel(value) {
+                  const text = String(value || "").trim();
+                  if (text.length < 2 || text.length > 60) return false;
+                  if (text.includes("_")) return false;
+                  if (/[{}[\]<>]/.test(text)) return false;
+                  if (/^[0-9\W]+$/.test(text)) return false;
+                  return true;
+                }
+                const serviceLabels = serviceLabelsByLang[langCode] || serviceLabelsByLang.nl;
+                const serviceText = serviceLabels[serviceRaw]
+                  || (looksHumanReadableLabel(serviceRawInput) ? serviceRawInput : notAvailable);
+                const tierLabels = tierLabelsByLang[langCode] || tierLabelsByLang.nl;
+                const tierText = tierLabels[tierRaw] || notAvailable;
+                const paxRaw = Number(inputs.pax ?? safePayload.pax);
+                const bagsRaw = Number(inputs.bags ?? safePayload.bags);
+                const paxText = Number.isFinite(paxRaw) ? String(Math.max(1, Math.round(paxRaw))) : notAvailable;
+                const bagsText = Number.isFinite(bagsRaw) ? String(Math.max(0, Math.round(bagsRaw))) : notAvailable;
+
+                const extras = [];
+                if (safePayload.drink_service === true) {
+                  extras.push(String(uiText.premiumOptionDrinkService || "Drink service"));
+                }
+                if (safePayload.work_table === true) {
+                  extras.push(String(uiText.premiumOptionWorkTable || "Work table"));
+                }
+                const extrasText = extras.length ? extras.map(esc).join(", ") : esc(notAvailable);
+
+                const breakdown = out.breakdown && typeof out.breakdown === "object" ? out.breakdown : null;
+                const breakdownRows = [];
+                if (breakdown) {
+                  const skipKeys = new Set([
+                    "total_ex",
+                    "vat_amount",
+                    "total_incl",
+                    "price_ex_vat",
+                    "price_vat",
+                    "price_incl_vat",
+                    "total_price_ex_vat",
+                    "total_price_vat",
+                    "total_price_incl_vat",
+                  ]);
+                  const knownMap = {
+                    start_fee_ex: uiText.offerBreakdownStartFee || "Start fee",
+                    distance_cost_ex: uiText.offerBreakdownDistanceCost || "Distance cost",
+                    time_cost_ex: uiText.offerBreakdownTimeCost || "Time cost",
+                    waiting_ex: uiText.offerBreakdownWaiting || "Waiting time",
+                    return_fee_ex: uiText.offerBreakdownReturnFee || "Return surcharge",
+                    fuel_surcharge_ex: uiText.offerBreakdownFuelSurcharge || "Fuel surcharge",
+                    bags_ex: uiText.offerBreakdownBags || "Luggage",
+                    tier_fee_ex: uiText.offerBreakdownTierFee || "Category",
+                  };
+                  const knownOrder = [
+                    "start_fee_ex",
+                    "distance_cost_ex",
+                    "time_cost_ex",
+                    "waiting_ex",
+                    "return_fee_ex",
+                    "fuel_surcharge_ex",
+                    "bags_ex",
+                    "tier_fee_ex",
+                  ];
+                  for (const key of knownOrder) {
+                    if (skipKeys.has(key)) continue;
+                    if (!Object.prototype.hasOwnProperty.call(breakdown, key)) continue;
+                    const value = Number(breakdown[key]);
+                    if (!Number.isFinite(value)) continue;
+                    breakdownRows.push(
+                      '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;">' +
+                        '<span>' + esc(String(knownMap[key] || uiText.offerUnknownLabel || "Other costs")) + '</span>' +
+                        '<strong>' + esc(formatMoney(value)) + '</strong>' +
+                      '</div>'
+                    );
+                  }
+                }
+
+                const totalEx = out.total_price_ex_vat != null ? out.total_price_ex_vat : out.price_ex_vat;
+                const totalVat = out.total_price_vat != null ? out.total_price_vat : out.price_vat;
+                const totalIncl = out.total_price_incl_vat != null ? out.total_price_incl_vat : out.price_incl_vat;
+                const mainEx = out.price_ex_vat;
+                const mainVat = out.price_vat;
+                const mainIncl = out.price_incl_vat;
+
+                const returnObj = out.return && typeof out.return === "object" ? out.return : null;
+                const hasReturn = !!returnObj;
+                const returnDate = String(safePayload.return_date || "").trim();
+                const returnTime = String(safePayload.return_time || "").trim();
+                const returnDateTime = (returnDate || returnTime)
+                  ? [returnDate, returnTime].filter(Boolean).join(" ")
+                  : notAvailable;
+                const returnSummary = hasReturn
+                  ? (
+                      esc(String(uiText.offerReturnDistance || "Distance")) + ": " +
+                      esc(String(returnObj.distance_km != null ? String(returnObj.distance_km) + " km" : notAvailable)) +
+                      " • " +
+                      esc(String(uiText.offerReturnDuration || "Duration")) + ": " +
+                      esc(String(returnObj.duration_min != null ? String(returnObj.duration_min) + " min" : notAvailable)) +
+                      " • " +
+                      esc(String(uiText.offerInclVat || "Incl. VAT")) + ": " +
+                      esc(formatMoney(returnObj.price_incl_vat))
+                    )
+                  : esc(notAvailable);
+
+                quoteDetailCardEl.innerHTML =
+                  '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #263351;">' +
+                    '<div style="font-weight:700;color:#f0c85d;margin-bottom:8px;">' + esc(String(uiText.offerDetailsTitle || "Quote details")) + '</div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerRoute || "Route")) + '</span><strong>' + esc(routeText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerDateTime || "Date and time")) + '</span><strong>' + esc(dateTimeText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerServiceCategory || "Service / category")) + '</span><strong>' + esc(serviceText + " / " + tierText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerPassengersBaggage || "Passengers / baggage")) + '</span><strong>' + esc(paxText + " / " + bagsText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerSelectedExtras || "Selected extras")) + '</span><strong>' + extrasText + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerMainTrip || "Outbound trip")) + " (" + esc(String(uiText.offerInclVat || "Incl. VAT")) + ')</span><strong>' + esc(formatMoney(mainIncl)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerExclVat || "Excl. VAT")) + '</span><strong>' + esc(formatMoney(mainEx)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerVat || "VAT")) + '</span><strong>' + esc(formatMoney(mainVat)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerReturnTrip || "Return")) + '</span><strong>' + esc(hasReturn ? String(uiText.offerYes || "Yes") : String(uiText.offerNo || "No")) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerReturnDateTime || "Return date and time")) + '</span><strong>' + esc(returnDateTime) + '</strong></div>' +
+                    '<div style="margin-top:4px;color:#c7d2ec;">' + esc(String(uiText.offerReturnSegment || "Return trip")) + ": " + returnSummary + '</div>' +
+                    (breakdownRows.length
+                      ? (
+                          '<div style="margin-top:8px;">' +
+                            '<div style="font-weight:600;color:#c7d2ec;">' + esc(String(uiText.offerPriceBreakdown || "Price breakdown")) + "</div>" +
+                            breakdownRows.join("") +
+                          "</div>"
+                        )
+                      : "") +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:8px;"><span>' + esc(String(uiText.offerExclVat || "Excl. VAT")) + '</span><strong>' + esc(formatMoney(totalEx)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerVat || "VAT")) + '</span><strong>' + esc(formatMoney(totalVat)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerInclVat || "Incl. VAT")) + '</span><strong>' + esc(formatMoney(totalIncl)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px;padding-top:6px;border-top:1px dashed #314266;"><span style="font-weight:700;">' + esc(String(uiText.offerTotalPrice || "Total price")) + '</span><strong style="font-weight:700;">' + esc(formatMoney(totalIncl)) + '</strong></div>' +
+                  "</div>";
+                quoteDetailCardEl.style.display = "block";
               }
 
               function pad2(value) {
@@ -6688,6 +7038,10 @@ async function handlePublicBookingPreview(url, env) {
                     const errorCode = String(out && out.error ? out.error : "quote_failed");
                     setStatus(uiText.quoteError + " (" + errorCode + ")", "error");
                     quotePanelEl.style.display = "none";
+                    if (quoteDetailCardEl) {
+                      quoteDetailCardEl.style.display = "none";
+                      quoteDetailCardEl.innerHTML = "";
+                    }
                     lastQuotePayload = null;
                     lastQuoteSignature = "";
                     setBusy(false);
@@ -6705,12 +7059,17 @@ async function handlePublicBookingPreview(url, env) {
                     quoteNoteWrapEl.style.display = "none";
                     quoteNoteEl.textContent = "";
                   }
+                  renderQuoteDetailCard(out, base.payload || lastQuotePayload || {});
                   quotePanelEl.style.display = "block";
                   lastQuotePayload = base.payload;
                   lastQuoteSignature = buildQuoteSignature();
                   setStatus(uiText.quoteSuccess, "success");
                 } catch (_) {
                   quotePanelEl.style.display = "none";
+                  if (quoteDetailCardEl) {
+                    quoteDetailCardEl.style.display = "none";
+                    quoteDetailCardEl.innerHTML = "";
+                  }
                   lastQuotePayload = null;
                   lastQuoteSignature = "";
                   setStatus(uiText.quoteError, "error");
@@ -6784,6 +7143,10 @@ async function handlePublicBookingPreview(url, env) {
                 lastQuotePayload = null;
                 lastQuoteSignature = "";
                 quotePanelEl.style.display = "none";
+                if (quoteDetailCardEl) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                }
                 resultEl.style.display = "none";
                 resultEl.innerHTML = "";
                 setStatus("", "info");
