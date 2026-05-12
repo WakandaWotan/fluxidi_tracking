@@ -108,23 +108,182 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
     super.dispose();
   }
 
+  String _registrationErrorMessage(String code) {
+    switch (code) {
+      case 'invalid_belgian_vat_number':
+        return _t(
+          nl: 'Ongeldig Belgisch BTW/KBO-nummer. Controleer het formaat (BE########## of 10 cijfers).',
+          en: 'Invalid Belgian VAT/KBO number. Check format (BE########## or 10 digits).',
+          fr: 'Numéro TVA/KBO belge invalide. Vérifiez le format (BE########## ou 10 chiffres).',
+          es: 'Número de IVA/KBO belga no válido. Revisa el formato (BE########## o 10 dígitos).',
+        );
+      case 'missing_company_name':
+        return _t(
+          nl: 'Bedrijfsnaam is verplicht.',
+          en: 'Company name is required.',
+          fr: 'Le nom de l’entreprise est obligatoire.',
+          es: 'El nombre de la empresa es obligatorio.',
+        );
+      default:
+        return _t(
+          nl: 'Registratie mislukt. Probeer opnieuw.',
+          en: 'Registration failed. Please try again.',
+          fr: 'Échec de l’inscription. Réessayez.',
+          es: 'El registro falló. Inténtalo de nuevo.',
+        );
+    }
+  }
+
+  String _parseRegistrationErrorCode(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('invalid_belgian_vat_number')) {
+      return 'invalid_belgian_vat_number';
+    }
+    if (text.contains('missing_company_name')) {
+      return 'missing_company_name';
+    }
+    if (text.contains('registration_failed')) {
+      return 'registration_failed';
+    }
+    return 'registration_failed';
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await CompanySessionStore.instance.saveNewProfileFromOnboarding(
-        companyName: _companyCtrl.text,
-        ownerName: _ownerCtrl.text,
-        email: _emailCtrl.text,
-        phone: _phoneCtrl.text,
-        vatNumber: _vatCtrl.text,
-        city: _cityCtrl.text,
-        countryCode: _country,
-        companyIdOverride: _companyIdCtrl.text.trim().isEmpty
-            ? null
-            : _normalizeHumanCompanyId(_companyIdCtrl.text),
+      final payload = <String, dynamic>{
+        'company_name': _companyCtrl.text.trim(),
+        'companyName': _companyCtrl.text.trim(),
+        'legal_name': _companyCtrl.text.trim(),
+        'legalName': _companyCtrl.text.trim(),
+        'vat_number': _vatCtrl.text.trim(),
+        'vatNumber': _vatCtrl.text.trim(),
+        'company_registration_number': _vatCtrl.text.trim(),
+        'companyRegistrationNumber': _vatCtrl.text.trim(),
+        'email': _emailCtrl.text.trim(),
+        'companyEmail': _emailCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'owner_phone': _phoneCtrl.text.trim(),
+        'country': _country.trim().isEmpty ? 'BE' : _country.trim().toUpperCase(),
+        'city': _cityCtrl.text.trim(),
+        'postcode': '',
+        'address': '',
+      };
+      debugPrint('[COMPANY_REGISTER][REQ] company=${payload['company_name']}');
+      final result = await registerPublicCompany(payload: payload);
+      final tenantId = (result['tenant_id'] ?? result['tenantId'] ?? '')
+          .toString()
+          .trim();
+      final companyId = (result['company_id'] ?? result['companyId'] ?? '')
+          .toString()
+          .trim();
+      final companyCode = (result['public_company_code'] ??
+              result['publicCompanyCode'] ??
+              result['company_code'] ??
+              result['companyCode'] ??
+              '')
+          .toString()
+          .trim();
+      final companySessionToken =
+          (result['company_session_token'] ?? result['companySessionToken'] ?? '')
+              .toString()
+              .trim();
+      if (tenantId.isEmpty ||
+          companyId.isEmpty ||
+          companyCode.isEmpty ||
+          companySessionToken.isEmpty) {
+        throw Exception('registration_failed');
+      }
+      final businessProfileNode = result['business_profile'];
+      final businessProfileMap = businessProfileNode is Map
+          ? Map<String, dynamic>.from(businessProfileNode)
+          : <String, dynamic>{};
+      for (final key in const <String>[
+        'company_code',
+        'companyCode',
+        'public_company_code',
+        'publicCompanyCode',
+        'public_company_slug',
+        'publicCompanySlug',
+        'public_display_code',
+        'publicDisplayCode',
+      ]) {
+        final value = (result[key] ?? '').toString().trim();
+        if (value.isNotEmpty && (businessProfileMap[key] ?? '').toString().trim().isEmpty) {
+          businessProfileMap[key] = value;
+        }
+      }
+      if (businessProfileMap.isNotEmpty) {
+        final backendBusinessProfile =
+            BackendBusinessProfile.fromJson(businessProfileMap);
+        await updateLocalBackendBusinessProfileCache(backendBusinessProfile);
+      }
+      final companyName = (businessProfileMap['companyName'] ??
+              businessProfileMap['company_name'] ??
+              _companyCtrl.text)
+          .toString()
+          .trim();
+      final countryCode =
+          (businessProfileMap['country'] ?? _country).toString().trim().toUpperCase();
+      final ownerName = _ownerCtrl.text.trim();
+      final email = (businessProfileMap['email'] ??
+              businessProfileMap['companyEmail'] ??
+              _emailCtrl.text)
+          .toString()
+          .trim();
+      final phone = (businessProfileMap['phone'] ?? _phoneCtrl.text)
+          .toString()
+          .trim();
+      final vatNumber = (businessProfileMap['vatNumber'] ??
+              businessProfileMap['vat_number'] ??
+              _vatCtrl.text)
+          .toString()
+          .trim();
+      final city = (businessProfileMap['city'] ?? _cityCtrl.text).toString().trim();
+      final postcode =
+          (businessProfileMap['postcode'] ?? '').toString().trim();
+      final address =
+          (businessProfileMap['address'] ?? '').toString().trim();
+      final issuedAtRaw = (result['issued_at'] ?? '').toString().trim();
+      final expiresAtRaw = (result['expires_at'] ?? '').toString().trim();
+      final expiresInSeconds = int.tryParse(
+        (result['expires_in'] ?? result['expiresIn'] ?? '').toString().trim(),
       );
+      await CompanySessionStore.instance.savePublicCompanyRegistrationSession(
+        tenantId: tenantId,
+        companyId: companyId,
+        companyCode: companyCode,
+        companyName: companyName,
+        countryCode: countryCode,
+        companySessionToken: companySessionToken,
+        ownerName: ownerName,
+        email: email,
+        phone: phone,
+        vatNumber: vatNumber,
+        addressLine: address,
+        postalCode: postcode,
+        city: city,
+        issuedAt: DateTime.tryParse(issuedAtRaw),
+        expiresAt: DateTime.tryParse(expiresAtRaw),
+        expiresInSeconds: expiresInSeconds,
+      );
+      final bootstrap = await fetchCompanyBootstrapWithToken(
+        companySessionToken: companySessionToken,
+      );
+      if (bootstrap != null) {
+        await hydrateCompanyStateFromBootstrap(bootstrap);
+      }
+      debugPrint('[COMPANY_REGISTER][OK] company=$companyId');
+    } catch (e) {
+      final errorCode = _parseRegistrationErrorCode(e);
+      debugPrint('[COMPANY_REGISTER][FAIL] code=$errorCode');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_registrationErrorMessage(errorCode))),
+      );
+      return;
     } finally {
       if (mounted) setState(() => _saving = false);
     }

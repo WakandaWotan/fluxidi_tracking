@@ -890,6 +890,103 @@ class CompanySessionStore {
     applyProfileToBusinessNotifier(profile);
   }
 
+  /// Persists a backend-backed company registration session for first device setup.
+  Future<void> savePublicCompanyRegistrationSession({
+    required String tenantId,
+    required String companyId,
+    required String companyCode,
+    required String companyName,
+    required String countryCode,
+    required String companySessionToken,
+    String ownerName = '',
+    String email = '',
+    String phone = '',
+    String vatNumber = '',
+    String addressLine = '',
+    String postalCode = '',
+    String city = '',
+    DateTime? issuedAt,
+    DateTime? expiresAt,
+    int? expiresInSeconds,
+  }) async {
+    final resolvedCompanyId = companyId.trim();
+    final resolvedTenantId = tenantId.trim();
+    final token = companySessionToken.trim();
+    if (resolvedCompanyId.isEmpty || resolvedTenantId.isEmpty || token.isEmpty) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final issued = (issuedAt ?? now).toUtc();
+    final nowIso = now.toIso8601String();
+    final issuedIso = issued.toIso8601String();
+    final normalizedCountry = countryCode.trim().toUpperCase();
+    final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
+    final normalizedCode = _normalizePublicCompanyCode(companyCode);
+    final String? safeCode = _isValidPublicCompanyCode(normalizedCode)
+        ? normalizedCode
+        : null;
+    final safeName = companyName.trim().isEmpty
+        ? (safeCode ?? resolvedCompanyId)
+        : companyName.trim();
+    final safeEmail = email.trim();
+    final profile = CompanyProfile(
+      companyId: resolvedCompanyId,
+      companyName: safeName,
+      ownerName: ownerName.trim(),
+      email: safeEmail,
+      phone: phone.trim(),
+      vatNumber: vatNumber.trim(),
+      addressLine: addressLine.trim(),
+      postalCode: postalCode.trim(),
+      city: city.trim(),
+      countryCode: safeCountry,
+      companyEmail: safeEmail,
+      supportEmail: safeEmail,
+      billingEmail: safeEmail,
+      bookingEmail: safeEmail,
+      notificationEmail: safeEmail,
+      createdAt: issuedIso,
+      updatedAt: nowIso,
+      isActive: true,
+      verificationStatus: CompanyVerificationStatus.pendingVerification,
+    );
+    await persistProfile(profile);
+    final prev = await loadSession();
+    final resolvedExpiresAtUtc = () {
+      if (expiresAt != null) return expiresAt.toUtc();
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        return now.add(Duration(seconds: expiresInSeconds)).toUtc();
+      }
+      return null;
+    }();
+    final session = ActiveCompanySession(
+      companyId: profile.companyId,
+      role: 'companyAdmin',
+      createdAt: prev != null && prev.companyId == profile.companyId
+          ? prev.createdAt
+          : nowIso,
+      lastUsedAt: nowIso,
+      companySessionToken: token,
+      companySessionExpiresAtUtc: resolvedExpiresAtUtc?.toIso8601String(),
+      companyCode: safeCode,
+      linkMethod: 'public_company_register',
+    );
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: profile.tenantId,
+        companyId: profile.companyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _sessionMemory = session;
+      activeCompanySessionNotifier.value = session;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
+      );
+    } catch (_) {}
+    companyProfileNotifier.value = profile;
+    applyProfileToBusinessNotifier(profile);
+  }
+
   /// Persists a verified backend pairing into local company profile + session.
   /// This does not use admin endpoints and stores only safe public pairing fields.
   Future<void> saveVerifiedCompanyPairingSession({
