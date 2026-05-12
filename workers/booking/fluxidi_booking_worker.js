@@ -2777,11 +2777,14 @@ function _derivePublicDateAndTimeFromPickupIso(pickupIsoRaw) {
 }
 
 function _sanitizePublicStopsList(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => safeStr(entry, 200))
-    .filter(Boolean)
-    .slice(0, 12);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => safeStr(entry, 200))
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+  const single = safeStr(value, 200);
+  return single ? [single] : [];
 }
 
 function _normalizePublicQuoteBody(body, resolvedScope) {
@@ -2808,6 +2811,24 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
   }
   const paxRaw = Number(body?.pax);
   const bagsRaw = Number(body?.bags);
+  const stopsInput = [];
+  const stopsCandidates = [
+    body?.stops,
+    body?.stop_points,
+    body?.stops_addresses,
+    body?.stop_addresses,
+    body?.waypoints,
+    body?.stop1,
+    body?.stop_1,
+    body?.stop,
+  ];
+  for (const candidate of stopsCandidates) {
+    if (Array.isArray(candidate)) {
+      stopsInput.push(...candidate);
+    } else if (candidate != null) {
+      stopsInput.push(candidate);
+    }
+  }
   const normalized = {
     from,
     to,
@@ -2828,7 +2849,7 @@ function _normalizePublicQuoteBody(body, resolvedScope) {
       body?.wait_min ?? body?.waitMin ?? body?.wait_minutes ?? body?.waiting_min ?? body?.wait,
       0,
     ),
-    stops: _sanitizePublicStopsList(body?.stops),
+    stops: _sanitizePublicStopsList(stopsInput),
     tenant_id: resolvedScope.scope.tenant_id,
     tenantId: resolvedScope.scope.tenant_id,
     company_id: resolvedScope.scope.company_id,
@@ -4507,12 +4528,37 @@ function publicPreviewCopy(lang) {
       fieldTo: "Bestemmingsadres",
       fieldPickupDate: "Ophaaldatum",
       fieldPickupTime: "Ophaaltijd",
+      quickToday: "Vandaag",
+      quickTomorrow: "Morgen",
+      quickNextTime: "+30 min",
       fieldName: "Uw naam",
       fieldPhone: "Telefoonnummer",
       fieldEmail: "E-mail (optioneel)",
       fieldPax: "Passagiers",
       fieldBags: "Bagage",
       fieldNotes: "Opmerkingen (optioneel)",
+      fieldService: "Dienst",
+      servicePassenger: "Personenvervoer",
+      serviceAirport: "Luchthavenvervoer",
+      serviceBusiness: "Zakelijk vervoer",
+      serviceEvent: "Event vervoer",
+      serviceHourly: "Uurservice",
+      serviceCare: "Zorgvervoer",
+      serviceCourier: "Koerier",
+      fieldTier: "Categorie",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      fieldWaitMin: "Wachttijd",
+      waitNone: "Geen wachttijd",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Tussenstop (optioneel)",
+      stopsDirect: "0 - rechtstreeks",
+      stepperMinusAria: "Verlaag waarde",
+      stepperPlusAria: "Verhoog waarde",
       quoteButton: "Bereken mijn ritprijs",
       bookButton: "Boeking aanvragen",
       resetButton: "Nieuwe quote",
@@ -4532,6 +4578,12 @@ function publicPreviewCopy(lang) {
       unavailableForBooking: "Deze pagina kan momenteel geen boekingen verwerken.",
       suggestionUnavailable: "Adres-suggesties zijn momenteel niet beschikbaar.",
       suggestionNoResults: "Geen suggesties gevonden.",
+      useCurrentLocation: "Gebruik huidige locatie",
+      locating: "Locatie ophalen...",
+      locationPermissionDenied: "Locatietoegang geweigerd.",
+      locationUnavailable: "Locatie niet beschikbaar.",
+      locationFound: "Locatie gevonden.",
+      quoteChangedRecalculate: "Offerte gewijzigd. Bereken opnieuw.",
       codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
@@ -4558,12 +4610,37 @@ function publicPreviewCopy(lang) {
       fieldTo: "Destination address",
       fieldPickupDate: "Pickup date",
       fieldPickupTime: "Pickup time",
+      quickToday: "Today",
+      quickTomorrow: "Tomorrow",
+      quickNextTime: "+30 min",
       fieldName: "Your name",
       fieldPhone: "Phone number",
       fieldEmail: "Email (optional)",
       fieldPax: "Passengers",
       fieldBags: "Luggage",
       fieldNotes: "Notes (optional)",
+      fieldService: "Service",
+      servicePassenger: "Passenger transport",
+      serviceAirport: "Airport transfer",
+      serviceBusiness: "Business transport",
+      serviceEvent: "Event transport",
+      serviceHourly: "Hourly service",
+      serviceCare: "Care transport",
+      serviceCourier: "Courier",
+      fieldTier: "Category",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      fieldWaitMin: "Waiting time",
+      waitNone: "No waiting",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Intermediate stop (optional)",
+      stopsDirect: "0 - direct",
+      stepperMinusAria: "Decrease value",
+      stepperPlusAria: "Increase value",
       quoteButton: "Calculate my ride price",
       bookButton: "Request booking",
       resetButton: "New quote",
@@ -4583,6 +4660,12 @@ function publicPreviewCopy(lang) {
       unavailableForBooking: "This page is currently unavailable for bookings.",
       suggestionUnavailable: "Address suggestions are currently unavailable.",
       suggestionNoResults: "No suggestions found.",
+      useCurrentLocation: "Use current location",
+      locating: "Locating...",
+      locationPermissionDenied: "Location permission denied.",
+      locationUnavailable: "Location unavailable.",
+      locationFound: "Location found.",
+      quoteChangedRecalculate: "Quote changed. Recalculate price.",
       codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
@@ -4609,12 +4692,37 @@ function publicPreviewCopy(lang) {
       fieldTo: "Adresse de destination",
       fieldPickupDate: "Date de prise en charge",
       fieldPickupTime: "Heure de prise en charge",
+      quickToday: "Aujourd'hui",
+      quickTomorrow: "Demain",
+      quickNextTime: "+30 min",
       fieldName: "Votre nom",
       fieldPhone: "Numéro de téléphone",
       fieldEmail: "E-mail (optionnel)",
       fieldPax: "Passagers",
       fieldBags: "Bagages",
       fieldNotes: "Remarques (optionnel)",
+      fieldService: "Service",
+      servicePassenger: "Transport passagers",
+      serviceAirport: "Transfert aeroport",
+      serviceBusiness: "Transport business",
+      serviceEvent: "Transport evenement",
+      serviceHourly: "Service horaire",
+      serviceCare: "Transport de soins",
+      serviceCourier: "Coursier",
+      fieldTier: "Categorie",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      fieldWaitMin: "Temps d'attente",
+      waitNone: "Pas d'attente",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Arret intermediaire (optionnel)",
+      stopsDirect: "0 - direct",
+      stepperMinusAria: "Diminuer la valeur",
+      stepperPlusAria: "Augmenter la valeur",
       quoteButton: "Calculer le prix du trajet",
       bookButton: "Demander la réservation",
       resetButton: "Nouveau devis",
@@ -4634,6 +4742,12 @@ function publicPreviewCopy(lang) {
       unavailableForBooking: "Cette page ne peut pas traiter de réservation pour le moment.",
       suggestionUnavailable: "Les suggestions d'adresse sont actuellement indisponibles.",
       suggestionNoResults: "Aucune suggestion trouvée.",
+      useCurrentLocation: "Utiliser la position actuelle",
+      locating: "Localisation en cours...",
+      locationPermissionDenied: "Autorisation de localisation refusée.",
+      locationUnavailable: "Localisation indisponible.",
+      locationFound: "Position trouvee.",
+      quoteChangedRecalculate: "Le devis a change. Recalculez le prix.",
       codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
@@ -4660,12 +4774,37 @@ function publicPreviewCopy(lang) {
       fieldTo: "Dirección de destino",
       fieldPickupDate: "Fecha de recogida",
       fieldPickupTime: "Hora de recogida",
+      quickToday: "Hoy",
+      quickTomorrow: "Manana",
+      quickNextTime: "+30 min",
       fieldName: "Tu nombre",
       fieldPhone: "Número de teléfono",
       fieldEmail: "Correo (opcional)",
       fieldPax: "Pasajeros",
       fieldBags: "Equipaje",
       fieldNotes: "Notas (opcional)",
+      fieldService: "Servicio",
+      servicePassenger: "Transporte de pasajeros",
+      serviceAirport: "Traslado al aeropuerto",
+      serviceBusiness: "Transporte empresarial",
+      serviceEvent: "Transporte para eventos",
+      serviceHourly: "Servicio por horas",
+      serviceCare: "Transporte asistencial",
+      serviceCourier: "Mensajeria",
+      fieldTier: "Categoria",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      fieldWaitMin: "Tiempo de espera",
+      waitNone: "Sin espera",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Parada intermedia (opcional)",
+      stopsDirect: "0 - directo",
+      stepperMinusAria: "Disminuir valor",
+      stepperPlusAria: "Aumentar valor",
       quoteButton: "Calcular mi precio",
       bookButton: "Solicitar reserva",
       resetButton: "Nueva cotización",
@@ -4685,6 +4824,12 @@ function publicPreviewCopy(lang) {
       unavailableForBooking: "Esta página no puede procesar reservas en este momento.",
       suggestionUnavailable: "Las sugerencias de dirección no están disponibles en este momento.",
       suggestionNoResults: "No se encontraron sugerencias.",
+      useCurrentLocation: "Usar ubicacion actual",
+      locating: "Obteniendo ubicacion...",
+      locationPermissionDenied: "Permiso de ubicacion denegado.",
+      locationUnavailable: "Ubicacion no disponible.",
+      locationFound: "Ubicacion encontrada.",
+      quoteChangedRecalculate: "La cotizacion cambio. Recalcula el precio.",
       codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
@@ -4791,6 +4936,52 @@ function _normalizePublicAddressSuggestion(feature) {
   };
 }
 
+function _normalizePublicAddressReverseFeature(feature, fallbackLat, fallbackLng) {
+  const fallbackLatRounded = Number(Number(fallbackLat).toFixed(7));
+  const fallbackLngRounded = Number(Number(fallbackLng).toFixed(7));
+  const normalized = _normalizePublicAddressSuggestion(feature);
+  if (normalized) {
+    return {
+      ...normalized,
+      lat: Number.isFinite(normalized.lat) ? normalized.lat : fallbackLatRounded,
+      lng: Number.isFinite(normalized.lng) ? normalized.lng : fallbackLngRounded,
+    };
+  }
+  const label = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? feature?.text ?? "",
+    240,
+  );
+  if (!label) return null;
+  return {
+    id: sanitizeTenantString(feature?.id, 120),
+    label,
+    address: label,
+    city: "",
+    postcode: "",
+    country: "",
+    lat: fallbackLatRounded,
+    lng: fallbackLngRounded,
+  };
+}
+
+async function _reverseGeocodePublicAddress({ lat, lng, lang, countryCode, token }) {
+  if (!token) throw new Error("missing_mapbox_token");
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("invalid_coordinates");
+  const coordsPath = `${Number(lng.toFixed(7))},${Number(lat.toFixed(7))}`;
+  const reverseUrl =
+    "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+    encodeURIComponent(coordsPath) +
+    `.json?limit=1&types=address,place,postcode,locality,neighborhood&language=${encodeURIComponent(lang || "nl")}&country=${encodeURIComponent(countryCode || "BE")}&access_token=${encodeURIComponent(token)}`;
+  const response = await fetch(reverseUrl);
+  if (!response.ok) throw new Error("reverse_geocode_failed");
+  const payload = await response.json().catch(() => ({}));
+  const features = Array.isArray(payload?.features) ? payload.features : [];
+  if (!features.length) throw new Error("reverse_geocode_not_found");
+  const normalized = _normalizePublicAddressReverseFeature(features[0], lat, lng);
+  if (!normalized) throw new Error("reverse_geocode_not_found");
+  return normalized;
+}
+
 async function handlePublicAddressSuggest(url, env) {
   const codeValidation = validatePublicCompanyCode(
     url.searchParams.get("company_code") ??
@@ -4847,6 +5038,62 @@ async function handlePublicAddressSuggest(url, env) {
     return json({ ok: true, suggestions }, 200);
   } catch (_) {
     return json({ ok: false, error: "suggestion_unavailable" }, 503);
+  }
+}
+
+async function handlePublicAddressReverse(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "invalid_company_code" }, 404);
+  }
+  const lat = parseFiniteCoordinateNumber(url.searchParams.get("lat"));
+  const lng = parseFiniteCoordinateNumber(url.searchParams.get("lng"));
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  if (!env?.MAPBOX_TOKEN) {
+    return json({ ok: false, error: "location_unavailable" }, 503);
+  }
+  const lang = _publicSuggestLanguage(url.searchParams.get("lang"));
+  const companyCountry = sanitizeTenantString(companyRecord?.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  try {
+    const result = await _reverseGeocodePublicAddress({
+      lat,
+      lng,
+      lang,
+      countryCode: companyCountry || "BE",
+      token: env.MAPBOX_TOKEN,
+    });
+    return json({
+      ok: true,
+      address: sanitizeTenantString(result.address || result.label, 240),
+      label: sanitizeTenantString(result.label || result.address, 240),
+      city: sanitizeTenantString(result.city, 120),
+      postcode: sanitizeTenantString(result.postcode, 24),
+      country: sanitizeTenantString(result.country, 8),
+      lat: Number(result.lat),
+      lng: Number(result.lng),
+    }, 200);
+  } catch (_) {
+    return json({ ok: false, error: "location_unavailable" }, 503);
   }
 }
 
@@ -5223,6 +5470,61 @@ async function handlePublicBookingPreview(url, env) {
         background: #171b2a;
         color: #e0e8ff;
       }
+      .fx-btn-inline {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        width: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .fx-quick-row {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .fx-btn-quick {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+        border-radius: 10px;
+        padding: 7px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .fx-stepper {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 34px;
+        gap: 6px;
+        align-items: center;
+      }
+      .fx-stepper-btn {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+        border-radius: 10px;
+        height: 38px;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .fx-stepper-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .fx-stepper-input {
+        text-align: center;
+        -moz-appearance: textfield;
+      }
+      .fx-stepper-input::-webkit-outer-spin-button,
+      .fx-stepper-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
       .fx-status,
       .fx-quote,
       .fx-booking {
@@ -5293,6 +5595,9 @@ async function handlePublicBookingPreview(url, env) {
                     <label class="fx-field fx-field-full">
                       <span class="fx-label">${escapeHtml(copy.fieldFrom)}</span>
                       <input id="public-field-from" class="fx-input" type="text" required />
+                      <button id="public-from-current-location-btn" class="fx-btn fx-btn-tertiary fx-btn-inline" type="button">
+                        ${escapeHtml(copy.useCurrentLocation || "Use current location")}
+                      </button>
                       <div id="public-from-suggestions" class="fx-suggest-list" style="display:none;"></div>
                     </label>
                     <label class="fx-field fx-field-full">
@@ -5306,8 +5611,13 @@ async function handlePublicBookingPreview(url, env) {
                     </label>
                     <label class="fx-field">
                       <span class="fx-label">${escapeHtml(copy.fieldPickupTime)}</span>
-                      <input id="public-field-time" class="fx-input" type="time" required />
+                      <input id="public-field-time" class="fx-input" type="time" step="300" required />
                     </label>
+                    <div class="fx-quick-row">
+                      <button id="public-date-today-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickToday || "Today")}</button>
+                      <button id="public-date-tomorrow-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickTomorrow || "Tomorrow")}</button>
+                      <button id="public-time-next-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickNextTime || "+30 min")}</button>
+                    </div>
                   </div>
                 </section>
 
@@ -5337,13 +5647,55 @@ async function handlePublicBookingPreview(url, env) {
               <section class="fx-card">
                 <h3 class="fx-card-title">${escapeHtml(copy.cardServiceTitle || "Service")}</h3>
                 <div class="fx-input-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                  <label class="fx-field fx-field-full">
+                    <span class="fx-label">${escapeHtml(copy.fieldService || "Service")}</span>
+                    <select id="public-field-service" class="fx-input">
+                      <option value="passenger">${escapeHtml(copy.servicePassenger || "Passenger transport")}</option>
+                      <option value="airport">${escapeHtml(copy.serviceAirport || "Airport transfer")}</option>
+                      <option value="business">${escapeHtml(copy.serviceBusiness || "Business transport")}</option>
+                      <option value="event">${escapeHtml(copy.serviceEvent || "Event transport")}</option>
+                      <option value="hourly">${escapeHtml(copy.serviceHourly || "Hourly service")}</option>
+                      <option value="care">${escapeHtml(copy.serviceCare || "Care transport")}</option>
+                      <option value="courier">${escapeHtml(copy.serviceCourier || "Courier")}</option>
+                    </select>
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldTier || "Category")}</span>
+                    <select id="public-field-tier" class="fx-input">
+                      <option value="comfort">${escapeHtml(copy.tierComfort || "Comfort")}</option>
+                      <option value="private">${escapeHtml(copy.tierPrivate || "Private")}</option>
+                      <option value="premium">${escapeHtml(copy.tierPremium || "Premium")}</option>
+                    </select>
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldWaitMin || "Waiting time")}</span>
+                    <select id="public-field-wait-min" class="fx-input">
+                      <option value="0">${escapeHtml(copy.waitNone || "No waiting")}</option>
+                      <option value="15">${escapeHtml(copy.wait15 || "15 min")}</option>
+                      <option value="30">${escapeHtml(copy.wait30 || "30 min")}</option>
+                      <option value="45">${escapeHtml(copy.wait45 || "45 min")}</option>
+                      <option value="60">${escapeHtml(copy.wait60 || "60 min")}</option>
+                    </select>
+                  </label>
+                  <label class="fx-field fx-field-full">
+                    <span class="fx-label">${escapeHtml(copy.fieldStops || "Intermediate stop (optional)")}</span>
+                    <input id="public-field-stop-1" class="fx-input" type="text" placeholder="${escapeHtml(copy.stopsDirect || "0 - direct")}" />
+                  </label>
                   <label class="fx-field">
                     <span class="fx-label">${escapeHtml(copy.fieldPax)}</span>
-                    <input id="public-field-pax" class="fx-input" type="number" min="1" step="1" value="1" />
+                    <div class="fx-stepper">
+                      <button id="public-pax-minus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperMinusAria || "Decrease value")}">-</button>
+                      <input id="public-field-pax" class="fx-input fx-stepper-input" type="number" min="1" step="1" value="1" />
+                      <button id="public-pax-plus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperPlusAria || "Increase value")}">+</button>
+                    </div>
                   </label>
                   <label class="fx-field">
                     <span class="fx-label">${escapeHtml(copy.fieldBags)}</span>
-                    <input id="public-field-bags" class="fx-input" type="number" min="0" step="1" value="0" />
+                    <div class="fx-stepper">
+                      <button id="public-bags-minus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperMinusAria || "Decrease value")}">-</button>
+                      <input id="public-field-bags" class="fx-input fx-stepper-input" type="number" min="0" step="1" value="0" />
+                      <button id="public-bags-plus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperPlusAria || "Increase value")}">+</button>
+                    </div>
                   </label>
                 </div>
 
@@ -5390,6 +5742,13 @@ async function handlePublicBookingPreview(url, env) {
                 unavailableForBooking: copy.unavailableForBooking,
                 suggestionUnavailable: copy.suggestionUnavailable,
                 suggestionNoResults: copy.suggestionNoResults,
+                useCurrentLocation: copy.useCurrentLocation,
+                locating: copy.locating,
+                locationPermissionDenied: copy.locationPermissionDenied,
+                locationUnavailable: copy.locationUnavailable,
+                locationFound: copy.locationFound,
+                quoteChangedRecalculate: copy.quoteChangedRecalculate,
+                stopsDirect: copy.stopsDirect,
               })};
               const currentLang = ${JSON.stringify(lang)};
 
@@ -5413,11 +5772,24 @@ async function handlePublicBookingPreview(url, env) {
               const fieldEmail = document.getElementById("public-field-email");
               const fieldPax = document.getElementById("public-field-pax");
               const fieldBags = document.getElementById("public-field-bags");
+              const fieldService = document.getElementById("public-field-service");
+              const fieldTier = document.getElementById("public-field-tier");
+              const fieldWaitMin = document.getElementById("public-field-wait-min");
+              const fieldStop1 = document.getElementById("public-field-stop-1");
+              const dateTodayBtn = document.getElementById("public-date-today-btn");
+              const dateTomorrowBtn = document.getElementById("public-date-tomorrow-btn");
+              const timeNextBtn = document.getElementById("public-time-next-btn");
               const fieldNotes = document.getElementById("public-field-notes");
               const fromSuggestEl = document.getElementById("public-from-suggestions");
               const toSuggestEl = document.getElementById("public-to-suggestions");
+              const currentLocationBtn = document.getElementById("public-from-current-location-btn");
+              const paxMinusBtn = document.getElementById("public-pax-minus");
+              const paxPlusBtn = document.getElementById("public-pax-plus");
+              const bagsMinusBtn = document.getElementById("public-bags-minus");
+              const bagsPlusBtn = document.getElementById("public-bags-plus");
 
               let lastQuotePayload = null;
+              let lastQuoteSignature = "";
               let fromSuggestTimer = null;
               let toSuggestTimer = null;
 
@@ -5457,6 +5829,14 @@ async function handlePublicBookingPreview(url, env) {
               function setBusy(isBusy, mode) {
                 quoteBtn.disabled = !!isBusy;
                 resetBtn.disabled = !!isBusy;
+                if (currentLocationBtn) currentLocationBtn.disabled = !!isBusy;
+                if (paxMinusBtn) paxMinusBtn.disabled = !!isBusy;
+                if (paxPlusBtn) paxPlusBtn.disabled = !!isBusy;
+                if (bagsMinusBtn) bagsMinusBtn.disabled = !!isBusy;
+                if (bagsPlusBtn) bagsPlusBtn.disabled = !!isBusy;
+                if (dateTodayBtn) dateTodayBtn.disabled = !!isBusy;
+                if (dateTomorrowBtn) dateTomorrowBtn.disabled = !!isBusy;
+                if (timeNextBtn) timeNextBtn.disabled = !!isBusy;
                 if (isBusy && mode === "quote") {
                   bookBtn.disabled = true;
                 } else if (isBusy && mode === "book") {
@@ -5470,6 +5850,10 @@ async function handlePublicBookingPreview(url, env) {
                 bookBtn.style.cursor = bookBtn.disabled ? "not-allowed" : "pointer";
                 resetBtn.style.opacity = resetBtn.disabled ? "0.7" : "1";
                 resetBtn.style.cursor = resetBtn.disabled ? "not-allowed" : "pointer";
+                if (currentLocationBtn) {
+                  currentLocationBtn.style.opacity = currentLocationBtn.disabled ? "0.7" : "1";
+                  currentLocationBtn.style.cursor = currentLocationBtn.disabled ? "not-allowed" : "pointer";
+                }
               }
 
               function normalizeInt(value, fallback, minValue) {
@@ -5479,10 +5863,103 @@ async function handlePublicBookingPreview(url, env) {
                 return Math.max(minValue, rounded);
               }
 
+              function normalizeWaitMin(value) {
+                const allowed = new Set([0, 15, 30, 45, 60]);
+                const parsed = normalizeInt(value, 0, 0);
+                return allowed.has(parsed) ? parsed : 0;
+              }
+
               function formatMoney(value) {
                 const num = Number(value);
                 if (!Number.isFinite(num)) return "-";
                 return "EUR " + num.toFixed(2);
+              }
+
+              function pad2(value) {
+                return String(value).padStart(2, "0");
+              }
+
+              function toLocalDateInputValue(date) {
+                return String(date.getFullYear()) + "-" + pad2(date.getMonth() + 1) + "-" + pad2(date.getDate());
+              }
+
+              function toLocalTimeInputValue(date) {
+                return pad2(date.getHours()) + ":" + pad2(date.getMinutes());
+              }
+
+              function roundedNowPlusMinutes(minutesAhead) {
+                const now = new Date();
+                const target = new Date(now.getTime() + (Math.max(0, Number(minutesAhead) || 0) * 60 * 1000));
+                target.setSeconds(0, 0);
+                target.setMinutes(Math.ceil(target.getMinutes() / 5) * 5);
+                return target;
+              }
+
+              function openNativePicker(inputEl) {
+                if (!inputEl) return;
+                if (typeof inputEl.showPicker === "function") {
+                  try {
+                    inputEl.showPicker();
+                    return;
+                  } catch (_) {
+                    // Fallback to focus for browsers that block showPicker.
+                  }
+                }
+                try { inputEl.focus(); } catch (_) {}
+              }
+
+              function applyDateTimeDefaults() {
+                const now = new Date();
+                if (!Number.isFinite(now.getTime())) return;
+                const today = toLocalDateInputValue(now);
+                if (fieldDate) {
+                  fieldDate.min = today;
+                  if (!String(fieldDate.value || "").trim()) {
+                    fieldDate.value = today;
+                  }
+                }
+                if (fieldTime && !String(fieldTime.value || "").trim()) {
+                  const localTarget = roundedNowPlusMinutes(30);
+                  fieldTime.value = toLocalTimeInputValue(localTarget);
+                }
+              }
+
+              function normalizeQuoteSignatureText(value) {
+                return String(value || "")
+                  .trim()
+                  .replace(/\s+/g, " ")
+                  .toLowerCase();
+              }
+
+              function buildQuoteSignature() {
+                const stop1 = fieldStop1
+                  ? normalizeQuoteSignatureText(fieldStop1.value)
+                  : "";
+                return JSON.stringify({
+                  from: normalizeQuoteSignatureText(fieldFrom.value),
+                  to: normalizeQuoteSignatureText(fieldTo.value),
+                  pickup_date: String(fieldDate.value || "").trim(),
+                  pickup_time: String(fieldTime.value || "").trim(),
+                  service: normalizeQuoteSignatureText(fieldService && fieldService.value),
+                  tier: normalizeQuoteSignatureText(fieldTier && fieldTier.value),
+                  wait_min: normalizeWaitMin(fieldWaitMin && fieldWaitMin.value),
+                  stop1,
+                  pax: normalizeInt(fieldPax.value, 1, 1),
+                  bags: normalizeInt(fieldBags.value, 0, 0),
+                });
+              }
+
+              function markQuoteStaleIfNeeded() {
+                if (!lastQuotePayload) return;
+                const nextSignature = buildQuoteSignature();
+                if (!nextSignature || nextSignature === lastQuoteSignature) return;
+                lastQuotePayload = null;
+                lastQuoteSignature = "";
+                setBusy(false);
+                setStatus(
+                  uiText.quoteChangedRecalculate || uiText.quoteFirst || uiText.quoteError,
+                  "info",
+                );
               }
 
               function hideSuggestions(container) {
@@ -5523,6 +6000,7 @@ async function handlePublicBookingPreview(url, env) {
                     const nextValue = String(selected.address || selected.label || "").trim();
                     if (nextValue) inputField.value = nextValue;
                     hideSuggestions(container);
+                    markQuoteStaleIfNeeded();
                   });
                 });
               }
@@ -5594,12 +6072,48 @@ async function handlePublicBookingPreview(url, env) {
                   from,
                   to,
                   pickup_iso: pickupIso,
+                  service: String((fieldService && fieldService.value) || "passenger").trim().toLowerCase(),
+                  tier: String((fieldTier && fieldTier.value) || "comfort").trim().toLowerCase(),
+                  wait_min: normalizeWaitMin(fieldWaitMin && fieldWaitMin.value),
                   pax: normalizeInt(fieldPax.value, 1, 1),
                   bags: normalizeInt(fieldBags.value, 0, 0),
                 };
+                const stop1 = String((fieldStop1 && fieldStop1.value) || "").trim();
+                if (stop1) payload.stops = [stop1];
                 const notes = String(fieldNotes.value || "").trim();
                 if (notes) payload.notes = notes;
                 return { ok: true, payload };
+              }
+
+              function applyStepperValue(inputEl, delta, minValue) {
+                if (!inputEl) return;
+                const next = normalizeInt(Number(inputEl.value || 0) + Number(delta || 0), minValue, minValue);
+                inputEl.value = String(next);
+                markQuoteStaleIfNeeded();
+              }
+
+              function setPickupDateToday() {
+                if (!fieldDate) return;
+                const today = toLocalDateInputValue(new Date());
+                fieldDate.value = today;
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldDate);
+              }
+
+              function setPickupDateTomorrow() {
+                if (!fieldDate) return;
+                const target = new Date();
+                target.setDate(target.getDate() + 1);
+                fieldDate.value = toLocalDateInputValue(target);
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldDate);
+              }
+
+              function setPickupTimeNextAvailable() {
+                if (!fieldTime) return;
+                fieldTime.value = toLocalTimeInputValue(roundedNowPlusMinutes(30));
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldTime);
               }
 
               async function onQuoteRequest() {
@@ -5630,6 +6144,7 @@ async function handlePublicBookingPreview(url, env) {
                     setStatus(uiText.quoteError + " (" + errorCode + ")", "error");
                     quotePanelEl.style.display = "none";
                     lastQuotePayload = null;
+                    lastQuoteSignature = "";
                     setBusy(false);
                     return;
                   }
@@ -5647,10 +6162,12 @@ async function handlePublicBookingPreview(url, env) {
                   }
                   quotePanelEl.style.display = "block";
                   lastQuotePayload = base.payload;
+                  lastQuoteSignature = buildQuoteSignature();
                   setStatus(uiText.quoteSuccess, "success");
                 } catch (_) {
                   quotePanelEl.style.display = "none";
                   lastQuotePayload = null;
+                  lastQuoteSignature = "";
                   setStatus(uiText.quoteError, "error");
                 } finally {
                   setBusy(false);
@@ -5661,6 +6178,9 @@ async function handlePublicBookingPreview(url, env) {
                 if (!companyCode) {
                   setStatus(uiText.unavailableForBooking, "error");
                   return;
+                }
+                if (lastQuotePayload && buildQuoteSignature() !== lastQuoteSignature) {
+                  markQuoteStaleIfNeeded();
                 }
                 if (!lastQuotePayload) {
                   setStatus(uiText.quoteFirst, "error");
@@ -5717,6 +6237,7 @@ async function handlePublicBookingPreview(url, env) {
 
               function onResetFlow() {
                 lastQuotePayload = null;
+                lastQuoteSignature = "";
                 quotePanelEl.style.display = "none";
                 resultEl.style.display = "none";
                 resultEl.innerHTML = "";
@@ -5724,15 +6245,118 @@ async function handlePublicBookingPreview(url, env) {
                 setBusy(false);
               }
 
+              function reverseGeocodeCurrentLocation(position) {
+                const coords = position && position.coords ? position.coords : null;
+                const lat = coords ? Number(coords.latitude) : Number.NaN;
+                const lng = coords ? Number(coords.longitude) : Number.NaN;
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                  setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  return;
+                }
+                const params = new URLSearchParams();
+                params.set("company_code", companyCode);
+                params.set("lat", String(lat));
+                params.set("lng", String(lng));
+                params.set("lang", currentLang || "nl");
+                fetch("/public/address/reverse?" + params.toString(), { method: "GET" })
+                  .then(function (response) {
+                    return response.json().catch(function () { return { ok: false, error: "location_unavailable" }; })
+                      .then(function (out) { return { response: response, out: out }; });
+                  })
+                  .then(function (result) {
+                    const response = result.response;
+                    const out = result.out || {};
+                    if (!response.ok || out.ok !== true) {
+                      setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                      return;
+                    }
+                    const nextValue = String(out.address || out.label || "").trim();
+                    if (!nextValue) {
+                      setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                      return;
+                    }
+                    fieldFrom.value = nextValue;
+                    hideSuggestions(fromSuggestEl);
+                    markQuoteStaleIfNeeded();
+                    setStatus(uiText.locationFound || uiText.quoteChangedRecalculate, "success");
+                  })
+                  .catch(function () {
+                    setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  });
+              }
+
+              function onUseCurrentLocation() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                if (!navigator || !navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== "function") {
+                  setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  return;
+                }
+                setStatus(uiText.locating || uiText.quoteLoading, "info");
+                navigator.geolocation.getCurrentPosition(
+                  function (position) {
+                    reverseGeocodeCurrentLocation(position);
+                  },
+                  function (error) {
+                    const denied = !!(error && Number(error.code) === 1);
+                    setStatus(
+                      denied
+                        ? (uiText.locationPermissionDenied || uiText.locationUnavailable || uiText.suggestionUnavailable)
+                        : (uiText.locationUnavailable || uiText.suggestionUnavailable),
+                      "error",
+                    );
+                  },
+                  {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 30000,
+                  },
+                );
+              }
+
               quoteBtn.addEventListener("click", onQuoteRequest);
               bookBtn.addEventListener("click", onBookRequest);
               resetBtn.addEventListener("click", onResetFlow);
               fieldFrom.addEventListener("input", function () {
+                markQuoteStaleIfNeeded();
                 scheduleSuggest("from", fieldFrom, fromSuggestEl);
               });
+              fieldFrom.addEventListener("change", markQuoteStaleIfNeeded);
               fieldTo.addEventListener("input", function () {
+                markQuoteStaleIfNeeded();
                 scheduleSuggest("to", fieldTo, toSuggestEl);
               });
+              fieldTo.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldTime.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldTime.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("click", function () { openNativePicker(fieldDate); });
+              fieldDate.addEventListener("focus", function () { openNativePicker(fieldDate); });
+              fieldTime.addEventListener("click", function () { openNativePicker(fieldTime); });
+              fieldTime.addEventListener("focus", function () { openNativePicker(fieldTime); });
+              fieldPax.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldPax.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldBags.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldBags.addEventListener("change", markQuoteStaleIfNeeded);
+              if (fieldService) {
+                fieldService.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldService.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldTier) {
+                fieldTier.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldTier.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldWaitMin) {
+                fieldWaitMin.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldWaitMin.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldStop1) {
+                fieldStop1.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldStop1.addEventListener("change", markQuoteStaleIfNeeded);
+              }
               fieldFrom.addEventListener("blur", function () {
                 setTimeout(function () { hideSuggestions(fromSuggestEl); }, 120);
               });
@@ -5745,9 +6369,47 @@ async function handlePublicBookingPreview(url, env) {
               fieldTo.addEventListener("focus", function () {
                 scheduleSuggest("to", fieldTo, toSuggestEl);
               });
+              if (currentLocationBtn) {
+                currentLocationBtn.addEventListener("click", onUseCurrentLocation);
+              }
+              if (paxMinusBtn) {
+                paxMinusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldPax, -1, 1);
+                });
+              }
+              if (paxPlusBtn) {
+                paxPlusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldPax, 1, 1);
+                });
+              }
+              if (bagsMinusBtn) {
+                bagsMinusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldBags, -1, 0);
+                });
+              }
+              if (bagsPlusBtn) {
+                bagsPlusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldBags, 1, 0);
+                });
+              }
+              if (dateTodayBtn) {
+                dateTodayBtn.addEventListener("click", setPickupDateToday);
+              }
+              if (dateTomorrowBtn) {
+                dateTomorrowBtn.addEventListener("click", setPickupDateTomorrow);
+              }
+              if (timeNextBtn) {
+                timeNextBtn.addEventListener("click", setPickupTimeNextAvailable);
+              }
+              applyDateTimeDefaults();
               if (!companyCode) {
                 quoteBtn.disabled = true;
                 bookBtn.disabled = true;
+                if (currentLocationBtn) currentLocationBtn.disabled = true;
+                if (paxMinusBtn) paxMinusBtn.disabled = true;
+                if (paxPlusBtn) paxPlusBtn.disabled = true;
+                if (bagsMinusBtn) bagsMinusBtn.disabled = true;
+                if (bagsPlusBtn) bagsPlusBtn.disabled = true;
                 setStatus(uiText.unavailableForBooking, "error");
               } else {
                 setBusy(false);
@@ -7145,6 +7807,12 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handlePublicAddressSuggest(url, env);
+      }
+      if (url.pathname === "/public/address/reverse") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicAddressReverse(url, env);
       }
 
       if (url.pathname === "/public/quote" && request.method === "POST") {
