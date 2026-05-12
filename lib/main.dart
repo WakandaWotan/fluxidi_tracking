@@ -31690,10 +31690,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                     child: _tenantLogo(
                       height: logoHeight,
                       fit: BoxFit.contain,
-                      fallback: const Icon(
-                        Icons.local_taxi_rounded,
-                        color: Color(0xFFFFD36A),
-                        size: 64,
+                      fallback: Image.asset(
+                        kFluxidiLogoAsset,
+                        height: logoHeight,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.topLeft,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
                     ),
                   ),
