@@ -1626,6 +1626,9 @@ function sanitizePublicCompanyId(value) {
 
 const COMPANY_LINK_CODE_INDEX_KEY_PREFIX = "company_link:index:code:";
 const COMPANY_LINK_CODE_INDEX_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_SCOPE_INDEX_KEY_PREFIX = "company_link:index:scope:";
+const COMPANY_LINK_SCOPE_INDEX_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY = "company_link:counter:public_code:v1";
 const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
 const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
@@ -1738,6 +1741,15 @@ function _companyLinkIndexKeyForCode(code) {
   return `${COMPANY_LINK_CODE_INDEX_KEY_PREFIX}${code}${COMPANY_LINK_CODE_INDEX_KEY_SUFFIX}`;
 }
 
+function buildCompanyLinkScopeIndexKey(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return "";
+  }
+  return `${COMPANY_LINK_SCOPE_INDEX_KEY_PREFIX}${tenantId}:${companyId}${COMPANY_LINK_SCOPE_INDEX_KEY_SUFFIX}`;
+}
+
 function _companyLinkChallengeKey(challengeId) {
   return `${COMPANY_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_LINK_CHALLENGE_KEY_SUFFIX}`;
 }
@@ -1750,6 +1762,459 @@ function _companyLinkChallengeId() {
 function _looksLikeE164Phone(value) {
   const text = sanitizeTenantString(value, 40);
   return /^\+[1-9]\d{6,14}$/.test(text);
+}
+
+function isValidGeneratedFluxidiCompanyCode(code) {
+  const normalized = normalizePublicCompanyCode(code);
+  if (!normalized) return false;
+  return /^FLX(?:-?[0-9]{4,12})$/.test(normalized);
+}
+
+function _formatSequentialFluxidiCompanyCode(numberValue) {
+  const n = Math.max(1, Math.min(999999999999, Math.round(Number(numberValue) || 0)));
+  const digits = String(n).padStart(5, "0");
+  return `FLX-${digits}`;
+}
+
+function _publicCompanyNameCandidatesFromBusinessProfile(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return [];
+  return [
+    source.company_name,
+    source.companyName,
+    source.public_display_name,
+    source.publicDisplayName,
+    source.legal_name,
+    source.legalName,
+    source.business_name,
+    source.businessName,
+    source.display_name,
+    source.displayName,
+  ];
+}
+
+function _resolvePublicCompanyDisplayName(businessProfile) {
+  const candidates = _publicCompanyNameCandidatesFromBusinessProfile(
+    businessProfile,
+  );
+  for (const raw of candidates) {
+    const text = sanitizeTenantString(raw, 160);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _normalizePublicCompanySlug(rawName, maxLen = 32) {
+  const base = sanitizeTenantString(rawName, 220).trim();
+  if (!base) return "";
+  let text = base;
+  try {
+    text = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  } catch (_) {}
+  text = text.toUpperCase();
+  text = text.replace(/\s+/g, "-");
+  text = text.replace(/[^A-Z0-9-]+/g, "-");
+  text = text.replace(/-+/g, "-");
+  text = text.replace(/^-+|-+$/g, "");
+  if (!text) return "";
+  return text.slice(0, Math.max(4, Math.min(64, Math.round(Number(maxLen) || 32))));
+}
+
+function _publicDisplayCodeFromParts(companyCode, slug) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!normalizedCode) return "";
+  const normalizedSlug = _normalizePublicCompanySlug(slug);
+  if (!normalizedSlug) return normalizedCode;
+  return `${normalizedCode}-${normalizedSlug}`;
+}
+
+async function _readPublicCompanyCodeCounter(env) {
+  if (!env?.BOOKING_KV) return 0;
+  const raw = await env.BOOKING_KV.get(COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const counterRaw = Number(
+    source.counter ?? source.value ?? source.sequence ?? source.next ?? source.current ?? 0,
+  );
+  if (!Number.isFinite(counterRaw)) return 0;
+  return Math.max(0, Math.min(999999999999, Math.round(counterRaw)));
+}
+
+async function _writePublicCompanyCodeCounter(env, counter, nowIso) {
+  if (!env?.BOOKING_KV) return;
+  const safeCounter = Math.max(0, Math.min(999999999999, Math.round(Number(counter) || 0)));
+  await env.BOOKING_KV.put(
+    COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY,
+    JSON.stringify({
+      counter: safeCounter,
+      updated_at: sanitizeTenantString(nowIso, 80) || new Date().toISOString(),
+    }),
+  );
+}
+
+function _companyCodeResultPayload({
+  companyCode,
+  publicCompanySlug = "",
+  publicDisplayCode = "",
+  codeIndexKey = "",
+  scopeIndexKey = "",
+}) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedSlug = _normalizePublicCompanySlug(publicCompanySlug);
+  const normalizedDisplayCode = sanitizeTenantString(
+    publicDisplayCode || _publicDisplayCodeFromParts(normalizedCode, normalizedSlug),
+    240,
+  );
+  return {
+    ok: true,
+    company_code: normalizedCode,
+    companyCode: normalizedCode,
+    public_company_code: normalizedCode,
+    publicCompanyCode: normalizedCode,
+    ...(normalizedSlug
+      ? {
+          public_company_slug: normalizedSlug,
+          publicCompanySlug: normalizedSlug,
+        }
+      : {}),
+    ...(normalizedDisplayCode
+      ? {
+          public_display_code: normalizedDisplayCode,
+          publicDisplayCode: normalizedDisplayCode,
+        }
+      : {}),
+    ...(codeIndexKey ? { code_index_key: codeIndexKey } : {}),
+    ...(scopeIndexKey ? { scope_index_key: scopeIndexKey } : {}),
+  };
+}
+
+function _normalizeCompanyLinkIndexSource(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source =
+    raw.record && typeof raw.record === "object" && !Array.isArray(raw.record)
+      ? raw.record
+      : raw;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  return source;
+}
+
+function _readAnyCompanyCodeAlias(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return "";
+  return normalizePublicCompanyCode(
+    source.company_code ??
+      source.companyCode ??
+      source.public_company_code ??
+      source.publicCompanyCode ??
+      "",
+  );
+}
+
+function _sameCompanyLinkScope(source, tenantId, companyId) {
+  const leftTenant = sanitizeTenantString(source?.tenant_id ?? source?.tenantId, 80);
+  const leftCompany = sanitizeTenantString(source?.company_id ?? source?.companyId, 80);
+  return leftTenant === tenantId && leftCompany === companyId;
+}
+
+function _extractCompanyCodeHints(options = {}) {
+  const profileHints = [];
+  if (options.profile && typeof options.profile === "object") {
+    profileHints.push(
+      options.profile.company_code,
+      options.profile.companyCode,
+      options.profile.public_company_code,
+      options.profile.publicCompanyCode,
+    );
+  }
+  const list = [
+    options.company_code,
+    options.companyCode,
+    options.public_company_code,
+    options.publicCompanyCode,
+    options.preferredCompanyCode,
+    options.session_company_code,
+    options.sessionCompanyCode,
+    ...profileHints,
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const normalized = normalizePublicCompanyCode(raw);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+async function _readCompanyLinkScopeIndexRecord(env, scope) {
+  const key = buildCompanyLinkScopeIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { key: "", record: null };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = _normalizeCompanyLinkIndexSource(raw);
+  return { key, record: source };
+}
+
+async function _readCompanyLinkCodeIndexRecord(env, companyCode) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!normalizedCode || !env?.BOOKING_KV) {
+    return { key: "", record: null, company_code: normalizedCode };
+  }
+  const key = _companyLinkIndexKeyForCode(normalizedCode);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = _normalizeCompanyLinkIndexSource(raw);
+  return { key, record: source, company_code: normalizedCode };
+}
+
+async function _upsertCompanyCodeIndexesForScope(
+  env,
+  { tenantId, companyId, companyCode, nowIso, source = "auto_generated", hints = null },
+) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!isValidGeneratedFluxidiCompanyCode(normalizedCode)) {
+    return { ok: false, error: "invalid_company_code" };
+  }
+  const codeKey = _companyLinkIndexKeyForCode(normalizedCode);
+  const scopeKey = buildCompanyLinkScopeIndexKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  if (!codeKey || !scopeKey) return { ok: false, error: "invalid_scope" };
+  const hintMap = hints && typeof hints === "object" ? hints : {};
+  const businessProfileForDisplay =
+    hintMap.business_profile && typeof hintMap.business_profile === "object"
+      ? hintMap.business_profile
+      : (hintMap.businessProfile && typeof hintMap.businessProfile === "object"
+        ? hintMap.businessProfile
+        : null);
+  const prevCodeRead = await _readCompanyLinkCodeIndexRecord(env, normalizedCode);
+  const prevScopeRead = await _readCompanyLinkScopeIndexRecord(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  const prevCode = prevCodeRead.record;
+  const prevScope = prevScopeRead.record;
+  const createdAt = sanitizeTenantString(
+    prevCode?.created_at ??
+      prevCode?.createdAt ??
+      prevScope?.created_at ??
+      prevScope?.createdAt ??
+      nowIso,
+    80,
+  ) || nowIso;
+  const displayName = _resolvePublicCompanyDisplayName(businessProfileForDisplay);
+  const currentDisplayName = displayName;
+  const currentExplicitSlugRaw = sanitizeTenantString(
+    hintMap.public_company_slug ?? hintMap.publicCompanySlug,
+    120,
+  );
+  const currentSlug = _normalizePublicCompanySlug(
+    currentExplicitSlugRaw || currentDisplayName,
+  );
+  const storedSlug = _normalizePublicCompanySlug(
+    sanitizeTenantString(
+      prevCode?.public_company_slug ??
+        prevCode?.publicCompanySlug ??
+        prevScope?.public_company_slug ??
+        prevScope?.publicCompanySlug ??
+        "",
+      120,
+    ),
+  );
+  const publicCompanySlug = currentSlug || storedSlug;
+  const storedDisplayCode = sanitizeTenantString(
+    prevCode?.public_display_code ??
+      prevCode?.publicDisplayCode ??
+      prevScope?.public_display_code ??
+      prevScope?.publicDisplayCode ??
+      "",
+    240,
+  );
+  const explicitDisplayCode = sanitizeTenantString(
+    hintMap.public_display_code ?? hintMap.publicDisplayCode,
+    240,
+  );
+  const publicDisplayCode = currentSlug
+    ? sanitizeTenantString(
+        explicitDisplayCode || _publicDisplayCodeFromParts(normalizedCode, publicCompanySlug),
+        240,
+      )
+    : sanitizeTenantString(
+        explicitDisplayCode ||
+          storedDisplayCode ||
+          _publicDisplayCodeFromParts(normalizedCode, publicCompanySlug),
+        240,
+      );
+  const country = sanitizeTenantString(
+    hintMap.country ?? prevCode?.country ?? prevScope?.country,
+    8,
+  )
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const linkedRecord = {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: normalizedCode,
+    companyCode: normalizedCode,
+    public_company_code: normalizedCode,
+    publicCompanyCode: normalizedCode,
+    ...(publicCompanySlug
+      ? {
+          public_company_slug: publicCompanySlug,
+          publicCompanySlug: publicCompanySlug,
+        }
+      : {}),
+    ...(publicDisplayCode
+      ? {
+          public_display_code: publicDisplayCode,
+          publicDisplayCode: publicDisplayCode,
+        }
+      : {}),
+    ...(displayName
+      ? {
+          display_name: displayName,
+          displayName: displayName,
+        }
+      : {}),
+    ...(country ? { country } : {}),
+    linking_enabled: _coerceLinkingEnabled(
+      hintMap.linking_enabled ??
+        hintMap.linkingEnabled ??
+        prevCode?.linking_enabled ??
+        prevCode?.linkingEnabled ??
+        prevScope?.linking_enabled ??
+        prevScope?.linkingEnabled,
+    ),
+    created_at: createdAt,
+    updated_at: nowIso,
+    source: sanitizeTenantString(
+      hintMap.source ?? prevCode?.source ?? prevScope?.source ?? source,
+      64,
+    ) || source,
+  };
+  await env.BOOKING_KV.put(codeKey, JSON.stringify(linkedRecord));
+  await env.BOOKING_KV.put(
+    scopeKey,
+    JSON.stringify({
+      ...linkedRecord,
+      code_index_key: codeKey,
+    }),
+  );
+  return _companyCodeResultPayload({
+    companyCode: normalizedCode,
+    publicCompanySlug,
+    publicDisplayCode,
+    codeIndexKey: codeKey,
+    scopeIndexKey: scopeKey,
+  });
+}
+
+async function ensurePublicCompanyCodeForScope(env, scope, options = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "BOOKING_KV binding is missing" };
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return { ok: false, error: "invalid_tenant_or_company_scope" };
+  }
+  const nowIso = new Date().toISOString();
+  const maxAttemptsRaw = Number(options?.maxAttempts);
+  const maxAttempts = Number.isFinite(maxAttemptsRaw)
+    ? Math.max(1, Math.min(200, Math.round(maxAttemptsRaw)))
+    : 25;
+
+  const scopeRead = await _readCompanyLinkScopeIndexRecord(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  const scopeCode = _readAnyCompanyCodeAlias(scopeRead.record);
+  const scopeCodeValidation = validatePublicCompanyCode(scopeCode);
+  if (scopeCodeValidation.ok && !isValidGeneratedFluxidiCompanyCode(scopeCode)) {
+    const scopeSlug = sanitizeTenantString(
+      scopeRead.record?.public_company_slug ?? scopeRead.record?.publicCompanySlug,
+      80,
+    );
+    const scopeDisplayCode = sanitizeTenantString(
+      scopeRead.record?.public_display_code ?? scopeRead.record?.publicDisplayCode,
+      240,
+    );
+    return _companyCodeResultPayload({
+      companyCode: scopeCodeValidation.code,
+      publicCompanySlug: scopeSlug,
+      publicDisplayCode: scopeDisplayCode,
+      scopeIndexKey: scopeRead.key,
+    });
+  }
+  if (isValidGeneratedFluxidiCompanyCode(scopeCode)) {
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, scopeCode);
+    if (codeRead.record && _sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+        tenantId,
+        companyId,
+        companyCode: scopeCode,
+        nowIso,
+        source: "auto_generated",
+        hints: { ...scopeRead.record, ...codeRead.record, ...options },
+      });
+      if (repaired.ok) return repaired;
+    } else if (!codeRead.record) {
+      const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+        tenantId,
+        companyId,
+        companyCode: scopeCode,
+        nowIso,
+        source: "auto_generated",
+        hints: { ...scopeRead.record, ...options },
+      });
+      if (repaired.ok) return repaired;
+    }
+  }
+
+  const hintedCodes = _extractCompanyCodeHints(options);
+  for (const hintedCode of hintedCodes) {
+    if (!isValidGeneratedFluxidiCompanyCode(hintedCode)) continue;
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, hintedCode);
+    if (codeRead.record && !_sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      continue;
+    }
+    const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+      tenantId,
+      companyId,
+      companyCode: hintedCode,
+      nowIso,
+      source: "auto_generated",
+      hints: { ...codeRead.record, ...scopeRead.record, ...options },
+    });
+    if (repaired.ok) return repaired;
+  }
+
+  const baseCounter = await _readPublicCompanyCodeCounter(env);
+  let highestCounterUsed = baseCounter;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const candidateCounter = baseCounter + i + 1;
+    highestCounterUsed = Math.max(highestCounterUsed, candidateCounter);
+    const candidate = _formatSequentialFluxidiCompanyCode(candidateCounter);
+    if (!isValidGeneratedFluxidiCompanyCode(candidate)) continue;
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, candidate);
+    if (codeRead.record && !_sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      continue;
+    }
+    const created = await _upsertCompanyCodeIndexesForScope(env, {
+      tenantId,
+      companyId,
+      companyCode: candidate,
+      nowIso,
+      source: "auto_generated",
+      hints: { ...codeRead.record, ...scopeRead.record, ...options },
+    });
+    if (created.ok) {
+      try {
+        const currentCounter = await _readPublicCompanyCodeCounter(env);
+        if (highestCounterUsed > currentCounter) {
+          await _writePublicCompanyCodeCounter(env, highestCounterUsed, nowIso);
+        }
+      } catch (_) {}
+      return created;
+    }
+  }
+  return { ok: false, error: "company_code_generation_failed", attempts: maxAttempts };
 }
 
 function _looksLikeE164PhoneForAdminUpsert(value) {
@@ -4364,7 +4829,64 @@ async function handleCompanyBootstrap(request, env) {
     });
   }
 
-  const companyCode = sanitizeTenantString(session.company_code, 80);
+  let companyCode = sanitizeTenantString(session.company_code, 80);
+  let companyPublicSlug = "";
+  let companyDisplayCode = "";
+  if (!companyCode) {
+    try {
+      const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+        session_company_code: session.company_code,
+        business_profile: businessProfile,
+        profile: businessProfile,
+        country: businessProfile?.country,
+        source: "auto_generated",
+      });
+      if (ensuredCode?.ok) {
+        companyCode = sanitizeTenantString(ensuredCode.company_code, 80);
+        companyPublicSlug = sanitizeTenantString(
+          ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+          80,
+        );
+        companyDisplayCode = sanitizeTenantString(
+          ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+          240,
+        );
+      }
+    } catch (err) {
+      console.log(
+        `[COMPANY_BOOTSTRAP][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_ensure_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+      );
+    }
+  }
+  if (companyCode && (!companyPublicSlug || !companyDisplayCode)) {
+    try {
+      const scopeRead = await _readCompanyLinkScopeIndexRecord(env, scope);
+      if (scopeRead.record) {
+        const indexedCode = _readAnyCompanyCodeAlias(scopeRead.record);
+        if (indexedCode && indexedCode === companyCode) {
+          if (!companyPublicSlug) {
+            companyPublicSlug = sanitizeTenantString(
+              scopeRead.record.public_company_slug ?? scopeRead.record.publicCompanySlug,
+              80,
+            );
+          }
+          if (!companyDisplayCode) {
+            companyDisplayCode = sanitizeTenantString(
+              scopeRead.record.public_display_code ?? scopeRead.record.publicDisplayCode,
+              240,
+            );
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  if (companyCode && !companyPublicSlug) {
+    const displayNameHint = _resolvePublicCompanyDisplayName(businessProfile);
+    companyPublicSlug = _normalizePublicCompanySlug(displayNameHint);
+  }
+  if (companyCode && !companyDisplayCode) {
+    companyDisplayCode = _publicDisplayCodeFromParts(companyCode, companyPublicSlug);
+  }
   const companyDisplayName = sanitizeTenantString(
     session.company_display_name ??
       businessProfile?.companyName ??
@@ -4389,11 +4911,44 @@ async function handleCompanyBootstrap(request, env) {
         ? {
             company_code: companyCode,
             companyCode: companyCode,
+            public_company_code: companyCode,
+            publicCompanyCode: companyCode,
+            ...(companyPublicSlug
+              ? {
+                  public_company_slug: companyPublicSlug,
+                  publicCompanySlug: companyPublicSlug,
+                }
+              : {}),
+            ...(companyDisplayCode
+              ? {
+                  public_display_code: companyDisplayCode,
+                  publicDisplayCode: companyDisplayCode,
+                }
+              : {}),
           }
         : {}),
       company: {
         display_name: companyDisplayName,
-        ...(companyCode ? { company_code: companyCode } : {}),
+        ...(companyCode
+          ? {
+              company_code: companyCode,
+              companyCode: companyCode,
+              public_company_code: companyCode,
+              publicCompanyCode: companyCode,
+              ...(companyPublicSlug
+                ? {
+                    public_company_slug: companyPublicSlug,
+                    publicCompanySlug: companyPublicSlug,
+                  }
+                : {}),
+              ...(companyDisplayCode
+                ? {
+                    public_display_code: companyDisplayCode,
+                    publicDisplayCode: companyDisplayCode,
+                  }
+                : {}),
+            }
+          : {}),
       },
       business_profile: businessProfile,
       tax_profile: taxProfile,
@@ -9568,10 +10123,70 @@ GET /oauth/callback
         const profile = await loadBusinessProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
         });
+        let resolvedCompanyCode = "";
+        let ensuredPublicCompanyCode = "";
+        let ensuredPublicCompanySlug = "";
+        let ensuredPublicDisplayCode = "";
+        try {
+          const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
+            profile,
+            business_profile: profile,
+            company_code:
+              profile?.company_code ??
+              profile?.companyCode ??
+              profile?.public_company_code ??
+              profile?.publicCompanyCode,
+            country: profile?.country,
+            source: "auto_generated",
+          });
+          if (ensuredCode?.ok) {
+            resolvedCompanyCode = sanitizeTenantString(ensuredCode.company_code, 80);
+            ensuredPublicCompanyCode = sanitizeTenantString(
+              ensuredCode.public_company_code ?? ensuredCode.company_code,
+              80,
+            );
+            ensuredPublicCompanySlug = sanitizeTenantString(
+              ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+              80,
+            );
+            ensuredPublicDisplayCode = sanitizeTenantString(
+              ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+              240,
+            );
+          }
+        } catch (err) {
+          console.log(
+            `[ADMIN_BUSINESS_PROFILE][WARN] reason=company_code_ensure_failed tenant=${_maskPublicDriverLoginValue(explicitScope.tenant_id)} company=${_maskPublicDriverLoginValue(explicitScope.company_id)} error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+          );
+        }
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ...(resolvedCompanyCode
+            ? {
+                company_code: resolvedCompanyCode,
+                companyCode: resolvedCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanyCode
+            ? {
+                public_company_code: ensuredPublicCompanyCode,
+                publicCompanyCode: ensuredPublicCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanySlug
+            ? {
+                public_company_slug: ensuredPublicCompanySlug,
+                publicCompanySlug: ensuredPublicCompanySlug,
+              }
+            : {}),
+          ...(ensuredPublicDisplayCode
+            ? {
+                public_display_code: ensuredPublicDisplayCode,
+                publicDisplayCode: ensuredPublicDisplayCode,
+              }
+            : {}),
         }, 200);
       }
 
@@ -9593,10 +10208,74 @@ GET /oauth/callback
         const profile = await saveBusinessProfile(env, incoming, explicitScope, {
           allowTenantLegacyWrite: false,
         });
+        let resolvedCompanyCode = "";
+        let ensuredPublicCompanyCode = "";
+        let ensuredPublicCompanySlug = "";
+        let ensuredPublicDisplayCode = "";
+        try {
+          const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
+            profile,
+            business_profile: profile,
+            company_code:
+              incoming?.company_code ??
+              incoming?.companyCode ??
+              incoming?.public_company_code ??
+              incoming?.publicCompanyCode ??
+              profile?.company_code ??
+              profile?.companyCode ??
+              profile?.public_company_code ??
+              profile?.publicCompanyCode,
+            country: incoming?.country ?? profile?.country,
+            source: "auto_generated",
+          });
+          if (ensuredCode?.ok) {
+            resolvedCompanyCode = sanitizeTenantString(ensuredCode.company_code, 80);
+            ensuredPublicCompanyCode = sanitizeTenantString(
+              ensuredCode.public_company_code ?? ensuredCode.company_code,
+              80,
+            );
+            ensuredPublicCompanySlug = sanitizeTenantString(
+              ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+              80,
+            );
+            ensuredPublicDisplayCode = sanitizeTenantString(
+              ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+              240,
+            );
+          }
+        } catch (err) {
+          console.log(
+            `[ADMIN_BUSINESS_PROFILE][WARN] reason=company_code_ensure_failed tenant=${_maskPublicDriverLoginValue(explicitScope.tenant_id)} company=${_maskPublicDriverLoginValue(explicitScope.company_id)} error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+          );
+        }
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ...(resolvedCompanyCode
+            ? {
+                company_code: resolvedCompanyCode,
+                companyCode: resolvedCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanyCode
+            ? {
+                public_company_code: ensuredPublicCompanyCode,
+                publicCompanyCode: ensuredPublicCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanySlug
+            ? {
+                public_company_slug: ensuredPublicCompanySlug,
+                publicCompanySlug: ensuredPublicCompanySlug,
+              }
+            : {}),
+          ...(ensuredPublicDisplayCode
+            ? {
+                public_display_code: ensuredPublicDisplayCode,
+                publicDisplayCode: ensuredPublicDisplayCode,
+              }
+            : {}),
         }, 200);
       }
 
