@@ -1923,6 +1923,74 @@ function _projectPublicRecoveryStartResponse(challengeId, email) {
   };
 }
 
+async function _sendCompanyRecoveryOtpEmail({
+  env,
+  tenantId,
+  companyId,
+  recipientEmail,
+  otp,
+}) {
+  const apiKey = safeStr(env?.RESEND_API_KEY);
+  const emailFrom = safeStr(env?.EMAIL_FROM);
+  const toEmail = _normalizeRecoveryEmail(recipientEmail);
+  const code = sanitizeTenantString(otp, 24);
+  if (!apiKey || !emailFrom || !toEmail || !/^\d{4,8}$/.test(code)) {
+    return { ok: false, reason: "provider_or_input_missing" };
+  }
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    sanitizeTenantString(tenantId, 80),
+    sanitizeTenantString(companyId, 80),
+  );
+  const replyTo = pickFirstValidEmail(
+    commProfile?.replyToEmail,
+    commProfile?.companyEmail,
+    commProfile?.supportEmail,
+    commProfile?.notificationEmail,
+    env?.EMAIL_REPLY_TO,
+  );
+  const brandName = safeBrandName(commProfile?.brandName, "Fluxidi");
+  const subject = "Fluxidi herstelcode / Fluxidi recovery code";
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.55;color:#111">
+      <h2 style="margin:0 0 10px">${escapeHtml(brandName)} herstelcode / recovery code</h2>
+      <p style="margin:0 0 12px">Gebruik deze code om je bedrijfsaccount te herstellen.</p>
+      <p style="margin:0 0 12px">Use this code to recover your company account.</p>
+      <div style="display:inline-block;padding:10px 14px;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:20px;font-weight:800;letter-spacing:3px">
+        ${escapeHtml(code)}
+      </div>
+      <p style="margin:12px 0 0">Deze code vervalt binnen 10 minuten.</p>
+      <p style="margin:4px 0 0">This code expires in 10 minutes.</p>
+      <p style="margin:12px 0 0;color:#555">Heb je dit niet aangevraagd? Dan kan je deze e-mail negeren.</p>
+      <p style="margin:4px 0 0;color:#555">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+  const payload = {
+    from: emailFrom,
+    to: [toEmail],
+    subject,
+    html,
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  };
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: safeStr(body?.message || `HTTP ${response.status}`, 180),
+    };
+  }
+  return { ok: true, id: safeStr(body?.id, 120) };
+}
+
 function _looksLikeE164Phone(value) {
   const text = sanitizeTenantString(value, 40);
   return /^\+[1-9]\d{6,14}$/.test(text);
@@ -3560,6 +3628,29 @@ async function handlePublicCompanyRecoveryStart(body, env) {
   await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
     expirationTtl: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
   });
+
+  try {
+    const emailSend = await _sendCompanyRecoveryOtpEmail({
+      env,
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      recipientEmail: email,
+      otp,
+    });
+    if (emailSend?.ok) {
+      console.log(
+        `[COMPANY_RECOVERY][EMAIL][OK] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} id=${sanitizeTenantString(emailSend.id, 120) || "-"}`,
+      );
+    } else {
+      console.log(
+        `[COMPANY_RECOVERY][EMAIL][WARN] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[COMPANY_RECOVERY][EMAIL][ERROR] company=${_maskPublicDriverLoginValue(codeValidation.code)} to=${maskEmailForLog(email)} reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
+    );
+  }
 
   const out = { ...genericResponse };
   if (sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1") {
