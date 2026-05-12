@@ -4584,6 +4584,7 @@ function publicPreviewCopy(lang) {
       locationUnavailable: "Locatie niet beschikbaar.",
       locationFound: "Locatie gevonden.",
       quoteChangedRecalculate: "Offerte gewijzigd. Bereken opnieuw.",
+      poweredByFluxidi: "Aangedreven door Fluxidi",
       codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
@@ -4666,6 +4667,7 @@ function publicPreviewCopy(lang) {
       locationUnavailable: "Location unavailable.",
       locationFound: "Location found.",
       quoteChangedRecalculate: "Quote changed. Recalculate price.",
+      poweredByFluxidi: "Powered by Fluxidi",
       codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
@@ -4748,6 +4750,7 @@ function publicPreviewCopy(lang) {
       locationUnavailable: "Localisation indisponible.",
       locationFound: "Position trouvee.",
       quoteChangedRecalculate: "Le devis a change. Recalculez le prix.",
+      poweredByFluxidi: "Propulse par Fluxidi",
       codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
@@ -4830,6 +4833,7 @@ function publicPreviewCopy(lang) {
       locationUnavailable: "Ubicacion no disponible.",
       locationFound: "Ubicacion encontrada.",
       quoteChangedRecalculate: "La cotizacion cambio. Recalcula el precio.",
+      poweredByFluxidi: "Con tecnologia de Fluxidi",
       codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
@@ -4850,6 +4854,25 @@ function _publicWebsiteHref(rawWebsite) {
   if (lower.startsWith("http://") || lower.startsWith("https://")) return value;
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return "";
   return `https://${value}`;
+}
+
+function _publicLogoHref(rawLogo) {
+  const normalized = _normalizeSafeRemoteMediaRef(rawLogo);
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("https://")) return normalized;
+  if (lower.startsWith("/public/media/")) return normalized;
+  return "";
+}
+
+function _publicDisplayInitials(value) {
+  const text = sanitizeTenantString(value, 120).trim();
+  if (!text) return "F";
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return "F";
+  const first = tokens[0].slice(0, 1);
+  const second = tokens.length > 1 ? tokens[1].slice(0, 1) : "";
+  return sanitizeTenantString((first + second).toUpperCase(), 2) || "F";
 }
 
 function _publicSuggestLanguage(value) {
@@ -5138,6 +5161,14 @@ async function _buildPublicBookingGatewayPayload({
     business.locale,
     "nl",
   ).toLowerCase();
+  const safeLogoUrl = _publicLogoHref(
+    pickFirstPublicValue(
+      business.publicLogoUrl,
+      business.public_logo_url,
+      business.logoUrl,
+      business.logo_url,
+    ),
+  );
   return {
     ok: true,
     phase: "public_booking_gateway_v2a",
@@ -5145,6 +5176,8 @@ async function _buildPublicBookingGatewayPayload({
     public_booking_status: "prepared",
     company_code: sanitizeTenantString(companyCode, 80),
     display_name: displayName || "Fluxidi",
+    logo_url: safeLogoUrl,
+    logoUrl: safeLogoUrl,
     default_language: defaultLanguage || "nl",
     supported_languages: ["nl", "en", "fr", "es"],
     public_contact: {
@@ -5161,7 +5194,8 @@ async function _buildPublicBookingGatewayPayload({
       website: pickFirstPublicValue(business.website),
     },
     branding: {
-      logo_url: pickFirstPublicValue(business.logoUrl),
+      logo_url: safeLogoUrl,
+      logoUrl: safeLogoUrl,
       primary_color: pickFirstPublicValue(
         business.primaryColor,
         business.primary_color,
@@ -5227,6 +5261,18 @@ async function handlePublicBookingPreview(url, env) {
   }
   const localizedStatus = publicStatusLabel(lang, data?.public_booking_status);
   const displayName = sanitizeTenantString(data?.display_name || "Fluxidi", 120);
+  const branding = data?.branding && typeof data.branding === "object"
+    ? data.branding
+    : {};
+  const companyLogoUrl = _publicLogoHref(
+    pickFirstPublicValue(
+      data?.logo_url,
+      data?.logoUrl,
+      branding?.logo_url,
+      branding?.logoUrl,
+    ),
+  );
+  const companyInitials = _publicDisplayInitials(displayName);
   const contact = data?.public_contact && typeof data.public_contact === "object"
     ? data.public_contact
     : {};
@@ -5297,6 +5343,74 @@ async function handlePublicBookingPreview(url, env) {
         padding: 16px;
         box-shadow: 0 18px 34px rgba(0,0,0,0.35);
       }
+      .fx-hero-head {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr);
+        gap: 28px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .fx-hero-left {
+        min-width: 0;
+      }
+      .fx-brand-row {
+        display: block;
+        margin-bottom: 8px;
+      }
+      .fx-brand-logo-wrap {
+        position: relative;
+        width: 100%;
+        height: 230px;
+        border-radius: 22px;
+        border: 1px solid rgba(212, 175, 74, 0.62);
+        background: linear-gradient(180deg, #11182a, #0e1422);
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px;
+        box-shadow:
+          inset 0 0 0 1px rgba(240, 200, 93, 0.16),
+          0 10px 24px rgba(0, 0, 0, 0.28);
+      }
+      .fx-brand-logo {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transform: scale(1.45);
+        transform-origin: center;
+      }
+      .fx-brand-logo-fallback {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #f8dc8f;
+        font-size: 82px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+      }
+      .fx-brand-copy {
+        min-width: 0;
+      }
+      .fx-brand-name {
+        font-size: 22px;
+        font-weight: 800;
+        color: #f3f6ff;
+        line-height: 1.2;
+      }
+      .fx-brand-code {
+        margin-top: 3px;
+        color: #aeb8d0;
+        font-size: 12px;
+      }
+      .fx-brand-powered {
+        margin-top: 3px;
+        color: #f0c85d;
+        font-size: 11px;
+        letter-spacing: 0.2px;
+      }
       .fx-chip {
         display: inline-flex;
         align-items: center;
@@ -5314,10 +5428,10 @@ async function handlePublicBookingPreview(url, env) {
       .fx-topline {
         color: var(--fx-subtle);
         font-size: 12px;
-        margin-top: 8px;
+        margin-top: 6px;
       }
       .fx-title {
-        margin: 10px 0 6px;
+        margin: 6px 0 6px;
         font-size: 29px;
         line-height: 1.15;
       }
@@ -5328,7 +5442,7 @@ async function handlePublicBookingPreview(url, env) {
         line-height: 1.48;
       }
       .fx-meta {
-        margin-top: 14px;
+        margin-top: 10px;
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
@@ -5343,13 +5457,13 @@ async function handlePublicBookingPreview(url, env) {
         font-weight: 600;
       }
       .fx-lang-row {
-        margin-top: 12px;
+        margin-top: 8px;
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
       }
       .fx-form-wrap {
-        margin-top: 14px;
+        margin-top: 16px;
       }
       .fx-grid {
         display: grid;
@@ -5560,6 +5674,27 @@ async function handlePublicBookingPreview(url, env) {
         .fx-main { padding: 16px 12px 26px; }
         .fx-title { font-size: 24px; }
         .fx-grid { grid-template-columns: 1fr; }
+        .fx-hero-head {
+          grid-template-columns: 1fr;
+          gap: 10px;
+          align-items: start;
+          margin-bottom: 12px;
+        }
+        .fx-brand-logo-wrap {
+          width: min(90%, 280px);
+          max-width: 280px;
+          height: 140px;
+          border-radius: 16px;
+          padding: 6px;
+          justify-self: center;
+          align-self: center;
+        }
+        .fx-brand-logo {
+          transform: scale(1.1);
+        }
+        .fx-brand-logo-fallback {
+          font-size: 46px;
+        }
       }
       @media (max-width: 640px) {
         .fx-input-grid { grid-template-columns: 1fr; }
@@ -5569,21 +5704,37 @@ async function handlePublicBookingPreview(url, env) {
   <body class="fx-page">
     <main class="fx-main">
       <section class="fx-hero">
-        <div class="fx-chip">${escapeHtml(copy.calculatorChip || "Fluxidi calculator")}</div>
-        <div class="fx-topline">${escapeHtml(copy.backToHome || "")}</div>
-        <h1 class="fx-title">${escapeHtml(copy.calculatorTitle || copy.heading)}</h1>
-        <p class="fx-subtitle">${escapeHtml(copy.calculatorSubtitle || copy.description)}</p>
+        <div class="fx-hero-head">
+          <div class="fx-hero-left">
+            <div class="fx-brand-row">
+              <div class="fx-brand-copy">
+                <div class="fx-brand-name">${escapeHtml(displayName)}</div>
+                ${
+                  companyCodeForUi
+                    ? `<div class="fx-brand-code">${escapeHtml(copy.codeLabel)}: ${escapeHtml(companyCodeForUi)}</div>`
+                    : ""
+                }
+                <div class="fx-brand-powered">${escapeHtml(copy.poweredByFluxidi || "Powered by Fluxidi")}</div>
+              </div>
+            </div>
+            <div class="fx-chip">${escapeHtml(copy.calculatorChip || "Fluxidi calculator")}</div>
+            <div class="fx-topline">${escapeHtml(copy.backToHome || "")}</div>
+            <h1 class="fx-title">${escapeHtml(copy.calculatorTitle || copy.heading)}</h1>
+            <p class="fx-subtitle">${escapeHtml(copy.calculatorSubtitle || copy.description)}</p>
 
-        <div class="fx-meta">
-          <span class="fx-meta-pill">${escapeHtml(displayName)}</span>
-          ${
-            companyCodeForUi
-              ? `<span class="fx-meta-pill">${escapeHtml(copy.codeLabel)}: ${escapeHtml(companyCodeForUi)}</span>`
-              : ""
-          }
-          <span class="fx-meta-pill">${escapeHtml(localizedStatus)}</span>
+            <div class="fx-meta">
+              <span class="fx-meta-pill">${escapeHtml(localizedStatus)}</span>
+            </div>
+            <div class="fx-lang-row">${langChips}</div>
+          </div>
+          <div class="fx-brand-logo-wrap">
+            ${
+              companyLogoUrl
+                ? `<img src="${escapeHtml(companyLogoUrl)}" alt="${escapeHtml(displayName)}" class="fx-brand-logo" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none';var f=this.nextElementSibling;if(f)f.style.display='flex';" /><span class="fx-brand-logo-fallback" style="display:none;">${escapeHtml(companyInitials)}</span>`
+                : `<span class="fx-brand-logo-fallback">${escapeHtml(companyInitials)}</span>`
+            }
+          </div>
         </div>
-        <div class="fx-lang-row">${langChips}</div>
 
         <div class="fx-form-wrap">
           <form id="public-booking-form" onsubmit="return false;">
