@@ -4829,34 +4829,64 @@ async function handleCompanyBootstrap(request, env) {
     });
   }
 
-  let companyCode = sanitizeTenantString(session.company_code, 80);
+  const sessionCompanyCode = sanitizeTenantString(session.company_code, 80);
+  let companyCode = sessionCompanyCode;
   let companyPublicSlug = "";
   let companyDisplayCode = "";
-  if (!companyCode) {
-    try {
-      const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
-        session_company_code: session.company_code,
-        business_profile: businessProfile,
-        profile: businessProfile,
-        country: businessProfile?.country,
-        source: "auto_generated",
-      });
-      if (ensuredCode?.ok) {
-        companyCode = sanitizeTenantString(ensuredCode.company_code, 80);
-        companyPublicSlug = sanitizeTenantString(
-          ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
-          80,
-        );
-        companyDisplayCode = sanitizeTenantString(
-          ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
-          240,
-        );
-      }
-    } catch (err) {
-      console.log(
-        `[COMPANY_BOOTSTRAP][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_ensure_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+  try {
+    const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+      session_company_code: session.company_code,
+      business_profile: businessProfile,
+      profile: businessProfile,
+      country: businessProfile?.country,
+      source: "auto_generated",
+    });
+    if (ensuredCode?.ok) {
+      companyCode = sanitizeTenantString(ensuredCode.company_code, 80) || companyCode;
+      companyPublicSlug = sanitizeTenantString(
+        ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+        80,
+      );
+      companyDisplayCode = sanitizeTenantString(
+        ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+        240,
       );
     }
+  } catch (err) {
+    console.log(
+      `[COMPANY_BOOTSTRAP][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_ensure_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+    );
+  }
+  if (!companyCode) {
+    companyCode = sessionCompanyCode;
+  }
+  if (
+    companyCode &&
+    sessionCompanyCode &&
+    companyCode !== sessionCompanyCode &&
+    session?.key &&
+    env?.BOOKING_KV
+  ) {
+    try {
+      const expiresAtMs = Date.parse(sanitizeTenantString(session.expires_at, 80));
+      const ttlSeconds = Number.isFinite(expiresAtMs)
+        ? Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000))
+        : null;
+      const nextSessionRecord = {
+        role: "company_admin",
+        tenant_id: sanitizeTenantString(session.tenant_id, 80),
+        company_id: sanitizeTenantString(session.company_id, 80),
+        company_code: companyCode,
+        companyCode: companyCode,
+        company_display_name: sanitizeTenantString(session.company_display_name, 160),
+        expires_at: sanitizeTenantString(session.expires_at, 80),
+      };
+      await env.BOOKING_KV.put(
+        session.key,
+        JSON.stringify(nextSessionRecord),
+        ttlSeconds ? { expirationTtl: ttlSeconds } : undefined,
+      );
+    } catch (_) {}
   }
   if (companyCode && (!companyPublicSlug || !companyDisplayCode)) {
     try {

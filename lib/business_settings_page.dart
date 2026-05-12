@@ -430,6 +430,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
 
     return BackendBusinessProfile(
+      companyCode: pick(local.companyCode, server.companyCode),
+      publicCompanyCode: pick(local.publicCompanyCode, server.publicCompanyCode),
+      publicCompanySlug: pick(local.publicCompanySlug, server.publicCompanySlug),
+      publicDisplayCode: pick(local.publicDisplayCode, server.publicDisplayCode),
       companyName: pick(local.companyName, server.companyName),
       legalName: pick(local.legalName, server.legalName),
       vatNumber: pick(local.vatNumber, server.vatNumber),
@@ -512,6 +516,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
       final rawTax = results[1] as BackendTaxProfile;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        rawBiz,
+        source: 'business_profile_get',
+      );
       // Merge server response over the locally cached profile so empty server
       // fields do not wipe non-empty user-saved values.
       final cached = localBackendBusinessProfileNotifier.value;
@@ -1166,6 +1174,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        saved,
+        source: 'business_profile_post',
+      );
       // Merge so empty backend echo does not erase locally entered values.
       final merged = _mergeBackendBusinessProfile(
         local: formProfile,
@@ -1243,6 +1255,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        saved,
+        source: 'business_profile_media_post',
+      );
       final merged = _mergeBackendBusinessProfile(
         local: formProfile,
         server: saved,
@@ -2030,6 +2046,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        savedBusiness,
+        source: 'business_profile_publish_pre_post',
+      );
       final mergedBusiness = _mergeBackendBusinessProfile(
         local: formProfile,
         server: savedBusiness,
@@ -2081,6 +2101,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        savedPublishedBusiness,
+        source: 'business_profile_publish_post',
+      );
       final mergedPublishedBusiness = _mergeBackendBusinessProfile(
         local: publishedBusiness,
         server: savedPublishedBusiness,
@@ -2792,6 +2816,29 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(v)) return false;
     if (!RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(v)) return false;
     return true;
+  }
+
+  Future<void> _hydratePublicCompanyCodeFromBackendProfile(
+    BackendBusinessProfile profile, {
+    required String source,
+  }) async {
+    final profileMap = profile.toJson();
+    for (final key in const <String>[
+      'public_company_code',
+      'publicCompanyCode',
+      'company_code',
+      'companyCode',
+    ]) {
+      final normalized = _normalizePublicCompanyCode(
+        (profileMap[key] ?? '').toString(),
+      );
+      if (!_isValidPublicCompanyCode(normalized)) continue;
+      await CompanySessionStore.instance.updateActiveSessionCompanyCode(
+        normalized,
+        source: source,
+      );
+      return;
+    }
   }
 
   String? _activePublicCompanyCode({

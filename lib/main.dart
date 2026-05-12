@@ -352,32 +352,14 @@ bool _isValidPublicFluxidiCompanyCode(String code) {
 }
 
 String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> bootstrap) {
-  final fromTopLevel = _normalizePublicFluxidiCompanyCode(
-    (bootstrap['company_code'] ?? bootstrap['companyCode'] ?? '').toString(),
-  );
-  if (_isValidPublicFluxidiCompanyCode(fromTopLevel)) return fromTopLevel;
-
-  final companyNode = bootstrap['company'];
-  if (companyNode is Map) {
-    final companyMap = Map<String, dynamic>.from(companyNode);
-    final fromCompany = _normalizePublicFluxidiCompanyCode(
-      (companyMap['company_code'] ??
-              companyMap['companyCode'] ??
-              companyMap['public_company_code'] ??
-              companyMap['publicCompanyCode'] ??
-              '')
-          .toString(),
-    );
-    if (_isValidPublicFluxidiCompanyCode(fromCompany)) return fromCompany;
-  }
   final businessProfileNode = bootstrap['business_profile'];
   if (businessProfileNode is Map) {
     final businessMap = Map<String, dynamic>.from(businessProfileNode);
     final fromBusinessProfile = _normalizePublicFluxidiCompanyCode(
-      (businessMap['company_code'] ??
-              businessMap['companyCode'] ??
-              businessMap['public_company_code'] ??
+      (businessMap['public_company_code'] ??
               businessMap['publicCompanyCode'] ??
+              businessMap['company_code'] ??
+              businessMap['companyCode'] ??
               '')
           .toString(),
     );
@@ -385,6 +367,30 @@ String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> bootstrap) {
       return fromBusinessProfile;
     }
   }
+
+  final companyNode = bootstrap['company'];
+  if (companyNode is Map) {
+    final companyMap = Map<String, dynamic>.from(companyNode);
+    final fromCompany = _normalizePublicFluxidiCompanyCode(
+      (companyMap['public_company_code'] ??
+              companyMap['publicCompanyCode'] ??
+              companyMap['company_code'] ??
+              companyMap['companyCode'] ??
+              '')
+          .toString(),
+    );
+    if (_isValidPublicFluxidiCompanyCode(fromCompany)) return fromCompany;
+  }
+
+  final fromTopLevel = _normalizePublicFluxidiCompanyCode(
+    (bootstrap['public_company_code'] ??
+            bootstrap['publicCompanyCode'] ??
+            bootstrap['company_code'] ??
+            bootstrap['companyCode'] ??
+            '')
+        .toString(),
+  );
+  if (_isValidPublicFluxidiCompanyCode(fromTopLevel)) return fromTopLevel;
   return null;
 }
 
@@ -6126,27 +6132,51 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
   }
 
-  String? _resolvePublicBookingCompanyCodeForDashboard() {
-    final fromSession = _normalizePublicBookingCompanyCode(
-      activeCompanySessionNotifier.value?.companyCode ?? '',
-    );
-    if (_isValidPublicBookingCompanyCode(fromSession)) return fromSession;
+  bool _isGeneratedSequentialPublicCompanyCode(String value) {
+    final code = _normalizePublicBookingCompanyCode(value);
+    return RegExp(r'^FLX-[0-9]{5,12}$').hasMatch(code);
+  }
 
-    final profileMap = companyProfileNotifier.value?.toJson();
-    if (profileMap is Map<String, dynamic>) {
+  String? _resolvePublicBookingCompanyCodeForDashboard() {
+    String? readFirstValidFromMap(Map<String, dynamic>? map) {
+      if (map == null) return null;
       for (final key in const <String>[
-        'companyCode',
+        'public_company_code',
         'publicCompanyCode',
         'company_code',
-        'public_company_code',
+        'companyCode',
       ]) {
         final normalized = _normalizePublicBookingCompanyCode(
-          (profileMap[key] ?? '').toString(),
+          (map[key] ?? '').toString(),
         );
         if (_isValidPublicBookingCompanyCode(normalized)) return normalized;
       }
+      return null;
     }
-    return null;
+
+    final backendMap = localBackendBusinessProfileNotifier.value?.toJson();
+    final profileMap = companyProfileNotifier.value?.toJson();
+    final sessionCode = _normalizePublicBookingCompanyCode(
+      activeCompanySessionNotifier.value?.companyCode ?? '',
+    );
+
+    final candidates = <String>[];
+    if (backendMap is Map<String, dynamic>) {
+      final backendCode = readFirstValidFromMap(backendMap);
+      if (backendCode != null) candidates.add(backendCode);
+    }
+    if (profileMap is Map<String, dynamic>) {
+      final profileCode = readFirstValidFromMap(profileMap);
+      if (profileCode != null) candidates.add(profileCode);
+    }
+    if (_isValidPublicBookingCompanyCode(sessionCode)) {
+      candidates.add(sessionCode);
+    }
+
+    for (final code in candidates) {
+      if (_isGeneratedSequentialPublicCompanyCode(code)) return code;
+    }
+    return candidates.isNotEmpty ? candidates.first : null;
   }
 
   String _preparedPublicBookingUrlForDashboard(String companyCode) {
@@ -6678,17 +6708,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   String? _activeCompanyCodeForPairingCodeCreate() {
-    final sessionCode = _normalizeActivationCompanyCode(
-      activeCompanySessionNotifier.value?.companyCode ?? '',
-    );
-    if (_isValidActivationCompanyCode(sessionCode)) return sessionCode;
+    final canonicalCode = _resolvePublicBookingCompanyCodeForDashboard();
+    final normalized = _normalizeActivationCompanyCode(canonicalCode ?? '');
+    if (_isValidActivationCompanyCode(normalized)) return normalized;
     return null;
   }
 
   String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> payload) {
     String readTopLevel() {
       return _normalizeActivationCompanyCode(
-        (payload['company_code'] ?? payload['companyCode'] ?? '').toString(),
+        (payload['public_company_code'] ??
+                payload['publicCompanyCode'] ??
+                payload['company_code'] ??
+                payload['companyCode'] ??
+                '')
+            .toString(),
       );
     }
 
@@ -6697,20 +6731,38 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       if (companyNode is! Map) return '';
       final map = Map<String, dynamic>.from(companyNode);
       return _normalizeActivationCompanyCode(
-        (map['company_code'] ??
+        (map['public_company_code'] ??
+                map['publicCompanyCode'] ??
+                map['company_code'] ??
                 map['companyCode'] ??
                 map['code'] ??
-                map['public_company_code'] ??
-                map['publicCompanyCode'] ??
                 '')
             .toString(),
       );
     }
 
-    final top = readTopLevel();
-    if (_isValidActivationCompanyCode(top)) return top;
+    String readBusinessProfileNode() {
+      final node = payload['business_profile'];
+      if (node is! Map) return '';
+      final map = Map<String, dynamic>.from(node);
+      return _normalizeActivationCompanyCode(
+        (map['public_company_code'] ??
+                map['publicCompanyCode'] ??
+                map['company_code'] ??
+                map['companyCode'] ??
+                '')
+            .toString(),
+      );
+    }
+
+    final fromBusinessProfile = readBusinessProfileNode();
+    if (_isValidActivationCompanyCode(fromBusinessProfile)) {
+      return fromBusinessProfile;
+    }
     final fromCompany = readCompanyNode();
     if (_isValidActivationCompanyCode(fromCompany)) return fromCompany;
+    final top = readTopLevel();
+    if (_isValidActivationCompanyCode(top)) return top;
     return null;
   }
 
@@ -6718,7 +6770,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   _resolvePublicCompanyCodeForPairingCodeCreate() async {
     final fromSession = _activeCompanyCodeForPairingCodeCreate();
     if (fromSession != null) {
-      return (companyCode: fromSession, source: 'session');
+      return (companyCode: fromSession, source: 'canonical');
     }
 
     final session = activeCompanySessionNotifier.value;
@@ -7111,7 +7163,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
-    final publicCompanyCode = _activeCompanyCodeForPairingCodeCreate();
+    final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
     final hasPublicCompanyCode = publicCompanyCode != null;
     String firstNonEmpty(List<String?> values) {
       for (final value in values) {
@@ -7705,7 +7757,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               builder: (context, profile, _) => ListView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
                 children: [
-                  _topBar(context, profile),
+                  ValueListenableBuilder<ActiveCompanySession?>(
+                    valueListenable: activeCompanySessionNotifier,
+                    builder: (context, _, __) => _topBar(context, profile),
+                  ),
                   const SizedBox(height: 12),
                   _panel(
                     child: Column(

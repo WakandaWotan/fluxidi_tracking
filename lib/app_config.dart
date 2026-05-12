@@ -259,6 +259,10 @@ class BusinessSettingsState {
 }
 
 class BackendBusinessProfile {
+  final String companyCode;
+  final String publicCompanyCode;
+  final String publicCompanySlug;
+  final String publicDisplayCode;
   final String companyName;
   final String legalName;
   final String vatNumber;
@@ -286,6 +290,10 @@ class BackendBusinessProfile {
   final String invoiceReceiptFooterText;
 
   const BackendBusinessProfile({
+    this.companyCode = '',
+    this.publicCompanyCode = '',
+    this.publicCompanySlug = '',
+    this.publicDisplayCode = '',
     required this.companyName,
     required this.legalName,
     required this.vatNumber,
@@ -381,6 +389,24 @@ class BackendBusinessProfile {
     }
 
     return BackendBusinessProfile(
+      companyCode: textAny(const [
+        'company_code',
+        'companyCode',
+      ], fallback.companyCode),
+      publicCompanyCode: textAny(const [
+        'public_company_code',
+        'publicCompanyCode',
+        'company_code',
+        'companyCode',
+      ], fallback.publicCompanyCode),
+      publicCompanySlug: textAny(const [
+        'public_company_slug',
+        'publicCompanySlug',
+      ], fallback.publicCompanySlug),
+      publicDisplayCode: textAny(const [
+        'public_display_code',
+        'publicDisplayCode',
+      ], fallback.publicDisplayCode),
       companyName: text('companyName', fallback.companyName),
       legalName: text('legalName', fallback.legalName),
       vatNumber: text('vatNumber', fallback.vatNumber),
@@ -446,6 +472,22 @@ class BackendBusinessProfile {
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
+    if (companyCode.trim().isNotEmpty) ...<String, dynamic>{
+      'company_code': companyCode,
+      'companyCode': companyCode,
+    },
+    if (publicCompanyCode.trim().isNotEmpty) ...<String, dynamic>{
+      'public_company_code': publicCompanyCode,
+      'publicCompanyCode': publicCompanyCode,
+    },
+    if (publicCompanySlug.trim().isNotEmpty) ...<String, dynamic>{
+      'public_company_slug': publicCompanySlug,
+      'publicCompanySlug': publicCompanySlug,
+    },
+    if (publicDisplayCode.trim().isNotEmpty) ...<String, dynamic>{
+      'public_display_code': publicDisplayCode,
+      'publicDisplayCode': publicDisplayCode,
+    },
     'companyName': companyName,
     'legalName': legalName,
     'vatNumber': vatNumber,
@@ -2288,9 +2330,30 @@ Future<BackendBusinessProfile> fetchBackendBusinessProfile({
   }
   final decoded = jsonDecode(res.body);
   if (decoded is! Map) throw Exception('Invalid response');
+  final decodedMap = Map<String, dynamic>.from(decoded);
   final profile = decoded['business_profile'];
   if (profile is! Map) throw Exception('Missing business_profile');
-  return BackendBusinessProfile.fromJson(Map<String, dynamic>.from(profile));
+  final mergedProfile = Map<String, dynamic>.from(profile);
+  for (final key in const <String>[
+    'company_code',
+    'companyCode',
+    'public_company_code',
+    'publicCompanyCode',
+    'public_company_slug',
+    'publicCompanySlug',
+    'public_display_code',
+    'publicDisplayCode',
+  ]) {
+    final top = decodedMap[key];
+    if (top == null) continue;
+    final topText = top.toString().trim();
+    if (topText.isEmpty) continue;
+    final curText = (mergedProfile[key] ?? '').toString().trim();
+    if (curText.isEmpty) {
+      mergedProfile[key] = topText;
+    }
+  }
+  return BackendBusinessProfile.fromJson(mergedProfile);
 }
 
 Future<BackendBusinessProfile> saveBackendBusinessProfile(
@@ -2322,9 +2385,30 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
   }
   final decoded = jsonDecode(res.body);
   if (decoded is! Map) throw Exception('Invalid response');
+  final decodedMap = Map<String, dynamic>.from(decoded);
   final saved = decoded['business_profile'];
   if (saved is! Map) throw Exception('Missing business_profile');
-  return BackendBusinessProfile.fromJson(Map<String, dynamic>.from(saved));
+  final mergedProfile = Map<String, dynamic>.from(saved);
+  for (final key in const <String>[
+    'company_code',
+    'companyCode',
+    'public_company_code',
+    'publicCompanyCode',
+    'public_company_slug',
+    'publicCompanySlug',
+    'public_display_code',
+    'publicDisplayCode',
+  ]) {
+    final top = decodedMap[key];
+    if (top == null) continue;
+    final topText = top.toString().trim();
+    if (topText.isEmpty) continue;
+    final curText = (mergedProfile[key] ?? '').toString().trim();
+    if (curText.isEmpty) {
+      mergedProfile[key] = topText;
+    }
+  }
+  return BackendBusinessProfile.fromJson(mergedProfile);
 }
 
 Future<BackendTaxProfile> fetchBackendTaxProfile({
