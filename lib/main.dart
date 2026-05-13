@@ -26,7 +26,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
+import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 export 'package:fluxidi_tracking/payment_return.dart'
     show
@@ -933,6 +935,248 @@ Future<Map<String, String>> _customerOwnershipProof({
     if (email != null) 'customer_email': email,
     if (phone != null) 'customer_phone': phone,
   };
+}
+
+dynamic _customerBootstrapValueAtPath(
+  Map<String, dynamic> source,
+  String path,
+) {
+  dynamic current = source;
+  for (final segment in path.split('.')) {
+    if (current is Map && current.containsKey(segment)) {
+      current = current[segment];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+String _customerBootstrapText(Map<String, dynamic> source, List<String> paths) {
+  for (final path in paths) {
+    final value = _customerBootstrapValueAtPath(source, path);
+    final text = (value ?? '').toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+  }
+  return '';
+}
+
+double? _customerBootstrapDouble(
+  Map<String, dynamic> source,
+  List<String> paths,
+) {
+  for (final path in paths) {
+    final value = _customerBootstrapValueAtPath(source, path);
+    if (value is num) return value.toDouble();
+    final text = (value ?? '').toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') continue;
+    final parsed = double.tryParse(text.replaceAll(',', '.'));
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+StoredCustomerBooking? _storedBookingFromCustomerBootstrap(
+  Map<String, dynamic> item,
+  CustomerSession session,
+) {
+  final bookingId = _customerBootstrapText(item, const [
+    'booking_id',
+    'bookingId',
+    'id',
+    'public_booking_id',
+    'publicBookingId',
+  ]);
+  if (bookingId.isEmpty) return null;
+  final nowIso = DateTime.now().toIso8601String();
+  final tenantId = _customerBootstrapText(item, const [
+    'tenant_id',
+    'tenantId',
+  ]);
+  final companyId = _customerBootstrapText(item, const [
+    'company_id',
+    'companyId',
+  ]);
+  return StoredCustomerBooking(
+    bookingId: bookingId,
+    tenantId: tenantId.isNotEmpty
+        ? tenantId
+        : (session.defaultTenantId ?? '').trim(),
+    companyId: companyId.isNotEmpty
+        ? companyId
+        : (session.defaultCompanyId ?? '').trim(),
+    publicBookingId: _customerBootstrapText(item, const [
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'public_reference',
+      'publicReference',
+      'public_booking_id',
+      'publicBookingId',
+    ]),
+    planningReference: _customerBootstrapText(item, const [
+      'planning_reference',
+      'planningReference',
+    ]),
+    bookingReference: _customerBootstrapText(item, const [
+      'booking_reference',
+      'bookingReference',
+    ]),
+    publicReference: _customerBootstrapText(item, const [
+      'public_reference',
+      'publicReference',
+    ]),
+    receiptReference: _customerBootstrapText(item, const [
+      'receipt_reference',
+      'receiptReference',
+    ]),
+    paymentBookingId: _customerBootstrapText(item, const [
+      'payment_booking_id',
+      'paymentBookingId',
+    ]),
+    customerName: _customerBootstrapText(item, const [
+      'customer_name',
+      'customerName',
+    ]),
+    customerPhone: _customerBootstrapText(item, const [
+      'customer_phone',
+      'customerPhone',
+    ]),
+    customerEmail: _customerBootstrapText(item, const [
+      'customer_email',
+      'customerEmail',
+    ]),
+    from: _customerBootstrapText(item, const [
+      'from',
+      'pickup_address',
+      'pickupAddress',
+    ]),
+    to: _customerBootstrapText(item, const [
+      'to',
+      'dropoff_address',
+      'dropoffAddress',
+    ]),
+    pickupIso: _customerBootstrapText(item, const ['pickup_iso', 'pickupIso']),
+    price: _customerBootstrapDouble(item, const [
+      'price',
+      'quoted_price',
+      'quotedPrice',
+    ]),
+    currency: _customerBootstrapText(item, const [
+      'currency',
+      'quote.currency',
+    ]),
+    paymentStatus: _customerBootstrapText(item, const [
+      'payment_status',
+      'paymentStatus',
+    ]),
+    status: _customerBootstrapText(item, const [
+      'status',
+      'stage',
+      'booking_status',
+      'bookingStatus',
+    ]),
+    service: _customerBootstrapText(item, const [
+      'service_type',
+      'serviceType',
+      'service',
+    ]),
+    tier: _customerBootstrapText(item, const [
+      'tier',
+      'vehicle_tier',
+      'vehicleTier',
+    ]),
+    pax: _customerBootstrapText(item, const [
+      'passenger_count',
+      'passengerCount',
+      'pax',
+    ]),
+    bags: _customerBootstrapText(item, const [
+      'luggage_count',
+      'luggageCount',
+      'bags',
+    ]),
+    createdAt:
+        _customerBootstrapText(item, const [
+          'created_at',
+          'createdAt',
+        ]).isNotEmpty
+        ? _customerBootstrapText(item, const ['created_at', 'createdAt'])
+        : nowIso,
+    updatedAt:
+        _customerBootstrapText(item, const [
+          'updated_at',
+          'updatedAt',
+        ]).isNotEmpty
+        ? _customerBootstrapText(item, const ['updated_at', 'updatedAt'])
+        : nowIso,
+    companyName: _customerBootstrapText(item, const [
+      'company_name',
+      'companyName',
+    ]),
+    vatNumber: _customerBootstrapText(item, const ['vat_number', 'vatNumber']),
+    invoiceEmail: _customerBootstrapText(item, const [
+      'invoice_email',
+      'invoiceEmail',
+    ]),
+    invoiceAddress: _customerBootstrapText(item, const [
+      'invoice_address',
+      'invoiceAddress',
+    ]),
+    quote: _customerBootstrapValueAtPath(item, 'quote') is Map
+        ? Map<String, dynamic>.from(
+            _customerBootstrapValueAtPath(item, 'quote') as Map,
+          )
+        : const <String, dynamic>{},
+  );
+}
+
+Future<int> _bootstrapCustomerSessionAndMergeBookings({
+  required String reason,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) return 0;
+    debugPrint('[CUSTOMER_BOOTSTRAP][REQ] reason=$reason');
+    final response = await fetchPublicCustomerSessionBootstrap(
+      customerSessionToken: session.customerSessionToken,
+    );
+    if (response == null) {
+      final status = lastCustomerBootstrapHttpStatusCode;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+        debugPrint('[CUSTOMER_BOOTSTRAP][SESSION_EXPIRED]');
+      } else {
+        debugPrint(
+          '[CUSTOMER_BOOTSTRAP][FAIL] reason=$reason status=${status ?? 0}',
+        );
+      }
+      return 0;
+    }
+    final dynamic bookingsRaw =
+        response['bookings'] ??
+        _customerBootstrapValueAtPath(response, 'data.bookings') ??
+        const <dynamic>[];
+    final bookings = bookingsRaw is List ? bookingsRaw : const <dynamic>[];
+    debugPrint('[CUSTOMER_BOOTSTRAP][OK] count=${bookings.length}');
+    var merged = 0;
+    for (final entry in bookings) {
+      if (entry is! Map) continue;
+      final stored = _storedBookingFromCustomerBootstrap(
+        Map<String, dynamic>.from(entry),
+        session,
+      );
+      if (stored == null) continue;
+      await CustomerBookingsStore.instance.upsert(stored);
+      merged += 1;
+    }
+    debugPrint('[CUSTOMER_BOOTSTRAP][MERGE] count=$merged');
+    return merged;
+  } catch (err) {
+    debugPrint('[CUSTOMER_BOOTSTRAP][FAIL] reason=$reason error=$err');
+    return 0;
+  }
 }
 
 /// Admin token (optional) for driver actions like complete/cancel/delete.
@@ -2573,7 +2817,44 @@ class RoleEntryPage extends StatelessWidget {
 
   Future<void> _goCustomer(BuildContext context) async {
     setAppRole(AppRole.customer);
+    final validSession = await CustomerSessionStore.instance.loadValidSession();
+    if (validSession != null) {
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_role_entry',
+      );
+      if (!context.mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+      );
+      return;
+    }
     final existingProfile = await CustomerProfileStore.instance.load();
+    if (!context.mounted) return;
+    final entryIntent = await _promptCustomerEntryIntent(
+      context,
+      hasExistingLocalProfile: existingProfile != null,
+    );
+    if (!context.mounted || entryIntent == null) return;
+    if (entryIntent == _customerEntryPhoneLoginIntent) {
+      final sessionResult = await Navigator.of(context).push<CustomerSession?>(
+        MaterialPageRoute(builder: (_) => const CustomerPhoneRecoveryPage()),
+      );
+      if (!context.mounted || sessionResult == null) return;
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_phone_login',
+      );
+      if (!context.mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+      );
+      return;
+    }
+    if (entryIntent == _customerEntryNewIntent) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerOnboardingPage()),
+      );
+      return;
+    }
     if (!context.mounted) return;
     if (existingProfile != null) {
       Navigator.of(context).pushReplacement(
@@ -2586,9 +2867,110 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
+  static const String _customerEntryPhoneLoginIntent =
+      '__customer_phone_login__';
+  static const String _customerEntryNewIntent = '__customer_new__';
+  static const String _customerEntryContinueIntent = '__customer_continue__';
   static const String _companyPairingOnboardingIntent =
       '__open_company_onboarding__';
   static const String _companyRecoveryIntent = '__open_company_recovery__';
+
+  Future<String?> _promptCustomerEntryIntent(
+    BuildContext context, {
+    required bool hasExistingLocalProfile,
+  }) {
+    return FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Klant starten',
+              en: 'Start as customer',
+              fr: 'Démarrer en client',
+              es: 'Iniciar como cliente',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasExistingLocalProfile) ...[
+                OutlinedButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_customerEntryContinueIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withOpacity(0.35)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Doorgaan',
+                      en: 'Continue',
+                      fr: 'Continuer',
+                      es: 'Continuar',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              FilledButton(
+                onPressed: () => Navigator.of(
+                  dialogContext,
+                ).pop(_customerEntryPhoneLoginIntent),
+                child: Text(
+                  _t(
+                    nl: 'Inloggen met gsm',
+                    en: 'Login with phone',
+                    fr: 'Connexion avec gsm',
+                    es: 'Iniciar con móvil',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(_customerEntryNewIntent),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Nieuwe klant',
+                    en: 'New customer',
+                    fr: 'Nouveau client',
+                    es: 'Cliente nuevo',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   Future<String?> _promptExistingCompanyId(BuildContext context) async {
     final controller = TextEditingController();
@@ -14214,6 +14596,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       _error = null;
     });
     try {
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_saved_bookings',
+      );
       final items = await CustomerBookingStore.instance.loadAll();
       final visible = items
           .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))

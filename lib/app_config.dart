@@ -2571,6 +2571,10 @@ int? _lastCompanyBootstrapHttpStatusCode;
 int? get lastCompanyBootstrapHttpStatusCode =>
     _lastCompanyBootstrapHttpStatusCode;
 
+int? _lastCustomerBootstrapHttpStatusCode;
+int? get lastCustomerBootstrapHttpStatusCode =>
+    _lastCustomerBootstrapHttpStatusCode;
+
 Future<Map<String, dynamic>?> fetchCompanyBootstrapWithToken({
   required String companySessionToken,
 }) async {
@@ -2675,6 +2679,88 @@ Future<Map<String, dynamic>> verifyPublicCompanyRecovery({
   final errorCode = (map['error'] ?? '').toString().trim();
   if (errorCode.isNotEmpty) throw Exception(errorCode);
   throw Exception('recovery_verify_failed');
+}
+
+Future<Map<String, dynamic>> startPublicCustomerPhoneAuth({
+  required Map<String, dynamic> payload,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/auth/phone/start',
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('customer_phone_auth_start_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true) {
+    return map;
+  }
+  final errorCode = (map['error'] ?? '').toString().trim();
+  if (errorCode.isNotEmpty) throw Exception(errorCode);
+  throw Exception('customer_phone_auth_start_failed');
+}
+
+Future<Map<String, dynamic>> verifyPublicCustomerPhoneAuth({
+  required Map<String, dynamic> payload,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/auth/phone/verify',
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('customer_phone_auth_verify_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true) {
+    return map;
+  }
+  final errorCode = (map['error'] ?? '').toString().trim();
+  if (errorCode.isNotEmpty) throw Exception(errorCode);
+  throw Exception('customer_phone_auth_verify_failed');
+}
+
+Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
+  required String customerSessionToken,
+}) async {
+  final token = customerSessionToken.trim();
+  if (token.isEmpty) return null;
+  _lastCustomerBootstrapHttpStatusCode = null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/session/bootstrap',
+  );
+  try {
+    final res = await http
+        .get(
+          endpoint,
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
+    _lastCustomerBootstrapHttpStatusCode = res.statusCode;
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    return map['ok'] == true ? map : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 Future<bool> hydrateCompanyStateFromBootstrap(
