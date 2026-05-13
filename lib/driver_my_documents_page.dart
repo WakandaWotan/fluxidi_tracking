@@ -253,8 +253,15 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   }
 
   DriverProfile? _driverForSession(ActiveDriverSession session) {
+    final sessionDriverId = session.driverId.trim();
+    final sessionCompanyId = (session.companyId ?? '').trim();
     for (final d in driversNotifier.value) {
-      if (d.id == session.driverId) return d;
+      if (d.id.trim() != sessionDriverId) continue;
+      final driverCompanyId = (d.companyId ?? '').trim();
+      if (sessionCompanyId.isNotEmpty && driverCompanyId.isNotEmpty) {
+        if (sessionCompanyId != driverCompanyId) continue;
+      }
+      return d;
     }
     return null;
   }
@@ -267,6 +274,27 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     } catch (_) {
       return false;
     }
+  }
+
+  bool _isHttpUrl(String? value) {
+    final lower = (value ?? '').trim().toLowerCase();
+    return lower.startsWith('https://') || lower.startsWith('http://');
+  }
+
+  String? _driverNetworkPhotoUrl(
+    DriverProfile driver,
+    ActiveDriverSession? session,
+  ) {
+    final publicPortraitUrl = (driver.publicPortraitUrl ?? '').trim();
+    if (_isHttpUrl(publicPortraitUrl)) return publicPortraitUrl;
+
+    final sessionPhotoUrl = (session?.driverPhotoUrl ?? '').trim();
+    if (_isHttpUrl(sessionPhotoUrl)) return sessionPhotoUrl;
+
+    final profilePhotoPath = (driver.profilePhotoPath ?? '').trim();
+    if (_isHttpUrl(profilePhotoPath)) return profilePhotoPath;
+
+    return null;
   }
 
   String _driverInitials(DriverProfile driver) {
@@ -450,9 +478,14 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     }
   }
 
-  Widget _profilePhotoActionCard(DriverProfile driver) {
+  Widget _profilePhotoActionCard(
+    DriverProfile driver, {
+    ActiveDriverSession? session,
+  }) {
     final path = driver.profilePhotoPath?.trim() ?? '';
-    final hasPhoto = _driverPhotoExists(path);
+    final hasLocalPhoto = _driverPhotoExists(path);
+    final networkUrl = _driverNetworkPhotoUrl(driver, session);
+    final hasPhoto = hasLocalPhoto || networkUrl != null;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -472,7 +505,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
               border: Border.all(color: _gold.withOpacity(0.42)),
             ),
             child: ClipOval(
-              child: hasPhoto
+              child: hasLocalPhoto
                   ? Image.file(
                       File(path),
                       fit: BoxFit.cover,
@@ -486,15 +519,29 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                         ),
                       ),
                     )
-                  : Center(
-                      child: Text(
-                        _driverInitials(driver),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
+                  : (networkUrl != null
+                        ? Image.network(
+                            networkUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Center(
+                              child: Text(
+                                _driverInitials(driver),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              _driverInitials(driver),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          )),
             ),
           ),
           const SizedBox(width: 12),
@@ -727,7 +774,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                           ],
                         ),
                       ),
-                      _profilePhotoActionCard(driver),
+                      _profilePhotoActionCard(driver, session: session),
                       const SizedBox(height: 2),
                       _sectionTitle(
                         _tr(
