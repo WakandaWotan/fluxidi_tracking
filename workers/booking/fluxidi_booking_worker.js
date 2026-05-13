@@ -1710,6 +1710,20 @@ const CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX = "customer_recovery:rate:start:";
 const CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
 const CUSTOMER_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
 const CUSTOMER_RECOVERY_START_RATE_MAX = 5;
+const CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_PREFIX = "customer_phone_auth:challenge:";
+const CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS = 10 * 60;
+const CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS = 5;
+const CUSTOMER_PHONE_AUTH_START_RATE_KEY_PREFIX = "customer_phone_auth:rate:start:";
+const CUSTOMER_PHONE_AUTH_START_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_START_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_PHONE_AUTH_START_RATE_MAX = 5;
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX = "customer_phone_auth:rate:verify:";
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
+const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
+const CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX = "customer:global:identity:";
 const CUSTOMER_IDENTITY_KEY_PREFIX = "customer:identity:v1:tenant:";
 const CUSTOMER_IDENTITY_KEY_MIDDLE = ":company:";
 const CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE = ":customer:";
@@ -1868,6 +1882,17 @@ function _customerRecoveryChallengeId() {
     .replace(/[^a-zA-Z0-9_-]+/g, "");
 }
 
+function _customerPhoneAuthChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_PREFIX}${safeChallengeId}${CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cpa_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
 function _maskRecoveryChallengeId(value) {
   const id = sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
   if (!id) return "-";
@@ -1919,6 +1944,55 @@ function _customerRecoveryStartRateKey(companyCode, emailHash) {
   const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
   if (!normalizedCode || !normalizedHash) return "";
   return `${CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthStartRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_PHONE_AUTH_START_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_PHONE_AUTH_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthVerifyRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+function _globalCustomerPhoneIndexKey(phoneHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  if (!normalizedPhoneHash) return "";
+  return `${CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX}${normalizedPhoneHash}`;
+}
+
+function _globalCustomerIdentityKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _maskCustomerPhoneForAuth(phoneE164) {
+  const normalized = sanitizeTenantString(phoneE164, 40);
+  if (!_looksLikeE164Phone(normalized)) return "";
+  const digits = normalized.replace(/\D/g, "");
+  if (!digits) return "";
+  const head = digits.slice(0, 2);
+  const tail = digits.slice(-3);
+  return `+${head}******${tail}`;
+}
+
+function _readCustomerPhoneAuthInputPhone(body) {
+  const phoneRaw = sanitizeTenantString(
+    body?.phone_e164 ??
+      body?.phoneE164 ??
+      body?.phone ??
+      body?.customer_phone ??
+      body?.customerPhone,
+    40,
+  );
+  const normalized = _normalizeCustomerPhone(phoneRaw);
+  return _looksLikeE164Phone(normalized) ? normalized : "";
 }
 
 function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
@@ -3088,6 +3162,7 @@ async function _loadCustomerSessionFromRequest(request, env) {
   const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
   const customerId = _normalizeCustomerIdentityId(record.customer_id ?? record.customerId);
   const emailHash = sanitizeTenantString(record.email_hash ?? record.emailHash, 200).toLowerCase();
+  const phoneHash = sanitizeTenantString(record.phone_hash ?? record.phoneHash, 200).toLowerCase();
   const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
   const expiresAtMs = Date.parse(expiresAt);
   if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
@@ -3096,7 +3171,7 @@ async function _loadCustomerSessionFromRequest(request, env) {
     } catch (_) {}
     return null;
   }
-  if (!tenantId || !companyId || !customerId || !emailHash) return null;
+  if (!tenantId || !companyId || !customerId || (!emailHash && !phoneHash)) return null;
   return {
     key,
     token_hash: tokenHash,
@@ -3105,6 +3180,7 @@ async function _loadCustomerSessionFromRequest(request, env) {
     company_id: companyId,
     customer_id: customerId,
     email_hash: emailHash,
+    phone_hash: phoneHash,
     issued_at: sanitizeTenantString(record.issued_at ?? record.issuedAt, 80),
     expires_at: expiresAt,
   };
@@ -4515,6 +4591,307 @@ async function handlePublicCustomerRecoveryVerify(body, env) {
       tenantId: tenantId,
       company_id: companyId,
       companyId: companyId,
+    },
+    200,
+  );
+}
+
+async function _customerPhoneAuthIncrementAttempts({
+  env,
+  challengeKey,
+  challenge,
+  nowIso,
+  nowMs,
+}) {
+  if (!env?.BOOKING_KV || !challengeKey || !challenge || typeof challenge !== "object") return;
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) return;
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  challenge.attempts = attempts + 1;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+}
+
+async function _incrementSimpleRateLimit({
+  env,
+  rateKey,
+  maxCount,
+  windowSeconds,
+}) {
+  if (!env?.BOOKING_KV || !rateKey) return { limited: false, count: 0 };
+  const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+  const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+    ? rawRate
+    : {};
+  const count = Number.isFinite(Number(rateSource.count))
+    ? Math.max(0, Math.round(Number(rateSource.count)))
+    : 0;
+  if (count >= maxCount) {
+    return { limited: true, count };
+  }
+  await env.BOOKING_KV.put(
+    rateKey,
+    JSON.stringify({
+      count: count + 1,
+      updated_at: new Date().toISOString(),
+    }),
+    { expirationTtl: windowSeconds },
+  );
+  return { limited: false, count: count + 1 };
+}
+
+async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) {
+    return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const startRateKey = _customerPhoneAuthStartRateKey(phoneHash, clientHash);
+  if (startRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: startRateKey,
+      maxCount: CUSTOMER_PHONE_AUTH_START_RATE_MAX,
+      windowSeconds: CUSTOMER_PHONE_AUTH_START_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][RATE_LIMIT] stage=start phone=${maskedPhone || "-"} bucket=start`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  const challengeId = _customerPhoneAuthChallengeId();
+  const challengeKey = _customerPhoneAuthChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`);
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_phone_auth",
+      challenge_id: challengeId,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+      attempts: 0,
+      max_attempts: CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
+      created_at: nowIso,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }),
+    { expirationTtl: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS },
+  );
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][START] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  const response = {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId: challengeId,
+    verification_channel: "sms_otp",
+    verificationChannel: "sms_otp",
+    expires_in_seconds: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS,
+    masked_phone: maskedPhone,
+    maskedPhone: maskedPhone,
+  };
+  const debugOtpEnabled =
+    String(env?.CUSTOMER_PHONE_AUTH_DEBUG_OTP || "").trim().toLowerCase() === "true";
+  if (debugOtpEnabled) {
+    response.debug_otp = otp;
+    response.debugOtp = otp;
+  }
+  return json(response, 200);
+}
+
+async function handlePublicCustomerPhoneAuthVerify(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) return json({ ok: false, error: "invalid_phone" }, 400);
+  const otp = sanitizeTenantString(
+    body.otp ?? body.code ?? body.recovery_code ?? body.recoveryCode,
+    24,
+  ).replace(/\s+/g, "");
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const verifyRateKey = _customerPhoneAuthVerifyRateKey(phoneHash, clientHash);
+  if (verifyRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: verifyRateKey,
+      maxCount: CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX,
+      windowSeconds: CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][RATE_LIMIT] stage=verify phone=${maskedPhone || "-"} bucket=verify`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  if (!challengeId || !/^\d{6}$/.test(otp)) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _customerPhoneAuthChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_missing`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  const challengePhoneHash = sanitizeTenantString(
+    challenge.phone_hash ?? challenge.phoneHash,
+    200,
+  ).toLowerCase();
+  if (
+    sanitizeTenantString(challenge.purpose, 80) !== "customer_phone_auth" ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts ||
+    !_constantTimeEquals(challengePhoneHash, phoneHash)
+  ) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`)).toLowerCase();
+  if (!_constantTimeEquals(expectedOtpHash, candidateOtpHash)) {
+    await _customerPhoneAuthIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
+  if (!phoneIndexKey) return json({ ok: false, error: "verification_failed" }, 403);
+  let customerId = _normalizeCustomerIdentityId(await env.BOOKING_KV.get(phoneIndexKey));
+  if (!customerId) {
+    customerId = _generateCustomerIdentityId();
+  }
+  const customerIdentityKey = _globalCustomerIdentityKey(customerId);
+  if (!customerIdentityKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const existingIdentity = await env.BOOKING_KV.get(customerIdentityKey, { type: "json" });
+  const identityCreatedAt = sanitizeTenantString(existingIdentity?.created_at, 80) || nowIso;
+  await env.BOOKING_KV.put(
+    customerIdentityKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_global_identity",
+      customer_id: customerId,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      created_at: identityCreatedAt,
+      updated_at: nowIso,
+      recovery_method: "phone_otp",
+    }),
+  );
+  await env.BOOKING_KV.put(phoneIndexKey, customerId);
+  const customerSessionToken = _generateOpaqueToken(32, "cus_");
+  const customerSessionTokenHash = await _hashCustomerSessionToken(customerSessionToken);
+  const customerSessionKey = _customerSessionKey(customerSessionTokenHash);
+  if (!customerSessionKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    customerSessionKey,
+    JSON.stringify({
+      role: "customer",
+      purpose: "customer_session",
+      tenant_id: "global",
+      company_id: "global",
+      customer_id: customerId,
+      email_hash: "",
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      created_at: nowIso,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      recovery_method: "phone_otp",
+    }),
+    { expirationTtl: CUSTOMER_SESSION_TTL_SECONDS },
+  );
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.recovered_customer_id = customerId;
+  challenge.link_method = "public_customer_phone_auth";
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][VERIFY_OK] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      customer_session_token: customerSessionToken,
+      customerSessionToken: customerSessionToken,
+      expires_in_seconds: CUSTOMER_SESSION_TTL_SECONDS,
+      expiresInSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      customer_id: customerId,
+      customerId: customerId,
     },
     200,
   );
@@ -11644,6 +12021,22 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCustomerRecoveryVerify(body, env);
+      }
+
+      if (url.pathname === "/public/customer/auth/phone/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerPhoneAuthStart(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/auth/phone/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerPhoneAuthVerify(body, env, request);
       }
 
       if (url.pathname === "/public/customer/session/bootstrap") {
