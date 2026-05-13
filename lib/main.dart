@@ -4074,12 +4074,53 @@ class RoleEntryPage extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
-                top: 96.0,
-                bottom: -96.0,
+                top: (() {
+                  final media = MediaQuery.of(context);
+                  final W = media.size.width;
+                  final H = media.size.height;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
+                  final bgTop = isTabletLandscape ? 72.0 : 96.0;
+                  return bgTop;
+                })(),
+                bottom: (() {
+                  final media = MediaQuery.of(context);
+                  final W = media.size.width;
+                  final H = media.size.height;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
+                  final bgBottom = isTabletLandscape ? -72.0 : -96.0;
+                  return bgBottom;
+                })(),
                 child: Image.asset(
                   _startBackgroundAsset,
                   fit: BoxFit.cover,
-                  alignment: const Alignment(0, 0.75),
+                  alignment: (() {
+                    final media = MediaQuery.of(context);
+                    final W = media.size.width;
+                    final H = media.size.height;
+                    final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                    final isTabletLike =
+                        screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop;
+                    final isLandscape = W > H;
+                    final isTabletLandscape =
+                        isTabletLike && isLandscape && H >= 700;
+                    final bgAlignment = isTabletLandscape
+                        ? const Alignment(0.0, 0.82)
+                        : const Alignment(0.0, 0.75);
+                    return bgAlignment;
+                  })(),
                   errorBuilder: (_, __, ___) => const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -4116,15 +4157,22 @@ class RoleEntryPage extends StatelessWidget {
               ),
               LayoutBuilder(
                 builder: (context, constraints) {
+                  double clampDouble(double v, double min, double max) =>
+                      v < min ? min : (v > max ? max : v);
+
+                  final W = constraints.maxWidth;
+                  final H = constraints.maxHeight;
                   final veryCompact = constraints.maxHeight < 680;
                   final narrow = constraints.maxWidth < 390;
-                  final screenClass = FluxidiBreakpoints.classifyWidth(
-                    constraints.maxWidth,
-                  );
-                  final tabletLikeViewport =
-                      (screenClass == FluxidiScreenClass.tablet ||
-                          screenClass == FluxidiScreenClass.desktop) &&
-                      constraints.maxHeight >= 700;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletPortrait =
+                      isTabletLike && !isLandscape && H >= 900;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
                   final contentHorizontalPadding = narrow ? 14.0 : 18.0;
                   final logoTop = veryCompact ? -26.0 : -32.0;
                   final languageTop = veryCompact ? 4.0 : 6.0;
@@ -4139,13 +4187,44 @@ class RoleEntryPage extends StatelessWidget {
                       constraints.maxWidth * (narrow ? 0.62 : 0.55),
                     ),
                   );
-                  final contentTop =
-                      (veryCompact ? 112.0 : 136.0) +
-                      (tabletLikeViewport ? 24.0 : 0.0);
+                  final logoLeft = isTabletLandscape
+                      ? -clampDouble(logoWidth * 0.16, 64.0, 96.0)
+                      : 0.0;
+                  const contentMaxWidth = 470.0;
+                  final languageRight = isTabletLandscape
+                      ? -clampDouble(
+                          ((W - contentMaxWidth) / 2.0) - 36.0,
+                          0.0,
+                          520.0,
+                        )
+                      : 0.0;
+                  final basePhoneContentTop = veryCompact ? 112.0 : 136.0;
+                  final contentTop = isTabletLandscape
+                      ? clampDouble(H * 0.40, 330.0, 365.0)
+                      : isTabletPortrait
+                      ? clampDouble(H * 0.15, 176.0, 232.0)
+                      : basePhoneContentTop;
 
-                  final roleCardHeight = veryCompact ? 92.0 : 98.0;
-                  final cardGap = veryCompact ? 5.0 : 6.0;
-                  final sectionGap = veryCompact ? 7.0 : 8.0;
+                  final roleCardHeight = isTabletLandscape
+                      ? 88.0
+                      : isTabletPortrait
+                      ? 98.0
+                      : (veryCompact ? 92.0 : 98.0);
+                  final cardGap = isTabletLandscape
+                      ? 4.0
+                      : isTabletPortrait
+                      ? 6.0
+                      : (veryCompact ? 5.0 : 6.0);
+                  final sectionGap = isTabletLandscape
+                      ? 6.0
+                      : isTabletPortrait
+                      ? 8.0
+                      : (veryCompact ? 7.0 : 8.0);
+                  final scrollBottomPadding = isTabletLandscape
+                      ? 92.0
+                      : isTabletPortrait
+                      ? 148.0
+                      : (veryCompact ? 118.0 : 136.0);
                   final roleCardWidth = math.min(
                     392.0,
                     constraints.maxWidth * (narrow ? 0.85 : 0.8),
@@ -4163,9 +4242,10 @@ class RoleEntryPage extends StatelessWidget {
                           horizontal: contentHorizontalPadding,
                         ),
                         child: Stack(
+                          clipBehavior: Clip.none,
                           children: [
                             Positioned(
-                              left: 0,
+                              left: logoLeft,
                               top: logoTop,
                               child: SizedBox(
                                 width: logoWidth,
@@ -4191,7 +4271,7 @@ class RoleEntryPage extends StatelessWidget {
                               ),
                             ),
                             Positioned(
-                              right: 0,
+                              right: languageRight,
                               top: languageTop,
                               child: _languageSelectorPill(),
                             ),
@@ -4199,7 +4279,7 @@ class RoleEntryPage extends StatelessWidget {
                               top: contentTop,
                               child: SingleChildScrollView(
                                 padding: EdgeInsets.only(
-                                  bottom: veryCompact ? 118 : 136,
+                                  bottom: scrollBottomPadding,
                                 ),
                                 child: Column(
                                   children: [
