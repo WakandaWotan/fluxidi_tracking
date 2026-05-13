@@ -8320,9 +8320,20 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         screenClass == FluxidiScreenClass.desktop) &&
                     W < H &&
                     H >= 900;
-                final businessHeaderHeight = isTabletPortrait
+                final isTabletLandscape =
+                    (screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop) &&
+                    W > H &&
+                    H >= 700;
+                final usesTabletHeader = isTabletPortrait || isTabletLandscape;
+                final businessHeaderHeight = isTabletLandscape
+                    ? clampDouble(H * 0.26, 280.0, 330.0)
+                    : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
+                final businessHeaderAsset = isTabletLandscape
+                    ? 'assets/fluxidi/zakelijke_tablet_header_foto_landscape.png'
+                    : 'assets/fluxidi/zakelijke_tablet_header_foto.png';
                 final businessQuickActionCardHeight = isTabletPortrait
                     ? clampDouble(H * 0.092, 118.0, 132.0)
                     : 132.0;
@@ -8342,7 +8353,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     businessListBottomPadding,
                   ),
                   children: [
-                    if (isTabletPortrait)
+                    if (usesTabletHeader)
                       Container(
                         height: businessHeaderHeight,
                         clipBehavior: Clip.antiAlias,
@@ -8356,8 +8367,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                           fit: StackFit.expand,
                           children: [
                             Image.asset(
-                              'assets/fluxidi/zakelijke_tablet_header_foto.png',
+                              businessHeaderAsset,
                               fit: BoxFit.cover,
+                              alignment: isTabletLandscape
+                                  ? Alignment.centerRight
+                                  : Alignment.center,
                               errorBuilder: (_, __, ___) => const DecoratedBox(
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
