@@ -11849,6 +11849,17 @@ GET /oauth/callback
           const out = await handleManualReceiptEmail(request, url, env, bookingId, body);
           if (out?.ok && out?.status === "already_sent") return json(out, 200);
           if (out?.ok) return json(out, 200);
+          if (out?.error === "invoice_artifact_not_persisted") {
+            const reason = safeStr(out?.reason, 80);
+            const conflictReasons = new Set([
+              "missing_booking_scope",
+              "missing_booking_id",
+              "empty_pdf_bytes",
+              "pdf_missing",
+            ]);
+            const statusCode = conflictReasons.has(reason) ? 409 : 500;
+            return json(out, statusCode);
+          }
           if (out?.status === "missing_email") return json(out, 400);
           if (out?.status === "skipped") return json(out, 400);
           return json(out, 500);
@@ -19891,7 +19902,8 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       rec?.booking?.customer_invoice_sent_at ||
       rec?.booking?.customerInvoiceSentAt,
     );
-    if (businessInvoiceContext && existingSentAt) {
+    const existingArtifact = _invoicePdfMetadataFromRecord(rec);
+    if (businessInvoiceContext && existingSentAt && existingArtifact.exists) {
       console.log(
         `[EMAIL][RECEIPT_CUSTOMER_MANUAL][ALREADY_SENT] bookingId=${safeStr(bookingId)} sentAt=${safeStr(existingSentAt)} source=${safeStr(source)}`,
       );
@@ -19971,12 +19983,18 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
       priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
     };
+    const needsArtifactBackfillWithoutResend = businessInvoiceContext && !!existingSentAt && !existingArtifact.exists;
     const invoiceResult = await generateAndSendInvoice({
       env,
       booking: invoiceInput,
+      bookingRecordInfoOverride: { key, rec },
       emailPolicy: {
-        sendCustomerEmail: true,
-        customerSkipReason: "",
+        sendCustomerEmail: needsArtifactBackfillWithoutResend ? false : true,
+        skipEmailDelivery: needsArtifactBackfillWithoutResend,
+        requireArtifactPersistence: true,
+        customerSkipReason: needsArtifactBackfillWithoutResend
+          ? "artifact_backfill_already_sent"
+          : "",
         context: "manual_flutter_receipt_button",
         allowManualPrivateCustomerSend: true,
         language: language || undefined,
@@ -19986,6 +20004,20 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
 
     if (!invoiceResult?.ok) {
       const reason = safeStr(invoiceResult?.error || "invoice_generation_failed").slice(0, 160) || "invoice_generation_failed";
+      const artifactReason = safeStr(invoiceResult?.reason, 80);
+      const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(rec));
+      console.log(
+        `[INVOICE_ARTIFACT][MANUAL_ROUTE] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=false reason=${artifactReason || reason}`,
+      );
+      if (reason === "invoice_artifact_not_persisted") {
+        return {
+          ok: false,
+          status: "error",
+          error: "invoice_artifact_not_persisted",
+          reason: artifactReason || "unknown",
+          email_sent: invoiceResult?.email_sent === true,
+        };
+      }
       console.log(
         `[EMAIL][RECEIPT_CUSTOMER_MANUAL][ERROR] bookingId=${safeStr(bookingId)} reason=${reason} source=${safeStr(source)}`,
       );
@@ -19996,8 +20028,28 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       };
     }
 
+    const artifactOk = invoiceResult?.invoice_pdf_artifact?.ok === true;
+    const artifactReason = safeStr(
+      invoiceResult?.invoice_pdf_artifact?.reason ||
+      invoiceResult?.invoice_pdf_artifact?.error,
+      80,
+    );
+    const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(rec));
+    console.log(
+      `[INVOICE_ARTIFACT][MANUAL_ROUTE] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=${artifactOk} reason=${artifactReason || "-"}`,
+    );
+    if (!artifactOk) {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: artifactReason || "unknown",
+        email_sent: invoiceResult?.email?.customer?.sent === true,
+      };
+    }
+
     const customerSend = invoiceResult?.email?.customer || {};
-    if (!customerSend?.sent) {
+    if (!needsArtifactBackfillWithoutResend && !customerSend?.sent) {
       const reason = customerSend?.skipped
         ? (safeStr(customerSend?.reason) || "customer_send_skipped")
         : "customer_send_failed";
@@ -20011,33 +20063,48 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       };
     }
 
-    const sentAt = new Date().toISOString();
+    const sentAt = needsArtifactBackfillWithoutResend
+      ? (safeStr(existingSentAt, 80) || new Date().toISOString())
+      : new Date().toISOString();
     const documentType = safeStr(invoiceResult?.documentType || "receipt");
-    rec.receipt_email_sent_at = sentAt;
-    rec.receipt_email_sent_to = customerEmail;
-    rec.receipt_email_sent_source = source;
-    rec.receipt_email_document_type = documentType;
-    rec.receipt_email_send_context = "manual_flutter_receipt_button";
+    if (!needsArtifactBackfillWithoutResend) {
+      rec.receipt_email_sent_at = sentAt;
+      rec.receipt_email_sent_to = customerEmail;
+      rec.receipt_email_sent_source = source;
+      rec.receipt_email_document_type = documentType;
+      rec.receipt_email_send_context = "manual_flutter_receipt_button";
+    }
     rec.updatedAt = sentAt;
     if (rec.booking && typeof rec.booking === "object") {
-      rec.booking.receipt_email_sent_at = sentAt;
-      rec.booking.receipt_email_sent_to = customerEmail;
-      rec.booking.receipt_email_sent_source = source;
-      rec.booking.receipt_email_document_type = documentType;
-      rec.booking.receipt_email_send_context = "manual_flutter_receipt_button";
+      if (!needsArtifactBackfillWithoutResend) {
+        rec.booking.receipt_email_sent_at = sentAt;
+        rec.booking.receipt_email_sent_to = customerEmail;
+        rec.booking.receipt_email_sent_source = source;
+        rec.booking.receipt_email_document_type = documentType;
+        rec.booking.receipt_email_send_context = "manual_flutter_receipt_button";
+      }
     }
     await env.BOOKING_KV.put(key, JSON.stringify(rec));
 
     console.log(
       `[EMAIL][RECEIPT_CUSTOMER_MANUAL][OK] bookingId=${safeStr(bookingId)} recipient=${maskEmailForLog(customerEmail)} sentAt=${sentAt} source=${safeStr(source)}`,
     );
-    return {
-      ok: true,
-      status: "sent",
-      booking_id: bookingId,
-      recipient: maskEmailForLog(customerEmail),
-      sent_at: sentAt,
-    };
+    return needsArtifactBackfillWithoutResend
+      ? {
+          ok: true,
+          status: "already_sent",
+          booking_id: bookingId,
+          recipient: maskEmailForLog(customerEmail),
+          sent_at: sentAt,
+          artifact_backfilled: true,
+        }
+      : {
+          ok: true,
+          status: "sent",
+          booking_id: bookingId,
+          recipient: maskEmailForLog(customerEmail),
+          sent_at: sentAt,
+        };
   } catch (err) {
     const message = safeStr(err?.message || err).slice(0, 200) || "manual_receipt_email_failed";
     console.log(
@@ -22214,7 +22281,12 @@ async function sendInvoiceEmailWithPdf({
   };
 }
 
-async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
+async function generateAndSendInvoice({
+  env,
+  booking,
+  emailPolicy = null,
+  bookingRecordInfoOverride = null,
+}) {
   try {
     const bookingInput = booking && typeof booking === "object" ? booking : {};
     const invoiceTenantId = safeStr(
@@ -22232,7 +22304,20 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       : null;
     const commProfile = await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
-    const bookingRecordInfo = await loadInvoiceBookingRecord(env, bookingInput);
+    const bookingRecordInfo =
+      bookingRecordInfoOverride &&
+      typeof bookingRecordInfoOverride === "object" &&
+      safeStr(bookingRecordInfoOverride?.key)
+        ? {
+            booking_id: safeStr(bookingRecordInfoOverride?.booking_id, 160) || null,
+            key: safeStr(bookingRecordInfoOverride?.key, 240),
+            rec:
+              bookingRecordInfoOverride?.rec &&
+              typeof bookingRecordInfoOverride.rec === "object"
+                ? bookingRecordInfoOverride.rec
+                : null,
+          }
+        : await loadInvoiceBookingRecord(env, bookingInput);
     const existingInvoiceNumber =
       findExistingInvoiceNumber(bookingRecordInfo?.rec) ||
       findExistingInvoiceNumber(bookingInput);
@@ -22362,17 +22447,49 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
         pdfBytes,
       });
     }
+    const artifactReason = safeStr(
+      artifactResult?.reason || artifactResult?.error || "",
+      80,
+    );
+    const requireArtifactPersistence = emailPolicy?.requireArtifactPersistence === true;
+    if (requireArtifactPersistence && !artifactResult?.ok) {
+      return {
+        ok: false,
+        error: "invoice_artifact_not_persisted",
+        reason: artifactReason || "unknown",
+        email_sent: false,
+        invoice_pdf_artifact: {
+          ok: false,
+          reason: artifactReason || "unknown",
+          key: null,
+          generated_at: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      };
+    }
+
+    const skipEmailDelivery = emailPolicy?.skipEmailDelivery === true;
 
     const emailTo = customerEmail;
-    const emailResult = await sendInvoiceEmailWithPdf({
-      env,
-      toEmail: emailTo,
-      invoiceNumber,
-      pdfBytes: pdfBytes || new Uint8Array(0),
-      commProfile,
-      sendCustomerEmail: emailPolicy?.sendCustomerEmail !== false,
-      customerSkipReason: safeStr(emailPolicy?.customerSkipReason || ""),
-    });
+    const emailResult = skipEmailDelivery
+      ? {
+          enabled: false,
+          sent: false,
+          skipped: true,
+          reason: "skip_email_delivery",
+          customer: { sent: false, skipped: true, reason: "skip_email_delivery" },
+          admin_copy: { sent: false, skipped: true, reason: "skip_email_delivery" },
+        }
+      : await sendInvoiceEmailWithPdf({
+          env,
+          toEmail: emailTo,
+          invoiceNumber,
+          pdfBytes: pdfBytes || new Uint8Array(0),
+          commProfile,
+          sendCustomerEmail: emailPolicy?.sendCustomerEmail !== false,
+          customerSkipReason: safeStr(emailPolicy?.customerSkipReason || ""),
+        });
 
     const documentType = (safeStr(data.customerCompany) || safeStr(data.customerVat)) ? "invoice" : "receipt";
     return {
@@ -22386,6 +22503,7 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       pdf_provider_configured: pdfProviderConfigured,
       invoice_pdf_artifact: {
         ok: !!artifactResult?.ok,
+        reason: artifactReason || null,
         key: safeStr(artifactResult?.key, 1024) || null,
         generated_at: safeStr(artifactResult?.generated_at, 80) || null,
         content_type: safeStr(artifactResult?.content_type, 120) || null,
