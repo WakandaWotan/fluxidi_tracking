@@ -25280,6 +25280,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       return null;
     }
 
+    bool isHttpImageRef(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
+    }
+
+    Widget resolvedFallback() {
+      return fallback ??
+          Image.asset(
+            kFluxidiLogoAsset,
+            height: height,
+            fit: fit,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+          );
+    }
+
     return ValueListenableBuilder<BusinessSettingsState>(
       valueListenable: businessSettingsNotifier,
       builder: (context, s, _) {
@@ -25296,36 +25313,25 @@ class _DriverHomePageState extends State<DriverHomePage>
             height: height,
             fit: fit,
             filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) =>
-                fallback ??
-                Text(
-                  kCompanyName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                  ),
-                ),
+            errorBuilder: (_, __, ___) => resolvedFallback(),
           );
         }
-        if (kIsWeb) {
+        if (isHttpImageRef(ref)) {
           return Image.network(
             ref,
             height: height,
             fit: fit,
             filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) =>
-                fallback ??
-                const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+            errorBuilder: (_, __, ___) => resolvedFallback(),
           );
         }
+        if (kIsWeb) return resolvedFallback();
         return Image.file(
           File(ref),
           height: height,
           fit: fit,
           filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) =>
-              fallback ??
-              const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+          errorBuilder: (_, __, ___) => resolvedFallback(),
         );
       },
     );
@@ -31368,14 +31374,23 @@ class _DriverHomePageState extends State<DriverHomePage>
                           : 1.0;
                       return Transform.scale(
                         scale: compactNavHeader
-                            ? (pulse * 1.28)
-                            : (pulse * 1.6),
-                        child: _tenantLogo(
-                          height: compactNavHeader ? 68 : 92,
-                          fallback: const Icon(
-                            Icons.local_taxi,
-                            size: 32,
-                            color: Colors.white70,
+                            ? (pulse * 1.06)
+                            : (pulse * 1.18),
+                        child: ClipRect(
+                          child: SizedBox(
+                            width: compactNavHeader ? 132 : 164,
+                            height: compactNavHeader ? 46 : 58,
+                            child: Center(
+                              child: _tenantLogo(
+                                height: compactNavHeader ? 38 : 50,
+                                fit: BoxFit.contain,
+                                fallback: const Icon(
+                                  Icons.local_taxi,
+                                  size: 32,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       );
@@ -34176,25 +34191,64 @@ class _DriverHomePageState extends State<DriverHomePage>
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 10,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.26),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withOpacity(0.14)),
-                    ),
-                    child: IconButton(
-                      tooltip: 'Menu',
-                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                      icon: const Icon(Icons.menu_rounded, size: 22),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.26),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.14),
+                          ),
+                        ),
+                        child: IconButton(
+                          tooltip: 'Menu',
+                          onPressed: () =>
+                              _scaffoldKey.currentState?.openDrawer(),
+                          icon: const Icon(Icons.menu_rounded, size: 22),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  IgnorePointer(
+                    child: Container(
+                      width: isLandscape ? 146 : 124,
+                      height: isLandscape ? 48 : 44,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.38),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0x66FFD36A)),
+                      ),
+                      child: Center(
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: _tenantLogo(
+                            height: isLandscape ? 36 : 30,
+                            fit: BoxFit.contain,
+                            fallback: Image.asset(
+                              kFluxidiLogoAsset,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           if (_cameraMode == _CameraMode.follow && _nextNavInstruction != null)
