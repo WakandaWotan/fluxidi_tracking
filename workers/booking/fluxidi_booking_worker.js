@@ -14589,6 +14589,13 @@ async function mollieCreatePayment(payload, env, request) {
     const redirectUrl = `${base}/pay/return?id=${encodeURIComponent(bookingId)}&return_to=${encodeURIComponent(returnTo)}`;
     // webhookUrl: points to this worker
     const webhookUrl = `${base}/webhook/mollie`;
+    const scopeMask = _bookingIntentScopeMask({
+      tenant_id: paymentTenantId,
+      company_id: paymentCompanyId,
+    });
+    console.log(
+      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(mollieConfig?.mode, 16) || "unknown"}`,
+    );
 
     const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
     const description = `${safeBrandName(commProfile?.brandName, "Fluxidi Taxi")} booking ${bookingId}`;
@@ -14609,6 +14616,25 @@ async function mollieCreatePayment(payload, env, request) {
     });
 
     const mollie = await mollieRes.json().catch(() => ({}));
+    const mollieCheckoutHref = safeStr(mollie?._links?.checkout?.href, 2000);
+    let checkoutHost = "";
+    try {
+      checkoutHost = mollieCheckoutHref ? safeStr(new URL(mollieCheckoutHref).host, 120).toLowerCase() : "";
+    } catch (_) {
+      checkoutHost = "";
+    }
+    const mollieErrorCode = safeStr(mollie?.detail || mollie?.code || mollie?.error, 64);
+    const mollieErrorMessage = safeStr(
+      mollie?.title ||
+        mollie?.message ||
+        mollie?.detail ||
+        mollie?.error_description ||
+        mollie?.error,
+      160,
+    );
+    console.log(
+      `[MOLLIE_CREATE][RES] httpStatus=${Number(mollieRes?.status || 0)} ok=${mollieRes?.ok === true} hasId=${!!safeStr(mollie?.id, 120)} hasCheckout=${!!mollieCheckoutHref} checkoutHost=${checkoutHost || "-"} errorCode=${mollieErrorCode || "-"} errorMessage=${mollieErrorMessage || "-"}`,
+    );
     if (!mollieRes.ok || !mollie?.id || !mollie?._links?.checkout?.href) {
       // Keep booking in KV for debugging
       await env.BOOKING_KV.put(
@@ -15665,57 +15691,24 @@ async function handleBooking(payload, env, request) {
         // only when Mollie has actually reported "paid".
         if (business_detected && !molliePaidConfirmed) {
           calendarPaymentHandled = true;
-          const pay = await mollieCreatePayment(
-            {
-              ...payload,
-              __booking_id: canonicalBookingId,
-              __public_booking_reference: publicBookingReference,
-              bookingId: canonicalBookingId,
-              tenant_id: tenantContext.tenant_id,
-              tenantId: tenantContext.tenant_id,
-              company_id: tenantContext.company_id,
-              companyId: tenantContext.company_id,
-              total_incl_vat: totalPricing.price_incl_vat,
-              total_ex_vat: totalPricing.price_ex_vat,
-              vat_amount: totalPricing.price_vat,
-            },
-            env,
-            request
-          );
-          const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
-          if (pay?.ok !== true || !checkoutUrl) {
-            return {
-              ok: false,
-              error: "payment_checkout_unavailable",
-              message: "Online payment checkout could not be created",
-              requiresPayment: true,
-              paymentMode: "mollie",
-              booking_id: canonicalBookingId,
-              bookingId: canonicalBookingId,
-            };
-          }
           const nowIso = new Date().toISOString();
           const provisionalRecord = {
+            id: canonicalBookingId,
             stage: "PENDING",
             status: "PENDING",
             lifecycle_status: "pending",
             lifecycleStatus: "pending",
-            booking_status: "pending",
-            bookingStatus: "pending",
-            payment_status: "pending",
-            paymentStatus: "pending",
+            booking_status: "payment_initializing",
+            bookingStatus: "payment_initializing",
+            payment_status: "initializing",
+            paymentStatus: "initializing",
             payment_mode: "mollie",
             paymentMode: "mollie",
             payment_required: true,
             paymentRequired: true,
             requiresPayment: true,
-            payment_booking_id: pay?.bookingId || null,
-            paymentBookingId: pay?.bookingId || null,
-            checkout_url: checkoutUrl,
-            checkoutUrl: checkoutUrl,
-            status_url: safeStr(pay?.statusUrl || pay?.status_url, 2000) || null,
-            statusUrl: safeStr(pay?.statusUrl || pay?.status_url, 2000) || null,
-            amount: pay?.amount || null,
+            payment_booking_id: null,
+            paymentBookingId: null,
             booking_id: canonicalBookingId,
             bookingId: canonicalBookingId,
             booking_uuid,
@@ -15731,6 +15724,45 @@ async function handleBooking(payload, env, request) {
             company_id: tenantContext.company_id,
             tenantId: tenantContext.tenant_id,
             companyId: tenantContext.company_id,
+            customer_name: customerContact.name,
+            customer_phone: customerContact.phone,
+            customer_email: customerContact.email,
+            from,
+            to,
+            date,
+            time,
+            pickup_iso,
+            return_enabled: ret.enabled,
+            return_from,
+            return_to,
+            return_pickup_iso,
+            service,
+            tier,
+            pax,
+            bags,
+            wait_min,
+            stops,
+            business_detected,
+            invoice_requested,
+            company_name: biz.company_name || "",
+            vat_number: biz.vat_number || "",
+            invoice_address: biz.invoice_address || "",
+            invoice_email: biz.invoice_email || customerContact.email || "",
+            vat_rate,
+            price_ex_vat: totalPricing?.price_ex_vat,
+            price_vat: totalPricing?.price_vat,
+            price_incl_vat: totalPricing?.price_incl_vat,
+            price_ex_vat_main: mainPricing?.price_ex_vat,
+            price_vat_main: mainPricing?.price_vat,
+            price_incl_vat_main: mainPricing?.price_incl_vat,
+            price_ex_vat_return: returnPricing?.price_ex_vat,
+            price_vat_return: returnPricing?.price_vat,
+            price_incl_vat_return: returnPricing?.price_incl_vat,
+            pricing_source: bookingPricingSource,
+            fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_rule_id: bookingFixedFareRuleId,
+            distance_km,
+            duration_route_min,
             booking_source: tenantContext.booking_source,
             entry_channel: tenantContext.entry_channel,
             source_context: tenantContext.source_context,
@@ -15741,6 +15773,7 @@ async function handleBooking(payload, env, request) {
             updatedAt: nowIso,
             updated_at: nowIso,
             booking: {
+              id: canonicalBookingId,
               bookingId: canonicalBookingId,
               booking_id: canonicalBookingId,
               booking_uuid,
@@ -15765,17 +15798,17 @@ async function handleBooking(payload, env, request) {
               stage: "PENDING",
               lifecycle_status: "pending",
               lifecycleStatus: "pending",
-              booking_status: "pending",
-              bookingStatus: "pending",
-              payment_status: "pending",
-              paymentStatus: "pending",
+              booking_status: "payment_initializing",
+              bookingStatus: "payment_initializing",
+              payment_status: "initializing",
+              paymentStatus: "initializing",
               payment_mode: "mollie",
               paymentMode: "mollie",
               payment_required: true,
               paymentRequired: true,
               requiresPayment: true,
-              payment_booking_id: pay?.bookingId || null,
-              paymentBookingId: pay?.bookingId || null,
+              payment_booking_id: null,
+              paymentBookingId: null,
               customer_name: customerContact.name,
               customer_phone: customerContact.phone,
               customer_email: customerContact.email,
@@ -15835,10 +15868,10 @@ async function handleBooking(payload, env, request) {
               publicBookingReference: publicBookingReference,
               planning_reference: planningReference,
               planningReference: planningReference,
-              payment_booking_id: pay?.bookingId || null,
-              paymentBookingId: pay?.bookingId || null,
-              payment_status: "pending",
-              paymentStatus: "pending",
+              payment_booking_id: null,
+              paymentBookingId: null,
+              payment_status: "initializing",
+              paymentStatus: "initializing",
             },
             quote: {
               from,
@@ -15863,6 +15896,117 @@ async function handleBooking(payload, env, request) {
             tracking_last: null,
             trip: null,
           };
+          await env.BOOKING_KV.put(
+            `booking:${canonicalBookingId}`,
+            JSON.stringify(provisionalRecord),
+          );
+          const pay = await mollieCreatePayment(
+            {
+              ...payload,
+              __booking_id: canonicalBookingId,
+              __public_booking_reference: publicBookingReference,
+              bookingId: canonicalBookingId,
+              tenant_id: tenantContext.tenant_id,
+              tenantId: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              companyId: tenantContext.company_id,
+              total_incl_vat: totalPricing.price_incl_vat,
+              total_ex_vat: totalPricing.price_ex_vat,
+              vat_amount: totalPricing.price_vat,
+            },
+            env,
+            request
+          );
+          const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+          if (pay?.ok !== true || !checkoutUrl) {
+            const failIso = new Date().toISOString();
+            provisionalRecord.payment_status = "payment_checkout_failed";
+            provisionalRecord.paymentStatus = "payment_checkout_failed";
+            provisionalRecord.booking_status = "payment_checkout_failed";
+            provisionalRecord.bookingStatus = "payment_checkout_failed";
+            provisionalRecord.payment_error_code = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
+            provisionalRecord.paymentErrorCode = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
+            provisionalRecord.payment_error_message =
+              safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
+            provisionalRecord.paymentErrorMessage =
+              safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
+            provisionalRecord.updatedAt = failIso;
+            provisionalRecord.updated_at = failIso;
+            if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
+              provisionalRecord.booking.payment_status = "payment_checkout_failed";
+              provisionalRecord.booking.paymentStatus = "payment_checkout_failed";
+              provisionalRecord.booking.booking_status = "payment_checkout_failed";
+              provisionalRecord.booking.bookingStatus = "payment_checkout_failed";
+            }
+            if (provisionalRecord.payload && typeof provisionalRecord.payload === "object") {
+              provisionalRecord.payload.payment_status = "payment_checkout_failed";
+              provisionalRecord.payload.paymentStatus = "payment_checkout_failed";
+            }
+            await env.BOOKING_KV.put(
+              `booking:${canonicalBookingId}`,
+              JSON.stringify(provisionalRecord),
+            );
+            console.log(
+              `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid`,
+            );
+            return {
+              ok: false,
+              error: "payment_checkout_unavailable",
+              message: "Online payment checkout could not be created",
+              requiresPayment: true,
+              paymentMode: "mollie",
+              booking_id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+            };
+          }
+          const successIso = new Date().toISOString();
+          provisionalRecord.payment_status = "pending";
+          provisionalRecord.paymentStatus = "pending";
+          provisionalRecord.booking_status = "pending";
+          provisionalRecord.bookingStatus = "pending";
+          provisionalRecord.payment_mode = "mollie";
+          provisionalRecord.paymentMode = "mollie";
+          provisionalRecord.payment_required = true;
+          provisionalRecord.paymentRequired = true;
+          provisionalRecord.requiresPayment = true;
+          provisionalRecord.payment_booking_id = pay?.bookingId || null;
+          provisionalRecord.paymentBookingId = pay?.bookingId || null;
+          provisionalRecord.checkout_url = checkoutUrl;
+          provisionalRecord.checkoutUrl = checkoutUrl;
+          provisionalRecord.payment_url = checkoutUrl;
+          provisionalRecord.paymentUrl = checkoutUrl;
+          provisionalRecord.status_url = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          provisionalRecord.statusUrl = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          provisionalRecord.amount = pay?.amount || null;
+          provisionalRecord.updatedAt = successIso;
+          provisionalRecord.updated_at = successIso;
+          if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
+            provisionalRecord.booking.payment_status = "pending";
+            provisionalRecord.booking.paymentStatus = "pending";
+            provisionalRecord.booking.booking_status = "pending";
+            provisionalRecord.booking.bookingStatus = "pending";
+            provisionalRecord.booking.payment_mode = "mollie";
+            provisionalRecord.booking.paymentMode = "mollie";
+            provisionalRecord.booking.payment_required = true;
+            provisionalRecord.booking.paymentRequired = true;
+            provisionalRecord.booking.requiresPayment = true;
+            provisionalRecord.booking.payment_booking_id = pay?.bookingId || null;
+            provisionalRecord.booking.paymentBookingId = pay?.bookingId || null;
+            provisionalRecord.booking.checkout_url = checkoutUrl;
+            provisionalRecord.booking.checkoutUrl = checkoutUrl;
+            provisionalRecord.booking.payment_url = checkoutUrl;
+            provisionalRecord.booking.paymentUrl = checkoutUrl;
+            provisionalRecord.booking.status_url = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+            provisionalRecord.booking.statusUrl = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          }
+          if (provisionalRecord.payload && typeof provisionalRecord.payload === "object") {
+            provisionalRecord.payload.payment_booking_id = pay?.bookingId || null;
+            provisionalRecord.payload.paymentBookingId = pay?.bookingId || null;
+            provisionalRecord.payload.payment_status = "pending";
+            provisionalRecord.payload.paymentStatus = "pending";
+            provisionalRecord.payload.checkout_url = checkoutUrl;
+            provisionalRecord.payload.checkoutUrl = checkoutUrl;
+          }
           await env.BOOKING_KV.put(
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
@@ -15902,6 +16046,8 @@ async function handleBooking(payload, env, request) {
             paymentMode: "mollie",
             checkout_url: checkoutUrl,
             checkoutUrl: checkoutUrl,
+            payment_url: checkoutUrl,
+            paymentUrl: checkoutUrl,
             status_url: pay.statusUrl || pay.status_url || null,
             statusUrl: pay.statusUrl || pay.status_url || null,
             amount: pay.amount || null,
@@ -16142,6 +16288,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       );
       const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
       if (pay?.ok !== true || !checkoutUrl) {
+        console.log(
+          `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=non_calendar_or_sync_suppressed_business_unpaid`,
+        );
         return {
           ok: false,
           error: "payment_checkout_unavailable",
