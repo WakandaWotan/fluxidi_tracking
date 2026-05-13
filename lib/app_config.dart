@@ -1821,6 +1821,50 @@ Map<String, dynamic> _encodePricingProfileForBackend(BusinessSettingsState s) {
   };
 }
 
+String? _sanitizeOutboundFleetMediaRef(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+  final lower = text.toLowerCase();
+
+  final isWindowsAbsolutePath = RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(text);
+  final isWindowsUncPath = text.startsWith(r'\\');
+  final isMobileLocalPath =
+      lower.startsWith('/data/') ||
+      lower.startsWith('/storage/') ||
+      lower.startsWith('/sdcard/') ||
+      lower.startsWith('/var/mobile/') ||
+      lower.startsWith('/private/var/mobile/') ||
+      lower.startsWith('/var/containers/');
+
+  if (lower.startsWith('file://') ||
+      lower.startsWith('content://') ||
+      isWindowsAbsolutePath ||
+      isWindowsUncPath ||
+      isMobileLocalPath) {
+    return null;
+  }
+
+  if (lower.startsWith('https://') || lower.startsWith('http://')) {
+    return text;
+  }
+  if (lower.startsWith('/public/media/') ||
+      lower.startsWith('public-media/') ||
+      lower.startsWith('/public-media/')) {
+    return text;
+  }
+  return null;
+}
+
+List<String> _sanitizeOutboundFleetMediaRefs(Iterable<String> refs) {
+  final out = <String>[];
+  for (final ref in refs) {
+    final sanitized = _sanitizeOutboundFleetMediaRef(ref);
+    if (sanitized == null || out.contains(sanitized)) continue;
+    out.add(sanitized);
+  }
+  return out;
+}
+
 Map<String, dynamic> _encodeVehicleForBackendFleet(
   VehicleProfile v, {
   required String tenantId,
@@ -1854,6 +1898,10 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
           'displayName': linkedDriver.fullName.trim(),
           'phone': linkedDriver.phone.trim(),
         };
+  final safePrimaryPhotoRef = _sanitizeOutboundFleetMediaRef(v.primaryPhotoRef);
+  final safeGalleryPhotoRefs = _sanitizeOutboundFleetMediaRefs(
+    v.galleryPhotoRefs,
+  );
   return <String, dynamic>{
     'vehicle_id': v.id.trim(),
     'vehicleId': v.id.trim(),
@@ -1888,21 +1936,15 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
     'companyId': (v.companyId?.trim().isNotEmpty ?? false)
         ? v.companyId!.trim()
         : resolvedCompany,
-    if (v.primaryPhotoRef.trim().isNotEmpty) ...{
-      'primary_photo_ref': v.primaryPhotoRef.trim(),
-      'primaryPhotoRef': v.primaryPhotoRef.trim(),
-      'photo_ref': v.primaryPhotoRef.trim(),
-      'photoRef': v.primaryPhotoRef.trim(),
+    if (safePrimaryPhotoRef != null) ...{
+      'primary_photo_ref': safePrimaryPhotoRef,
+      'primaryPhotoRef': safePrimaryPhotoRef,
+      'photo_ref': safePrimaryPhotoRef,
+      'photoRef': safePrimaryPhotoRef,
     },
-    if (v.galleryPhotoRefs.isNotEmpty) ...{
-      'gallery_photo_refs': v.galleryPhotoRefs
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList(growable: false),
-      'galleryPhotoRefs': v.galleryPhotoRefs
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList(growable: false),
+    if (safeGalleryPhotoRefs.isNotEmpty) ...{
+      'gallery_photo_refs': safeGalleryPhotoRefs,
+      'galleryPhotoRefs': safeGalleryPhotoRefs,
     },
     if ((v.publicPhotoUrl ?? '').trim().isNotEmpty) ...{
       'public_photo_url': v.publicPhotoUrl!.trim(),
