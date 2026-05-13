@@ -11832,6 +11832,15 @@ GET /oauth/callback
 
         if (
           pathParts.length === 4 &&
+          pathParts[2] === "invoice" &&
+          pathParts[3] === "pdf" &&
+          request.method === "GET"
+        ) {
+          return await handleBookingInvoicePdfGet(request, url, env, bookingId);
+        }
+
+        if (
+          pathParts.length === 4 &&
           pathParts[2] === "receipt" &&
           pathParts[3] === "email" &&
           request.method === "POST"
@@ -19263,6 +19272,102 @@ async function getBookingAuthoritative(bookingId, env, tenantScope = null, prelo
   };
 }
 
+async function _driverSessionCanAccessBookingInvoice(request, rec, env) {
+  try {
+    const session = await _loadPublicDriverSessionFromRequest(request, env);
+    if (!session) return { allowed: false };
+    const recordScope = resolveBookingTenantScopeFromRecord(rec);
+    if (!recordScope?.tenant_id || !recordScope?.company_id) {
+      return { allowed: false };
+    }
+    if (
+      safeStr(session.tenant_id, 120) !== safeStr(recordScope.tenant_id, 120) ||
+      safeStr(session.company_id, 120) !== safeStr(recordScope.company_id, 120)
+    ) {
+      return { allowed: false };
+    }
+    const allowed = await driverOwnsBookingForMutation({
+      rec,
+      actorDriverId: safeStr(session.driver_id, 96),
+      actorVehicleId: safeStr(session.assigned_vehicle_id, 128),
+      tenantScope: recordScope,
+      env,
+    });
+    return { allowed: !!allowed };
+  } catch (_) {
+    return { allowed: false };
+  }
+}
+
+async function handleBookingInvoicePdfGet(request, url, env, bookingId) {
+  let loaded = null;
+  try {
+    loaded = await loadBookingRecord(env, bookingId);
+  } catch (_) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const rec = loaded?.rec;
+  if (!rec || typeof rec !== "object") {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const adminAuthorized = hasValidAdminToken(request, url, env);
+  let allowed = !!adminAuthorized;
+  // Customer contact proof (email/phone knowledge) is intentionally insufficient
+  // for private financial artifacts. Customer access will be re-enabled via a
+  // dedicated customer session/recovery token flow.
+  if (!allowed) {
+    const driverAccess = await _driverSessionCanAccessBookingInvoice(request, rec, env);
+    allowed = !!driverAccess?.allowed;
+  }
+  if (!allowed) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  const metadata = _invoicePdfMetadataFromRecord(rec);
+  if (!metadata.exists) {
+    return json({
+      ok: false,
+      error: "invoice_pdf_not_available",
+      message: "Invoice PDF artifact has not been persisted for this booking.",
+    }, 404);
+  }
+  if (!env?.PUBLIC_MEDIA || typeof env.PUBLIC_MEDIA.get !== "function") {
+    return json({ ok: false, error: "invoice_storage_unavailable" }, 500);
+  }
+  try {
+    const object = await env.PUBLIC_MEDIA.get(metadata.key);
+    if (!object) {
+      return json({ ok: false, error: "invoice_pdf_not_found" }, 404);
+    }
+    const buffer = await object.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (!bytes.length) {
+      return json({ ok: false, error: "invoice_pdf_empty" }, 404);
+    }
+    const invoiceNumber = safeStr(findExistingInvoiceNumber(rec), 120) || safeStr(bookingId, 120) || "invoice";
+    const safeInvoicePart = _safeArtifactPathSegment(invoiceNumber, "invoice");
+    const contentType = safeStr(
+      metadata.content_type || object?.httpMetadata?.contentType,
+      120,
+    ) || "application/pdf";
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `inline; filename="factuur-${safeInvoicePart}.pdf"`,
+        "Cache-Control": "private, no-store, max-age=0",
+        Pragma: "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Length": String(bytes.length),
+        ...corsHeaders(),
+      },
+    });
+  } catch (err) {
+    const reason = safeStr(err?.message || err).slice(0, 160) || "invoice_pdf_read_failed";
+    console.log(`[INVOICE_ARTIFACT][READ_ERROR] bookingId=${safeStr(bookingId)} reason=${reason}`);
+    return json({ ok: false, error: "invoice_pdf_read_failed" }, 500);
+  }
+}
+
 async function updateBookingStatusAuthoritative(bookingId, status, env, tenantScope = null) {
   if (!tenantScope?.hasScope) {
     return missingTenantScopeError();
@@ -21335,6 +21440,187 @@ function findExistingInvoiceNumber(source) {
   );
 }
 
+function _safeArtifactPathSegment(value, fallback = "unknown", maxLen = 120) {
+  const raw = sanitizeTenantString(value ?? "", Math.max(24, maxLen)).toLowerCase();
+  const cleaned = raw
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!cleaned) return fallback;
+  return cleaned.slice(0, Math.max(12, maxLen));
+}
+
+function _invoicePdfMetadataFromRecord(rec) {
+  const key = safeStr(
+    rec?.invoice_pdf_key ??
+      rec?.invoicePdfKey ??
+      rec?.booking?.invoice_pdf_key ??
+      rec?.booking?.invoicePdfKey,
+    1024,
+  );
+  const generatedAt = safeStr(
+    rec?.invoice_pdf_generated_at ??
+      rec?.invoicePdfGeneratedAt ??
+      rec?.booking?.invoice_pdf_generated_at ??
+      rec?.booking?.invoicePdfGeneratedAt,
+    80,
+  );
+  const contentType = safeStr(
+    rec?.invoice_pdf_content_type ??
+      rec?.invoicePdfContentType ??
+      rec?.booking?.invoice_pdf_content_type ??
+      rec?.booking?.invoicePdfContentType,
+    120,
+  ) || "application/pdf";
+  const rawSize =
+    rec?.invoice_pdf_size_bytes ??
+    rec?.invoicePdfSizeBytes ??
+    rec?.booking?.invoice_pdf_size_bytes ??
+    rec?.booking?.invoicePdfSizeBytes;
+  const sizeBytes = Number(rawSize);
+  const sha256 = safeStr(
+    rec?.invoice_pdf_sha256 ??
+      rec?.invoicePdfSha256 ??
+      rec?.booking?.invoice_pdf_sha256 ??
+      rec?.booking?.invoicePdfSha256,
+    128,
+  ).toLowerCase();
+  return {
+    key,
+    generated_at: generatedAt || null,
+    content_type: contentType || "application/pdf",
+    size_bytes: Number.isFinite(sizeBytes) && sizeBytes > 0 ? Math.trunc(sizeBytes) : null,
+    sha256: sha256 || null,
+    exists: !!key,
+  };
+}
+
+async function _sha256HexFromBytes(bytes) {
+  const normalized = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const digest = await crypto.subtle.digest("SHA-256", normalized);
+  const out = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of out) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
+  invoiceNumber,
+  pdfBytes,
+} = {}) {
+  const storage = env?.PUBLIC_MEDIA;
+  if (!storage || typeof storage.put !== "function") {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_public_media_binding");
+    return { ok: false, skipped: true, reason: "missing_public_media_binding" };
+  }
+  const key = safeStr(bookingRecordInfo?.key, 240);
+  if (!key || !env?.BOOKING_KV) {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_record");
+    return { ok: false, skipped: true, reason: "missing_booking_record" };
+  }
+  const bytes = pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes || []);
+  if (!bytes.length) {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=empty_pdf_bytes");
+    return { ok: false, skipped: true, reason: "empty_pdf_bytes" };
+  }
+  try {
+    const latest = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latest || typeof latest !== "object") {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=record_not_found");
+      return { ok: false, skipped: true, reason: "record_not_found" };
+    }
+    const scope = resolveBookingTenantScopeFromRecord(latest);
+    if (!scope?.tenant_id || !scope?.company_id) {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_scope");
+      return { ok: false, skipped: true, reason: "missing_booking_scope" };
+    }
+    const bookingId = safeStr(
+      bookingRecordInfo?.booking_id ??
+        latest?.booking_id ??
+        latest?.bookingId ??
+        latest?.booking?.booking_id ??
+        latest?.booking?.bookingId,
+      160,
+    );
+    if (!bookingId) {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_id");
+      return { ok: false, skipped: true, reason: "missing_booking_id" };
+    }
+    const canonicalInvoiceNumber = safeStr(invoiceNumber || findExistingInvoiceNumber(latest), 120) || "unknown";
+    const safeInvoicePart = _safeArtifactPathSegment(canonicalInvoiceNumber, "invoice");
+    const objectKey = [
+      "private-artifacts",
+      "tenant",
+      _safeArtifactPathSegment(scope.tenant_id, "tenant"),
+      "company",
+      _safeArtifactPathSegment(scope.company_id, "company"),
+      "bookings",
+      _safeArtifactPathSegment(bookingId, "booking"),
+      "invoices",
+      `${safeInvoicePart}.pdf`,
+    ].join("/");
+    const generatedAt = new Date().toISOString();
+    const sizeBytes = bytes.length;
+    const sha256 = await _sha256HexFromBytes(bytes);
+    await storage.put(objectKey, bytes, {
+      httpMetadata: {
+        contentType: "application/pdf",
+        cacheControl: "private, no-store, max-age=0",
+      },
+      customMetadata: {
+        artifact_type: "booking_invoice_pdf",
+        tenant_id: _safeArtifactPathSegment(scope.tenant_id, "tenant"),
+        company_id: _safeArtifactPathSegment(scope.company_id, "company"),
+        booking_id: _safeArtifactPathSegment(bookingId, "booking"),
+        invoice_number: safeInvoicePart,
+      },
+    });
+    latest.invoice_pdf_key = objectKey;
+    latest.invoicePdfKey = objectKey;
+    latest.invoice_pdf_generated_at = generatedAt;
+    latest.invoicePdfGeneratedAt = generatedAt;
+    latest.invoice_pdf_content_type = "application/pdf";
+    latest.invoicePdfContentType = "application/pdf";
+    latest.invoice_pdf_size_bytes = sizeBytes;
+    latest.invoicePdfSizeBytes = sizeBytes;
+    latest.invoice_pdf_sha256 = sha256;
+    latest.invoicePdfSha256 = sha256;
+    if (latest.booking && typeof latest.booking === "object") {
+      latest.booking.invoice_pdf_key = objectKey;
+      latest.booking.invoicePdfKey = objectKey;
+      latest.booking.invoice_pdf_generated_at = generatedAt;
+      latest.booking.invoicePdfGeneratedAt = generatedAt;
+      latest.booking.invoice_pdf_content_type = "application/pdf";
+      latest.booking.invoicePdfContentType = "application/pdf";
+      latest.booking.invoice_pdf_size_bytes = sizeBytes;
+      latest.booking.invoicePdfSizeBytes = sizeBytes;
+      latest.booking.invoice_pdf_sha256 = sha256;
+      latest.booking.invoicePdfSha256 = sha256;
+    }
+    latest.updatedAt = generatedAt;
+    await env.BOOKING_KV.put(key, JSON.stringify(latest));
+    const scopeMask = _bookingIntentScopeMask(scope);
+    const artifactHashPrefix = safeStr(sha256, 16).slice(0, 12) || "-";
+    console.log(
+      `[INVOICE_ARTIFACT][PERSISTED] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} size=${sizeBytes} sha256_prefix=${artifactHashPrefix}`,
+    );
+    return {
+      ok: true,
+      key: objectKey,
+      generated_at: generatedAt,
+      content_type: "application/pdf",
+      size_bytes: sizeBytes,
+      sha256,
+    };
+  } catch (err) {
+    const reason = safeStr(err?.message || err).slice(0, 160) || "persist_failed";
+    console.log(`[INVOICE_ARTIFACT][ERROR] reason=${reason}`);
+    return { ok: false, error: reason };
+  }
+}
+
 function resolveInvoiceBookingId(bookingInput) {
   const out = [];
   const seen = new Set();
@@ -22069,6 +22355,13 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
     console.log(
       `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfGenerated=${!!(pdfBytes && pdfBytes.length)} pdfProviderConfigured=${pdfProviderConfigured}`,
     );
+    let artifactResult = { ok: false, skipped: true, reason: "pdf_missing" };
+    if (pdfBytes && pdfBytes.length) {
+      artifactResult = await persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
+        invoiceNumber,
+        pdfBytes,
+      });
+    }
 
     const emailTo = customerEmail;
     const emailResult = await sendInvoiceEmailWithPdf({
@@ -22091,6 +22384,15 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       html_preview_available: true,
       pdf_generated: !!(pdfBytes && pdfBytes.length),
       pdf_provider_configured: pdfProviderConfigured,
+      invoice_pdf_artifact: {
+        ok: !!artifactResult?.ok,
+        key: safeStr(artifactResult?.key, 1024) || null,
+        generated_at: safeStr(artifactResult?.generated_at, 80) || null,
+        content_type: safeStr(artifactResult?.content_type, 120) || null,
+        size_bytes: Number.isFinite(Number(artifactResult?.size_bytes))
+          ? Math.trunc(Number(artifactResult?.size_bytes))
+          : null,
+      },
     };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
