@@ -20067,24 +20067,50 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       ? (safeStr(existingSentAt, 80) || new Date().toISOString())
       : new Date().toISOString();
     const documentType = safeStr(invoiceResult?.documentType || "receipt");
+    const customerEmailSent = !needsArtifactBackfillWithoutResend && customerSend?.sent === true;
+    const latestAfterInvoice = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latestAfterInvoice || typeof latestAfterInvoice !== "object") {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: "metadata_not_readable_after_write",
+        email_sent: customerEmailSent,
+      };
+    }
+
+    // Keep invoice artifact metadata from the latest stored record authoritative.
+    const merged = latestAfterInvoice;
     if (!needsArtifactBackfillWithoutResend) {
-      rec.receipt_email_sent_at = sentAt;
-      rec.receipt_email_sent_to = customerEmail;
-      rec.receipt_email_sent_source = source;
-      rec.receipt_email_document_type = documentType;
-      rec.receipt_email_send_context = "manual_flutter_receipt_button";
-    }
-    rec.updatedAt = sentAt;
-    if (rec.booking && typeof rec.booking === "object") {
-      if (!needsArtifactBackfillWithoutResend) {
-        rec.booking.receipt_email_sent_at = sentAt;
-        rec.booking.receipt_email_sent_to = customerEmail;
-        rec.booking.receipt_email_sent_source = source;
-        rec.booking.receipt_email_document_type = documentType;
-        rec.booking.receipt_email_send_context = "manual_flutter_receipt_button";
+      merged.receipt_email_sent_at = sentAt;
+      merged.receipt_email_sent_to = customerEmail;
+      merged.receipt_email_sent_source = source;
+      merged.receipt_email_document_type = documentType;
+      merged.receipt_email_send_context = "manual_flutter_receipt_button";
+      merged.updatedAt = sentAt;
+      if (merged.booking && typeof merged.booking === "object") {
+        merged.booking.receipt_email_sent_at = sentAt;
+        merged.booking.receipt_email_sent_to = customerEmail;
+        merged.booking.receipt_email_sent_source = source;
+        merged.booking.receipt_email_document_type = documentType;
+        merged.booking.receipt_email_send_context = "manual_flutter_receipt_button";
       }
+      await env.BOOKING_KV.put(key, JSON.stringify(merged));
     }
-    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+    const latestReadable = needsArtifactBackfillWithoutResend
+      ? merged
+      : await env.BOOKING_KV.get(key, { type: "json" });
+    const readableArtifact = _invoicePdfMetadataFromRecord(latestReadable);
+    if (!readableArtifact.exists || !safeStr(readableArtifact.key, 1024)) {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: "metadata_not_readable_after_write",
+        email_sent: customerEmailSent,
+      };
+    }
 
     console.log(
       `[EMAIL][RECEIPT_CUSTOMER_MANUAL][OK] bookingId=${safeStr(bookingId)} recipient=${maskEmailForLog(customerEmail)} sentAt=${sentAt} source=${safeStr(source)}`,
