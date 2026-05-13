@@ -8308,481 +8308,615 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
             child: ValueListenableBuilder<CompanyProfile?>(
               valueListenable: companyProfileNotifier,
-              builder: (context, profile, _) => ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                children: [
-                  ValueListenableBuilder<ActiveCompanySession?>(
-                    valueListenable: activeCompanySessionNotifier,
-                    builder: (context, _, __) => _topBar(context, profile),
+              builder: (context, profile, _) {
+                double clampDouble(double v, double min, double max) =>
+                    v < min ? min : (v > max ? max : v);
+                final size = MediaQuery.sizeOf(context);
+                final W = size.width;
+                final H = size.height;
+                final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                final isTabletPortrait =
+                    (screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop) &&
+                    W < H &&
+                    H >= 900;
+                final businessHeaderHeight = isTabletPortrait
+                    ? clampDouble(H * 0.23, 300.0, 360.0)
+                    : null;
+                final businessQuickActionCardHeight = isTabletPortrait
+                    ? clampDouble(H * 0.092, 118.0, 132.0)
+                    : 132.0;
+                final businessQuickActionSpacing = isTabletPortrait
+                    ? 14.0
+                    : 12.0;
+                final businessBackButtonGap = isTabletPortrait ? 10.0 : 14.0;
+                final businessListBottomPadding = isTabletPortrait
+                    ? 12.0
+                    : 20.0;
+
+                return ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    12,
+                    16,
+                    businessListBottomPadding,
                   ),
-                  const SizedBox(height: 12),
-                  _panel(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _t(
-                            nl: 'Goedemorgen! 👋',
-                            en: 'Good morning! 👋',
-                            fr: 'Bonjour ! 👋',
-                            es: '¡Buenos días! 👋',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 19,
+                  children: [
+                    if (isTabletPortrait)
+                      Container(
+                        height: businessHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: kFluxidiYellow.withOpacity(0.22),
                           ),
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _t(
-                            nl: 'Bedrijfsoverzicht',
-                            en: 'Business overview',
-                            fr: 'Aperçu de l’entreprise',
-                            es: 'Resumen de empresa',
-                          ),
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.74),
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _primaryCta(context),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final stacked = constraints.maxWidth < 430;
-                      if (stacked) {
-                        return Column(
+                        child: Stack(
+                          fit: StackFit.expand,
                           children: [
-                            _metricCard(
-                              icon: Icons.calendar_month_outlined,
-                              title: _t(
-                                nl: 'Open boekingen',
-                                en: 'Open bookings',
-                                fr: 'Réservations ouvertes',
-                                es: 'Reservas abiertas',
+                            Image.asset(
+                              'assets/fluxidi/zakelijke_tablet_header_foto.png',
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Gepland',
-                                en: 'Planned',
-                                fr: 'Planifiées',
-                                es: 'Planificadas',
-                              ),
-                              value: _metricCountText(_openBookingsCount),
-                              accentColor: const Color(0xFF60A5FA),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.directions_car_outlined,
-                              title: _t(
-                                nl: 'Voltooide ritten',
-                                en: 'Completed rides',
-                                fr: 'Courses terminées',
-                                es: 'Viajes completados',
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.12),
+                                      Colors.black.withOpacity(0.22),
+                                      Colors.black.withOpacity(0.58),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Afgerond',
-                                en: 'Completed',
-                                fr: 'Terminées',
-                                es: 'Completados',
-                              ),
-                              value: _metricCountText(_completedRidesCount),
-                              accentColor: const Color(0xFF4ADE80),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.payments_outlined,
-                              title: _t(
-                                nl: 'Nog te betalen',
-                                en: 'To be paid',
-                                fr: 'À payer',
-                                es: 'Por pagar',
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  12,
+                                  12,
+                                  14,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ValueListenableBuilder<
+                                      ActiveCompanySession?
+                                    >(
+                                      valueListenable:
+                                          activeCompanySessionNotifier,
+                                      builder: (context, _, __) =>
+                                          _topBar(context, profile),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      _t(
+                                        nl: 'Goedemorgen! 👋',
+                                        en: 'Good morning! 👋',
+                                        fr: 'Bonjour ! 👋',
+                                        es: '¡Buenos días! 👋',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 19,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      _t(
+                                        nl: 'Bedrijfsoverzicht',
+                                        en: 'Business overview',
+                                        fr: 'Aperçu de l’entreprise',
+                                        es: 'Resumen de empresa',
+                                      ),
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.78),
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Afgerond maar onbetaald',
-                                en: 'Completed but unpaid',
-                                fr: 'Terminées mais impayées',
-                                es: 'Completados sin pagar',
-                              ),
-                              value: _metricCountText(
-                                _unpaidCompletedRidesCount,
-                              ),
-                              accentColor: const Color(0xFFF97373),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.euro_rounded,
-                              title: _t(
-                                nl: 'Maandomzet',
-                                en: 'Monthly income',
-                                fr: 'Revenus mensuels',
-                                es: 'Ingresos mensuales',
+                          ],
+                        ),
+                      )
+                    else ...[
+                      ValueListenableBuilder<ActiveCompanySession?>(
+                        valueListenable: activeCompanySessionNotifier,
+                        builder: (context, _, __) => _topBar(context, profile),
+                      ),
+                      const SizedBox(height: 12),
+                      _panel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Goedemorgen! 👋',
+                                en: 'Good morning! 👋',
+                                fr: 'Bonjour ! 👋',
+                                es: '¡Buenos días! 👋',
                               ),
-                              subtitle: _t(
-                                nl: 'Betaald',
-                                en: 'Paid',
-                                fr: 'Payées',
-                                es: 'Pagado',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 19,
                               ),
-                              value: _metricIncomeText(),
-                              accentColor: const Color(0xFFE5B641),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _t(
+                                nl: 'Bedrijfsoverzicht',
+                                en: 'Business overview',
+                                fr: 'Aperçu de l’entreprise',
+                                es: 'Resumen de empresa',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.74),
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    _primaryCta(context),
+                    const SizedBox(height: 10),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final stacked = constraints.maxWidth < 430;
+                        if (stacked) {
+                          return Column(
+                            children: [
+                              _metricCard(
+                                icon: Icons.calendar_month_outlined,
+                                title: _t(
+                                  nl: 'Open boekingen',
+                                  en: 'Open bookings',
+                                  fr: 'Réservations ouvertes',
+                                  es: 'Reservas abiertas',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Gepland',
+                                  en: 'Planned',
+                                  fr: 'Planifiées',
+                                  es: 'Planificadas',
+                                ),
+                                value: _metricCountText(_openBookingsCount),
+                                accentColor: const Color(0xFF60A5FA),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.directions_car_outlined,
+                                title: _t(
+                                  nl: 'Voltooide ritten',
+                                  en: 'Completed rides',
+                                  fr: 'Courses terminées',
+                                  es: 'Viajes completados',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond',
+                                  en: 'Completed',
+                                  fr: 'Terminées',
+                                  es: 'Completados',
+                                ),
+                                value: _metricCountText(_completedRidesCount),
+                                accentColor: const Color(0xFF4ADE80),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.payments_outlined,
+                                title: _t(
+                                  nl: 'Nog te betalen',
+                                  en: 'To be paid',
+                                  fr: 'À payer',
+                                  es: 'Por pagar',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond maar onbetaald',
+                                  en: 'Completed but unpaid',
+                                  fr: 'Terminées mais impayées',
+                                  es: 'Completados sin pagar',
+                                ),
+                                value: _metricCountText(
+                                  _unpaidCompletedRidesCount,
+                                ),
+                                accentColor: const Color(0xFFF97373),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.euro_rounded,
+                                title: _t(
+                                  nl: 'Maandomzet',
+                                  en: 'Monthly income',
+                                  fr: 'Revenus mensuels',
+                                  es: 'Ingresos mensuales',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Betaald',
+                                  en: 'Paid',
+                                  fr: 'Payées',
+                                  es: 'Pagado',
+                                ),
+                                value: _metricIncomeText(),
+                                accentColor: const Color(0xFFE5B641),
+                              ),
+                            ],
+                          );
+                        }
+                        final columns = constraints.maxWidth < 760 ? 2 : 4;
+                        final spacing = 8.0;
+                        final cardWidth =
+                            (constraints.maxWidth - ((columns - 1) * spacing)) /
+                            columns;
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: spacing,
+                          children: [
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.calendar_month_outlined,
+                                title: _t(
+                                  nl: 'Open boekingen',
+                                  en: 'Open bookings',
+                                  fr: 'Réservations ouvertes',
+                                  es: 'Reservas abiertas',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Gepland',
+                                  en: 'Planned',
+                                  fr: 'Planifiées',
+                                  es: 'Planificadas',
+                                ),
+                                value: _metricCountText(_openBookingsCount),
+                                accentColor: const Color(0xFF60A5FA),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.directions_car_outlined,
+                                title: _t(
+                                  nl: 'Voltooide ritten',
+                                  en: 'Completed rides',
+                                  fr: 'Courses terminées',
+                                  es: 'Viajes completados',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond',
+                                  en: 'Completed',
+                                  fr: 'Terminées',
+                                  es: 'Completados',
+                                ),
+                                value: _metricCountText(_completedRidesCount),
+                                accentColor: const Color(0xFF4ADE80),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.payments_outlined,
+                                title: _t(
+                                  nl: 'Nog te betalen',
+                                  en: 'To be paid',
+                                  fr: 'À payer',
+                                  es: 'Por pagar',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond maar onbetaald',
+                                  en: 'Completed but unpaid',
+                                  fr: 'Terminées mais impayées',
+                                  es: 'Completados sin pagar',
+                                ),
+                                value: _metricCountText(
+                                  _unpaidCompletedRidesCount,
+                                ),
+                                accentColor: const Color(0xFFF97373),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.euro_rounded,
+                                title: _t(
+                                  nl: 'Maandomzet',
+                                  en: 'Monthly income',
+                                  fr: 'Revenus mensuels',
+                                  es: 'Ingresos mensuales',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Betaald',
+                                  en: 'Paid',
+                                  fr: 'Payées',
+                                  es: 'Pagado',
+                                ),
+                                value: _metricIncomeText(),
+                                accentColor: const Color(0xFFE5B641),
+                              ),
                             ),
                           ],
                         );
-                      }
-                      final columns = constraints.maxWidth < 760 ? 2 : 4;
-                      final spacing = 8.0;
-                      final cardWidth =
-                          (constraints.maxWidth - ((columns - 1) * spacing)) /
-                          columns;
-                      return Wrap(
-                        spacing: spacing,
-                        runSpacing: spacing,
-                        children: [
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.calendar_month_outlined,
-                              title: _t(
-                                nl: 'Open boekingen',
-                                en: 'Open bookings',
-                                fr: 'Réservations ouvertes',
-                                es: 'Reservas abiertas',
-                              ),
-                              subtitle: _t(
-                                nl: 'Gepland',
-                                en: 'Planned',
-                                fr: 'Planifiées',
-                                es: 'Planificadas',
-                              ),
-                              value: _metricCountText(_openBookingsCount),
-                              accentColor: const Color(0xFF60A5FA),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.directions_car_outlined,
-                              title: _t(
-                                nl: 'Voltooide ritten',
-                                en: 'Completed rides',
-                                fr: 'Courses terminées',
-                                es: 'Viajes completados',
-                              ),
-                              subtitle: _t(
-                                nl: 'Afgerond',
-                                en: 'Completed',
-                                fr: 'Terminées',
-                                es: 'Completados',
-                              ),
-                              value: _metricCountText(_completedRidesCount),
-                              accentColor: const Color(0xFF4ADE80),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.payments_outlined,
-                              title: _t(
-                                nl: 'Nog te betalen',
-                                en: 'To be paid',
-                                fr: 'À payer',
-                                es: 'Por pagar',
-                              ),
-                              subtitle: _t(
-                                nl: 'Afgerond maar onbetaald',
-                                en: 'Completed but unpaid',
-                                fr: 'Terminées mais impayées',
-                                es: 'Completados sin pagar',
-                              ),
-                              value: _metricCountText(
-                                _unpaidCompletedRidesCount,
-                              ),
-                              accentColor: const Color(0xFFF97373),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.euro_rounded,
-                              title: _t(
-                                nl: 'Maandomzet',
-                                en: 'Monthly income',
-                                fr: 'Revenus mensuels',
-                                es: 'Ingresos mensuales',
-                              ),
-                              subtitle: _t(
-                                nl: 'Betaald',
-                                en: 'Paid',
-                                fr: 'Payées',
-                                es: 'Pagado',
-                              ),
-                              value: _metricIncomeText(),
-                              accentColor: const Color(0xFFE5B641),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    _t(
-                      nl: 'Snelle acties',
-                      en: 'Quick actions',
-                      fr: 'Actions rapides',
-                      es: 'Acciones rápidas',
+                      },
                     ),
-                    style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.95),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(height: 14),
+                    Text(
+                      _t(
+                        nl: 'Snelle acties',
+                        en: 'Quick actions',
+                        fr: 'Actions rapides',
+                        es: 'Acciones rápidas',
+                      ),
+                      style: TextStyle(
+                        color: kFluxidiYellow.withOpacity(0.95),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final cardWidth = (constraints.maxWidth - 12) / 2;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.business_center_outlined,
-                              title: _t(
-                                nl: 'Instellingen',
-                                en: 'Settings',
-                                fr: 'Réglages',
-                                es: 'Ajustes',
-                              ),
-                              subtitle: _t(
-                                nl: 'Profiel & branding',
-                                en: 'Profile & branding',
-                                fr: 'Profil & branding',
-                                es: 'Perfil y marca',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const BusinessSettingsPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.credit_card_outlined,
-                              title: _t(
-                                nl: 'Abonnement',
-                                en: 'Plan',
-                                fr: 'Abonnement',
-                                es: 'Plan',
-                              ),
-                              subtitle: _t(
-                                nl: 'Facturatie',
-                                en: 'Billing',
-                                fr: 'Facturation',
-                                es: 'Facturación',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const CompanySubscriptionBillingPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.directions_car_filled_outlined,
-                              title: _t(
-                                nl: 'Voertuigen',
-                                en: 'Vehicles',
-                                fr: 'Véhicules',
-                                es: 'Vehículos',
-                              ),
-                              subtitle: _t(
-                                nl: 'Wagenpark',
-                                en: 'Fleet',
-                                fr: 'Flotte',
-                                es: 'Flota',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const VehicleManagementPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.fact_check_outlined,
-                              title: _t(
-                                nl: 'Chiron',
-                                en: 'Chiron',
-                                fr: 'Chiron',
-                                es: 'Chiron',
-                              ),
-                              subtitle: 'Compliance',
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const ChironComplianceDashboardPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.local_taxi_outlined,
-                              title: _t(
-                                nl: 'Chauffeurs',
-                                en: 'Drivers',
-                                fr: 'Chauffeurs',
-                                es: 'Conductores',
-                              ),
-                              subtitle: _t(
-                                nl: 'Team',
-                                en: 'Team',
-                                fr: 'Équipe',
-                                es: 'Equipo',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const CompanyDriverManagementPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.speed_rounded,
-                              title: _t(
-                                nl: 'Chauffeur weergave',
-                                en: 'Driver view',
-                                fr: 'Vue chauffeur',
-                                es: 'Vista de conductor',
-                              ),
-                              subtitle: _t(
-                                nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
-                                en: 'Open the existing driver cockpit without signing out.',
-                                fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
-                                es: 'Abre la cabina de conductor existente sin cerrar sesión.',
-                              ),
-                              onTap: () => _openDriverCockpitView(context),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.radar_rounded,
-                              title: _t(
-                                nl: 'Vraagradar',
-                                en: 'Demand radar',
-                                fr: 'Radar demande',
-                                es: 'Radar demanda',
-                              ),
-                              subtitle: _t(
-                                nl: 'Klantvraag',
-                                en: 'Customer demand',
-                                fr: 'Demande clients',
-                                es: 'Demanda clientes',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const BusinessRegionalDemandPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.qr_code_2_outlined,
-                              title: _t(
-                                nl: 'Deel boekingslink',
-                                en: 'Share booking link',
-                                fr: 'Partager le lien de réservation',
-                                es: 'Compartir enlace de reserva',
-                              ),
-                              subtitle: _t(
-                                nl: 'Link + QR',
-                                en: 'Link + QR',
-                                fr: 'Lien + QR',
-                                es: 'Enlace + QR',
-                              ),
-                              onTap: () =>
-                                  _showPublicBookingShareQuickAccess(context),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.auto_awesome_outlined,
-                              title: _t(
-                                nl: 'AI Dispatch',
-                                en: 'AI Dispatch',
-                                fr: 'Dispatch IA',
-                                es: 'Despacho IA',
-                              ),
-                              subtitle: _t(
-                                nl: 'Binnenkort',
-                                en: 'Coming soon',
-                                fr: 'Bientôt',
-                                es: 'Próximamente',
-                              ),
-                              isFuture: true,
-                              futureBadge: _t(
-                                nl: 'Binnenkort',
-                                en: 'Soon',
-                                fr: 'Bientôt',
-                                es: 'Pronto',
+                    const SizedBox(height: 10),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cardWidth =
+                            (constraints.maxWidth -
+                                businessQuickActionSpacing) /
+                            2;
+                        return Wrap(
+                          spacing: businessQuickActionSpacing,
+                          runSpacing: businessQuickActionSpacing,
+                          children: [
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.business_center_outlined,
+                                title: _t(
+                                  nl: 'Instellingen',
+                                  en: 'Settings',
+                                  fr: 'Réglages',
+                                  es: 'Ajustes',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Profiel & branding',
+                                  en: 'Profile & branding',
+                                  fr: 'Profil & branding',
+                                  es: 'Perfil y marca',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const BusinessSettingsPage(),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  const FluxidiBackToStartButton(),
-                ],
-              ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.credit_card_outlined,
+                                title: _t(
+                                  nl: 'Abonnement',
+                                  en: 'Plan',
+                                  fr: 'Abonnement',
+                                  es: 'Plan',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Facturatie',
+                                  en: 'Billing',
+                                  fr: 'Facturation',
+                                  es: 'Facturación',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const CompanySubscriptionBillingPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.directions_car_filled_outlined,
+                                title: _t(
+                                  nl: 'Voertuigen',
+                                  en: 'Vehicles',
+                                  fr: 'Véhicules',
+                                  es: 'Vehículos',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Wagenpark',
+                                  en: 'Fleet',
+                                  fr: 'Flotte',
+                                  es: 'Flota',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const VehicleManagementPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.fact_check_outlined,
+                                title: _t(
+                                  nl: 'Chiron',
+                                  en: 'Chiron',
+                                  fr: 'Chiron',
+                                  es: 'Chiron',
+                                ),
+                                subtitle: 'Compliance',
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const ChironComplianceDashboardPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.local_taxi_outlined,
+                                title: _t(
+                                  nl: 'Chauffeurs',
+                                  en: 'Drivers',
+                                  fr: 'Chauffeurs',
+                                  es: 'Conductores',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Team',
+                                  en: 'Team',
+                                  fr: 'Équipe',
+                                  es: 'Equipo',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const CompanyDriverManagementPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.speed_rounded,
+                                title: _t(
+                                  nl: 'Chauffeur weergave',
+                                  en: 'Driver view',
+                                  fr: 'Vue chauffeur',
+                                  es: 'Vista de conductor',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
+                                  en: 'Open the existing driver cockpit without signing out.',
+                                  fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
+                                  es: 'Abre la cabina de conductor existente sin cerrar sesión.',
+                                ),
+                                onTap: () => _openDriverCockpitView(context),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.radar_rounded,
+                                title: _t(
+                                  nl: 'Vraagradar',
+                                  en: 'Demand radar',
+                                  fr: 'Radar demande',
+                                  es: 'Radar demanda',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Klantvraag',
+                                  en: 'Customer demand',
+                                  fr: 'Demande clients',
+                                  es: 'Demanda clientes',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const BusinessRegionalDemandPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.qr_code_2_outlined,
+                                title: _t(
+                                  nl: 'Deel boekingslink',
+                                  en: 'Share booking link',
+                                  fr: 'Partager le lien de réservation',
+                                  es: 'Compartir enlace de reserva',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Link + QR',
+                                  en: 'Link + QR',
+                                  fr: 'Lien + QR',
+                                  es: 'Enlace + QR',
+                                ),
+                                onTap: () =>
+                                    _showPublicBookingShareQuickAccess(context),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.auto_awesome_outlined,
+                                title: _t(
+                                  nl: 'AI Dispatch',
+                                  en: 'AI Dispatch',
+                                  fr: 'Dispatch IA',
+                                  es: 'Despacho IA',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Binnenkort',
+                                  en: 'Coming soon',
+                                  fr: 'Bientôt',
+                                  es: 'Próximamente',
+                                ),
+                                isFuture: true,
+                                futureBadge: _t(
+                                  nl: 'Binnenkort',
+                                  en: 'Soon',
+                                  fr: 'Bientôt',
+                                  es: 'Pronto',
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    SizedBox(height: businessBackButtonGap),
+                    const FluxidiBackToStartButton(),
+                  ],
+                );
+              },
             ),
           ),
         ),
