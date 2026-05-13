@@ -33063,7 +33063,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildDriverQuickActionsGrid() {
+  Widget _buildDriverQuickActionsGrid({
+    bool isTabletPortrait = false,
+    double? tabletPortraitCardMinHeight,
+    bool useImageBackgrounds = false,
+    double? tabletPortraitSpacing,
+  }) {
     const quickActionIconContainerSize = 56.0;
     const quickActionIconGlyphSize = 31.0;
     Widget quickAction({
@@ -33072,15 +33077,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       String subtitle = '',
       required VoidCallback onTap,
       bool active = false,
+      String? backgroundAsset,
     }) {
+      final hasImageBackground =
+          useImageBackgrounds && (backgroundAsset ?? '').trim().isNotEmpty;
       return InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 68),
-          padding: const EdgeInsets.all(10),
+          constraints: BoxConstraints(
+            minHeight: isTabletPortrait
+                ? (tabletPortraitCardMinHeight ?? 120.0)
+                : 68.0,
+          ),
           decoration: BoxDecoration(
-            color: const Color(0xFF111111).withOpacity(0.96),
+            color: hasImageBackground
+                ? const Color(0xFF0A0A0A).withOpacity(0.88)
+                : const Color(0xFF111111).withOpacity(0.96),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: active
@@ -33088,57 +33101,93 @@ class _DriverHomePageState extends State<DriverHomePage>
                   : Colors.white.withOpacity(0.12),
             ),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          child: Stack(
             children: [
-              Container(
-                width: quickActionIconContainerSize,
-                height: quickActionIconContainerSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: active
-                      ? const Color(0xFF21180A)
-                      : const Color(0xFF17130B),
-                  border: Border.all(
-                    color: active
-                        ? const Color(0x88FFD36A)
-                        : const Color(0x55FFD36A),
+              if (hasImageBackground)
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.asset(
+                      backgroundAsset!,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.centerRight,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
                   ),
                 ),
-                child: Icon(
-                  icon,
-                  color: const Color(0xFFFFD36A),
-                  size: quickActionIconGlyphSize,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 10.4,
+              if (hasImageBackground)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.16),
+                          Colors.black.withOpacity(0.26),
+                          Colors.black.withOpacity(0.56),
+                        ],
                       ),
                     ),
-                    if (subtitle.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.67),
-                          fontSize: 11.5,
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: quickActionIconContainerSize,
+                      height: quickActionIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: active
+                            ? const Color(0xFF21180A)
+                            : const Color(0xFF17130B),
+                        border: Border.all(
+                          color: active
+                              ? const Color(0x88FFD36A)
+                              : const Color(0x55FFD36A),
                         ),
                       ),
-                    ],
+                      child: Icon(
+                        icon,
+                        color: const Color(0xFFFFD36A),
+                        size: quickActionIconGlyphSize,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 10.4,
+                            ),
+                          ),
+                          if (subtitle.trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.67),
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -33150,10 +33199,15 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     return LayoutBuilder(
       builder: (context, c) {
-        final gap = 8.0;
-        const minTileWidth = 162.0;
-        int columns = (c.maxWidth / minTileWidth).floor();
-        columns = columns.clamp(2, 4);
+        final gap = isTabletPortrait ? (tabletPortraitSpacing ?? 11.0) : 8.0;
+        int columns;
+        if (isTabletPortrait) {
+          columns = 2;
+        } else {
+          const minTileWidth = 162.0;
+          columns = (c.maxWidth / minTileWidth).floor();
+          columns = columns.clamp(2, 4);
+        }
         final width = (c.maxWidth - (gap * (columns - 1))) / columns;
         return Wrap(
           spacing: gap,
@@ -33170,6 +33224,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Viaje directo',
                 ),
                 onTap: _openDirectRideEntry,
+                backgroundAsset: 'assets/fluxidi/driver_action_street_ride.png',
               ),
             ),
             SizedBox(
@@ -33183,6 +33238,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Calcular tarifa',
                 ),
                 onTap: _openCalculatorFromDashboard,
+                backgroundAsset:
+                    'assets/fluxidi/driver_action_fare_calculator.png',
               ),
             ),
             SizedBox(
@@ -33196,6 +33253,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Mis viajes',
                 ),
                 onTap: _openBookingsHubFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_my_rides.png',
               ),
             ),
             SizedBox(
@@ -33209,6 +33267,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Historial',
                 ),
                 onTap: _openTripHistoryFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_history.png',
               ),
             ),
             SizedBox(
@@ -33222,6 +33281,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Recibos',
                 ),
                 onTap: _openTripHistoryFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_receipts.png',
               ),
             ),
             SizedBox(
@@ -33241,6 +33301,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   );
                 },
+                backgroundAsset: 'assets/fluxidi/driver_action_documents.png',
               ),
             ),
           ],
@@ -33256,6 +33317,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     final statusKind = _dashboardDriverStatus();
     final statusLabel = _dashboardStatusLabel();
     final statusReady = statusKind == _DriverDashboardStatus.ready;
+    double clampDouble(double v, double min, double max) =>
+        v < min ? min : (v > max ? max : v);
+    final size = MediaQuery.sizeOf(context);
+    final W = size.width;
+    final H = size.height;
+    final screenClass = FluxidiBreakpoints.classifyWidth(W);
+    final isTabletPortrait =
+        (screenClass == FluxidiScreenClass.tablet ||
+            screenClass == FluxidiScreenClass.desktop) &&
+        W < H &&
+        H >= 900;
+    final driverHeaderHeight = isTabletPortrait
+        ? clampDouble(H * 0.24, 300.0, 360.0)
+        : 0.0;
+    final driverQuickActionCardMinHeight = isTabletPortrait
+        ? clampDouble(H * 0.12, 110.0, 140.0)
+        : 68.0;
+    final driverQuickActionGap = isTabletPortrait ? 11.0 : 8.0;
     Widget sectionTitle(String text) {
       return Text(
         text,
@@ -33302,6 +33381,98 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
 
+    Widget driverIdentityBlock() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _tr(
+              nl: 'Chauffeur',
+              en: 'Driver',
+              fr: 'Chauffeur',
+              es: 'Conductor',
+            ),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 13.2,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.30,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  driverName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _handleDriverStatusAction,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101113),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: statusReady
+                          ? const Color(0x664CD964)
+                          : const Color(0x66FFD36A),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: statusReady
+                              ? const Color(0xFF2ECC71)
+                              : const Color(0xFFFFD36A),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        statusLabel,
+                        style: TextStyle(
+                          color: statusReady
+                              ? const Color(0xFFBCF6D0)
+                              : const Color(0xFFFFE4A8),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 16,
+                        color: Colors.white54,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
     return ColoredBox(
       color: const Color(0xFF050505),
       child: SafeArea(
@@ -33314,92 +33485,75 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildDriverDashboardHeader(),
-                    const SizedBox(height: 1),
-                    Text(
-                      _tr(
-                        nl: 'Chauffeur',
-                        en: 'Driver',
-                        fr: 'Chauffeur',
-                        es: 'Conductor',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.30,
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            driverName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.2,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
+                    if (isTabletPortrait)
+                      Container(
+                        height: driverHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0x55FFD36A)),
                         ),
-                        const SizedBox(width: 8),
-                        InkWell(
-                          onTap: _handleDriverStatusAction,
-                          borderRadius: BorderRadius.circular(999),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF101113),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: statusReady
-                                    ? const Color(0x664CD964)
-                                    : const Color(0x66FFD36A),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/fluxidi/driver_header_portrait_tablet.png',
+                              fit: BoxFit.cover,
+                              alignment: Alignment.centerRight,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 7,
-                                  height: 7,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: statusReady
-                                        ? const Color(0xFF2ECC71)
-                                        : const Color(0xFFFFD36A),
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.16),
+                                      Colors.black.withOpacity(0.26),
+                                      Colors.black.withOpacity(0.56),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  statusLabel,
-                                  style: TextStyle(
-                                    color: statusReady
-                                        ? const Color(0xFFBCF6D0)
-                                        : const Color(0xFFFFE4A8),
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                                const SizedBox(width: 2),
-                                const Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  size: 16,
-                                  color: Colors.white54,
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  8,
+                                  10,
+                                  10,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildDriverDashboardHeader(),
+                                    const Spacer(),
+                                    driverIdentityBlock(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      )
+                    else ...[
+                      _buildDriverDashboardHeader(),
+                      const SizedBox(height: 1),
+                      driverIdentityBlock(),
+                    ],
                     const SizedBox(height: 6),
                     _buildDriverSummaryCards(nextRide: nextRide),
                     const SizedBox(height: 10),
@@ -33414,7 +33568,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _buildDriverQuickActionsGrid(),
+                    _buildDriverQuickActionsGrid(
+                      isTabletPortrait: isTabletPortrait,
+                      tabletPortraitCardMinHeight:
+                          driverQuickActionCardMinHeight,
+                      useImageBackgrounds: isTabletPortrait,
+                      tabletPortraitSpacing: driverQuickActionGap,
+                    ),
                   ],
                 ),
               ),
