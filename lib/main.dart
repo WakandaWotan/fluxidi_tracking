@@ -13405,7 +13405,7 @@ class CustomerHomePage extends StatelessWidget {
     }
   }
 
-  Widget _customerHomeHero(BuildContext context) {
+  Widget _customerHomeHero(BuildContext context, {required String heroAsset}) {
     final customerName = _customerDisplayName();
     return Container(
       height: 312,
@@ -13421,7 +13421,7 @@ class CustomerHomePage extends StatelessWidget {
             scale: 1.12,
             alignment: const Alignment(0.55, 0.10),
             child: Image.asset(
-              'assets/fluxidi/fluxidi_customer_home_hero.png',
+              heroAsset,
               fit: BoxFit.cover,
               alignment: const Alignment(0.55, 0.10),
               errorBuilder: (_, __, ___) => Image.asset(
@@ -13839,7 +13839,7 @@ class CustomerHomePage extends StatelessWidget {
     ];
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0E1524),
+        color: const Color(0xFF050505),
         border: Border(
           top: BorderSide(color: kFluxidiYellow.withOpacity(0.2), width: 0.8),
         ),
@@ -13918,59 +13918,83 @@ class CustomerHomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        bottomNavigationBar: _customerBottomNav(context),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Column(
-              children: [
-                _customerHomeHero(context),
-                const SizedBox(height: 14),
-                _customerQuickActionGrid(context),
-                const SizedBox(height: 12),
-                _customerWideCard(
-                  context: context,
-                  icon: Icons.celebration_outlined,
-                  title: _t(
-                    nl: 'Evenementen',
-                    en: 'Events',
-                    fr: 'Événements',
-                    es: 'Eventos',
+      builder: (context, _, __) {
+        double clampDouble(double v, double min, double max) =>
+            v < min ? min : (v > max ? max : v);
+        final media = MediaQuery.of(context);
+        final W = media.size.width;
+        final H = media.size.height;
+        final screenClass = FluxidiBreakpoints.classifyWidth(W);
+        final isTabletLandscape =
+            (screenClass == FluxidiScreenClass.tablet ||
+                screenClass == FluxidiScreenClass.desktop) &&
+            W > H &&
+            H >= 700;
+        final heroAsset = isTabletLandscape
+            ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_customer_home_hero.png';
+        final eventsAsset = isTabletLandscape
+            ? 'assets/fluxidi/evenementen_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_event_crowd_night.jpg';
+        final businessAsset = isTabletLandscape
+            ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_business_briefcase_night.jpg';
+        final customerWideCardHeight = isTabletLandscape
+            ? clampDouble(H * 0.24, 200.0, 230.0)
+            : 130.0;
+        return Scaffold(
+          backgroundColor: const Color(0xFF050505),
+          bottomNavigationBar: _customerBottomNav(context),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                children: [
+                  _customerHomeHero(context, heroAsset: heroAsset),
+                  const SizedBox(height: 14),
+                  _customerQuickActionGrid(context),
+                  const SizedBox(height: 12),
+                  _customerWideCard(
+                    context: context,
+                    icon: Icons.celebration_outlined,
+                    title: _t(
+                      nl: 'Evenementen',
+                      en: 'Events',
+                      fr: 'Événements',
+                      es: 'Eventos',
+                    ),
+                    subtitle: '',
+                    visualAsset: eventsAsset,
+                    visualHeight: customerWideCardHeight,
+                    visualAlignment: Alignment.centerRight,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const EventsPage()),
+                    ),
                   ),
-                  subtitle: '',
-                  visualAsset: 'assets/fluxidi/fluxidi_event_crowd_night.jpg',
-                  visualHeight: 130,
-                  visualAlignment: Alignment.centerRight,
-                  onTap: () => Navigator.of(
-                    context,
-                  ).push(MaterialPageRoute(builder: (_) => const EventsPage())),
-                ),
-                const SizedBox(height: 10),
-                _customerWideCard(
-                  context: context,
-                  icon: Icons.business_center_outlined,
-                  title: _t(
-                    nl: 'Zakelijk',
-                    en: 'Business',
-                    fr: 'Pro',
-                    es: 'Empresas',
+                  const SizedBox(height: 10),
+                  _customerWideCard(
+                    context: context,
+                    icon: Icons.business_center_outlined,
+                    title: _t(
+                      nl: 'Zakelijk',
+                      en: 'Business',
+                      fr: 'Pro',
+                      es: 'Empresas',
+                    ),
+                    subtitle: '',
+                    visualAsset: businessAsset,
+                    visualHeight: customerWideCardHeight,
+                    visualAlignment: const Alignment(0.65, 0.0),
+                    onTap: () => _comingSoon(context),
                   ),
-                  subtitle: '',
-                  visualAsset:
-                      'assets/fluxidi/fluxidi_business_briefcase_night.jpg',
-                  visualHeight: 130,
-                  visualAlignment: const Alignment(0.65, 0.0),
-                  onTap: () => _comingSoon(context),
-                ),
-                const SizedBox(height: 12),
-                const FluxidiBackToStartButton(),
-              ],
+                  const SizedBox(height: 12),
+                  const FluxidiBackToStartButton(),
+                ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
