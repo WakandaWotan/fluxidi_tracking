@@ -12703,7 +12703,16 @@ GET /oauth/callback
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
-          const { rec } = await loadBookingRecord(env, bookingId);
+          let rec = null;
+          try {
+            const loaded = await loadBookingRecord(env, bookingId);
+            rec = loaded?.rec || null;
+          } catch (loadErr) {
+            if (String(loadErr?.message || "") === "Booking not found") {
+              return json({ ok: false, error: "booking_not_found" }, 404);
+            }
+            throw loadErr;
+          }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const adminAuthorized = hasValidAdminToken(request, url, env);
           if (!adminAuthorized) {
@@ -15830,6 +15839,199 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         env,
         request
       );
+      const pendingPaymentStatus = safeStr(
+        pay?.payment_status ||
+          pay?.paymentStatus ||
+          pay?.status,
+      ).toLowerCase() || "pending";
+      const nowIso = new Date().toISOString();
+      const provisionalRecord = {
+        stage: "PENDING",
+        status: "PENDING",
+        lifecycle_status: "pending",
+        lifecycleStatus: "pending",
+        booking_status: "pending",
+        bookingStatus: "pending",
+        payment_status: pendingPaymentStatus,
+        paymentStatus: pendingPaymentStatus,
+        payment_mode: "mollie",
+        paymentMode: "mollie",
+        payment_required: true,
+        paymentRequired: true,
+        requiresPayment: true,
+        payment_booking_id: pay?.bookingId || null,
+        paymentBookingId: pay?.bookingId || null,
+        checkout_url: pay?.checkoutUrl || null,
+        checkoutUrl: pay?.checkoutUrl || null,
+        status_url: pay?.statusUrl || null,
+        statusUrl: pay?.statusUrl || null,
+        amount: pay?.amount || null,
+        booking_id: canonicalBookingId,
+        bookingId: canonicalBookingId,
+        booking_uuid,
+        public_booking_reference: publicBookingReference,
+        publicBookingReference: publicBookingReference,
+        booking_reference: publicBookingReference,
+        bookingReference: publicBookingReference,
+        public_reference: publicBookingReference,
+        publicReference: publicBookingReference,
+        planning_reference: planningReference,
+        planningReference: planningReference,
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        tenantId: tenantContext.tenant_id,
+        companyId: tenantContext.company_id,
+        booking_source: tenantContext.booking_source,
+        entry_channel: tenantContext.entry_channel,
+        source_context: tenantContext.source_context,
+        tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+        tenant_resolved_at: tenantContext.tenant_resolved_at,
+        createdAt: nowIso,
+        created_at: nowIso,
+        updatedAt: nowIso,
+        updated_at: nowIso,
+        booking: {
+          bookingId: canonicalBookingId,
+          booking_id: canonicalBookingId,
+          booking_uuid,
+          createdAt: nowIso,
+          created_at: nowIso,
+          tenant_id: tenantContext.tenant_id,
+          company_id: tenantContext.company_id,
+          tenantId: tenantContext.tenant_id,
+          companyId: tenantContext.company_id,
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          booking_reference: publicBookingReference,
+          bookingReference: publicBookingReference,
+          public_reference: publicBookingReference,
+          publicReference: publicBookingReference,
+          planning_reference: planningReference,
+          planningReference: planningReference,
+          booking_source: tenantContext.booking_source,
+          entry_channel: tenantContext.entry_channel,
+          source_context: tenantContext.source_context,
+          status: "PENDING",
+          stage: "PENDING",
+          lifecycle_status: "pending",
+          lifecycleStatus: "pending",
+          booking_status: "pending",
+          bookingStatus: "pending",
+          payment_status: pendingPaymentStatus,
+          paymentStatus: pendingPaymentStatus,
+          payment_mode: "mollie",
+          paymentMode: "mollie",
+          payment_required: true,
+          paymentRequired: true,
+          requiresPayment: true,
+          payment_booking_id: pay?.bookingId || null,
+          paymentBookingId: pay?.bookingId || null,
+          customer_name: customerContact.name,
+          customer_phone: customerContact.phone,
+          customer_email: customerContact.email,
+          name: customerContact.name,
+          phone: customerContact.phone,
+          email: customerContact.email,
+          custName: customerContact.name,
+          custPhone: customerContact.phone,
+          custEmail: customerContact.email,
+          from,
+          to,
+          date,
+          time,
+          pickupStartIso: pickup_iso,
+          pickup_iso,
+          return_enabled: ret.enabled,
+          return_from,
+          return_to,
+          returnPickupIso: return_pickup_iso,
+          service,
+          tier,
+          pax,
+          bags,
+          wait_min,
+          stops,
+          business_detected,
+          invoice_requested,
+          company_name: biz.company_name || "",
+          vat_number: biz.vat_number || "",
+          invoice_address: biz.invoice_address || "",
+          invoice_email: biz.invoice_email || customerContact.email || "",
+          vat_rate,
+          price_ex_vat: totalPricing?.price_ex_vat,
+          price_vat: totalPricing?.price_vat,
+          price_incl_vat: totalPricing?.price_incl_vat,
+          price_ex_vat_main: mainPricing?.price_ex_vat,
+          price_vat_main: mainPricing?.price_vat,
+          price_incl_vat_main: mainPricing?.price_incl_vat,
+          price_ex_vat_return: returnPricing?.price_ex_vat,
+          price_vat_return: returnPricing?.price_vat,
+          price_incl_vat_return: returnPricing?.price_incl_vat,
+          pricing_source: bookingPricingSource,
+          fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_rule_id: bookingFixedFareRuleId,
+          distance_km,
+          duration_route_min,
+        },
+        payload: {
+          ...payload,
+          booking_id: canonicalBookingId,
+          bookingId: canonicalBookingId,
+          tenant_id: tenantContext.tenant_id,
+          company_id: tenantContext.company_id,
+          tenantId: tenantContext.tenant_id,
+          companyId: tenantContext.company_id,
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          planning_reference: planningReference,
+          planningReference: planningReference,
+          payment_booking_id: pay?.bookingId || null,
+          paymentBookingId: pay?.bookingId || null,
+          payment_status: pendingPaymentStatus,
+          paymentStatus: pendingPaymentStatus,
+        },
+        quote: {
+          from,
+          to,
+          date,
+          time,
+          pickup_iso,
+          stops,
+          pricing: {
+            price_ex_vat: totalPricing?.price_ex_vat,
+            price_vat: totalPricing?.price_vat,
+            price_incl_vat: totalPricing?.price_incl_vat,
+            pricing_source: bookingPricingSource,
+            fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_rule_id: bookingFixedFareRuleId,
+          },
+          pricing_main: mainPricing,
+          pricing_return: returnPricing,
+          distance_km,
+          duration_min: duration_route_min,
+        },
+        tracking_last: null,
+        trip: null,
+      };
+      await env.BOOKING_KV.put(
+        `booking:${canonicalBookingId}`,
+        JSON.stringify(provisionalRecord),
+      );
+      try {
+        await upsertCustomerScopedBookingIndexForBooking(
+          env,
+          canonicalBookingId,
+          provisionalRecord,
+        );
+      } catch (customerIndexErr) {
+        const scopeMask = _bookingIntentScopeMask(
+          resolveBookingTenantScopeFromRecord(provisionalRecord),
+        );
+        const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+        console.log(
+          `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+        );
+      }
 
       return {
         ok: true,

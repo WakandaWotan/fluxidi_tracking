@@ -16483,6 +16483,10 @@ class CustomerBookingView {
 
   factory CustomerBookingView.fromStored(StoredCustomerBooking stored) {
     final booking = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'from': stored.from,
       'to': stored.to,
       'pickup_iso': stored.pickupIso,
@@ -16515,10 +16519,18 @@ class CustomerBookingView {
     );
     booking.addAll(businessPayload);
     final record = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'status': stored.status,
       'payment_status': stored.paymentStatus,
       'booking': booking,
       'payload': <String, dynamic>{
+        'tenant_id': stored.tenantId,
+        'tenantId': stored.tenantId,
+        'company_id': stored.companyId,
+        'companyId': stored.companyId,
         'from': stored.from,
         'to': stored.to,
         'pickup_iso': stored.pickupIso,
@@ -16531,6 +16543,10 @@ class CustomerBookingView {
       ...businessPayload,
     };
     final source = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'record': record,
       'booking': booking,
       'quote': stored.quote,
@@ -17885,6 +17901,44 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   Map<String, String> _selectedCancelScopeQuery() {
+    final storedScopeSource = <String, dynamic>{
+      'record': _view.record,
+      'booking': _view.booking,
+    };
+    final tenantFromStoredBooking =
+        _cancelScopeFirstNonEmpty(storedScopeSource, const [
+          'tenant_id',
+          'tenantId',
+          'record.tenant_id',
+          'record.tenantId',
+          'record.booking.tenant_id',
+          'record.booking.tenantId',
+          'booking.tenant_id',
+          'booking.tenantId',
+        ]);
+    final companyFromStoredBooking =
+        _cancelScopeFirstNonEmpty(storedScopeSource, const [
+          'company_id',
+          'companyId',
+          'record.company_id',
+          'record.companyId',
+          'record.booking.company_id',
+          'record.booking.companyId',
+          'booking.company_id',
+          'booking.companyId',
+        ]);
+    if (tenantFromStoredBooking.isNotEmpty &&
+        companyFromStoredBooking.isNotEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=stored_booking_scope',
+      );
+      return <String, String>{
+        'tenant_id': tenantFromStoredBooking,
+        'company_id': companyFromStoredBooking,
+        'tenantId': tenantFromStoredBooking,
+        'companyId': companyFromStoredBooking,
+      };
+    }
     final scopeSource = <String, dynamic>{
       ..._view.source,
       'record': _view.record,

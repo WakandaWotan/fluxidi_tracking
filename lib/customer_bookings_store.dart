@@ -1093,7 +1093,19 @@ class CustomerBookingsStore {
 
   Future<List<StoredCustomerBooking>> loadAll() async {
     final scope = _activeLocalScope();
-    final scopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+    return _loadAllForScope(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<List<StoredCustomerBooking>> _loadAllForScope({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final scopeKey = '$normalizedTenantId::$normalizedCompanyId';
     if (_cache != null) {
       if (_cacheScopeKey == scopeKey) {
         return List<StoredCustomerBooking>.from(_cache!);
@@ -1101,28 +1113,29 @@ class CustomerBookingsStore {
       _cache = null;
     }
     try {
-      final tenantId = scope.tenantId.trim();
-      final companyId = scope.companyId.trim();
       final allowLegacyWithoutScope = _allowLegacyWithoutScopeForScope(
-        tenantId: tenantId,
-        companyId: companyId,
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
       );
       _cacheScopeKey = scopeKey;
-      final scopedFile = await _file();
+      final scopedFile = await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
       final scopedItems = await _readFileItems(scopedFile);
       if (scopedItems.isNotEmpty) {
         final filtered =
             _filterForScope(
                   scopedItems,
-                  tenantId: tenantId,
-                  companyId: companyId,
+                  tenantId: normalizedTenantId,
+                  companyId: normalizedCompanyId,
                   allowLegacyWithoutScope: allowLegacyWithoutScope,
                 )
                 .map(
                   (item) => _coerceScope(
                     item,
-                    tenantId: tenantId,
-                    companyId: companyId,
+                    tenantId: normalizedTenantId,
+                    companyId: normalizedCompanyId,
                   ),
                 )
                 .toList(growable: false);
@@ -1139,30 +1152,30 @@ class CustomerBookingsStore {
       final migrated =
           _filterForScope(
                 legacyItems,
-                tenantId: tenantId,
-                companyId: companyId,
+                tenantId: normalizedTenantId,
+                companyId: normalizedCompanyId,
                 allowLegacyWithoutScope: false,
               )
               .map(
                 (item) => _coerceScope(
                   item,
-                  tenantId: tenantId,
-                  companyId: companyId,
+                  tenantId: normalizedTenantId,
+                  companyId: normalizedCompanyId,
                 ),
               )
               .toList(growable: false);
 
       if (migrated.isNotEmpty) {
         debugPrint(
-          '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_MIGRATE] tenant=${_maskScopeId(tenantId)} company=${_maskScopeId(companyId)} migrated=${migrated.length}',
+          '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_MIGRATE] tenant=${_maskScopeId(normalizedTenantId)} company=${_maskScopeId(normalizedCompanyId)} migrated=${migrated.length}',
         );
         await _atomicWriteJsonArray(
           file: scopedFile,
           payload: migrated.map((e) => e.toJson()).toList(growable: false),
         );
         await _removeVisibleLegacyItemsForScope(
-          tenantId: tenantId,
-          companyId: companyId,
+          tenantId: normalizedTenantId,
+          companyId: normalizedCompanyId,
         );
       }
       _cache = migrated;
@@ -1176,19 +1189,38 @@ class CustomerBookingsStore {
 
   Future<void> _saveAll(List<StoredCustomerBooking> items) async {
     final scope = _activeLocalScope();
+    await _saveAllForScope(
+      items,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<void> _saveAllForScope(
+    List<StoredCustomerBooking> items, {
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final scopeKey = '$normalizedTenantId::$normalizedCompanyId';
     final normalized = items
         .map(
           (item) => _coerceScope(
             item,
-            tenantId: scope.tenantId,
-            companyId: scope.companyId,
+            tenantId: normalizedTenantId,
+            companyId: normalizedCompanyId,
           ),
         )
         .toList(growable: false);
+    _cacheScopeKey = scopeKey;
     _cache = List<StoredCustomerBooking>.from(normalized);
     await _enqueueWrite(() async {
       try {
-        final file = await _file();
+        final file = await _scopedFile(
+          tenantId: normalizedTenantId,
+          companyId: normalizedCompanyId,
+        );
         final payload = normalized
             .map((e) => e.toJson())
             .toList(growable: false);
@@ -1289,17 +1321,28 @@ class CustomerBookingsStore {
   }
 
   Future<void> upsert(StoredCustomerBooking booking) async {
-    final list = List<StoredCustomerBooking>.from(await loadAll());
-    final index = _findIndex(list, booking);
     final now = DateTime.now().toIso8601String();
-    final scope = _activeLocalScope();
+    final activeScope = _activeLocalScope();
+    final targetTenantId = booking.tenantId.trim().isNotEmpty
+        ? booking.tenantId
+        : activeScope.tenantId;
+    final targetCompanyId = booking.companyId.trim().isNotEmpty
+        ? booking.companyId
+        : activeScope.companyId;
+    final list = List<StoredCustomerBooking>.from(
+      await _loadAllForScope(
+        tenantId: targetTenantId,
+        companyId: targetCompanyId,
+      ),
+    );
+    final index = _findIndex(list, booking);
     final incoming = booking.copyWith(
       tenantId: booking.tenantId.trim().isNotEmpty
           ? booking.tenantId
-          : scope.tenantId,
+          : targetTenantId,
       companyId: booking.companyId.trim().isNotEmpty
           ? booking.companyId
-          : scope.companyId,
+          : targetCompanyId,
       updatedAt: now,
       createdAt: booking.createdAt.trim().isEmpty ? now : booking.createdAt,
     );
@@ -1387,7 +1430,11 @@ class CustomerBookingsStore {
       list.add(incoming);
     }
     list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    await _saveAll(list);
+    await _saveAllForScope(
+      list,
+      tenantId: targetTenantId,
+      companyId: targetCompanyId,
+    );
   }
 
   Future<void> markPaid({
