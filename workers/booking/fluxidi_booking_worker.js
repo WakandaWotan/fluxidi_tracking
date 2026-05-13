@@ -4535,6 +4535,19 @@ async function handlePublicCustomerSessionBootstrap(request, env) {
   const customerId = _normalizeCustomerIdentityId(
     identity?.customer_id ?? identity?.customerId ?? session.customer_id,
   );
+  const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+    customer_id: customerId,
+    email_hash: sanitizeTenantString(
+      identity?.email_hash ?? identity?.emailHash ?? session.email_hash,
+      200,
+    ).toLowerCase(),
+    phone_hash: sanitizeTenantString(
+      identity?.phone_hash ?? identity?.phoneHash ?? session.phone_hash ?? session.phoneHash,
+      200,
+    ).toLowerCase(),
+  });
   return json(
     {
       ok: true,
@@ -4548,16 +4561,387 @@ async function handlePublicCustomerSessionBootstrap(request, env) {
         email_verified: true,
         emailVerified: true,
       },
-      bookings: [],
+      bookings: hydration?.ok ? hydration.items : [],
       relationships: [],
       capabilities: {
         customer_recovery: true,
-        booking_hydration: false,
+        booking_hydration: true,
         invoice_pdf_customer_access: false,
       },
     },
     200,
   );
+}
+
+function _customerBookingIdsFromRecord(rec) {
+  const ids = new Set();
+  const addId = (value) => {
+    const normalized = _normalizeCustomerIdentityId(value);
+    if (normalized) ids.add(normalized);
+  };
+  addId(rec?.customer_id);
+  addId(rec?.customerId);
+  addId(rec?.customer?.customer_id);
+  addId(rec?.customer?.customerId);
+  addId(rec?.booking?.customer_id);
+  addId(rec?.booking?.customerId);
+  addId(rec?.booking?.customer?.customer_id);
+  addId(rec?.booking?.customer?.customerId);
+  return Array.from(ids);
+}
+
+async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  const sessionCustomerId = _normalizeCustomerIdentityId(identity?.customer_id);
+  if (sessionCustomerId && bookingCustomerIds.length > 0) {
+    return bookingCustomerIds.includes(sessionCustomerId)
+      ? { matched: true, mode: "customer_id" }
+      : { matched: false, mode: "customer_id_mismatch" };
+  }
+  if (bookingCustomerIds.length > 0) {
+    return { matched: false, mode: "customer_id_missing_session" };
+  }
+  const sessionEmailHash = sanitizeTenantString(identity?.email_hash, 200).toLowerCase();
+  const sessionPhoneHash = sanitizeTenantString(identity?.phone_hash, 200).toLowerCase();
+  if (!sessionEmailHash && !sessionPhoneHash) {
+    return { matched: false, mode: "legacy_no_verified_contact_hash" };
+  }
+  const contacts = _bookingCustomerContacts(rec);
+  const emails = Array.isArray(contacts?.emails) ? contacts.emails : [];
+  for (const email of emails) {
+    const normalized = _normalizeCustomerEmail(email);
+    if (!normalized || !sessionEmailHash) continue;
+    const hashed = (await _sha256Hex(normalized)).toLowerCase();
+    if (_constantTimeEquals(hashed, sessionEmailHash)) {
+      return { matched: true, mode: "legacy_email_hash" };
+    }
+  }
+  const phones = Array.isArray(contacts?.phones) ? contacts.phones : [];
+  for (const phone of phones) {
+    const normalized = _normalizeCustomerPhone(phone);
+    if (!normalized || !sessionPhoneHash) continue;
+    const hashed = (await _sha256Hex(normalized)).toLowerCase();
+    if (_constantTimeEquals(hashed, sessionPhoneHash)) {
+      return { matched: true, mode: "legacy_phone_hash" };
+    }
+  }
+  return { matched: false, mode: "legacy_contact_mismatch" };
+}
+
+function _toMsOrZero(value) {
+  const ms = Date.parse(safeStr(value, 80));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function _projectSafeCustomerBookingSummary(bookingId, rec, scope) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const row = _flattenBookingForRidesList(bookingId, rec);
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference,
+    120,
+  );
+  const planningReference = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      booking?.planning_reference ??
+      booking?.planningReference,
+    120,
+  );
+  const createdAt = safeStr(
+    rec?.created_at ??
+      rec?.createdAt ??
+      booking?.created_at ??
+      booking?.createdAt,
+    80,
+  );
+  const updatedAt = safeStr(
+    rec?.updated_at ??
+      rec?.updatedAt ??
+      booking?.updated_at ??
+      booking?.updatedAt,
+    80,
+  );
+  return {
+    booking_id: safeStr(bookingId, 160),
+    bookingId: safeStr(bookingId, 160),
+    status: safeStr(row?.status, 40),
+    from: safeStr(row?.from, 240),
+    to: safeStr(row?.to, 240),
+    pickup_iso: safeStr(row?.pickup_iso, 80),
+    created_at: createdAt || undefined,
+    updated_at: updatedAt || undefined,
+    amount_total: Number.isFinite(Number(row?.price)) ? Number(row.price) : undefined,
+    currency: safeStr(row?.currency, 16) || "EUR",
+    payment_status: safeStr(row?.payment_status ?? row?.paymentStatus, 40) || undefined,
+    paymentStatus: safeStr(row?.paymentStatus ?? row?.payment_status, 40) || undefined,
+    service: safeStr(
+      booking?.service ??
+        booking?.extra_service ??
+        booking?.extra_service_key,
+      64,
+    ) || undefined,
+    tier: safeStr(row?.tier, 40) || undefined,
+    ...(publicBookingReference
+      ? {
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          booking_reference: publicBookingReference,
+          bookingReference: publicBookingReference,
+        }
+      : {}),
+    ...(planningReference
+      ? { planning_reference: planningReference, planningReference: planningReference }
+      : {}),
+    tenant_id: safeStr(scope?.tenant_id, 80),
+    company_id: safeStr(scope?.company_id, 80),
+    _sort_ts: Math.max(_toMsOrZero(row?.pickup_iso), _toMsOrZero(createdAt), _toMsOrZero(updatedAt)),
+  };
+}
+
+function customerScopedBookingsIndexKey(tenantId, companyId, customerId) {
+  const tenant = sanitizeTenantString(tenantId, 80);
+  const company = sanitizeTenantString(companyId, 80);
+  const customer = _normalizeCustomerIdentityId(customerId);
+  if (!tenant || !company || !customer) return "";
+  return `tenant:${tenant}:company:${company}:customer:${customer}:bookings:v1`;
+}
+
+async function readCustomerScopedBookingIndex(env, scope) {
+  if (!env?.BOOKING_KV) return { ok: false, key: "", index: null };
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const customerId = _normalizeCustomerIdentityId(scope?.customer_id ?? scope?.customerId);
+  const key = customerScopedBookingsIndexKey(tenantId, companyId, customerId);
+  if (!key) return { ok: false, key: "", index: null };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const incomingItems = Array.isArray(source.items) ? source.items : [];
+  const items = incomingItems
+    .map((entry) => {
+      const item = entry && typeof entry === "object" ? entry : {};
+      const bookingId = safeStr(item.booking_id ?? item.bookingId, 160);
+      if (!bookingId) return null;
+      const sortTsRaw = Number(item.sort_ts ?? item.sortTs);
+      const sortTs = Number.isFinite(sortTsRaw) ? Math.max(0, Math.trunc(sortTsRaw)) : 0;
+      return {
+        booking_id: bookingId,
+        sort_ts: sortTs,
+        created_at: safeStr(item.created_at ?? item.createdAt, 80),
+        updated_at: safeStr(item.updated_at ?? item.updatedAt, 80),
+        pickup_iso: safeStr(item.pickup_iso ?? item.pickupIso, 80),
+        public_booking_reference: safeStr(
+          item.public_booking_reference ?? item.publicBookingReference,
+          120,
+        ),
+        planning_reference: safeStr(item.planning_reference ?? item.planningReference, 120),
+      };
+    })
+    .filter((entry) => !!entry);
+  return {
+    ok: true,
+    key,
+    index: {
+      version: 1,
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      updated_at: safeStr(source.updated_at ?? source.updatedAt, 80),
+      items,
+    },
+  };
+}
+
+async function upsertCustomerScopedBookingIndexForBooking(env, bookingId, rec) {
+  if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const tenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(recordScope?.company_id, 80);
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  const customerId = bookingCustomerIds[0] || "";
+  if (!tenantId || !companyId || !customerId) {
+    return { ok: false, skipped: true, reason: "missing_scope_or_customer_id" };
+  }
+  const key = customerScopedBookingsIndexKey(tenantId, companyId, customerId);
+  if (!key) return { ok: false, skipped: true, reason: "index_key_invalid" };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const nowIso = new Date().toISOString();
+  const createdAt = safeStr(
+    rec?.created_at ?? rec?.createdAt ?? rec?.booking?.created_at ?? rec?.booking?.createdAt,
+    80,
+  );
+  const updatedAt = safeStr(
+    rec?.updated_at ?? rec?.updatedAt ?? rec?.booking?.updated_at ?? rec?.booking?.updatedAt,
+    80,
+  ) || nowIso;
+  const pickupIso = safeStr(
+    rec?.booking?.pickup_iso ?? rec?.booking?.pickupStartIso ?? rec?.quote?.pickup_iso,
+    80,
+  );
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.booking?.public_booking_reference ??
+      rec?.booking?.publicBookingReference ??
+      rec?.booking?.booking_reference ??
+      rec?.booking?.bookingReference,
+    120,
+  );
+  const planningReference = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      rec?.booking?.planning_reference ??
+      rec?.booking?.planningReference,
+    120,
+  );
+  const sortTs = Math.max(
+    _toMsOrZero(pickupIso),
+    _toMsOrZero(updatedAt),
+    _toMsOrZero(createdAt),
+    Date.now(),
+  );
+  const incoming = {
+    booking_id: safeStr(bookingId, 160),
+    sort_ts: sortTs,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    pickup_iso: pickupIso,
+    public_booking_reference: publicBookingReference,
+    planning_reference: planningReference,
+  };
+  const existingItems = Array.isArray(source.items) ? source.items : [];
+  const deduped = existingItems
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!safeStr(entry?.booking_id ?? entry?.bookingId, 160))
+    .filter((entry) => safeStr(entry?.booking_id ?? entry?.bookingId, 160) !== incoming.booking_id);
+  deduped.push(incoming);
+  deduped.sort((a, b) => Number(b?.sort_ts || b?.sortTs || 0) - Number(a?.sort_ts || a?.sortTs || 0));
+  const capped = deduped.slice(0, 250);
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      updated_at: nowIso,
+      items: capped.map((entry) => ({
+        booking_id: safeStr(entry?.booking_id ?? entry?.bookingId, 160),
+        sort_ts: Number.isFinite(Number(entry?.sort_ts ?? entry?.sortTs))
+          ? Math.max(0, Math.trunc(Number(entry?.sort_ts ?? entry?.sortTs)))
+          : 0,
+        created_at: safeStr(entry?.created_at ?? entry?.createdAt, 80),
+        updated_at: safeStr(entry?.updated_at ?? entry?.updatedAt, 80),
+        pickup_iso: safeStr(entry?.pickup_iso ?? entry?.pickupIso, 80),
+        public_booking_reference: safeStr(
+          entry?.public_booking_reference ?? entry?.publicBookingReference,
+          120,
+        ),
+        planning_reference: safeStr(entry?.planning_reference ?? entry?.planningReference, 120),
+      })),
+    }),
+  );
+  return { ok: true, key, count: capped.length };
+}
+
+async function hydrateCustomerBookingsFromScopedIndex(
+  env,
+  {
+    tenant_id,
+    company_id,
+    customer_id,
+    email_hash,
+    phone_hash,
+    limit = 50,
+  } = {},
+) {
+  const tenantScope = normalizeFleetTenantScope({ tenant_id, company_id });
+  const scopeMask = _bookingIntentScopeMask(tenantScope);
+  const safeCustomerMask = _maskPublicDriverLoginValue(customer_id);
+  const lim = Math.min(50, Math.max(1, Number(limit) || 50));
+  console.log(
+    `[CUSTOMER_BOOTSTRAP][HYDRATE][REQUESTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"}`,
+  );
+  if (!tenantScope?.hasScope || !env?.BOOKING_KV) {
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][FAILED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} reason=missing_scope_or_kv`,
+    );
+    return { ok: false, items: [] };
+  }
+  try {
+    const indexRead = await readCustomerScopedBookingIndex(env, {
+      tenant_id: tenantScope.tenant_id,
+      company_id: tenantScope.company_id,
+      customer_id,
+    });
+    if (!indexRead?.ok || !indexRead?.index) {
+      console.log(
+        `[CUSTOMER_BOOTSTRAP][HYDRATE][SUCCESS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} count=0 bucket=index_missing`,
+      );
+      // TODO: add admin-controlled scoped backfill tool for legacy bookings not yet indexed.
+      return { ok: true, items: [] };
+    }
+    const candidates = Array.isArray(indexRead.index.items) ? indexRead.index.items : [];
+    const sortedCandidates = candidates
+      .slice()
+      .sort((a, b) => Number(b?.sort_ts || 0) - Number(a?.sort_ts || 0));
+    const out = [];
+    for (const entry of sortedCandidates) {
+      if (out.length >= lim) break;
+      const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=missing_booking`,
+        );
+        continue;
+      }
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=scope_mismatch`,
+        );
+        continue;
+      }
+      const identityMatch = await _bookingMatchesCustomerSessionIdentity(rec, {
+        customer_id,
+        email_hash,
+        phone_hash,
+      });
+      if (!identityMatch?.matched) {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=identity_mismatch`,
+        );
+        continue;
+      }
+      out.push(_projectSafeCustomerBookingSummary(bookingId, rec, tenantScope));
+    }
+    out.sort((a, b) => Number(b?._sort_ts || 0) - Number(a?._sort_ts || 0));
+    const items = out.slice(0, lim).map((entry) => {
+      const next = { ...entry };
+      delete next._sort_ts;
+      return next;
+    });
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][SUCCESS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} count=${items.length}`,
+    );
+    return { ok: true, items };
+  } catch (err) {
+    const reason = sanitizeTenantString(err?.message ?? err, 160) || "unexpected_failure";
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][FAILED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} reason=${reason}`,
+    );
+    return { ok: false, items: [] };
+  }
 }
 
 async function handlePublicCompanyLinkVerify(body, env) {
@@ -15724,6 +16108,26 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         }
       }
       throw persistErr;
+    }
+    try {
+      const indexResult = await upsertCustomerScopedBookingIndexForBooking(
+        env,
+        booking.bookingId,
+        record,
+      );
+      if (indexResult?.ok) {
+        const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
+        const bookingCustomerIds = _customerBookingIdsFromRecord(record);
+        console.log(
+          `[CUSTOMER_BOOKING_INDEX][UPSERT][OK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${_maskPublicDriverLoginValue(bookingCustomerIds[0] || "") || "-"} booking=${_bookingIntentMask(booking.bookingId)} count=${Number(indexResult?.count || 0)}`,
+        );
+      }
+    } catch (customerIndexErr) {
+      const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
+      const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+      console.log(
+        `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+      );
     }
     const maskedScope = _bookingIntentScopeMask(idempotencyScope);
     let idempotencyStored = false;
