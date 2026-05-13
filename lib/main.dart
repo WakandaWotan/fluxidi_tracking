@@ -30667,10 +30667,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildNextRideRoutePreview(BookingItem booking) {
+  Widget _buildNextRideRoutePreview(BookingItem booking, {double? height}) {
     final future = _nextRidePreviewFuture(booking);
     return Container(
-      height: 136,
+      height: height ?? 136,
       width: double.infinity,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -32625,9 +32625,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildDriverSummaryCards({required BookingItem? nextRide}) {
+  Widget _buildDriverSummaryCards({
+    required BookingItem? nextRide,
+    bool compactLandscape = false,
+    double? compactMinHeight,
+  }) {
     const summaryIconContainerSize = 52.0;
     const summaryIconGlyphSize = 30.0;
+    const compactIconContainerSize = 36.0;
+    const compactIconGlyphSize = 20.0;
     Widget card({
       required IconData icon,
       required String label,
@@ -32639,53 +32645,105 @@ class _DriverHomePageState extends State<DriverHomePage>
         onTap: onTap,
         borderRadius: BorderRadius.circular(13),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          constraints: compactLandscape && compactMinHeight != null
+              ? BoxConstraints(minHeight: compactMinHeight)
+              : null,
+          padding: compactLandscape
+              ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
+              : const EdgeInsets.fromLTRB(8, 8, 8, 8),
           decoration: BoxDecoration(
             color: const Color(0xFF111214),
             borderRadius: BorderRadius.circular(13),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: summaryIconContainerSize,
-                height: summaryIconContainerSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accentColor.withOpacity(0.16),
-                  border: Border.all(color: accentColor.withOpacity(0.55)),
+          child: compactLandscape
+              ? Row(
+                  children: [
+                    Container(
+                      width: compactIconContainerSize,
+                      height: compactIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: accentColor.withOpacity(0.16),
+                        border: Border.all(
+                          color: accentColor.withOpacity(0.55),
+                        ),
+                      ),
+                      child: Icon(
+                        icon,
+                        size: compactIconGlyphSize,
+                        color: accentColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.78),
+                          fontSize: 11.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: summaryIconContainerSize,
+                      height: summaryIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: accentColor.withOpacity(0.16),
+                        border: Border.all(
+                          color: accentColor.withOpacity(0.55),
+                        ),
+                      ),
+                      child: Icon(
+                        icon,
+                        size: summaryIconGlyphSize,
+                        color: accentColor,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.66),
+                        fontSize: 10.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
-                child: Icon(
-                  icon,
-                  size: summaryIconGlyphSize,
-                  color: accentColor,
-                ),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.66),
-                  fontSize: 10.2,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
         ),
       );
     }
@@ -32738,7 +32796,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildNextRideHeroCard({required BookingItem? nextRide}) {
+  Widget _buildNextRideHeroCard({
+    required BookingItem? nextRide,
+    double? routePreviewHeight,
+  }) {
     if (nextRide == null) {
       return Container(
         width: double.infinity,
@@ -33029,7 +33090,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ],
           ),
           const SizedBox(height: 8),
-          _buildNextRideRoutePreview(nextRide),
+          _buildNextRideRoutePreview(nextRide, height: routePreviewHeight),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -33066,6 +33127,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget _buildDriverQuickActionsGrid({
     bool isTabletPortrait = false,
     double? tabletPortraitCardMinHeight,
+    bool isTabletLandscape = false,
+    int? forcedColumns,
+    double? landscapeCardMinHeight,
+    double? landscapeSpacing,
+    bool compactLandscape = false,
     bool useImageBackgrounds = false,
     double? tabletPortraitSpacing,
   }) {
@@ -33088,6 +33154,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           constraints: BoxConstraints(
             minHeight: isTabletPortrait
                 ? (tabletPortraitCardMinHeight ?? 120.0)
+                : isTabletLandscape
+                ? (landscapeCardMinHeight ?? 98.0)
                 : 68.0,
           ),
           decoration: BoxDecoration(
@@ -33133,7 +33201,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                 ),
               Padding(
-                padding: const EdgeInsets.all(10),
+                padding: EdgeInsets.all(compactLandscape ? 8 : 10),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -33199,10 +33267,20 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     return LayoutBuilder(
       builder: (context, c) {
-        final gap = isTabletPortrait ? (tabletPortraitSpacing ?? 11.0) : 8.0;
+        final gap = isTabletPortrait
+            ? (tabletPortraitSpacing ?? 11.0)
+            : isTabletLandscape
+            ? (landscapeSpacing ?? 8.0)
+            : 8.0;
         int columns;
         if (isTabletPortrait) {
           columns = 2;
+        } else if (isTabletLandscape) {
+          columns = forcedColumns ?? 3;
+          final preferredWidth = (c.maxWidth - (gap * (columns - 1))) / columns;
+          if (preferredWidth < 105.0) {
+            columns = 2;
+          }
         } else {
           const minTileWidth = 162.0;
           columns = (c.maxWidth / minTileWidth).floor();
@@ -33328,13 +33406,32 @@ class _DriverHomePageState extends State<DriverHomePage>
             screenClass == FluxidiScreenClass.desktop) &&
         W < H &&
         H >= 900;
+    final isTabletLandscape =
+        (screenClass == FluxidiScreenClass.tablet ||
+            screenClass == FluxidiScreenClass.desktop) &&
+        W > H &&
+        H >= 700;
     final driverHeaderHeight = isTabletPortrait
         ? clampDouble(H * 0.24, 300.0, 360.0)
+        : 0.0;
+    final driverLandscapeHeaderHeight = isTabletLandscape
+        ? clampDouble(H * 0.19, 140.0, 185.0)
         : 0.0;
     final driverQuickActionCardMinHeight = isTabletPortrait
         ? clampDouble(H * 0.12, 110.0, 140.0)
         : 68.0;
     final driverQuickActionGap = isTabletPortrait ? 11.0 : 8.0;
+    final driverLandscapeQuickActionCardMinHeight = isTabletLandscape
+        ? clampDouble(H * 0.175, 132.0, 162.0)
+        : 98.0;
+    final driverLandscapeQuickActionGap = isTabletLandscape ? 8.0 : 8.0;
+    final driverLandscapeSummaryCardMinHeight = isTabletLandscape
+        ? clampDouble(H * 0.09, 70.0, 86.0)
+        : 70.0;
+    final driverLandscapeRoutePreviewHeight = isTabletLandscape
+        ? clampDouble(H * 0.24, 170.0, 220.0)
+        : 136.0;
+    final driverScrollBottomPadding = isTabletLandscape ? 18.0 : 10.0;
     Widget sectionTitle(String text) {
       return Text(
         text,
@@ -33481,11 +33578,16 @@ class _DriverHomePageState extends State<DriverHomePage>
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  2,
+                  14,
+                  driverScrollBottomPadding,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (isTabletPortrait)
+                    if (isTabletPortrait) ...[
                       Container(
                         height: driverHeaderHeight,
                         clipBehavior: Clip.antiAlias,
@@ -33548,33 +33650,172 @@ class _DriverHomePageState extends State<DriverHomePage>
                             ),
                           ],
                         ),
-                      )
-                    else ...[
+                      ),
+                      const SizedBox(height: 6),
+                      _buildDriverSummaryCards(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      _buildNextRideHeroCard(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      sectionTitle(
+                        _tr(
+                          nl: 'Snelle acties',
+                          en: 'Quick actions',
+                          fr: 'Actions rapides',
+                          es: 'Acciones rapidas',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDriverQuickActionsGrid(
+                        isTabletPortrait: isTabletPortrait,
+                        tabletPortraitCardMinHeight:
+                            driverQuickActionCardMinHeight,
+                        useImageBackgrounds: isTabletPortrait,
+                        tabletPortraitSpacing: driverQuickActionGap,
+                      ),
+                    ] else if (isTabletLandscape) ...[
+                      Container(
+                        height: driverLandscapeHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0x55FFD36A)),
+                        ),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/fluxidi/driver_header_landscape_tablet.png',
+                              fit: BoxFit.cover,
+                              alignment: Alignment.center,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.20),
+                                      Colors.black.withOpacity(0.32),
+                                      Colors.black.withOpacity(0.62),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  6,
+                                  10,
+                                  8,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildDriverDashboardHeader(),
+                                    const SizedBox(height: 2),
+                                    driverIdentityBlock(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 60,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildDriverSummaryCards(
+                                  nextRide: nextRide,
+                                  compactLandscape: true,
+                                  compactMinHeight:
+                                      driverLandscapeSummaryCardMinHeight,
+                                ),
+                                const SizedBox(height: 10),
+                                _buildNextRideHeroCard(
+                                  nextRide: nextRide,
+                                  routePreviewHeight:
+                                      driverLandscapeRoutePreviewHeight,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            flex: 40,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                sectionTitle(
+                                  _tr(
+                                    nl: 'Snelle acties',
+                                    en: 'Quick actions',
+                                    fr: 'Actions rapides',
+                                    es: 'Acciones rapidas',
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                _buildDriverQuickActionsGrid(
+                                  isTabletLandscape: true,
+                                  forcedColumns: 2,
+                                  landscapeCardMinHeight:
+                                      driverLandscapeQuickActionCardMinHeight,
+                                  landscapeSpacing:
+                                      driverLandscapeQuickActionGap,
+                                  compactLandscape: true,
+                                  useImageBackgrounds: true,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else ...[
                       _buildDriverDashboardHeader(),
                       const SizedBox(height: 1),
                       driverIdentityBlock(),
-                    ],
-                    const SizedBox(height: 6),
-                    _buildDriverSummaryCards(nextRide: nextRide),
-                    const SizedBox(height: 10),
-                    _buildNextRideHeroCard(nextRide: nextRide),
-                    const SizedBox(height: 10),
-                    sectionTitle(
-                      _tr(
-                        nl: 'Snelle acties',
-                        en: 'Quick actions',
-                        fr: 'Actions rapides',
-                        es: 'Acciones rapidas',
+                      const SizedBox(height: 6),
+                      _buildDriverSummaryCards(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      _buildNextRideHeroCard(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      sectionTitle(
+                        _tr(
+                          nl: 'Snelle acties',
+                          en: 'Quick actions',
+                          fr: 'Actions rapides',
+                          es: 'Acciones rapidas',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildDriverQuickActionsGrid(
-                      isTabletPortrait: isTabletPortrait,
-                      tabletPortraitCardMinHeight:
-                          driverQuickActionCardMinHeight,
-                      useImageBackgrounds: isTabletPortrait,
-                      tabletPortraitSpacing: driverQuickActionGap,
-                    ),
+                      const SizedBox(height: 8),
+                      _buildDriverQuickActionsGrid(
+                        isTabletPortrait: isTabletPortrait,
+                        tabletPortraitCardMinHeight:
+                            driverQuickActionCardMinHeight,
+                        useImageBackgrounds: isTabletPortrait,
+                        tabletPortraitSpacing: driverQuickActionGap,
+                      ),
+                    ],
                   ],
                 ),
               ),
