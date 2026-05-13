@@ -1702,6 +1702,23 @@ const COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX = "company_recovery:rate:verify:";
 const COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX = ":v1";
 const COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
 const COMPANY_RECOVERY_VERIFY_RATE_MAX = 20;
+const CUSTOMER_RECOVERY_CHALLENGE_KEY_PREFIX = "customer_recovery:challenge:";
+const CUSTOMER_RECOVERY_CHALLENGE_KEY_SUFFIX = ":v1";
+const CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS = 10 * 60;
+const CUSTOMER_RECOVERY_MAX_ATTEMPTS = 5;
+const CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX = "customer_recovery:rate:start:";
+const CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_RECOVERY_START_RATE_MAX = 5;
+const CUSTOMER_IDENTITY_KEY_PREFIX = "customer:identity:v1:tenant:";
+const CUSTOMER_IDENTITY_KEY_MIDDLE = ":company:";
+const CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE = ":customer:";
+const CUSTOMER_EMAIL_INDEX_KEY_PREFIX = "customer:index:email:v1:tenant:";
+const CUSTOMER_EMAIL_INDEX_KEY_MIDDLE = ":company:";
+const CUSTOMER_EMAIL_INDEX_KEY_HASH_MIDDLE = ":sha256:";
+const CUSTOMER_SESSION_KEY_PREFIX = "customer:session:";
+const CUSTOMER_SESSION_KEY_SUFFIX = ":v1";
+const CUSTOMER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX = "company_link:admin_pairing:challenge:";
 const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX = "company_link:admin_pairing:active:";
@@ -1840,6 +1857,17 @@ function _companyRecoveryChallengeId() {
     .replace(/[^a-zA-Z0-9_-]+/g, "");
 }
 
+function _customerRecoveryChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${CUSTOMER_RECOVERY_CHALLENGE_KEY_PREFIX}${safeChallengeId}${CUSTOMER_RECOVERY_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _customerRecoveryChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cur_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
 function _maskRecoveryChallengeId(value) {
   const id = sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
   if (!id) return "-";
@@ -1884,6 +1912,13 @@ function _companyRecoveryStartRateKey(companyCode, emailHash) {
   const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
   if (!normalizedCode || !normalizedHash) return "";
   return `${COMPANY_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${COMPANY_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerRecoveryStartRateKey(companyCode, emailHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedHash) return "";
+  return `${CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX}`;
 }
 
 function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
@@ -1972,6 +2007,47 @@ function _projectPublicRecoveryStartResponse(challengeId, email) {
   };
 }
 
+function _projectPublicCustomerRecoveryStartResponse(challengeId) {
+  return {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId: challengeId,
+    verification_channel: "email",
+    expires_in_seconds: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS,
+  };
+}
+
+function _customerIdentityKey(scope, customerId) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safeCustomerId = sanitizeTenantString(customerId, 160).replace(/[^a-zA-Z0-9._-]+/g, "");
+  if (!tenantId || !companyId || !safeCustomerId) return "";
+  return `${CUSTOMER_IDENTITY_KEY_PREFIX}${tenantId}${CUSTOMER_IDENTITY_KEY_MIDDLE}${companyId}${CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE}${safeCustomerId}`;
+}
+
+function _customerEmailIndexKey(scope, emailHash) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safeEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!tenantId || !companyId || !safeEmailHash) return "";
+  return `${CUSTOMER_EMAIL_INDEX_KEY_PREFIX}${tenantId}${CUSTOMER_EMAIL_INDEX_KEY_MIDDLE}${companyId}${CUSTOMER_EMAIL_INDEX_KEY_HASH_MIDDLE}${safeEmailHash}`;
+}
+
+function _customerSessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${CUSTOMER_SESSION_KEY_PREFIX}${safeHash}${CUSTOMER_SESSION_KEY_SUFFIX}`;
+}
+
+function _normalizeCustomerIdentityId(value) {
+  return sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9._-]+/g, "");
+}
+
+function _generateCustomerIdentityId() {
+  return _generateOpaqueToken(24, "cust_");
+}
+
 async function _sendCompanyRecoveryOtpEmail({
   env,
   tenantId,
@@ -2012,6 +2088,71 @@ async function _sendCompanyRecoveryOtpEmail({
       <p style="margin:4px 0 0">This code expires in 10 minutes.</p>
       <p style="margin:12px 0 0;color:#555">Heb je dit niet aangevraagd? Dan kan je deze e-mail negeren.</p>
       <p style="margin:4px 0 0;color:#555">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+  const payload = {
+    from: emailFrom,
+    to: [toEmail],
+    subject,
+    html,
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  };
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: safeStr(body?.message || `HTTP ${response.status}`, 180),
+    };
+  }
+  return { ok: true, id: safeStr(body?.id, 120) };
+}
+
+async function _sendCustomerRecoveryOtpEmail({
+  env,
+  tenantId,
+  companyId,
+  recipientEmail,
+  otp,
+}) {
+  const apiKey = safeStr(env?.RESEND_API_KEY);
+  const emailFrom = safeStr(env?.EMAIL_FROM);
+  const toEmail = _normalizeRecoveryEmail(recipientEmail);
+  const code = sanitizeTenantString(otp, 24);
+  if (!apiKey || !emailFrom || !toEmail || !/^\d{4,8}$/.test(code)) {
+    return { ok: false, reason: "provider_or_input_missing" };
+  }
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    sanitizeTenantString(tenantId, 80),
+    sanitizeTenantString(companyId, 80),
+  );
+  const replyTo = pickFirstValidEmail(
+    commProfile?.replyToEmail,
+    commProfile?.companyEmail,
+    commProfile?.supportEmail,
+    commProfile?.notificationEmail,
+    env?.EMAIL_REPLY_TO,
+  );
+  const brandName = safeBrandName(commProfile?.brandName, "Fluxidi");
+  const subject = "Fluxidi customer recovery code";
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.55;color:#111">
+      <h2 style="margin:0 0 10px">${escapeHtml(brandName)} customer recovery code</h2>
+      <p style="margin:0 0 12px">Use this code to recover your customer session.</p>
+      <div style="display:inline-block;padding:10px 14px;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:20px;font-weight:800;letter-spacing:3px">
+        ${escapeHtml(code)}
+      </div>
+      <p style="margin:12px 0 0">This code expires in 10 minutes.</p>
+      <p style="margin:12px 0 0;color:#555">If you did not request this, you can ignore this email.</p>
     </div>
   `;
   const payload = {
@@ -2822,6 +2963,13 @@ async function _hashCompanySessionToken(token) {
   return sanitizeTenantString(hash, 200).toLowerCase();
 }
 
+async function _hashCustomerSessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
 function _extractBearerToken(request) {
   const auth = request?.headers?.get?.("authorization") || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
@@ -2920,6 +3068,44 @@ async function _loadCompanySessionFromRequest(request, env) {
     company_id: companyId,
     company_code: companyCode,
     company_display_name: companyDisplayName,
+    expires_at: expiresAt,
+  };
+}
+
+async function _loadCustomerSessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashCustomerSessionToken(token);
+  if (!tokenHash) return null;
+  const key = _customerSessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const purpose = sanitizeTenantString(record.purpose, 40).toLowerCase();
+  if (purpose && purpose !== "customer_session") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const customerId = _normalizeCustomerIdentityId(record.customer_id ?? record.customerId);
+  const emailHash = sanitizeTenantString(record.email_hash ?? record.emailHash, 200).toLowerCase();
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId || !customerId || !emailHash) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    purpose: "customer_session",
+    tenant_id: tenantId,
+    company_id: companyId,
+    customer_id: customerId,
+    email_hash: emailHash,
+    issued_at: sanitizeTenantString(record.issued_at ?? record.issuedAt, 80),
     expires_at: expiresAt,
   };
 }
@@ -4002,6 +4188,373 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
         businessProfile?.chironReadinessStatus ?? businessProfile?.chiron_readiness_status,
         40,
       ),
+    },
+    200,
+  );
+}
+
+async function _customerRecoveryIncrementAttempts({
+  env,
+  challengeKey,
+  challenge,
+  nowIso,
+  nowMs,
+}) {
+  if (!env?.BOOKING_KV || !challengeKey || !challenge || typeof challenge !== "object") return;
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) return;
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  challenge.attempts = attempts + 1;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+}
+
+async function handlePublicCustomerRecoveryStart(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const challengeId = _customerRecoveryChallengeId();
+  const genericResponse = _projectPublicCustomerRecoveryStartResponse(challengeId);
+  const companyCode = normalizePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(body.email ?? body.customer_email ?? body.customerEmail);
+  console.log(
+    `[CUSTOMER_RECOVERY][START][REQUESTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"}`,
+  );
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!codeValidation.ok || !email) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"} bucket=invalid_input`,
+    );
+    return json(genericResponse, 200);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=company_unavailable`,
+    );
+    return json(genericResponse, 200);
+  }
+  const scope = {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=scope_missing`,
+    );
+    return json(genericResponse, 200);
+  }
+  const emailHash = await _hashRecoveryStartRateKeyPart(email);
+  const rateKey = _customerRecoveryStartRateKey(codeValidation.code, emailHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= CUSTOMER_RECOVERY_START_RATE_MAX) {
+      console.log(
+        `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=start_rate_limited`,
+      );
+      return json(genericResponse, 200);
+    }
+    await env.BOOKING_KV.put(
+      rateKey,
+      JSON.stringify({
+        count: count + 1,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: CUSTOMER_RECOVERY_START_RATE_WINDOW_SECONDS },
+    );
+  }
+  const challengeKey = _customerRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=challenge_key_invalid`,
+    );
+    return json(genericResponse, 200);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify({
+      version: 1,
+      challenge_id: challengeId,
+      purpose: "customer_recovery",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: codeValidation.code,
+      email_hash: sanitizeTenantString(emailHash, 200).toLowerCase(),
+      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+      attempts: 0,
+      max_attempts: CUSTOMER_RECOVERY_MAX_ATTEMPTS,
+      created_at: nowIso,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }),
+    { expirationTtl: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS },
+  );
+  console.log(
+    `[CUSTOMER_RECOVERY][START][ACCEPTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} ttl=${CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS}`,
+  );
+  try {
+    const emailSend = await _sendCustomerRecoveryOtpEmail({
+      env,
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      recipientEmail: email,
+      otp,
+    });
+    if (emailSend?.ok) {
+      console.log(
+        `[CUSTOMER_RECOVERY][EMAIL][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} provider_id=${sanitizeTenantString(emailSend.id, 120) || "-"}`,
+      );
+    } else {
+      console.log(
+        `[CUSTOMER_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[CUSTOMER_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
+    );
+  }
+  return json(genericResponse, 200);
+}
+
+async function handlePublicCustomerRecoveryVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(body.email ?? body.customer_email ?? body.customerEmail);
+  const otp = sanitizeTenantString(
+    body.otp ?? body.recovery_code ?? body.recoveryCode ?? body.code_otp,
+    24,
+  ).replace(/\s+/g, "");
+  console.log(
+    `[CUSTOMER_RECOVERY][VERIFY][REQUESTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
+    console.log(
+      `[CUSTOMER_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _customerRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : CUSTOMER_RECOVERY_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.purpose, 80) !== "customer_recovery" ||
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
+  const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`))
+    .toLowerCase();
+  const emailOk = _constantTimeEquals(expectedEmailHash, candidateEmailHash);
+  const otpOk = _constantTimeEquals(expectedOtpHash, candidateOtpHash);
+  if (!emailOk || !otpOk) {
+    await _customerRecoveryIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    console.log(
+      `[CUSTOMER_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_or_email_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const tenantId = sanitizeTenantString(challenge.tenant_id, 80);
+  const companyId = sanitizeTenantString(challenge.company_id, 80);
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (
+    !companyRecord ||
+    companyRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyRecord.company_id, 80) !== companyId
+  ) {
+    await _customerRecoveryIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const emailHash = sanitizeTenantString(candidateEmailHash, 200).toLowerCase();
+  const emailIndexKey = _customerEmailIndexKey(scope, emailHash);
+  if (!emailIndexKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  let customerId = _normalizeCustomerIdentityId(await env.BOOKING_KV.get(emailIndexKey));
+  if (!customerId) {
+    customerId = _generateCustomerIdentityId();
+  }
+  const customerIdentityKey = _customerIdentityKey(scope, customerId);
+  if (!customerIdentityKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const existingIdentity = await env.BOOKING_KV.get(customerIdentityKey, { type: "json" });
+  const identityCreatedAt = sanitizeTenantString(existingIdentity?.created_at, 80) || nowIso;
+  await env.BOOKING_KV.put(
+    customerIdentityKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_identity",
+      customer_id: customerId,
+      tenant_id: tenantId,
+      company_id: companyId,
+      email_hash: emailHash,
+      email_verified: true,
+      email_verified_at: nowIso,
+      created_at: identityCreatedAt,
+      updated_at: nowIso,
+      recovery_method: "email_otp",
+    }),
+  );
+  await env.BOOKING_KV.put(emailIndexKey, customerId);
+  const customerSessionToken = _generateOpaqueToken(32, "cus_");
+  const customerSessionTokenHash = await _hashCustomerSessionToken(customerSessionToken);
+  const customerSessionKey = _customerSessionKey(customerSessionTokenHash);
+  if (!customerSessionKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    customerSessionKey,
+    JSON.stringify({
+      role: "customer",
+      purpose: "customer_session",
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      email_hash: emailHash,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      recovery_method: "email_otp",
+    }),
+    { expirationTtl: CUSTOMER_SESSION_TTL_SECONDS },
+  );
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.recovered_customer_id = customerId;
+  challenge.link_method = "public_customer_recovery";
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  console.log(
+    `[CUSTOMER_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      customer_session_token: customerSessionToken,
+      customerSessionToken: customerSessionToken,
+      expires_in_seconds: CUSTOMER_SESSION_TTL_SECONDS,
+      expiresInSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      customer_id: customerId,
+      customerId: customerId,
+      tenant_id: tenantId,
+      tenantId: tenantId,
+      company_id: companyId,
+      companyId: companyId,
+    },
+    200,
+  );
+}
+
+async function handlePublicCustomerSessionBootstrap(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const scope = {
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  };
+  const identityKey = _customerIdentityKey(scope, session.customer_id);
+  const identity = identityKey
+    ? await env.BOOKING_KV.get(identityKey, { type: "json" })
+    : null;
+  const customerId = _normalizeCustomerIdentityId(
+    identity?.customer_id ?? identity?.customerId ?? session.customer_id,
+  );
+  return json(
+    {
+      ok: true,
+      customer: {
+        customer_id: customerId,
+        customerId: customerId,
+        tenant_id: session.tenant_id,
+        tenantId: session.tenant_id,
+        company_id: session.company_id,
+        companyId: session.company_id,
+        email_verified: true,
+        emailVerified: true,
+      },
+      bookings: [],
+      relationships: [],
+      capabilities: {
+        customer_recovery: true,
+        booking_hydration: false,
+        invoice_pdf_customer_access: false,
+      },
     },
     200,
   );
@@ -10688,6 +11241,29 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCompanyRecoveryVerify(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/recovery/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerRecoveryStart(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/recovery/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerRecoveryVerify(body, env);
+      }
+
+      if (url.pathname === "/public/customer/session/bootstrap") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicCustomerSessionBootstrap(request, env);
       }
 
       if (url.pathname === "/public/company/link/start") {
