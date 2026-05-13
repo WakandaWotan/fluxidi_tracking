@@ -2953,6 +2953,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           .toString();
       throw Exception(err);
     }
+    debugPrint('[BOOK][SUCCESS_RAW] status=${res.statusCode} body=$rawText');
     return body;
   }
 
@@ -2988,6 +2989,20 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     required String effectiveInvoiceAddress,
     required Map<String, dynamic> businessPayload,
   }) async {
+    bool boolish(dynamic value) {
+      if (value is bool) return value;
+      final raw = (value ?? '').toString().trim().toLowerCase();
+      return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
+    }
+
+    String firstNonEmpty(List<dynamic> values) {
+      for (final value in values) {
+        final text = (value ?? '').toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
     final bookingRef =
         (body['bookingId'] ??
                 body['booking_id'] ??
@@ -3018,16 +3033,70 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final publicRef = publicRefRaw.isNotEmpty
         ? publicRefRaw
         : bookingRef.trim();
+    final bookingObj = body['booking'] is Map
+        ? Map<String, dynamic>.from(body['booking'] as Map)
+        : const <String, dynamic>{};
     final requiresPayment =
-        (body['requiresPayment'] == true || body['payment_required'] == true);
-    final checkoutUrl =
-        (body['checkoutUrl'] ?? body['paymentUrl'] ?? body['payment_url'] ?? '')
-            .toString()
-            .trim();
+        boolish(body['requiresPayment']) ||
+        boolish(body['payment_required']) ||
+        boolish(body['requires_payment']) ||
+        boolish(bookingObj['requiresPayment']) ||
+        boolish(bookingObj['payment_required']) ||
+        boolish(bookingObj['requires_payment']);
+    final checkoutUrl = firstNonEmpty([
+      body['checkoutUrl'],
+      body['checkout_url'],
+      body['paymentUrl'],
+      body['payment_url'],
+      bookingObj['checkoutUrl'],
+      bookingObj['checkout_url'],
+      bookingObj['paymentUrl'],
+      bookingObj['payment_url'],
+    ]);
     final safeCheckoutUrl = _isCustomerSafeCheckoutUrl(checkoutUrl)
         ? checkoutUrl
         : '';
-    final paymentFlow = requiresPayment || safeCheckoutUrl.isNotEmpty;
+    final paymentMode = firstNonEmpty([
+      body['paymentMode'],
+      body['payment_mode'],
+      bookingObj['paymentMode'],
+      bookingObj['payment_mode'],
+    ]).toLowerCase();
+    final responseBusinessDetected =
+        boolish(body['business_detected']) ||
+        boolish(body['businessDetected']) ||
+        boolish(bookingObj['business_detected']) ||
+        boolish(bookingObj['businessDetected']);
+    final responseInvoiceRequested =
+        boolish(body['invoice_requested']) ||
+        boolish(body['invoiceRequested']) ||
+        boolish(bookingObj['invoice_requested']) ||
+        boolish(bookingObj['invoiceRequested']);
+    final requestBusinessIntent =
+        boolish(businessPayload['business_detected']) ||
+        boolish(businessPayload['businessDetected']) ||
+        boolish(businessPayload['invoice_requested']) ||
+        boolish(businessPayload['invoiceRequested']) ||
+        boolish(payload['business_detected']) ||
+        boolish(payload['businessDetected']) ||
+        boolish(payload['invoice_requested']) ||
+        boolish(payload['invoiceRequested']);
+    final checkoutMandatory =
+        requiresPayment ||
+        paymentMode == 'mollie' ||
+        responseBusinessDetected ||
+        responseInvoiceRequested ||
+        requestBusinessIntent;
+    if (checkoutMandatory && safeCheckoutUrl.isEmpty) {
+      final blockedBooking = bookingRef.isNotEmpty ? bookingRef : publicRef;
+      debugPrint(
+        '[BOOK][CHECKOUT_MISSING_BLOCKED] booking=$blockedBooking business=${responseBusinessDetected || requestBusinessIntent} invoice=$responseInvoiceRequested requiresPayment=$requiresPayment',
+      );
+      throw Exception(
+        'Online betaling kon niet worden gestart. Probeer opnieuw.',
+      );
+    }
+    final paymentFlow = checkoutMandatory || safeCheckoutUrl.isNotEmpty;
     final paymentBookingId =
         (body['paymentBookingId'] ??
                 body['payment_booking_id'] ??
@@ -3108,7 +3177,19 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
       _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
     });
-    if (safeCheckoutUrl.isNotEmpty) {
+    if (checkoutMandatory && safeCheckoutUrl.isNotEmpty) {
+      final openedBooking = bookingRef.isNotEmpty ? bookingRef : publicRef;
+      debugPrint(
+        '[BOOK][CHECKOUT_OPEN] booking=$openedBooking urlPresent=true',
+      );
+      await _openPaymentUrl(safeCheckoutUrl);
+      if (!mounted) return;
+      await _showBookingSuccessDialog(
+        requiresPayment: true,
+        paymentUrl: safeCheckoutUrl,
+        publicRef: publicRef,
+      );
+    } else if (safeCheckoutUrl.isNotEmpty) {
       await _showBookingSuccessDialog(
         requiresPayment: true,
         paymentUrl: safeCheckoutUrl,

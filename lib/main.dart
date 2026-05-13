@@ -17457,11 +17457,59 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         fallbackPhone: _view.customerPhone,
         source: _view.source,
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(widget.bookingId)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scopeSource = <String, dynamic>{
+        ..._view.source,
+        'record': _view.record,
+        'booking': _view.booking,
+      };
+      final tenantFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+        'tenant_id',
+        'tenantId',
+        'record.tenant_id',
+        'record.tenantId',
+        'record.booking.tenant_id',
+        'record.booking.tenantId',
+        'record.payload.tenant_id',
+        'record.payload.tenantId',
+        'booking.tenant_id',
+        'booking.tenantId',
+        'payload.tenant_id',
+        'payload.tenantId',
+        'data.tenant_id',
+        'data.tenantId',
+        'data.record.tenant_id',
+        'data.record.tenantId',
+      ]);
+      final companyFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+        'company_id',
+        'companyId',
+        'record.company_id',
+        'record.companyId',
+        'record.booking.company_id',
+        'record.booking.companyId',
+        'record.payload.company_id',
+        'record.payload.companyId',
+        'booking.company_id',
+        'booking.companyId',
+        'payload.company_id',
+        'payload.companyId',
+        'data.company_id',
+        'data.companyId',
+        'data.record.company_id',
+        'data.record.companyId',
+      ]);
+      final refreshScope =
+          tenantFromStored.isNotEmpty && companyFromStored.isNotEmpty
+          ? <String, String>{
+              'tenant_id': tenantFromStored,
+              'company_id': companyFromStored,
+              'tenantId': tenantFromStored,
+              'companyId': companyFromStored,
+            }
+          : _activeBookingScopeQuery();
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
+      ).replace(queryParameters: <String, String>{...refreshScope, ...proof});
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));

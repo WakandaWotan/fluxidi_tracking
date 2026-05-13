@@ -11585,7 +11585,10 @@ GET /oauth/callback
         const out = await handleBooking(normalizedBody, env, request);
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
-        return json(out, 200);
+        const statusCode = out?.ok === true
+          ? 200
+          : (out?.error === "payment_checkout_unavailable" ? 502 : 400);
+        return json(out, statusCode);
       }
 
       // PUBLIC BOOTSTRAP (phase 2B, read-only)
@@ -15043,6 +15046,72 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
       booking?.payment_status ||
       booking?.paymentStatus,
   );
+  const paymentMode = safeStr(
+    rec?.payment_mode ||
+      rec?.paymentMode ||
+      booking?.payment_mode ||
+      booking?.paymentMode,
+  ).toLowerCase();
+  const checkoutUrl = normalizeMollieCheckoutUrl(
+    rec?.checkoutUrl ??
+      rec?.checkout_url ??
+      rec?.paymentUrl ??
+      rec?.payment_url ??
+      rec?.mollie?.checkout_url ??
+      rec?.mollie?.checkoutUrl ??
+      rec?.mollie?._links?.checkout?.href ??
+      booking?.checkoutUrl ??
+      booking?.checkout_url ??
+      booking?.paymentUrl ??
+      booking?.payment_url ??
+      booking?.mollie?.checkout_url ??
+      booking?.mollie?.checkoutUrl ??
+      booking?.mollie?._links?.checkout?.href,
+  );
+  const boolish = (value) => {
+    if (typeof value === "boolean") return value;
+    const raw = safeStr(value, 24).toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  };
+  const businessDetected = boolish(
+    rec?.business_detected ??
+      rec?.businessDetected ??
+      booking?.business_detected ??
+      booking?.businessDetected,
+  );
+  const invoiceRequested = boolish(
+    rec?.invoice_requested ??
+      rec?.invoiceRequested ??
+      booking?.invoice_requested ??
+      booking?.invoiceRequested,
+  );
+  const requiresPayment = boolish(
+    rec?.requiresPayment ??
+      rec?.requires_payment ??
+      rec?.payment_required ??
+      booking?.requiresPayment ??
+      booking?.requires_payment ??
+      booking?.payment_required,
+  ) || businessDetected || invoiceRequested || paymentMode === "mollie";
+  const normalizedPaymentStatus = paymentStatus.toLowerCase();
+  const paymentSettled = [
+    "paid",
+    "confirmed",
+    "completed",
+    "success",
+    "settled",
+  ].includes(normalizedPaymentStatus);
+  if (requiresPayment && !paymentSettled && !checkoutUrl) {
+    return {
+      ok: false,
+      error: "payment_checkout_unavailable",
+      message: "Online payment checkout could not be created",
+      requiresPayment: true,
+      paymentMode: "mollie",
+      booking_id: canonicalBookingId,
+      bookingId: canonicalBookingId,
+    };
+  }
   return {
     ok: true,
     booking_id: canonicalBookingId,
@@ -15059,7 +15128,37 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
     status: _normLifecycleStatus(rec?.status || rec?.stage || null),
     payment_status: paymentStatus || undefined,
     paymentStatus: paymentStatus || undefined,
+    checkout_url: checkoutUrl || undefined,
+    checkoutUrl: checkoutUrl || undefined,
+    requiresPayment: requiresPayment || undefined,
+    paymentMode: paymentMode || undefined,
   };
+}
+
+function normalizeMollieCheckoutUrl(value) {
+  const raw = safeStr(value, 2000);
+  if (!raw) return "";
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    return "";
+  }
+  if (safeStr(parsed?.protocol).toLowerCase() !== "https:") return "";
+  const host = safeStr(parsed?.hostname).toLowerCase();
+  if (!host || !host.includes("mollie.")) return "";
+  return parsed.toString();
+}
+
+function readMollieCheckoutUrlFromPaymentResult(pay) {
+  if (!pay || typeof pay !== "object") return "";
+  return normalizeMollieCheckoutUrl(
+    pay?.checkoutUrl ||
+      pay?.checkout_url ||
+      pay?.paymentUrl ||
+      pay?.payment_url ||
+      pay?._links?.checkout?.href,
+  );
 }
 
 async function handleBooking(payload, env, request) {
@@ -15583,6 +15682,206 @@ async function handleBooking(payload, env, request) {
             env,
             request
           );
+          const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+          if (pay?.ok !== true || !checkoutUrl) {
+            return {
+              ok: false,
+              error: "payment_checkout_unavailable",
+              message: "Online payment checkout could not be created",
+              requiresPayment: true,
+              paymentMode: "mollie",
+              booking_id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+            };
+          }
+          const nowIso = new Date().toISOString();
+          const provisionalRecord = {
+            stage: "PENDING",
+            status: "PENDING",
+            lifecycle_status: "pending",
+            lifecycleStatus: "pending",
+            booking_status: "pending",
+            bookingStatus: "pending",
+            payment_status: "pending",
+            paymentStatus: "pending",
+            payment_mode: "mollie",
+            paymentMode: "mollie",
+            payment_required: true,
+            paymentRequired: true,
+            requiresPayment: true,
+            payment_booking_id: pay?.bookingId || null,
+            paymentBookingId: pay?.bookingId || null,
+            checkout_url: checkoutUrl,
+            checkoutUrl: checkoutUrl,
+            status_url: safeStr(pay?.statusUrl || pay?.status_url, 2000) || null,
+            statusUrl: safeStr(pay?.statusUrl || pay?.status_url, 2000) || null,
+            amount: pay?.amount || null,
+            booking_id: canonicalBookingId,
+            bookingId: canonicalBookingId,
+            booking_uuid,
+            public_booking_reference: publicBookingReference,
+            publicBookingReference: publicBookingReference,
+            booking_reference: publicBookingReference,
+            bookingReference: publicBookingReference,
+            public_reference: publicBookingReference,
+            publicReference: publicBookingReference,
+            planning_reference: planningReference,
+            planningReference: planningReference,
+            tenant_id: tenantContext.tenant_id,
+            company_id: tenantContext.company_id,
+            tenantId: tenantContext.tenant_id,
+            companyId: tenantContext.company_id,
+            booking_source: tenantContext.booking_source,
+            entry_channel: tenantContext.entry_channel,
+            source_context: tenantContext.source_context,
+            tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+            tenant_resolved_at: tenantContext.tenant_resolved_at,
+            createdAt: nowIso,
+            created_at: nowIso,
+            updatedAt: nowIso,
+            updated_at: nowIso,
+            booking: {
+              bookingId: canonicalBookingId,
+              booking_id: canonicalBookingId,
+              booking_uuid,
+              createdAt: nowIso,
+              created_at: nowIso,
+              tenant_id: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              tenantId: tenantContext.tenant_id,
+              companyId: tenantContext.company_id,
+              public_booking_reference: publicBookingReference,
+              publicBookingReference: publicBookingReference,
+              booking_reference: publicBookingReference,
+              bookingReference: publicBookingReference,
+              public_reference: publicBookingReference,
+              publicReference: publicBookingReference,
+              planning_reference: planningReference,
+              planningReference: planningReference,
+              booking_source: tenantContext.booking_source,
+              entry_channel: tenantContext.entry_channel,
+              source_context: tenantContext.source_context,
+              status: "PENDING",
+              stage: "PENDING",
+              lifecycle_status: "pending",
+              lifecycleStatus: "pending",
+              booking_status: "pending",
+              bookingStatus: "pending",
+              payment_status: "pending",
+              paymentStatus: "pending",
+              payment_mode: "mollie",
+              paymentMode: "mollie",
+              payment_required: true,
+              paymentRequired: true,
+              requiresPayment: true,
+              payment_booking_id: pay?.bookingId || null,
+              paymentBookingId: pay?.bookingId || null,
+              customer_name: customerContact.name,
+              customer_phone: customerContact.phone,
+              customer_email: customerContact.email,
+              name: customerContact.name,
+              phone: customerContact.phone,
+              email: customerContact.email,
+              custName: customerContact.name,
+              custPhone: customerContact.phone,
+              custEmail: customerContact.email,
+              from,
+              to,
+              date,
+              time,
+              pickupStartIso: pickup_iso,
+              pickup_iso,
+              return_enabled: ret.enabled,
+              return_from,
+              return_to,
+              returnPickupIso: return_pickup_iso,
+              service,
+              tier,
+              pax,
+              bags,
+              wait_min,
+              stops,
+              business_detected,
+              invoice_requested,
+              company_name: biz.company_name || "",
+              vat_number: biz.vat_number || "",
+              invoice_address: biz.invoice_address || "",
+              invoice_email: biz.invoice_email || customerContact.email || "",
+              vat_rate,
+              price_ex_vat: totalPricing?.price_ex_vat,
+              price_vat: totalPricing?.price_vat,
+              price_incl_vat: totalPricing?.price_incl_vat,
+              price_ex_vat_main: mainPricing?.price_ex_vat,
+              price_vat_main: mainPricing?.price_vat,
+              price_incl_vat_main: mainPricing?.price_incl_vat,
+              price_ex_vat_return: returnPricing?.price_ex_vat,
+              price_vat_return: returnPricing?.price_vat,
+              price_incl_vat_return: returnPricing?.price_incl_vat,
+              pricing_source: bookingPricingSource,
+              fixed_fare_applied: bookingFixedFareApplied,
+              fixed_fare_rule_id: bookingFixedFareRuleId,
+              distance_km,
+              duration_route_min,
+            },
+            payload: {
+              ...payload,
+              booking_id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+              tenant_id: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              tenantId: tenantContext.tenant_id,
+              companyId: tenantContext.company_id,
+              public_booking_reference: publicBookingReference,
+              publicBookingReference: publicBookingReference,
+              planning_reference: planningReference,
+              planningReference: planningReference,
+              payment_booking_id: pay?.bookingId || null,
+              paymentBookingId: pay?.bookingId || null,
+              payment_status: "pending",
+              paymentStatus: "pending",
+            },
+            quote: {
+              from,
+              to,
+              date,
+              time,
+              pickup_iso,
+              stops,
+              pricing: {
+                price_ex_vat: totalPricing?.price_ex_vat,
+                price_vat: totalPricing?.price_vat,
+                price_incl_vat: totalPricing?.price_incl_vat,
+                pricing_source: bookingPricingSource,
+                fixed_fare_applied: bookingFixedFareApplied,
+                fixed_fare_rule_id: bookingFixedFareRuleId,
+              },
+              pricing_main: mainPricing,
+              pricing_return: returnPricing,
+              distance_km,
+              duration_min: duration_route_min,
+            },
+            tracking_last: null,
+            trip: null,
+          };
+          await env.BOOKING_KV.put(
+            `booking:${canonicalBookingId}`,
+            JSON.stringify(provisionalRecord),
+          );
+          try {
+            await upsertCustomerScopedBookingIndexForBooking(
+              env,
+              canonicalBookingId,
+              provisionalRecord,
+            );
+          } catch (customerIndexErr) {
+            const scopeMask = _bookingIntentScopeMask(
+              resolveBookingTenantScopeFromRecord(provisionalRecord),
+            );
+            const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+            console.log(
+              `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+            );
+          }
 
           return {
             ok: true,
@@ -15601,8 +15900,10 @@ async function handleBooking(payload, env, request) {
             paymentBookingId: pay.bookingId || null,
             requiresPayment: true,
             paymentMode: "mollie",
-            checkoutUrl: pay.checkoutUrl,
-            statusUrl: pay.statusUrl || null,
+            checkout_url: checkoutUrl,
+            checkoutUrl: checkoutUrl,
+            status_url: pay.statusUrl || pay.status_url || null,
+            statusUrl: pay.statusUrl || pay.status_url || null,
             amount: pay.amount || null,
           };
         }
@@ -15839,11 +16140,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         env,
         request
       );
-      const pendingPaymentStatus = safeStr(
-        pay?.payment_status ||
-          pay?.paymentStatus ||
-          pay?.status,
-      ).toLowerCase() || "pending";
+      const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+      if (pay?.ok !== true || !checkoutUrl) {
+        return {
+          ok: false,
+          error: "payment_checkout_unavailable",
+          message: "Online payment checkout could not be created",
+          requiresPayment: true,
+          paymentMode: "mollie",
+          booking_id: canonicalBookingId,
+          bookingId: canonicalBookingId,
+        };
+      }
+      const pendingPaymentStatus = "pending";
       const nowIso = new Date().toISOString();
       const provisionalRecord = {
         stage: "PENDING",
@@ -15861,10 +16170,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         requiresPayment: true,
         payment_booking_id: pay?.bookingId || null,
         paymentBookingId: pay?.bookingId || null,
-        checkout_url: pay?.checkoutUrl || null,
-        checkoutUrl: pay?.checkoutUrl || null,
-        status_url: pay?.statusUrl || null,
-        statusUrl: pay?.statusUrl || null,
+        checkout_url: checkoutUrl,
+        checkoutUrl: checkoutUrl,
+        status_url: pay?.statusUrl || pay?.status_url || null,
+        statusUrl: pay?.statusUrl || pay?.status_url || null,
         amount: pay?.amount || null,
         booking_id: canonicalBookingId,
         bookingId: canonicalBookingId,
@@ -16050,8 +16359,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         paymentBookingId: pay.bookingId || null,
         requiresPayment: true,
         paymentMode: "mollie",
-        checkoutUrl: pay.checkoutUrl,
-        statusUrl: pay.statusUrl || null,
+        checkout_url: checkoutUrl,
+        checkoutUrl: checkoutUrl,
+        status_url: pay.statusUrl || pay.status_url || null,
+        statusUrl: pay.statusUrl || pay.status_url || null,
         amount: pay.amount || null,
       };
     }
