@@ -13405,10 +13405,16 @@ class CustomerHomePage extends StatelessWidget {
     }
   }
 
-  Widget _customerHomeHero(BuildContext context, {required String heroAsset}) {
+  Widget _customerHomeHero(
+    BuildContext context, {
+    required String heroAsset,
+    required double heroHeight,
+    required Alignment heroImageAlignment,
+    required double heroImageScale,
+  }) {
     final customerName = _customerDisplayName();
     return Container(
-      height: 312,
+      height: heroHeight,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
@@ -13418,16 +13424,16 @@ class CustomerHomePage extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           Transform.scale(
-            scale: 1.12,
-            alignment: const Alignment(0.55, 0.10),
+            scale: heroImageScale,
+            alignment: heroImageAlignment,
             child: Image.asset(
               heroAsset,
               fit: BoxFit.cover,
-              alignment: const Alignment(0.55, 0.10),
+              alignment: heroImageAlignment,
               errorBuilder: (_, __, ___) => Image.asset(
                 'assets/fluxidi/fluxidi_hero_taxi.png',
                 fit: BoxFit.cover,
-                alignment: const Alignment(0.55, 0.10),
+                alignment: heroImageAlignment,
               ),
             ),
           ),
@@ -13581,7 +13587,10 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
-  Widget _customerQuickActionGrid(BuildContext context) {
+  Widget _customerQuickActionGrid(
+    BuildContext context, {
+    required double mainAxisExtent,
+  }) {
     final actions = <({IconData icon, String label, VoidCallback onTap})>[
       (
         icon: Icons.receipt_long_outlined,
@@ -13670,7 +13679,7 @@ class CustomerHomePage extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 9,
             mainAxisSpacing: 9,
-            mainAxisExtent: 112,
+            mainAxisExtent: mainAxisExtent,
           ),
           itemBuilder: (_, i) => _customerQuickActionCard(
             context: context,
@@ -13925,6 +13934,11 @@ class CustomerHomePage extends StatelessWidget {
         final W = media.size.width;
         final H = media.size.height;
         final screenClass = FluxidiBreakpoints.classifyWidth(W);
+        final isTabletPortrait =
+            (screenClass == FluxidiScreenClass.tablet ||
+                screenClass == FluxidiScreenClass.desktop) &&
+            W < H &&
+            H >= 900;
         final isTabletLandscape =
             (screenClass == FluxidiScreenClass.tablet ||
                 screenClass == FluxidiScreenClass.desktop) &&
@@ -13939,8 +13953,20 @@ class CustomerHomePage extends StatelessWidget {
         final businessAsset = isTabletLandscape
             ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.png'
             : 'assets/fluxidi/fluxidi_business_briefcase_night.jpg';
+        final customerHeroHeight = isTabletPortrait
+            ? clampDouble(H * 0.28, 360.0, 410.0)
+            : 312.0;
+        final customerHeroImageAlignment = isTabletPortrait
+            ? const Alignment(0.42, 0.00)
+            : const Alignment(0.55, 0.10);
+        final customerHeroImageScale = isTabletPortrait ? 1.02 : 1.12;
+        final customerQuickGridMainAxisExtent = isTabletPortrait
+            ? clampDouble(H * 0.10, 126.0, 144.0)
+            : 112.0;
         final customerWideCardHeight = isTabletLandscape
             ? clampDouble(H * 0.24, 200.0, 230.0)
+            : isTabletPortrait
+            ? clampDouble(H * 0.155, 205.0, 225.0)
             : 130.0;
         return Scaffold(
           backgroundColor: const Color(0xFF050505),
@@ -13950,9 +13976,18 @@ class CustomerHomePage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
               child: Column(
                 children: [
-                  _customerHomeHero(context, heroAsset: heroAsset),
+                  _customerHomeHero(
+                    context,
+                    heroAsset: heroAsset,
+                    heroHeight: customerHeroHeight,
+                    heroImageAlignment: customerHeroImageAlignment,
+                    heroImageScale: customerHeroImageScale,
+                  ),
                   const SizedBox(height: 14),
-                  _customerQuickActionGrid(context),
+                  _customerQuickActionGrid(
+                    context,
+                    mainAxisExtent: customerQuickGridMainAxisExtent,
+                  ),
                   const SizedBox(height: 12),
                   _customerWideCard(
                     context: context,
