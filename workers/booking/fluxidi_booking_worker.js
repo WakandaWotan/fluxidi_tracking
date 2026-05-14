@@ -1725,6 +1725,8 @@ const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
 const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
 const CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX = "customer:global:identity:";
 const CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX = "customer:global:scope_links:";
+const CUSTOMER_GLOBAL_PROFILE_KEY_PREFIX = "customer:global:";
+const CUSTOMER_GLOBAL_PROFILE_KEY_SUFFIX = ":profile:v1";
 const CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES = 25;
 const CUSTOMER_IDENTITY_KEY_PREFIX = "customer:identity:v1:tenant:";
 const CUSTOMER_IDENTITY_KEY_MIDDLE = ":company:";
@@ -1972,6 +1974,12 @@ function _globalCustomerIdentityKey(customerId) {
   const safeCustomerId = _normalizeCustomerIdentityId(customerId);
   if (!safeCustomerId) return "";
   return `${CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _globalCustomerProfileKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_PROFILE_KEY_PREFIX}${safeCustomerId}${CUSTOMER_GLOBAL_PROFILE_KEY_SUFFIX}`;
 }
 
 function _globalCustomerScopeLinksKey(customerId) {
@@ -5138,6 +5146,147 @@ async function handlePublicCustomerSessionBootstrap(request, env) {
     },
     200,
   );
+}
+
+function _customerSessionPreferredPhoneE164(session) {
+  const normalized = _normalizeCustomerPhone(
+    session?.phone_e164 ??
+    session?.phoneE164 ??
+    session?.customer_phone ??
+    session?.customerPhone,
+  );
+  return _looksLikeE164Phone(normalized) ? normalized : "";
+}
+
+function _sanitizePublicCustomerProfilePayload(body) {
+  const source = body && typeof body === "object" && !Array.isArray(body)
+    ? body
+    : {};
+  const name = sanitizeTenantString(source.name, 160);
+  const email = _normalizeCustomerEmail(source.email);
+  const preferredPostcode = sanitizeTenantString(
+    source.preferred_postcode ?? source.preferredPostcode,
+    32,
+  );
+  const companyName = sanitizeTenantString(
+    source.company_name ?? source.companyName,
+    160,
+  );
+  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const phoneNormalized = _normalizeCustomerPhone(source.phone);
+  const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
+  return {
+    name,
+    phone,
+    email,
+    preferred_postcode: preferredPostcode,
+    preferredPostcode,
+    company_name: companyName,
+    companyName,
+    vat_number: vatNumber,
+    vatNumber,
+  };
+}
+
+function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile) {
+  const source = sourceProfile && typeof sourceProfile === "object" && !Array.isArray(sourceProfile)
+    ? sourceProfile
+    : {};
+  const customerId = _normalizeCustomerIdentityId(
+    source.customer_id ??
+    source.customerId ??
+    sessionCustomerId,
+  );
+  const name = sanitizeTenantString(source.name, 160);
+  const phoneNormalized = _normalizeCustomerPhone(source.phone);
+  const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
+  const email = _normalizeCustomerEmail(source.email);
+  const preferredPostcode = sanitizeTenantString(
+    source.preferred_postcode ?? source.preferredPostcode,
+    32,
+  );
+  const companyName = sanitizeTenantString(
+    source.company_name ?? source.companyName,
+    160,
+  );
+  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const createdAt = sanitizeTenantString(source.created_at ?? source.createdAt, 80);
+  const updatedAt = sanitizeTenantString(source.updated_at ?? source.updatedAt, 80);
+  return {
+    customer_id: customerId,
+    customerId,
+    name,
+    phone,
+    email,
+    preferred_postcode: preferredPostcode,
+    preferredPostcode,
+    company_name: companyName,
+    companyName,
+    vat_number: vatNumber,
+    vatNumber,
+    created_at: createdAt,
+    createdAt,
+    updated_at: updatedAt,
+    updatedAt,
+  };
+}
+
+async function handlePublicCustomerProfileGet(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const customerId = _normalizeCustomerIdentityId(session.customer_id);
+  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
+  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
+  const stored = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  const profile = _projectPublicCustomerProfileResponse(customerId, stored);
+  return json({ ok: true, profile }, 200);
+}
+
+async function handlePublicCustomerProfilePost(request, env, body) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const customerId = _normalizeCustomerIdentityId(session.customer_id);
+  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
+  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
+  const existingRaw = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  const existing = _projectPublicCustomerProfileResponse(customerId, existingRaw);
+  const incoming = _sanitizePublicCustomerProfilePayload(body);
+  const sessionPhone = _customerSessionPreferredPhoneE164(session);
+  const nowIso = new Date().toISOString();
+  const merged = {
+    ...existing,
+    customer_id: customerId,
+    customerId,
+    name: incoming.name || existing.name || "",
+    phone: sessionPhone || existing.phone || "",
+    email: incoming.email || existing.email || "",
+    preferred_postcode: incoming.preferred_postcode || existing.preferred_postcode || "",
+    preferredPostcode: incoming.preferred_postcode || existing.preferred_postcode || "",
+    company_name: incoming.company_name || existing.company_name || "",
+    companyName: incoming.company_name || existing.company_name || "",
+    vat_number: incoming.vat_number || existing.vat_number || "",
+    vatNumber: incoming.vat_number || existing.vat_number || "",
+    created_at: existing.created_at || nowIso,
+    createdAt: existing.created_at || nowIso,
+    updated_at: nowIso,
+    updatedAt: nowIso,
+  };
+  await env.BOOKING_KV.put(
+    profileKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_global_profile",
+      ...merged,
+    }),
+  );
+  return json({ ok: true, profile: merged }, 200);
 }
 
 function _customerBookingIdsFromRecord(rec) {
@@ -12265,6 +12414,17 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCustomerPhoneAuthVerify(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/profile") {
+        if (request.method === "GET") {
+          return handlePublicCustomerProfileGet(request, env);
+        }
+        if (request.method === "POST") {
+          const body = await safeJson(request);
+          return handlePublicCustomerProfilePost(request, env, body);
+        }
+        return json({ ok: false, error: "method_not_allowed" }, 405);
       }
 
       if (url.pathname === "/public/customer/session/bootstrap") {
