@@ -856,6 +856,27 @@ Uri _withActiveBookingScope(
   return Uri.parse('$baseUrl$path').replace(queryParameters: scoped);
 }
 
+({String tenantId, String companyId})? _strictComplianceScopeFromValues({
+  required List<dynamic> tenantCandidates,
+  required List<dynamic> companyCandidates,
+}) {
+  String pick(List<dynamic> values) {
+    for (final value in values) {
+      final text = (value ?? '').toString().trim();
+      if (text.isEmpty) continue;
+      final lower = text.toLowerCase();
+      if (lower == 'null' || lower == 'undefined') continue;
+      return text;
+    }
+    return '';
+  }
+
+  final tenantId = pick(tenantCandidates);
+  final companyId = pick(companyCandidates);
+  if (tenantId.isEmpty || companyId.isEmpty) return null;
+  return (tenantId: tenantId, companyId: companyId);
+}
+
 String? _normalizedCustomerProofPhone(String? value) {
   final text = value?.trim() ?? '';
   if (text.isEmpty) return null;
@@ -1397,6 +1418,14 @@ class _ComplianceRideLedgerStore {
 Future<void> _writeComplianceLedgerRecord({
   required Map<String, dynamic> record,
 }) async {
+  final tenantId = (record['tenant_id'] ?? '').toString().trim();
+  final companyId = (record['company_id'] ?? '').toString().trim();
+  if (tenantId.isEmpty || companyId.isEmpty) {
+    debugPrint(
+      '[COMPLIANCE_LEDGER][SKIP_SCOPE] reason=missing_tenant_company_scope',
+    );
+    return;
+  }
   try {
     await _ComplianceRideLedgerStore.append(record);
     debugPrint(
@@ -25338,6 +25367,28 @@ Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
   final eventKey = reference.isEmpty
       ? eventAt.toUtc().millisecondsSinceEpoch
       : reference;
+  final strictScope = _strictComplianceScopeFromValues(
+    tenantCandidates: <dynamic>[
+      paymentFields['tenant_id'],
+      paymentFields['tenantId'],
+      item.bookingDetails['tenant_id'],
+      item.bookingDetails['tenantId'],
+      item.rawSource['tenant_id'],
+      item.rawSource['tenantId'],
+      activeDriverSessionNotifier.value?.tenantId,
+    ],
+    companyCandidates: <dynamic>[
+      paymentFields['company_id'],
+      paymentFields['companyId'],
+      item.bookingDetails['company_id'],
+      item.bookingDetails['companyId'],
+      item.rawSource['company_id'],
+      item.rawSource['companyId'],
+      activeDriverSessionNotifier.value?.companyId,
+      companyProfileNotifier.value?.companyId,
+      activeCompanySessionNotifier.value?.companyId,
+    ],
+  );
 
   return <String, dynamic>{
     'ledger_version': '1.0',
@@ -25346,8 +25397,8 @@ Map<String, dynamic> _buildCompliancePaymentUpdateLedgerRecord({
     'ride_id': null,
     'ride_type': rideType,
     'lifecycle_status': 'payment_updated',
-    'tenant_id': kOutboundTenantId,
-    'company_id': resolvedCompanyId,
+    'tenant_id': strictScope?.tenantId ?? '',
+    'company_id': strictScope?.companyId ?? '',
     'driver_id': item.driverId.trim().isNotEmpty
         ? item.driverId.trim()
         : kDriverId,
@@ -28975,14 +29026,32 @@ class _DriverHomePageState extends State<DriverHomePage>
       stoppedAt: stoppedAt,
       bookingId: bookingId,
     );
+    final strictScope = _strictComplianceScopeFromValues(
+      tenantCandidates: <dynamic>[
+        details['tenant_id'],
+        details['tenantId'],
+        _compliancePathText(details, 'booking.tenant_id'),
+        _compliancePathText(details, 'booking.tenantId'),
+        activeDriverSessionNotifier.value?.tenantId,
+      ],
+      companyCandidates: <dynamic>[
+        details['company_id'],
+        details['companyId'],
+        _compliancePathText(details, 'booking.company_id'),
+        _compliancePathText(details, 'booking.companyId'),
+        activeDriverSessionNotifier.value?.companyId,
+        companyProfileNotifier.value?.companyId,
+        activeCompanySessionNotifier.value?.companyId,
+      ],
+    );
 
     return <String, dynamic>{
       'ledger_version': '1.0',
       'ride_id': rideId,
       'ride_type': 'planned',
       'lifecycle_status': 'completed',
-      'tenant_id': kOutboundTenantId,
-      'company_id': resolvedCompanyId,
+      'tenant_id': strictScope?.tenantId ?? '',
+      'company_id': strictScope?.companyId ?? '',
       'driver_id': driverId,
       'vehicle_id': vehicleId,
       'booking_id': bookingId,
@@ -29054,14 +29123,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       startedAt: startedAt,
       stoppedAt: stoppedAt,
     );
+    final strictScope = _strictComplianceScopeFromValues(
+      tenantCandidates: <dynamic>[activeDriverSessionNotifier.value?.tenantId],
+      companyCandidates: <dynamic>[
+        activeDriverSessionNotifier.value?.companyId,
+        companyProfileNotifier.value?.companyId,
+        activeCompanySessionNotifier.value?.companyId,
+      ],
+    );
 
     return <String, dynamic>{
       'ledger_version': '1.0',
       'ride_id': rideId,
       'ride_type': 'direct',
       'lifecycle_status': 'completed',
-      'tenant_id': kOutboundTenantId,
-      'company_id': resolvedCompanyId,
+      'tenant_id': strictScope?.tenantId ?? '',
+      'company_id': strictScope?.companyId ?? '',
       'driver_id': driverId,
       'vehicle_id': vehicleId,
       'booking_id': null,

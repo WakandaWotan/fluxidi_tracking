@@ -15559,19 +15559,11 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
   const explicitTenantId = safeStr(
     payment?.tenant_id ||
       payment?.tenantId ||
-      payment?.company_id ||
-      payment?.companyId ||
       rec?.tenant_id ||
       rec?.tenantId ||
       booking?.tenant_id ||
-      booking?.tenantId ||
-      rec?.company_id ||
-      rec?.companyId ||
-      booking?.company_id ||
-      booking?.companyId,
+      booking?.tenantId,
   );
-  // TODO: replace Fluxidi fallback with strict tenant/company authority before production.
-  const tenantId = explicitTenantId || "fluxidi";
   const explicitCompanyId = safeStr(
     payment?.company_id ||
       payment?.companyId ||
@@ -15580,8 +15572,14 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       booking?.company_id ||
       booking?.companyId,
   );
-  const companyId = explicitCompanyId || tenantId;
-  if (!tenantId || !companyId) return null;
+  const tenantId = explicitTenantId;
+  const companyId = explicitCompanyId;
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=booking_payment_update reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
 
   const paidAt = safeStr(
     rec?.paid_at ||

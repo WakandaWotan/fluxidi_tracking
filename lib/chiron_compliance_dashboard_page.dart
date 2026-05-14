@@ -1606,13 +1606,15 @@ class _RemoteComplianceEventsSectionState
   ({String tenantId, String companyId}) _effectiveTenantCompanyIds() {
     final activeCompanyId =
         companyProfileNotifier.value?.companyId.trim() ?? '';
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
     final resolvedId = resolvedCompanyId.trim();
-    final effectiveTenantId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
     final effectiveCompanyId = activeCompanyId.isNotEmpty
         ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
+        : (sessionCompanyId.isNotEmpty
+              ? sessionCompanyId
+              : (resolvedId.isNotEmpty ? resolvedId : ''));
+    final effectiveTenantId = effectiveCompanyId;
     return (tenantId: effectiveTenantId, companyId: effectiveCompanyId);
   }
 
@@ -1832,6 +1834,23 @@ class _RemoteComplianceEventsSectionState
     final effective = _effectiveTenantCompanyIds();
     final effectiveTenantId = effective.tenantId;
     final effectiveCompanyId = effective.companyId;
+    if (effectiveTenantId.isEmpty || effectiveCompanyId.isEmpty) {
+      return RemoteComplianceEventsResponse(
+        ok: false,
+        tenantId: '',
+        companyId: '',
+        limit: 100,
+        count: 0,
+        malformedCount: 0,
+        events: const <RemoteComplianceEvent>[],
+        errorMessage: _t(
+          nl: 'Bedrijfscontext ontbreekt. Compliancegegevens kunnen niet veilig geladen worden.',
+          en: 'Company context is missing. Compliance data cannot be loaded safely.',
+          fr: 'Le contexte entreprise est manquant. Les données de conformité ne peuvent pas être chargées en toute sécurité.',
+          es: 'Falta el contexto de empresa. Los datos de cumplimiento no pueden cargarse de forma segura.',
+        ),
+      );
+    }
 
     final token = _complianceAdminToken.trim();
     if (token.isEmpty) {
@@ -1839,7 +1858,7 @@ class _RemoteComplianceEventsSectionState
         ok: false,
         tenantId: effectiveTenantId,
         companyId: effectiveCompanyId,
-        limit: 10,
+        limit: 100,
         count: 0,
         malformedCount: 0,
         events: const <RemoteComplianceEvent>[],
@@ -1857,7 +1876,7 @@ class _RemoteComplianceEventsSectionState
           queryParameters: <String, String>{
             'tenant_id': effectiveTenantId,
             'company_id': effectiveCompanyId,
-            'limit': '10',
+            'limit': '100',
           },
         );
     try {
@@ -1884,7 +1903,7 @@ class _RemoteComplianceEventsSectionState
           ok: false,
           tenantId: _text(payload['tenant_id']),
           companyId: _text(payload['company_id']),
-          limit: int.tryParse(_text(payload['limit'])) ?? 10,
+          limit: int.tryParse(_text(payload['limit'])) ?? 100,
           count: 0,
           malformedCount: 0,
           events: const <RemoteComplianceEvent>[],
@@ -1915,7 +1934,7 @@ class _RemoteComplianceEventsSectionState
         ok: payload['ok'] == true,
         tenantId: _text(payload['tenant_id']),
         companyId: _text(payload['company_id']),
-        limit: int.tryParse(_text(payload['limit'])) ?? 10,
+        limit: int.tryParse(_text(payload['limit'])) ?? 100,
         count: int.tryParse(_text(payload['count'])) ?? events.length,
         malformedCount: int.tryParse(_text(payload['malformed_count'])) ?? 0,
         events: events,
@@ -1926,7 +1945,7 @@ class _RemoteComplianceEventsSectionState
         ok: false,
         tenantId: effectiveTenantId,
         companyId: effectiveCompanyId,
-        limit: 10,
+        limit: 100,
         count: 0,
         malformedCount: 0,
         events: const <RemoteComplianceEvent>[],
@@ -1960,6 +1979,23 @@ class _RemoteComplianceEventsSectionState
       return;
     }
     final effective = _effectiveTenantCompanyIds();
+    if (effective.tenantId.trim().isEmpty ||
+        effective.companyId.trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bedrijfscontext ontbreekt. Compliancegegevens kunnen niet veilig geladen worden.',
+              en: 'Company context is missing. Compliance data cannot be loaded safely.',
+              fr: 'Le contexte entreprise est manquant. Les données de conformité ne peuvent pas être chargées en toute sécurité.',
+              es: 'Falta el contexto de empresa. Los datos de cumplimiento no pueden cargarse de forma segura.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final query = <String, String>{
       'tenant_id': effective.tenantId,
       'company_id': effective.companyId,

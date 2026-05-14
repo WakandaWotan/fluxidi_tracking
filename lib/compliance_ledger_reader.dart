@@ -386,7 +386,7 @@ class ComplianceLedgerReader {
             entry,
             tenantId: tenantId,
             companyId: companyId,
-            allowLegacyWithoutScope: true,
+            allowLegacyWithoutScope: false,
           );
         })
         .toList(growable: false);
@@ -419,7 +419,10 @@ class ComplianceLedgerReader {
     );
   }
 
-  Future<ComplianceLedgerReadResult> readLatest({int limit = 20}) async {
+  Future<ComplianceLedgerReadResult> readLatest({
+    int limit = 20,
+    bool allowLegacyWithoutScope = false,
+  }) async {
     if (kIsWeb) {
       return const ComplianceLedgerReadResult(
         entries: <ComplianceLedgerEntry>[],
@@ -462,7 +465,7 @@ class ComplianceLedgerReader {
           entry,
           tenantId: tenantId,
           companyId: companyId,
-          allowLegacyWithoutScope: true,
+          allowLegacyWithoutScope: allowLegacyWithoutScope,
         )) {
           continue;
         }

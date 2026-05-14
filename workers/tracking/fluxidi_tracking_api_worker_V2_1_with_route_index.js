@@ -350,7 +350,6 @@ async function _assertSessionOwnedByActorOrBlock({
 }
 
 const COMPLIANCE_APPEND_PATH = "/compliance/events/append";
-const TRACKING_FALLBACK_TENANT_ID = "fluxidi";
 
 function safeKeyPart(value, maxLen = 128) {
   const raw = safeStr(value, maxLen);
@@ -958,14 +957,19 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
     stopPayload?.tenant_id ?? stopPayload?.tenantId ?? stopPayload?.company_id ?? stopPayload?.companyId,
     96,
   );
-  const tenantId = normalizedScope?.tenant_id ?? tenantFromTrip ?? tenantFromPayload ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromTrip ?? tenantFromPayload;
 
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = normalizedScope?.company_id ?? companyFromTrip ?? companyFromPayload ?? tenantId;
+  const companyId = normalizedScope?.company_id ?? companyFromTrip ?? companyFromPayload;
 
-  if (!tenantId || !companyId) return null;
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=tracking reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
 
   const pickup = trip?.origin && typeof trip.origin === "object"
     ? {
@@ -1056,13 +1060,18 @@ function buildPlannedTripStopComplianceEvent(trip, stopPayload, canonicalScope =
     trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
     96,
   );
-  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip;
 
   const companyFromPayload = safeStr(stopPayload?.company_id ?? stopPayload?.companyId, 96);
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip ?? tenantId;
-  if (!tenantId || !companyId) return null;
+  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip;
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=tracking reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
 
   const stoppedAt = safeStr(
     trip?.stopped_at ?? trip?.stoppedAt ?? stopPayload?.stopped_at ?? stopPayload?.client_stopped_at,
@@ -1182,15 +1191,20 @@ function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult, can
     trip?.tenant_id ?? trip?.tenantId ?? trip?.company_id ?? trip?.companyId,
     96,
   );
-  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip ?? TRACKING_FALLBACK_TENANT_ID;
+  const tenantId = normalizedScope?.tenant_id ?? tenantFromPayload ?? tenantFromTrip;
   const companyFromPayload = safeStr(
     paymentPayloadOrResult?.company_id ?? paymentPayloadOrResult?.companyId,
     96,
   );
   const companyFromTrip = safeStr(trip?.company_id ?? trip?.companyId, 96);
   // TODO: tighten tenant/company authority from a single canonical source.
-  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip ?? tenantId;
-  if (!tenantId || !companyId) return null;
+  const companyId = normalizedScope?.company_id ?? companyFromPayload ?? companyFromTrip;
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=tracking reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
 
   const paidAt =
     safeStr(
