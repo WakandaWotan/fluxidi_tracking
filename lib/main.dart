@@ -39255,6 +39255,105 @@ class _ReceiptPdfBundle {
 }
 
 class _ReceiptPdfActionRunner {
+  static String _resolveBookingIdForInvoicePdf(_TripHistoryItem item) {
+    final direct = (item.bookingId ?? '').trim();
+    if (direct.isNotEmpty) return direct;
+    return (_firstPathText(item, const [
+              ['booking_id'],
+              ['bookingId'],
+              ['id'],
+              ['booking', 'booking_id'],
+              ['booking', 'bookingId'],
+              ['booking', 'id'],
+              ['record', 'booking_id'],
+              ['record', 'bookingId'],
+              ['record', 'booking', 'booking_id'],
+              ['record', 'booking', 'bookingId'],
+              ['payload', 'booking_id'],
+              ['payload', 'bookingId'],
+              ['payload', 'booking', 'booking_id'],
+              ['payload', 'booking', 'bookingId'],
+            ]) ??
+            '')
+        .trim();
+  }
+
+  static Uri? _buildBackendInvoicePdfUri(_TripHistoryItem item) {
+    final bookingId = _resolveBookingIdForInvoicePdf(item);
+    if (bookingId.isEmpty) return null;
+    return Uri.parse(
+      '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/invoice/pdf',
+    );
+  }
+
+  static Map<String, String> _backendInvoicePdfHeaders() {
+    final headers = <String, String>{'Accept': 'application/pdf'};
+    final admin = _adminHeaders();
+    if (admin.isNotEmpty) {
+      headers.addAll(admin);
+      return headers;
+    }
+
+    final driverSessionToken =
+        (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+    if (driverSessionToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $driverSessionToken';
+      return headers;
+    }
+
+    final companySessionToken =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (companySessionToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $companySessionToken';
+    }
+
+    return headers;
+  }
+
+  static Future<_ReceiptPdfBundle?> _tryFetchBackendInvoicePdfBundle({
+    required _TripHistoryItem item,
+    required String source,
+  }) async {
+    final uri = _buildBackendInvoicePdfUri(item);
+    if (uri == null) {
+      debugPrint('[PDF][BACKEND_FETCH][MISS] status=no_booking_id');
+      return null;
+    }
+    debugPrint('[PDF][BACKEND_FETCH][START] source=$source');
+    try {
+      final response = await http
+          .get(uri, headers: _backendInvoicePdfHeaders())
+          .timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        debugPrint('[PDF][BACKEND_FETCH][MISS] status=${response.statusCode}');
+        return null;
+      }
+      final bytes = response.bodyBytes;
+      final contentType = (response.headers['content-type'] ?? '')
+          .trim()
+          .toLowerCase();
+      debugPrint('[PDF][BACKEND_FETCH][OK] contentType=$contentType');
+
+      final tempDir = await getTemporaryDirectory();
+      final receiptsDir = Directory(
+        '${tempDir.path}${Platform.pathSeparator}fluxidi_receipts',
+      );
+      if (!await receiptsDir.exists()) {
+        await receiptsDir.create(recursive: true);
+      }
+
+      final fileName = _sanitizeFilePart('${_customerReference(item)}_invoice');
+      final file = File(
+        '${receiptsDir.path}${Platform.pathSeparator}$fileName.pdf',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      return _ReceiptPdfBundle(bytes: bytes, file: file);
+    } catch (err) {
+      debugPrint('[PDF][BACKEND_FETCH][ERROR] $err');
+      return null;
+    }
+  }
+
   static Future<void> previewPdf({
     required BuildContext context,
     required _TripHistoryItem item,
@@ -39810,6 +39909,11 @@ class _ReceiptPdfActionRunner {
     required BuildContext context,
     required _TripHistoryItem item,
   }) async {
+    final backendBundle = await _tryFetchBackendInvoicePdfBundle(
+      item: item,
+      source: 'receipt_pdf_bundle_static_layout',
+    );
+    if (backendBundle != null) return backendBundle;
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,
@@ -42927,6 +43031,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   Future<_ReceiptPdfBundle?> _buildReceiptPdfBundle(
     BuildContext context,
   ) async {
+    final backendBundle =
+        await _ReceiptPdfActionRunner._tryFetchBackendInvoicePdfBundle(
+          item: item,
+          source: 'receipt_pdf_bundle_stateful_layout',
+        );
+    if (backendBundle != null) return backendBundle;
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,
