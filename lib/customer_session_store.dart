@@ -4,6 +4,27 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+String normalizeCustomerSessionPhoneE164(String raw) {
+  final input = raw.trim();
+  if (input.isEmpty) return '';
+  var compact = input.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+  if (compact.startsWith('00') && compact.length > 2) {
+    compact = '+${compact.substring(2)}';
+  }
+  if (compact.startsWith('04') && RegExp(r'^04\d{8}$').hasMatch(compact)) {
+    return '+32${compact.substring(1)}';
+  }
+  if (compact.startsWith('+3204') &&
+      RegExp(r'^\+3204\d{8}$').hasMatch(compact)) {
+    return '+32${compact.substring(4)}';
+  }
+  if (compact.startsWith('+')) {
+    final digits = compact.substring(1).replaceAll(RegExp(r'[^0-9]'), '');
+    return digits.isEmpty ? '' : '+$digits';
+  }
+  return compact;
+}
+
 class CustomerSession {
   const CustomerSession({
     required this.customerSessionToken,
@@ -41,6 +62,8 @@ class CustomerSession {
       'default_company_id',
     ]);
 
+    final rawPhone = read(const ['phoneE164', 'phone_e164']);
+    final normalizedPhone = normalizeCustomerSessionPhoneE164(rawPhone);
     return CustomerSession(
       customerSessionToken: read(const [
         'customerSessionToken',
@@ -48,7 +71,7 @@ class CustomerSession {
       ]),
       expiresAt: read(const ['expiresAt', 'expires_at']),
       customerId: read(const ['customerId', 'customer_id']),
-      phoneE164: read(const ['phoneE164', 'phone_e164']),
+      phoneE164: normalizedPhone,
       defaultTenantId: defaultTenant.isEmpty ? null : defaultTenant,
       defaultCompanyId: defaultCompany.isEmpty ? null : defaultCompany,
       createdAt: read(const ['createdAt', 'created_at']),
@@ -116,6 +139,27 @@ class CustomerSessionStore {
         Map<String, dynamic>.from(decoded),
       );
       if (session.customerSessionToken.trim().isEmpty) return null;
+      final rawPhone = ((decoded['phoneE164'] ?? decoded['phone_e164']) ?? '')
+          .toString()
+          .trim();
+      final normalizedPhone = normalizeCustomerSessionPhoneE164(rawPhone);
+      final phoneChanged = rawPhone != normalizedPhone;
+      debugPrint('[CUSTOMER_SESSION][PHONE_NORMALIZED] changed=$phoneChanged');
+      if (phoneChanged) {
+        final healed = CustomerSession(
+          customerSessionToken: session.customerSessionToken,
+          expiresAt: session.expiresAt,
+          customerId: session.customerId,
+          phoneE164: normalizedPhone,
+          defaultTenantId: session.defaultTenantId,
+          defaultCompanyId: session.defaultCompanyId,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+        );
+        await file.writeAsString(jsonEncode(healed.toJson()), flush: true);
+        _cache = healed;
+        return healed;
+      }
       _cache = session;
       return session;
     } catch (_) {
@@ -125,11 +169,16 @@ class CustomerSessionStore {
 
   Future<void> save(CustomerSession session) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
+    final normalizedPhone = normalizeCustomerSessionPhoneE164(
+      session.phoneE164,
+    );
+    final phoneChanged = session.phoneE164.trim() != normalizedPhone;
+    debugPrint('[CUSTOMER_SESSION][PHONE_NORMALIZED] changed=$phoneChanged');
     final normalized = CustomerSession(
       customerSessionToken: session.customerSessionToken.trim(),
       expiresAt: session.expiresAt.trim(),
       customerId: session.customerId.trim(),
-      phoneE164: session.phoneE164.trim(),
+      phoneE164: normalizedPhone,
       defaultTenantId: (session.defaultTenantId ?? '').trim().isEmpty
           ? null
           : session.defaultTenantId!.trim(),

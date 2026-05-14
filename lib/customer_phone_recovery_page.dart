@@ -47,12 +47,7 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
   }
 
   String _normalizePhoneInput(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '';
-    final hasPlus = trimmed.startsWith('+');
-    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.isEmpty) return '';
-    return hasPlus ? '+$digits' : digits;
+    return normalizeCustomerSessionPhoneE164(raw);
   }
 
   bool _looksLikeE164(String value) {
@@ -69,7 +64,10 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
 
   Future<void> _start() async {
     if (_busy) return;
-    final phone = _normalizePhoneInput(_phoneCtrl.text);
+    final rawPhoneInput = _phoneCtrl.text;
+    final phone = _normalizePhoneInput(rawPhoneInput);
+    final changed = rawPhoneInput.trim() != phone;
+    debugPrint('[CUSTOMER_PHONE_LOGIN][PHONE_NORMALIZED] changed=$changed');
     if (!_looksLikeE164(phone)) {
       setState(() {
         _error = _t(
@@ -134,7 +132,10 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
 
   Future<void> _verify() async {
     if (_busy) return;
-    final phone = _normalizePhoneInput(_phoneCtrl.text);
+    final rawPhoneInput = _phoneCtrl.text;
+    final phone = _normalizePhoneInput(rawPhoneInput);
+    final changed = rawPhoneInput.trim() != phone;
+    debugPrint('[CUSTOMER_PHONE_LOGIN][PHONE_NORMALIZED] changed=$changed');
     final otp = _otpCtrl.text.trim();
     if (!_looksLikeE164(phone) || _challengeId.trim().isEmpty) {
       setState(() {
@@ -192,13 +193,14 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         throw Exception('session_missing');
       }
       final now = DateTime.now().toUtc();
+      final sessionPhone = normalizeCustomerSessionPhoneE164(phone);
       final session = CustomerSession(
         customerSessionToken: token,
         expiresAt: now
             .add(Duration(seconds: expiresInSeconds))
             .toIso8601String(),
         customerId: customerId,
-        phoneE164: phone,
+        phoneE164: sessionPhone,
         defaultTenantId: null,
         defaultCompanyId: null,
         createdAt: now.toIso8601String(),

@@ -1724,6 +1724,8 @@ const CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
 const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
 const CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX = "customer:global:identity:";
+const CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX = "customer:global:scope_links:";
+const CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES = 25;
 const CUSTOMER_IDENTITY_KEY_PREFIX = "customer:identity:v1:tenant:";
 const CUSTOMER_IDENTITY_KEY_MIDDLE = ":company:";
 const CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE = ":customer:";
@@ -1970,6 +1972,108 @@ function _globalCustomerIdentityKey(customerId) {
   const safeCustomerId = _normalizeCustomerIdentityId(customerId);
   if (!safeCustomerId) return "";
   return `${CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _globalCustomerScopeLinksKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _normalizeCustomerScopeLink(scope) {
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return null;
+  const tenantId = sanitizeTenantString(scope.tenant_id ?? scope.tenantId, 80);
+  const companyId = sanitizeTenantString(scope.company_id ?? scope.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  const linkedAt = sanitizeTenantString(scope.linked_at ?? scope.linkedAt, 80);
+  return {
+    tenant_id: tenantId,
+    tenantId,
+    company_id: companyId,
+    companyId,
+    linked_at: linkedAt || "",
+    linkedAt: linkedAt || "",
+  };
+}
+
+async function _readGlobalCustomerScopeLinks(env, customerId) {
+  if (!env?.BOOKING_KV) return { ok: false, key: "", customer_id: "", scopes: [] };
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  const key = _globalCustomerScopeLinksKey(normalizedCustomerId);
+  if (!key) return { ok: false, key: "", customer_id: "", scopes: [] };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const incomingScopes = Array.isArray(source.scopes) ? source.scopes : [];
+  const deduped = [];
+  const seen = new Set();
+  for (const entry of incomingScopes) {
+    const normalized = _normalizeCustomerScopeLink(entry);
+    if (!normalized) continue;
+    const dedupeKey = `${normalized.tenant_id}::${normalized.company_id}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    deduped.push(normalized);
+    if (deduped.length >= CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES) break;
+  }
+  return {
+    ok: true,
+    key,
+    customer_id: normalizedCustomerId,
+    customerId: normalizedCustomerId,
+    scopes: deduped,
+    updated_at: sanitizeTenantString(source.updated_at ?? source.updatedAt, 80),
+    updatedAt: sanitizeTenantString(source.updated_at ?? source.updatedAt, 80),
+  };
+}
+
+async function _upsertGlobalCustomerScopeLink(env, customerId, scope) {
+  if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  const key = _globalCustomerScopeLinksKey(normalizedCustomerId);
+  const normalizedScope = _normalizeCustomerScopeLink(scope);
+  if (!key || !normalizedScope) {
+    return { ok: false, skipped: true, reason: "invalid_scope_or_customer" };
+  }
+  const nowIso = new Date().toISOString();
+  const read = await _readGlobalCustomerScopeLinks(env, normalizedCustomerId);
+  const scopes = Array.isArray(read?.scopes) ? read.scopes.slice() : [];
+  const dedupeKey = `${normalizedScope.tenant_id}::${normalizedScope.company_id}`;
+  const existingIndex = scopes.findIndex((entry) => {
+    const compare = _normalizeCustomerScopeLink(entry);
+    if (!compare) return false;
+    return `${compare.tenant_id}::${compare.company_id}` === dedupeKey;
+  });
+  const nextScope = {
+    ...normalizedScope,
+    linked_at: nowIso,
+    linkedAt: nowIso,
+  };
+  if (existingIndex >= 0) scopes.splice(existingIndex, 1);
+  scopes.unshift(nextScope);
+  const capped = scopes
+    .map((entry) => _normalizeCustomerScopeLink(entry))
+    .filter((entry) => !!entry)
+    .slice(0, CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES)
+    .map((entry) => {
+      const linkedAt = safeStr(entry.linked_at || entry.linkedAt || nowIso, 80) || nowIso;
+      return {
+        ...entry,
+        linked_at: linkedAt,
+        linkedAt,
+      };
+    });
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      customer_id: normalizedCustomerId,
+      customerId: normalizedCustomerId,
+      scopes: capped,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
+  return { ok: true, key, count: capped.length };
 }
 
 function _maskCustomerPhoneForAuth(phoneE164) {
@@ -3181,6 +3285,7 @@ async function _loadCustomerSessionFromRequest(request, env) {
     customer_id: customerId,
     email_hash: emailHash,
     phone_hash: phoneHash,
+    recovery_method: sanitizeTenantString(record.recovery_method ?? record.recoveryMethod, 40).toLowerCase(),
     issued_at: sanitizeTenantString(record.issued_at ?? record.issuedAt, 80),
     expires_at: expiresAt,
   };
@@ -4905,26 +5010,111 @@ async function handlePublicCustomerSessionBootstrap(request, env) {
     tenant_id: session.tenant_id,
     company_id: session.company_id,
   };
-  const identityKey = _customerIdentityKey(scope, session.customer_id);
+  const sessionCustomerId = _normalizeCustomerIdentityId(session.customer_id);
+  const sessionTenantId = sanitizeTenantString(session.tenant_id, 80);
+  const sessionCompanyId = sanitizeTenantString(session.company_id, 80);
+  const isGlobalScopeSession =
+    sessionTenantId.toLowerCase() === "global" &&
+    sessionCompanyId.toLowerCase() === "global";
+  const identityKey = isGlobalScopeSession
+    ? _globalCustomerIdentityKey(sessionCustomerId)
+    : _customerIdentityKey(scope, sessionCustomerId);
   const identity = identityKey
     ? await env.BOOKING_KV.get(identityKey, { type: "json" })
     : null;
   const customerId = _normalizeCustomerIdentityId(
-    identity?.customer_id ?? identity?.customerId ?? session.customer_id,
+    identity?.customer_id ?? identity?.customerId ?? sessionCustomerId,
   );
-  const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
-    tenant_id: session.tenant_id,
-    company_id: session.company_id,
-    customer_id: customerId,
-    email_hash: sanitizeTenantString(
-      identity?.email_hash ?? identity?.emailHash ?? session.email_hash,
-      200,
-    ).toLowerCase(),
-    phone_hash: sanitizeTenantString(
-      identity?.phone_hash ?? identity?.phoneHash ?? session.phone_hash ?? session.phoneHash,
-      200,
-    ).toLowerCase(),
-  });
+  const normalizedEmailHash = sanitizeTenantString(
+    identity?.email_hash ?? identity?.emailHash ?? session.email_hash,
+    200,
+  ).toLowerCase();
+  const normalizedPhoneHash = sanitizeTenantString(
+    identity?.phone_hash ?? identity?.phoneHash ?? session.phone_hash ?? session.phoneHash,
+    200,
+  ).toLowerCase();
+  const sessionRecoveryMethod = sanitizeTenantString(
+    session.recovery_method ?? session.recoveryMethod,
+    40,
+  ).toLowerCase();
+  const identityPurpose = sanitizeTenantString(identity?.purpose, 80).toLowerCase();
+  const isGlobalPhoneSession =
+    isGlobalScopeSession &&
+    !!customerId &&
+    (!!normalizedPhoneHash ||
+      sessionRecoveryMethod.includes("phone") ||
+      identityPurpose === "customer_global_identity");
+  let mergedItems = [];
+  if (isGlobalPhoneSession) {
+    const scopeLinksRead = await _readGlobalCustomerScopeLinks(env, customerId);
+    const linkedScopes = Array.isArray(scopeLinksRead?.scopes)
+      ? scopeLinksRead.scopes.slice(0, CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES)
+      : [];
+    console.log(`[CUSTOMER_BOOTSTRAP][GLOBAL_SCOPES] count=${linkedScopes.length}`);
+    const mergedByKey = new Map();
+    const addMergedBooking = (item, fallbackScope) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return;
+      const tenantId = safeStr(item.tenant_id ?? item.tenantId ?? fallbackScope?.tenant_id, 80);
+      const companyId = safeStr(item.company_id ?? item.companyId ?? fallbackScope?.company_id, 80);
+      const normalizedItem = {
+        ...item,
+        tenant_id: tenantId,
+        tenantId,
+        company_id: companyId,
+        companyId,
+      };
+      const dedupeCandidates = [
+        safeStr(normalizedItem.booking_id ?? normalizedItem.bookingId ?? normalizedItem.id, 160),
+        safeStr(normalizedItem.public_booking_reference ?? normalizedItem.publicBookingReference, 160),
+        safeStr(normalizedItem.booking_reference ?? normalizedItem.bookingReference, 160),
+        safeStr(normalizedItem.payment_booking_id ?? normalizedItem.paymentBookingId, 160),
+      ].filter(Boolean);
+      const dedupeKeys = dedupeCandidates.length > 0 ? dedupeCandidates : [`fallback:${mergedByKey.size + 1}`];
+      let existing = null;
+      for (const key of dedupeKeys) {
+        if (mergedByKey.has(key)) {
+          existing = mergedByKey.get(key);
+          break;
+        }
+      }
+      const merged = { ...(existing || {}), ...normalizedItem };
+      for (const key of dedupeKeys) {
+        mergedByKey.set(key, merged);
+      }
+    };
+    for (const linkedScope of linkedScopes) {
+      if (mergedByKey.size >= 50) break;
+      const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
+        tenant_id: linkedScope.tenant_id,
+        company_id: linkedScope.company_id,
+        customer_id: customerId,
+        email_hash: normalizedEmailHash,
+        phone_hash: normalizedPhoneHash,
+        limit: 50,
+      });
+      const items = hydration?.ok && Array.isArray(hydration.items) ? hydration.items : [];
+      for (const item of items) {
+        addMergedBooking(item, linkedScope);
+        if (mergedByKey.size >= 50) break;
+      }
+    }
+    mergedItems = Array.from(new Set(Array.from(mergedByKey.values())))
+      .sort((a, b) => (
+        Math.max(_toMsOrZero(b?.pickup_iso), _toMsOrZero(b?.updated_at), _toMsOrZero(b?.created_at))
+        - Math.max(_toMsOrZero(a?.pickup_iso), _toMsOrZero(a?.updated_at), _toMsOrZero(a?.created_at))
+      ))
+      .slice(0, 50);
+    console.log(`[CUSTOMER_BOOTSTRAP][GLOBAL_MERGE] count=${mergedItems.length}`);
+  } else {
+    const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
+      tenant_id: session.tenant_id,
+      company_id: session.company_id,
+      customer_id: customerId,
+      email_hash: normalizedEmailHash,
+      phone_hash: normalizedPhoneHash,
+    });
+    mergedItems = hydration?.ok ? hydration.items : [];
+  }
   return json(
     {
       ok: true,
@@ -4938,7 +5128,7 @@ async function handlePublicCustomerSessionBootstrap(request, env) {
         email_verified: true,
         emailVerified: true,
       },
-      bookings: hydration?.ok ? hydration.items : [],
+      bookings: mergedItems,
       relationships: [],
       capabilities: {
         customer_recovery: true,
@@ -4965,6 +5155,44 @@ function _customerBookingIdsFromRecord(rec) {
   addId(rec?.booking?.customer?.customer_id);
   addId(rec?.booking?.customer?.customerId);
   return Array.from(ids);
+}
+
+function _enrichBookingRecordWithLinkedCustomer(rec, linkedCustomerId, linkedPhoneHash) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return rec;
+  const customerId = _normalizeCustomerIdentityId(linkedCustomerId);
+  const phoneHash = sanitizeTenantString(linkedPhoneHash, 200).toLowerCase();
+  if (!customerId) return rec;
+  rec.customer_id = customerId;
+  rec.customerId = customerId;
+  if (phoneHash) {
+    rec.phone_hash = phoneHash;
+    rec.phoneHash = phoneHash;
+  }
+  if (rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)) {
+    rec.booking.customer_id = customerId;
+    rec.booking.customerId = customerId;
+    if (phoneHash) {
+      rec.booking.phone_hash = phoneHash;
+      rec.booking.phoneHash = phoneHash;
+    }
+    if (rec.booking.customer && typeof rec.booking.customer === "object" && !Array.isArray(rec.booking.customer)) {
+      rec.booking.customer.customer_id = customerId;
+      rec.booking.customer.customerId = customerId;
+      if (phoneHash) {
+        rec.booking.customer.phone_hash = phoneHash;
+        rec.booking.customer.phoneHash = phoneHash;
+      }
+    }
+  }
+  if (rec.customer && typeof rec.customer === "object" && !Array.isArray(rec.customer)) {
+    rec.customer.customer_id = customerId;
+    rec.customer.customerId = customerId;
+    if (phoneHash) {
+      rec.customer.phone_hash = phoneHash;
+      rec.customer.phoneHash = phoneHash;
+    }
+  }
+  return rec;
 }
 
 async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
@@ -15651,6 +15879,74 @@ async function handleBooking(payload, env, request) {
     const business_detected = !!biz.vat_number;
     const customerContact = normalizeCustomerContact(payload);
     const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
+    let linkedCustomerId = "";
+    let linkedPhoneHash = "";
+    let customerPhoneLinkReason = "no_customer_phone";
+    let customerPhoneLinkHasPhone = false;
+    let customerPhoneLinkIsE164 = false;
+    let customerPhoneLinkHasIndex = false;
+    let customerPhoneLookupStep = "-";
+    let customerPhoneLookupErrorName = "-";
+    let customerPhoneLookupErrorMessage = "-";
+    try {
+      customerPhoneLookupStep = "normalize_phone";
+      const normalizedCustomerPhone = _normalizeCustomerPhone(customerContact.phone);
+      customerPhoneLinkHasPhone = !!safeStr(customerContact.phone, 80);
+      customerPhoneLinkIsE164 = _looksLikeE164Phone(normalizedCustomerPhone);
+      if (customerPhoneLinkIsE164) {
+        customerPhoneLookupStep = "hash_phone";
+        const phoneHash = sanitizeTenantString(await _sha256Hex(normalizedCustomerPhone), 200).toLowerCase();
+        customerPhoneLookupStep = "build_index_key";
+        const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
+        if (phoneIndexKey) {
+          customerPhoneLookupStep = "read_global_phone_index";
+          const indexRaw = await env.BOOKING_KV.get(phoneIndexKey);
+          const indexRawText = safeStr(indexRaw, 400).trim();
+          customerPhoneLinkHasIndex = indexRawText.isNotEmpty;
+          customerPhoneLookupStep = "parse_index";
+          let parsedIndex = null;
+          if (indexRaw && typeof indexRaw === "object") {
+            parsedIndex = indexRaw;
+            customerPhoneLinkHasIndex = true;
+          } else if (indexRawText.isNotEmpty) {
+            if (indexRawText.startsWith("{") || indexRawText.startsWith("[")) {
+              try {
+                parsedIndex = JSON.parse(indexRawText);
+              } catch (_) {
+                customerPhoneLinkReason = "index_parse_error";
+              }
+            } else {
+              parsedIndex = indexRawText;
+            }
+          }
+          const resolvedCustomerId = _normalizeCustomerIdentityId(
+            parsedIndex?.customer_id ?? parsedIndex?.customerId ?? parsedIndex,
+          );
+          if (resolvedCustomerId) {
+            customerPhoneLookupStep = "extract_customer_id";
+            linkedCustomerId = resolvedCustomerId;
+            linkedPhoneHash = phoneHash;
+            customerPhoneLinkReason = "linked";
+          } else if (customerPhoneLinkHasIndex) {
+            if (customerPhoneLinkReason !== "index_parse_error") {
+              customerPhoneLinkReason = "index_invalid_shape";
+            }
+          } else {
+            customerPhoneLinkReason = "no_global_phone_index";
+          }
+        } else {
+          customerPhoneLinkReason = "no_global_phone_index";
+        }
+      } else if (customerPhoneLinkHasPhone) {
+        customerPhoneLinkReason = "normalized_not_e164";
+      }
+    } catch (_lookupErr) {
+      customerPhoneLinkReason = "lookup_error";
+      customerPhoneLookupErrorName = safeStr(_lookupErr?.name || "Error", 40) || "Error";
+      customerPhoneLookupErrorMessage =
+        safeStr(_lookupErr?.message || _lookupErr, 120) || "lookup_failed";
+      // Best-effort link only.
+    }
 
     // Business rule: if VAT is provided => upfront payment required (Mollie test/live).
     // Private customers can book without immediate payment.
@@ -15786,6 +16082,13 @@ async function handleBooking(payload, env, request) {
     });
     attachPlanningReferenceAliases(payload, planningReference);
     payload.__planning_reference = planningReference;
+    const customerPhoneLinkScopeMask = _bookingIntentScopeMask({
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+    });
+    console.log(
+      `[CUSTOMER_PHONE_LINK][BOOKING_RESOLVE] linked=${linkedCustomerId ? "true" : "false"} reason=${customerPhoneLinkReason} hasPhone=${customerPhoneLinkHasPhone ? "true" : "false"} e164=${customerPhoneLinkIsE164 ? "true" : "false"} hasIndex=${customerPhoneLinkHasIndex ? "true" : "false"} lookupStep=${customerPhoneLookupStep} errorName=${customerPhoneLookupErrorName} errorMessage=${customerPhoneLookupErrorMessage} booking=${_bookingIntentMask(canonicalBookingId)} scope=${customerPhoneLinkScopeMask.tenant || "-"}/${customerPhoneLinkScopeMask.company || "-"}`,
+    );
 
 
 
@@ -16289,6 +16592,7 @@ async function handleBooking(payload, env, request) {
             tracking_last: null,
             trip: null,
           };
+          _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
           await env.BOOKING_KV.put(
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
@@ -16418,6 +16722,33 @@ async function handleBooking(payload, env, request) {
             console.log(
               `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
             );
+            if (linkedCustomerId) {
+              console.log(
+                `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+              );
+            }
+          }
+          if (linkedCustomerId) {
+            const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+            const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+            if (
+              normalizedTenantId &&
+              normalizedCompanyId &&
+              normalizedTenantId.toLowerCase() !== "global" &&
+              normalizedCompanyId.toLowerCase() !== "global"
+            ) {
+              try {
+                await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+                  tenant_id: normalizedTenantId,
+                  company_id: normalizedCompanyId,
+                });
+              } catch (scopeLinkErr) {
+                const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+                console.log(
+                  `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+                );
+              }
+            }
           }
 
           return {
@@ -16864,6 +17195,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         tracking_last: null,
         trip: null,
       };
+      _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
       await env.BOOKING_KV.put(
         `booking:${canonicalBookingId}`,
         JSON.stringify(provisionalRecord),
@@ -16882,6 +17214,33 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         console.log(
           `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
         );
+        if (linkedCustomerId) {
+          console.log(
+            `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+          );
+        }
+      }
+      if (linkedCustomerId) {
+        const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+        const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+        if (
+          normalizedTenantId &&
+          normalizedCompanyId &&
+          normalizedTenantId.toLowerCase() !== "global" &&
+          normalizedCompanyId.toLowerCase() !== "global"
+        ) {
+          try {
+            await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+              tenant_id: normalizedTenantId,
+              company_id: normalizedCompanyId,
+            });
+          } catch (scopeLinkErr) {
+            const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+            console.log(
+              `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+            );
+          }
+        }
       }
 
       return {
@@ -17147,6 +17506,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tracking_last: null,
       trip: null
     };
+    _enrichBookingRecordWithLinkedCustomer(record, linkedCustomerId, linkedPhoneHash);
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
@@ -17183,6 +17543,33 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       console.log(
         `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
       );
+      if (linkedCustomerId) {
+        console.log(
+          `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+        );
+      }
+    }
+    if (linkedCustomerId) {
+      const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+      const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+      if (
+        normalizedTenantId &&
+        normalizedCompanyId &&
+        normalizedTenantId.toLowerCase() !== "global" &&
+        normalizedCompanyId.toLowerCase() !== "global"
+      ) {
+        try {
+          await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+            tenant_id: normalizedTenantId,
+            company_id: normalizedCompanyId,
+          });
+        } catch (scopeLinkErr) {
+          const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+          console.log(
+            `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+          );
+        }
+      }
     }
     const maskedScope = _bookingIntentScopeMask(idempotencyScope);
     let idempotencyStored = false;

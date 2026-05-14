@@ -1506,6 +1506,121 @@ class CustomerBookingsStore {
     ]);
   }
 
+  String _leafDirName(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    for (int i = parts.length - 1; i >= 0; i--) {
+      final part = parts[i].trim();
+      if (part.isNotEmpty) return part;
+    }
+    return '';
+  }
+
+  int _safeIsoTimestampMs(String iso) {
+    final text = iso.trim();
+    if (text.isEmpty) return 0;
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return 0;
+    return parsed.toUtc().millisecondsSinceEpoch;
+  }
+
+  int _bookingSortTimestampMs(StoredCustomerBooking item) {
+    final updatedMs = _safeIsoTimestampMs(item.updatedAt);
+    final createdMs = _safeIsoTimestampMs(item.createdAt);
+    final pickupMs = _safeIsoTimestampMs(item.pickupIso);
+    return <int>[
+      updatedMs,
+      createdMs,
+      pickupMs,
+    ].reduce((a, b) => a > b ? a : b);
+  }
+
+  Future<List<StoredCustomerBooking>>
+  loadAllAcrossKnownCustomerScopesForDisplayOnly() async {
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+        );
+        return const <StoredCustomerBooking>[];
+      }
+      final matchedFiles = <File>[];
+      await for (final tenantEntry in root.list(followLinks: false)) {
+        if (tenantEntry is! Directory) continue;
+        final tenantLeaf = _leafDirName(tenantEntry.path);
+        if (!tenantLeaf.startsWith('tenant_')) continue;
+        await for (final companyEntry in tenantEntry.list(followLinks: false)) {
+          if (companyEntry is! Directory) continue;
+          final companyLeaf = _leafDirName(companyEntry.path);
+          if (!companyLeaf.startsWith('company_')) continue;
+          final file = File(
+            '${companyEntry.path}${Platform.pathSeparator}$_fileName',
+          );
+          if (await file.exists()) {
+            matchedFiles.add(file);
+          }
+        }
+      }
+      if (matchedFiles.isEmpty) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+        );
+        return const <StoredCustomerBooking>[];
+      }
+      final dedupedByKey = <String, StoredCustomerBooking>{};
+      final aliasToKey = <String, String>{};
+      var loadedCount = 0;
+      var generatedKeyCounter = 0;
+      for (final file in matchedFiles) {
+        final fileItems = await _readFileItems(file);
+        if (fileItems.isEmpty) continue;
+        loadedCount += fileItems.length;
+        for (final item in fileItems) {
+          final aliases = _bookingAliases(item);
+          String? existingKey;
+          for (final alias in aliases) {
+            existingKey = aliasToKey[alias];
+            if (existingKey != null && existingKey.isNotEmpty) break;
+          }
+          final targetKey =
+              existingKey ??
+              (aliases.isNotEmpty
+                  ? aliases.first
+                  : 'fallback_key_${generatedKeyCounter++}');
+          final existing = dedupedByKey[targetKey];
+          if (existing == null) {
+            dedupedByKey[targetKey] = item;
+          } else {
+            final existingTs = _bookingSortTimestampMs(existing);
+            final incomingTs = _bookingSortTimestampMs(item);
+            if (incomingTs > existingTs) {
+              dedupedByKey[targetKey] = item;
+            }
+          }
+          final active = dedupedByKey[targetKey]!;
+          for (final alias in _bookingAliases(active)) {
+            aliasToKey[alias] = targetKey;
+          }
+        }
+      }
+      final result = dedupedByKey.values.toList(growable: false)
+        ..sort(
+          (a, b) =>
+              _bookingSortTimestampMs(b).compareTo(_bookingSortTimestampMs(a)),
+        );
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=${matchedFiles.length} loaded=$loadedCount result=${result.length}',
+      );
+      return result;
+    } catch (_) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+      );
+      return const <StoredCustomerBooking>[];
+    }
+  }
+
   Future<({bool removed, int removedCount, int remaining})>
   removeByAnyReferenceAliases(Set<String> aliases) async {
     final normalizedAliases = _normalizedReferenceSet(aliases);
@@ -1529,6 +1644,73 @@ class CustomerBookingsStore {
       removedCount: removedCount,
       remaining: list.length,
     );
+  }
+
+  Future<({bool removed, int removedCount, int remaining})>
+  removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+    Set<String> aliases,
+  ) async {
+    final normalizedAliases = _normalizedReferenceSet(aliases);
+    if (normalizedAliases.isEmpty) {
+      return (removed: false, removedCount: 0, remaining: 0);
+    }
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) {
+        return (removed: false, removedCount: 0, remaining: 0);
+      }
+      final matchedFiles = <File>[];
+      await for (final tenantEntry in root.list(followLinks: false)) {
+        if (tenantEntry is! Directory) continue;
+        final tenantLeaf = _leafDirName(tenantEntry.path);
+        if (!tenantLeaf.startsWith('tenant_')) continue;
+        await for (final companyEntry in tenantEntry.list(followLinks: false)) {
+          if (companyEntry is! Directory) continue;
+          final companyLeaf = _leafDirName(companyEntry.path);
+          if (!companyLeaf.startsWith('company_')) continue;
+          final file = File(
+            '${companyEntry.path}${Platform.pathSeparator}$_fileName',
+          );
+          if (await file.exists()) {
+            matchedFiles.add(file);
+          }
+        }
+      }
+      var removedCount = 0;
+      var remaining = 0;
+      for (final file in matchedFiles) {
+        final items = await _readFileItems(file);
+        if (items.isEmpty) continue;
+        final retained = <StoredCustomerBooking>[];
+        for (final item in items) {
+          final itemAliases = _bookingAliases(item);
+          final matches = itemAliases.any(normalizedAliases.contains);
+          if (matches) {
+            removedCount += 1;
+          } else {
+            retained.add(item);
+          }
+        }
+        remaining += retained.length;
+        if (retained.length != items.length) {
+          await _atomicWriteJsonArray(
+            file: file,
+            payload: retained.map((e) => e.toJson()).toList(growable: false),
+          );
+        }
+      }
+      if (removedCount > 0) {
+        _cache = null;
+        _cacheScopeKey = '';
+      }
+      return (
+        removed: removedCount > 0,
+        removedCount: removedCount,
+        remaining: remaining,
+      );
+    } catch (_) {
+      return (removed: false, removedCount: 0, remaining: 0);
+    }
   }
 
   Future<void> clearLocalTestData() async {

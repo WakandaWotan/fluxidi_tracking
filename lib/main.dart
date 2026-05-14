@@ -14599,7 +14599,74 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       await _bootstrapCustomerSessionAndMergeBookings(
         reason: 'customer_saved_bookings',
       );
-      final items = await CustomerBookingStore.instance.loadAll();
+      var items = await CustomerBookingStore.instance.loadAll();
+      if (items.isEmpty) {
+        final fallbackItems = await CustomerBookingsStore.instance
+            .loadAllAcrossKnownCustomerScopesForDisplayOnly();
+        if (fallbackItems.isNotEmpty) {
+          String firstNonEmpty(List<String> values) {
+            for (final value in values) {
+              final trimmed = value.trim();
+              if (trimmed.isNotEmpty) return trimmed;
+            }
+            return '';
+          }
+
+          items = fallbackItems
+              .map((item) {
+                final publicReference = firstNonEmpty(<String>[
+                  item.publicBookingId,
+                  item.receiptReference,
+                  item.planningReference,
+                  item.bookingReference,
+                  item.publicReference,
+                ]);
+                final raw = <String, dynamic>{
+                  'booking_id': item.bookingId,
+                  'tenant_id': item.tenantId,
+                  'tenantId': item.tenantId,
+                  'company_id': item.companyId,
+                  'companyId': item.companyId,
+                  'public_booking_id': item.publicBookingId,
+                  'public_booking_reference': item.publicBookingId,
+                  'publicBookingReference': item.publicBookingId,
+                  'planning_reference': item.planningReference,
+                  'planningReference': item.planningReference,
+                  'booking_reference': item.bookingReference,
+                  'bookingReference': item.bookingReference,
+                  'public_reference': item.publicReference,
+                  'publicReference': item.publicReference,
+                  'receipt_reference': item.receiptReference,
+                  'receiptReference': item.receiptReference,
+                  'payment_booking_id': item.paymentBookingId,
+                  'payment_status': item.paymentStatus,
+                  'status': item.status,
+                  'price': item.price,
+                  'currency': item.currency,
+                  'quote': item.quote,
+                  'updated_at': item.updatedAt,
+                };
+                return CustomerSavedBooking(
+                  bookingId: item.bookingId,
+                  tenantId: item.tenantId,
+                  companyId: item.companyId,
+                  customerId: '',
+                  createdAt: item.createdAt,
+                  pickupIso: item.pickupIso,
+                  from: item.from,
+                  to: item.to,
+                  price: item.price,
+                  currency: item.currency,
+                  paymentStatus: item.paymentStatus,
+                  bookingStatus: item.status,
+                  publicReference: publicReference,
+                  rawSnapshot: raw,
+                );
+              })
+              .where((entry) => entry.bookingId.trim().isNotEmpty)
+              .toList(growable: false);
+        }
+      }
       final visible = items
           .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
           .toList(growable: false);
@@ -14630,6 +14697,40 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       publicReference: booking.publicReference,
       source: booking.rawSnapshot,
     );
+  }
+
+  Map<String, String> _savedBookingScopeQuery(CustomerSavedBooking booking) {
+    final tenantFromBooking = booking.tenantId.trim();
+    final companyFromBooking = booking.companyId.trim();
+    if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
+      return <String, String>{
+        'tenant_id': tenantFromBooking,
+        'company_id': companyFromBooking,
+        'tenantId': tenantFromBooking,
+        'companyId': companyFromBooking,
+      };
+    }
+    final tenantFromRaw =
+        (booking.rawSnapshot['tenant_id'] ??
+                booking.rawSnapshot['tenantId'] ??
+                '')
+            .toString()
+            .trim();
+    final companyFromRaw =
+        (booking.rawSnapshot['company_id'] ??
+                booking.rawSnapshot['companyId'] ??
+                '')
+            .toString()
+            .trim();
+    if (tenantFromRaw.isNotEmpty && companyFromRaw.isNotEmpty) {
+      return <String, String>{
+        'tenant_id': tenantFromRaw,
+        'company_id': companyFromRaw,
+        'tenantId': tenantFromRaw,
+        'companyId': companyFromRaw,
+      };
+    }
+    return _activeBookingScopeQuery();
   }
 
   String _formatPickup(String iso) {
@@ -14942,11 +15043,16 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         aliases: aliases,
         source: booking.rawSnapshot,
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(id)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scope = _savedBookingScopeQuery(booking);
+      final uri =
+          Uri.parse(
+            '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+          ).replace(
+            queryParameters: <String, String>{
+              ...scope,
+              if (proof.isNotEmpty) ...proof,
+            },
+          );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -14993,6 +15099,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
 
     final fallback = StoredCustomerBooking(
       bookingId: id,
+      tenantId: booking.tenantId,
+      companyId: booking.companyId,
       publicBookingId: booking.publicReference.trim().isNotEmpty
           ? booking.publicReference.trim()
           : id,
@@ -15090,7 +15198,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     );
     if (confirmed != true) return;
     try {
-      await CustomerBookingStore.instance.clearLocalTestData();
+      final aliases = <String>{};
+      for (final booking in _bookings) {
+        aliases.addAll(_aliasesForSavedBooking(booking));
+      }
+      await CustomerBookingsStore.instance
+          .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+            aliases,
+          );
       if (!mounted) return;
       setState(() {
         _bookings = const <CustomerSavedBooking>[];
@@ -15572,12 +15687,19 @@ _removeLocalCustomerBookingEverywhere({
   debugPrint(
     '[CUSTOMER_BOOKING][DELETE_REQ] booking=${_safeRefPreview(bookingForLog)} aliases=${sortedAliases.join(',')}',
   );
-  final result = await CustomerBookingStore.instance
-      .removeLocalBookingByAnyReference(aliases);
+  final result = await CustomerBookingsStore.instance
+      .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+        aliases,
+      );
   debugPrint(
-    '[CUSTOMER_BOOKING][DELETE_RESULT] removed=${result.removed} storeA=${result.storeA} storeB=${result.storeB} remaining=${result.remaining}',
+    '[CUSTOMER_BOOKING][DELETE_RESULT] removed=${result.removed} storeA=${result.removed} storeB=${result.removed} remaining=${result.remaining}',
   );
-  return result;
+  return (
+    removed: result.removed,
+    storeA: result.removed,
+    storeB: result.removed,
+    remaining: result.remaining,
+  );
 }
 
 class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
@@ -18363,7 +18485,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     if (tenantFromStoredBooking.isNotEmpty &&
         companyFromStoredBooking.isNotEmpty) {
       debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=stored_booking_scope',
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=booking_scope',
       );
       return <String, String>{
         'tenant_id': tenantFromStoredBooking,
@@ -18443,7 +18565,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     ]);
     if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
       debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_record',
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_scope',
       );
       return <String, String>{
         'tenant_id': tenantFromBooking,

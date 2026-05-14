@@ -22,6 +22,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
@@ -3286,6 +3287,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ).showSnackBar(SnackBar(content: Text(chooseCompanyMessage)));
       return;
     }
+    final customerSession = await CustomerSessionStore.instance
+        .loadValidSession();
+    final sessionPhoneE164 = (customerSession?.phoneE164 ?? '').trim();
+    final useSessionPhoneForBooking = sessionPhoneE164.isNotEmpty;
+    final payloadPhone = useSessionPhoneForBooking ? sessionPhoneE164 : phone;
+    debugPrint(
+      '[BOOK][CUSTOMER_SESSION_PHONE] used=${useSessionPhoneForBooking ? "true" : "false"}',
+    );
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
@@ -3319,7 +3328,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'customer': <String, dynamic>{
         'name': name,
         'full_name': name,
-        'phone': phone,
+        'phone': payloadPhone,
         'email': email,
         'companyName': effectiveCompanyName,
         'vatNumber': effectiveVatNumber,
@@ -3334,13 +3343,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'invoice_requested': businessPayload['invoice_requested'],
         'invoiceRequested': businessPayload['invoiceRequested'],
         'message': _messageCtrl.text.trim(),
+        if (useSessionPhoneForBooking) ...{
+          'phone_e164': sessionPhoneE164,
+          'customer_phone_e164': sessionPhoneE164,
+          'customerPhoneE164': sessionPhoneE164,
+        },
       },
       'name': name,
-      'phone': phone,
+      'phone': payloadPhone,
       'email': email,
       'customer_name': name,
-      'customer_phone': phone,
+      'customer_phone': payloadPhone,
+      'customerPhone': payloadPhone,
       'customer_email': email,
+      if (useSessionPhoneForBooking) ...{
+        'phone_e164': sessionPhoneE164,
+        'customer_phone_e164': sessionPhoneE164,
+        'customerPhoneE164': sessionPhoneE164,
+      },
       'customer_company_name': effectiveCompanyName,
       'customer_vat_number': effectiveVatNumber,
       'customerCompanyName': effectiveCompanyName,
