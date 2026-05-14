@@ -1185,6 +1185,54 @@ String _fleetScopeIdFromLocalState() {
   return kTenantId;
 }
 
+String _fleetScopeIdFromLocalStateStrict() {
+  for (final v in vehiclesNotifier.value) {
+    final id = v.companyId?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+  }
+  for (final d in driversNotifier.value) {
+    final id = d.companyId?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+  }
+  return '';
+}
+
+({String tenantId, String companyId})? _activeStrictPrivateCompanyScope() {
+  final localCompanyId = _fleetScopeIdFromLocalStateStrict();
+  if (localCompanyId.isNotEmpty) {
+    return (tenantId: localCompanyId, companyId: localCompanyId);
+  }
+  return null;
+}
+
+String _effectiveStrictAdminScopeId({String? tenantId, String? companyId}) {
+  final explicitTenant = (tenantId ?? '').trim();
+  final explicitCompany = (companyId ?? '').trim();
+  if (explicitTenant.isNotEmpty || explicitCompany.isNotEmpty) {
+    if (explicitTenant.isEmpty || explicitCompany.isEmpty) {
+      debugPrint(
+        '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_explicit_tenant_or_company tenant=${_maskCompanyScopeForLog(explicitTenant)} company=${_maskCompanyScopeForLog(explicitCompany)}',
+      );
+      throw StateError('missing_tenant_scope');
+    }
+    if (explicitTenant != explicitCompany) {
+      debugPrint(
+        '[PRIVATE_SCOPE][ADMIN][SKIP] reason=tenant_company_mismatch tenant=${_maskCompanyScopeForLog(explicitTenant)} company=${_maskCompanyScopeForLog(explicitCompany)}',
+      );
+      throw StateError('missing_tenant_scope');
+    }
+    return explicitTenant;
+  }
+  final activeScope = _activeStrictPrivateCompanyScope();
+  if (activeScope != null) {
+    return activeScope.companyId;
+  }
+  debugPrint(
+    '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context',
+  );
+  throw StateError('missing_tenant_scope');
+}
+
 void addVehicle(VehicleProfile vehicle) {
   vehiclesNotifier.value = <VehicleProfile>[...vehiclesNotifier.value, vehicle];
   _persistLocalTenantState();
@@ -1241,16 +1289,22 @@ void deleteDriver(String id) {
       break;
     }
   }
-  final scopeId = _fleetScopeIdFromLocalState();
+  final strictScope = _activeStrictPrivateCompanyScope();
   if (existingDriver != null) {
-    unawaited(
-      syncDriverIndexEntryToBackend(
-        existingDriver,
-        tenantId: scopeId,
-        companyId: scopeId,
-        isActiveOverride: false,
-      ),
-    );
+    if (strictScope != null) {
+      unawaited(
+        syncDriverIndexEntryToBackend(
+          existingDriver,
+          tenantId: strictScope.tenantId,
+          companyId: strictScope.companyId,
+          isActiveOverride: false,
+        ),
+      );
+    } else {
+      debugPrint(
+        '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context op=driver_index_soft_delete',
+      );
+    }
   }
   driversNotifier.value = driversNotifier.value
       .where((d) => d.id != id)
@@ -1259,7 +1313,18 @@ void deleteDriver(String id) {
       .map((v) => v.driverId == id ? v.copyWith(driverId: null) : v)
       .toList(growable: false);
   _persistLocalTenantState();
-  unawaited(syncFleetInventoryToBackend(tenantId: scopeId, companyId: scopeId));
+  if (strictScope != null) {
+    unawaited(
+      syncFleetInventoryToBackend(
+        tenantId: strictScope.tenantId,
+        companyId: strictScope.companyId,
+      ),
+    );
+  } else {
+    debugPrint(
+      '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context op=fleet_sync_after_driver_delete',
+    );
+  }
 }
 
 void removeDriverLocallyAfterBackendDelete(
@@ -1285,10 +1350,18 @@ void removeDriverLocallyAfterBackendDelete(
 
   _persistLocalTenantState();
 
-  final scope = _resolveAdminTenantCompanyScope(
-    tenantId: tenantId,
-    companyId: companyId,
-  );
+  late final Map<String, String> scope;
+  try {
+    scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+  } catch (_) {
+    debugPrint(
+      '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_tenant_scope op=remove_driver_locally_after_backend_delete',
+    );
+    return;
+  }
   unawaited(
     syncFleetInventoryToBackend(
       tenantId: scope['tenant_id'],
@@ -1768,19 +1841,15 @@ Map<String, String> _resolveAdminTenantCompanyScope({
   String? tenantId,
   String? companyId,
 }) {
-  final effectiveTenant = (tenantId ?? companyId ?? '').trim();
-  final effectiveCompany = (companyId ?? tenantId ?? '').trim();
-  final normalizedTenant = effectiveTenant.isEmpty
-      ? kTenantId
-      : effectiveTenant;
-  final normalizedCompany = effectiveCompany.isEmpty
-      ? normalizedTenant
-      : effectiveCompany;
+  final scopeId = _effectiveStrictAdminScopeId(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
   return <String, String>{
-    'tenant_id': normalizedTenant,
-    'company_id': normalizedCompany,
-    'tenantId': normalizedTenant,
-    'companyId': normalizedCompany,
+    'tenant_id': scopeId,
+    'company_id': scopeId,
+    'tenantId': scopeId,
+    'companyId': scopeId,
   };
 }
 
@@ -2113,8 +2182,8 @@ Future<bool> syncFleetInventoryToBackend({
         .map(
           (vehicle) => _encodeVehicleForBackendFleet(
             vehicle,
-            tenantId: scope['tenant_id'] ?? kTenantId,
-            companyId: scope['company_id'] ?? kTenantId,
+            tenantId: scope['tenant_id'] ?? '',
+            companyId: scope['company_id'] ?? '',
           ),
         )
         .where((e) => (e['vehicle_id'] as String).isNotEmpty)
@@ -2158,8 +2227,8 @@ Future<bool> syncDriverIndexEntryToBackend(
     if (driverId.isEmpty) return false;
     final payload = _encodeDriverForBackendIndexPayload(
       driver,
-      tenantId: scope['tenant_id'] ?? kTenantId,
-      companyId: scope['company_id'] ?? kTenantId,
+      tenantId: scope['tenant_id'] ?? '',
+      companyId: scope['company_id'] ?? '',
       isActiveOverride: isActiveOverride,
     );
     final response = await http
@@ -2179,23 +2248,34 @@ Future<void> syncLocalCompanyInventoryToBackend({
   if (_companyInventorySyncInFlight) return;
   final token = _fleetSyncAdminToken.trim();
   if (token.isEmpty) return;
-  final localScopeId = _fleetScopeIdFromLocalState().trim();
-  final resolvedTenant = (tenantId ?? companyId ?? localScopeId).trim();
-  final resolvedCompany = (companyId ?? tenantId ?? localScopeId).trim();
-  if (resolvedTenant.isEmpty || resolvedCompany.isEmpty) return;
+  final resolvedTenant = (tenantId ?? '').trim();
+  final resolvedCompany = (companyId ?? '').trim();
+  final strictScope = _activeStrictPrivateCompanyScope();
+  final effectiveTenant = resolvedTenant.isNotEmpty
+      ? resolvedTenant
+      : (strictScope?.tenantId ?? '');
+  final effectiveCompany = resolvedCompany.isNotEmpty
+      ? resolvedCompany
+      : (strictScope?.companyId ?? '');
+  if (effectiveTenant.isEmpty || effectiveCompany.isEmpty) {
+    debugPrint(
+      '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context op=syncLocalCompanyInventoryToBackend',
+    );
+    return;
+  }
 
   final scopedVehicles = vehiclesNotifier.value
       .where(
         (v) =>
             (v.companyId?.trim().isEmpty ?? true) ||
-            v.companyId!.trim() == resolvedCompany,
+            v.companyId!.trim() == effectiveCompany,
       )
       .toList(growable: false);
   final scopedDrivers = driversNotifier.value
       .where(
         (d) =>
             (d.companyId?.trim().isEmpty ?? true) ||
-            d.companyId!.trim() == resolvedCompany,
+            d.companyId!.trim() == effectiveCompany,
       )
       .toList(growable: false);
 
@@ -2217,7 +2297,7 @@ Future<void> syncLocalCompanyInventoryToBackend({
 
   _companyInventorySyncInFlight = true;
   debugPrint(
-    '[COMPANY_SYNC][START] reason=$reason vehicles=${scopedVehicles.length} drivers=${scopedDrivers.length} company=${_maskCompanyScopeForLog(resolvedCompany)}',
+    '[COMPANY_SYNC][START] reason=$reason vehicles=${scopedVehicles.length} drivers=${scopedDrivers.length} company=${_maskCompanyScopeForLog(effectiveCompany)}',
   );
   debugPrint(
     '[COMPANY_SYNC][LOCAL_COUNTS] vehicles=${vehiclesNotifier.value.length} drivers=${driversNotifier.value.length} scopedVehicles=${scopedVehicles.length} scopedDrivers=${scopedDrivers.length}',
@@ -2227,8 +2307,8 @@ Future<void> syncLocalCompanyInventoryToBackend({
   );
   try {
     final scope = _resolveAdminTenantCompanyScope(
-      tenantId: resolvedTenant,
-      companyId: resolvedCompany,
+      tenantId: effectiveTenant,
+      companyId: effectiveCompany,
     );
 
     if (scopedVehicles.isNotEmpty) {
@@ -2242,8 +2322,8 @@ Future<void> syncLocalCompanyInventoryToBackend({
             .map(
               (vehicle) => _encodeVehicleForBackendFleet(
                 vehicle,
-                tenantId: scope['tenant_id'] ?? kTenantId,
-                companyId: scope['company_id'] ?? kTenantId,
+                tenantId: scope['tenant_id'] ?? '',
+                companyId: scope['company_id'] ?? '',
               ),
             )
             .where((e) => (e['vehicle_id'] as String).isNotEmpty)
@@ -2305,8 +2385,8 @@ Future<void> syncLocalCompanyInventoryToBackend({
           );
           final payload = _encodeDriverForBackendIndexPayload(
             driver,
-            tenantId: scope['tenant_id'] ?? kTenantId,
-            companyId: scope['company_id'] ?? kTenantId,
+            tenantId: scope['tenant_id'] ?? '',
+            companyId: scope['company_id'] ?? '',
             assignedVehicleIdOverride: vehicleLinkByDriverId[driver.id.trim()],
           );
           final response = await http

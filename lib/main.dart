@@ -7156,7 +7156,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           final decoded = jsonDecode(tripRes.body);
           if (decoded is Map && decoded['ok'] == true) {
             nextCompletedRides = _asInt(decoded['completed_rides_count']);
-            nextUnpaidCompleted = _asInt(decoded['unpaid_completed_rides_count']);
+            nextUnpaidCompleted = _asInt(
+              decoded['unpaid_completed_rides_count'],
+            );
             nextCurrency =
                 (decoded['currency']?.toString().trim().isNotEmpty ?? false)
                 ? decoded['currency'].toString().trim().toUpperCase()
@@ -14958,74 +14960,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       await _bootstrapCustomerSessionAndMergeBookings(
         reason: 'customer_saved_bookings',
       );
-      var items = await CustomerBookingStore.instance.loadAll();
-      if (items.isEmpty) {
-        final fallbackItems = await CustomerBookingsStore.instance
-            .loadAllAcrossKnownCustomerScopesForDisplayOnly();
-        if (fallbackItems.isNotEmpty) {
-          String firstNonEmpty(List<String> values) {
-            for (final value in values) {
-              final trimmed = value.trim();
-              if (trimmed.isNotEmpty) return trimmed;
-            }
-            return '';
-          }
-
-          items = fallbackItems
-              .map((item) {
-                final publicReference = firstNonEmpty(<String>[
-                  item.publicBookingId,
-                  item.receiptReference,
-                  item.planningReference,
-                  item.bookingReference,
-                  item.publicReference,
-                ]);
-                final raw = <String, dynamic>{
-                  'booking_id': item.bookingId,
-                  'tenant_id': item.tenantId,
-                  'tenantId': item.tenantId,
-                  'company_id': item.companyId,
-                  'companyId': item.companyId,
-                  'public_booking_id': item.publicBookingId,
-                  'public_booking_reference': item.publicBookingId,
-                  'publicBookingReference': item.publicBookingId,
-                  'planning_reference': item.planningReference,
-                  'planningReference': item.planningReference,
-                  'booking_reference': item.bookingReference,
-                  'bookingReference': item.bookingReference,
-                  'public_reference': item.publicReference,
-                  'publicReference': item.publicReference,
-                  'receipt_reference': item.receiptReference,
-                  'receiptReference': item.receiptReference,
-                  'payment_booking_id': item.paymentBookingId,
-                  'payment_status': item.paymentStatus,
-                  'status': item.status,
-                  'price': item.price,
-                  'currency': item.currency,
-                  'quote': item.quote,
-                  'updated_at': item.updatedAt,
-                };
-                return CustomerSavedBooking(
-                  bookingId: item.bookingId,
-                  tenantId: item.tenantId,
-                  companyId: item.companyId,
-                  customerId: '',
-                  createdAt: item.createdAt,
-                  pickupIso: item.pickupIso,
-                  from: item.from,
-                  to: item.to,
-                  price: item.price,
-                  currency: item.currency,
-                  paymentStatus: item.paymentStatus,
-                  bookingStatus: item.status,
-                  publicReference: publicReference,
-                  rawSnapshot: raw,
-                );
-              })
-              .where((entry) => entry.bookingId.trim().isNotEmpty)
-              .toList(growable: false);
-        }
-      }
+      final items = await CustomerBookingStore.instance.loadAll();
       final visible = items
           .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
           .toList(growable: false);

@@ -912,7 +912,9 @@ class CompanySessionStore {
     final resolvedCompanyId = companyId.trim();
     final resolvedTenantId = tenantId.trim();
     final token = companySessionToken.trim();
-    if (resolvedCompanyId.isEmpty || resolvedTenantId.isEmpty || token.isEmpty) {
+    if (resolvedCompanyId.isEmpty ||
+        resolvedTenantId.isEmpty ||
+        token.isEmpty) {
       return;
     }
     final now = DateTime.now().toUtc();

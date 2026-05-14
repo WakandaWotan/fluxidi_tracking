@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -20,8 +19,9 @@ String _maskScopeId(String value) {
   return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
 }
 
-({String tenantId, String companyId}) _activeLocalScope() {
-  final scope = resolveEffectiveTenantCompanyScope(allowDriverFallback: true);
+({String tenantId, String companyId})? _activeLocalScope() {
+  final scope = resolveStrictTenantCompanyScope(allowDriverFallback: true);
+  if (scope == null) return null;
   return (tenantId: scope.tenantId, companyId: scope.companyId);
 }
 
@@ -336,7 +336,7 @@ class StoredCustomerBooking {
       bookingMap['tenantId'],
       payloadMap['tenant_id'],
       payloadMap['tenantId'],
-      activeScope.tenantId,
+      activeScope?.tenantId,
     ]);
     final companyId = _firstNonEmpty([
       response['company_id'],
@@ -345,7 +345,7 @@ class StoredCustomerBooking {
       bookingMap['companyId'],
       payloadMap['company_id'],
       payloadMap['companyId'],
-      activeScope.companyId,
+      activeScope?.companyId,
     ]);
     final businessDetected = _bool(
       _firstNonEmpty([
@@ -539,7 +539,7 @@ class StoredCustomerBooking {
         data['tenant_id'],
         data['tenantId'],
         fallback?.tenantId,
-        activeScope.tenantId,
+        activeScope?.tenantId,
       ]),
       companyId: _firstNonEmpty([
         response['company_id'],
@@ -551,7 +551,7 @@ class StoredCustomerBooking {
         data['company_id'],
         data['companyId'],
         fallback?.companyId,
-        activeScope.companyId,
+        activeScope?.companyId,
       ]),
       publicBookingId: _firstNonEmpty([
         response['public_booking_reference'],
@@ -977,8 +977,9 @@ class CustomerBookingsStore {
     return file;
   }
 
-  Future<File> _file() async {
+  Future<File?> _file() async {
     final scope = _activeLocalScope();
+    if (scope == null) return null;
     return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
   }
 
@@ -1021,12 +1022,7 @@ class CustomerBookingsStore {
   bool _allowLegacyWithoutScopeForScope({
     required String tenantId,
     required String companyId,
-  }) {
-    final activeTenant = tenantId.trim();
-    final activeCompany = companyId.trim();
-    if (activeTenant.isEmpty || activeCompany.isEmpty) return false;
-    return activeTenant == activeCompany && activeTenant == kTenantId.trim();
-  }
+  }) => false;
 
   StoredCustomerBooking _coerceScope(
     StoredCustomerBooking item, {
@@ -1093,6 +1089,14 @@ class CustomerBookingsStore {
 
   Future<List<StoredCustomerBooking>> loadAll() async {
     final scope = _activeLocalScope();
+    if (scope == null) {
+      _cache = <StoredCustomerBooking>[];
+      _cacheScopeKey = '';
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
+      );
+      return <StoredCustomerBooking>[];
+    }
     return _loadAllForScope(
       tenantId: scope.tenantId,
       companyId: scope.companyId,
@@ -1142,44 +1146,8 @@ class CustomerBookingsStore {
         _cache = filtered;
         return List<StoredCustomerBooking>.from(filtered);
       }
-
-      final legacyFile = await _legacyFile();
-      final legacyItems = await _readFileItems(legacyFile);
-      if (legacyItems.isEmpty) {
-        _cache = <StoredCustomerBooking>[];
-        return <StoredCustomerBooking>[];
-      }
-      final migrated =
-          _filterForScope(
-                legacyItems,
-                tenantId: normalizedTenantId,
-                companyId: normalizedCompanyId,
-                allowLegacyWithoutScope: false,
-              )
-              .map(
-                (item) => _coerceScope(
-                  item,
-                  tenantId: normalizedTenantId,
-                  companyId: normalizedCompanyId,
-                ),
-              )
-              .toList(growable: false);
-
-      if (migrated.isNotEmpty) {
-        debugPrint(
-          '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_MIGRATE] tenant=${_maskScopeId(normalizedTenantId)} company=${_maskScopeId(normalizedCompanyId)} migrated=${migrated.length}',
-        );
-        await _atomicWriteJsonArray(
-          file: scopedFile,
-          payload: migrated.map((e) => e.toJson()).toList(growable: false),
-        );
-        await _removeVisibleLegacyItemsForScope(
-          tenantId: normalizedTenantId,
-          companyId: normalizedCompanyId,
-        );
-      }
-      _cache = migrated;
-      return List<StoredCustomerBooking>.from(migrated);
+      _cache = <StoredCustomerBooking>[];
+      return <StoredCustomerBooking>[];
     } catch (err) {
       debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] $err');
       _cache = <StoredCustomerBooking>[];
@@ -1189,6 +1157,12 @@ class CustomerBookingsStore {
 
   Future<void> _saveAll(List<StoredCustomerBooking> items) async {
     final scope = _activeLocalScope();
+    if (scope == null) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
+      );
+      return;
+    }
     await _saveAllForScope(
       items,
       tenantId: scope.tenantId,
@@ -1323,6 +1297,12 @@ class CustomerBookingsStore {
   Future<void> upsert(StoredCustomerBooking booking) async {
     final now = DateTime.now().toIso8601String();
     final activeScope = _activeLocalScope();
+    if (activeScope == null) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope op=upsert',
+      );
+      return;
+    }
     final targetTenantId = booking.tenantId.trim().isNotEmpty
         ? booking.tenantId
         : activeScope.tenantId;
@@ -1474,6 +1454,14 @@ class CustomerBookingsStore {
 
   Future<void> clear() async {
     final scope = _activeLocalScope();
+    if (scope == null) {
+      _cache = <StoredCustomerBooking>[];
+      _cacheScopeKey = '';
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope op=clear',
+      );
+      return;
+    }
     _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
     await _saveAll(const <StoredCustomerBooking>[]);
   }
@@ -1536,7 +1524,15 @@ class CustomerBookingsStore {
   }
 
   Future<List<StoredCustomerBooking>>
-  loadAllAcrossKnownCustomerScopesForDisplayOnly() async {
+  loadAllAcrossKnownCustomerScopesForDisplayOnly({
+    bool allowDiagnosticFallback = false,
+  }) async {
+    if (!allowDiagnosticFallback) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][FALLBACK_SCAN][SKIP] reason=diagnostic_flag_disabled',
+      );
+      return const <StoredCustomerBooking>[];
+    }
     try {
       final root = await _stateRootDir();
       if (!await root.exists()) {
@@ -1715,6 +1711,14 @@ class CustomerBookingsStore {
 
   Future<void> clearLocalTestData() async {
     final scope = _activeLocalScope();
+    if (scope == null) {
+      _cacheScopeKey = '';
+      _cache = <StoredCustomerBooking>[];
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope op=clearLocalTestData',
+      );
+      return;
+    }
     _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
     _cache = <StoredCustomerBooking>[];
     await _enqueueWrite(() async {
@@ -1722,6 +1726,7 @@ class CustomerBookingsStore {
         final tenantId = scope.tenantId.trim();
         final companyId = scope.companyId.trim();
         final file = await _file();
+        if (file == null) return;
         final tempFile = File('${file.path}.tmp');
         final swapFile = File(
           '${file.parent.path}${Platform.pathSeparator}$_fileName.swap',

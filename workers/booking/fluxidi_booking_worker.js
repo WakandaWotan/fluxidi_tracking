@@ -14493,7 +14493,9 @@ GET /oauth/callback
       // Start a tracking session (creates trip_id, persists on booking)
       if (url.pathname === "/tracking/start" && request.method === "POST") {
         const body = await safeJson(request);
-        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const out = await trackingStart(body, env, tenantScope);
         return json(
           out,
@@ -14506,7 +14508,9 @@ GET /oauth/callback
       // GPS ping from driver phone
       if (url.pathname === "/tracking/ping" && request.method === "POST") {
         const body = await safeJson(request);
-        const tenantScope = extractBookingTenantScope({ request, url, body });
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const out = await trackingPing(body, env, tenantScope);
         return json(
           out,
@@ -14518,7 +14522,9 @@ GET /oauth/callback
 
       // Read last GPS ping (tablet + diagnostics)
       if (url.pathname === "/tracking/last" && request.method === "GET") {
-        const tenantScope = extractBookingTenantScope({ request, url });
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
         const out = await trackingLast(url, env, tenantScope);
         return json(
           out,

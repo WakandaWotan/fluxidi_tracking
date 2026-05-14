@@ -3,8 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:fluxidi_tracking/app_config.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
 class CustomerProfile {
@@ -106,11 +105,10 @@ class CustomerProfileStore {
     return sanitized;
   }
 
-  ({String tenantId, String companyId}) _activeLocalScope() {
-    final resolvedId = resolvedCompanyId.trim();
-    final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
-    final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
-    return (tenantId: tenantId, companyId: companyId);
+  ({String tenantId, String companyId})? _activeLocalScope() {
+    final strict = resolveStrictTenantCompanyScope(allowDriverFallback: true);
+    if (strict == null) return null;
+    return (tenantId: strict.tenantId, companyId: strict.companyId);
   }
 
   Future<Directory> _stateRootDir() async {
@@ -122,11 +120,6 @@ class CustomerProfileStore {
       await dir.create(recursive: true);
     }
     return dir;
-  }
-
-  Future<File> _legacyFile() async {
-    final dir = await _stateRootDir();
-    return File('${dir.path}${Platform.pathSeparator}$_fileName');
   }
 
   Future<File> _scopedFile({
@@ -147,8 +140,9 @@ class CustomerProfileStore {
     return file;
   }
 
-  Future<File> _file() async {
+  Future<File?> _file() async {
     final scope = _activeLocalScope();
+    if (scope == null) return null;
     return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
   }
 
@@ -174,27 +168,27 @@ class CustomerProfileStore {
 
   Future<CustomerProfile?> load() async {
     final scope = _activeLocalScope();
+    if (scope == null) {
+      _cache = null;
+      _cacheScopeKey = '';
+      debugPrint(
+        '[CUSTOMER_PROFILE][SKIP_SCOPE] reason=missing_tenant_company_scope',
+      );
+      return null;
+    }
     final scopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
     if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
     _cache = null;
     _cacheScopeKey = scopeKey;
     try {
       final file = await _file();
+      if (file == null) return null;
       final scopedProfile = await _readFromFile(file);
       if (scopedProfile != null) {
         _cache = scopedProfile;
         return scopedProfile;
       }
-
-      final legacyFile = await _legacyFile();
-      final legacyProfile = await _readFromFile(legacyFile);
-      if (legacyProfile == null) return null;
-      await file.writeAsString(jsonEncode(legacyProfile.toJson()));
-      debugPrint(
-        '[CUSTOMER_PROFILE][MIGRATE_LEGACY] tenant=${scope.tenantId} company=${scope.companyId} from=${legacyFile.path} to=${file.path}',
-      );
-      _cache = legacyProfile;
-      return legacyProfile;
+      return null;
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][LOAD_ERROR] $err');
       return null;
@@ -231,9 +225,19 @@ class CustomerProfileStore {
     );
     try {
       final file = await _file();
+      if (file == null) {
+        debugPrint(
+          '[CUSTOMER_PROFILE][SKIP_SCOPE] reason=missing_tenant_company_scope',
+        );
+        return profile;
+      }
       await file.writeAsString(jsonEncode(profile.toJson()));
       _cache = profile;
       final scope = _activeLocalScope();
+      if (scope == null) {
+        _cacheScopeKey = '';
+        return profile;
+      }
       _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
       debugPrint(
         '[CUSTOMER_PROFILE][SAVE] tenant=${scope.tenantId} company=${scope.companyId} path=${file.path}',
@@ -336,9 +340,19 @@ class CustomerProfileStore {
 
     try {
       final file = await _file();
+      if (file == null) {
+        debugPrint(
+          '[CUSTOMER_PROFILE][SKIP_SCOPE] reason=missing_tenant_company_scope',
+        );
+        return merged;
+      }
       await file.writeAsString(jsonEncode(merged.toJson()));
       _cache = merged;
       final scope = _activeLocalScope();
+      if (scope == null) {
+        _cacheScopeKey = '';
+        return merged;
+      }
       _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
       debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=true');
     } catch (err) {
