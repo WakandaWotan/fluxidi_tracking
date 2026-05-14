@@ -50,7 +50,13 @@ class CustomerProfile {
     return CustomerProfile(
       customerId: read('customerId'),
       name: read('name'),
-      phone: read('phone'),
+      phone: readAny(const [
+        'phone',
+        'customerPhone',
+        'customer_phone',
+        'phoneE164',
+        'phone_e164',
+      ]),
       email: read('email').toLowerCase(),
       preferredPostcode: readAny(const [
         'preferredPostcode',
@@ -202,13 +208,16 @@ class CustomerProfileStore {
     String preferredPostcode = '',
     String companyName = '',
     String vatNumber = '',
+    String? sessionCustomerId,
   }) async {
     final existing = await load();
     final now = DateTime.now().toIso8601String();
+    final sessionId = (sessionCustomerId ?? '').trim();
+    final existingId = existing?.customerId.trim() ?? '';
     final profile = CustomerProfile(
-      customerId: (existing?.customerId.trim().isNotEmpty ?? false)
-          ? existing!.customerId
-          : _generateCustomerId(),
+      customerId: sessionId.isNotEmpty
+          ? sessionId
+          : (existingId.isNotEmpty ? existingId : _generateCustomerId()),
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim().toLowerCase(),
@@ -233,5 +242,108 @@ class CustomerProfileStore {
       debugPrint('[CUSTOMER_PROFILE][SAVE_ERROR] $err');
     }
     return profile;
+  }
+
+  Future<CustomerProfile> mergeBackendProfileForSession(
+    Map<String, dynamic> profile, {
+    required String sessionCustomerId,
+    String? sessionPhoneE164,
+  }) async {
+    String readAny(List<String> keys) {
+      for (final key in keys) {
+        final value = profile[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    String pickPreferBackend(String backend, String local) {
+      final b = backend.trim();
+      if (b.isNotEmpty) return b;
+      return local.trim();
+    }
+
+    final existing = await load();
+    final nowIso = DateTime.now().toIso8601String();
+    final backendCustomerId = readAny(const ['customer_id', 'customerId']);
+    final resolvedCustomerId = sessionCustomerId.trim().isNotEmpty
+        ? sessionCustomerId.trim()
+        : (backendCustomerId.isNotEmpty
+              ? backendCustomerId
+              : (existing?.customerId.trim().isNotEmpty ?? false)
+              ? existing!.customerId.trim()
+              : _generateCustomerId());
+
+    final backendName = readAny(const ['name']);
+    final backendPhone = readAny(const ['phone']);
+    final backendEmail = readAny(const ['email']).toLowerCase();
+    final backendPreferredPostcode = readAny(const [
+      'preferred_postcode',
+      'preferredPostcode',
+      'postcode',
+      'postalCode',
+      'postal_code',
+    ]).toUpperCase();
+    final backendCompanyName = readAny(const ['company_name', 'companyName']);
+    final backendVatNumber = readAny(const ['vat_number', 'vatNumber']);
+    final backendCreatedAt = readAny(const ['created_at', 'createdAt']);
+    final backendUpdatedAt = readAny(const ['updated_at', 'updatedAt']);
+    final sessionPhone = (sessionPhoneE164 ?? '').trim();
+    final localPhone = (existing?.phone ?? '').trim();
+    final backendPhoneTrimmed = backendPhone.trim();
+    final resolvedPhone = backendPhoneTrimmed.isNotEmpty
+        ? backendPhoneTrimmed
+        : (localPhone.isNotEmpty ? localPhone : sessionPhone);
+    final preservedPhone =
+        backendPhoneTrimmed.isEmpty && resolvedPhone.isNotEmpty;
+    if (preservedPhone) {
+      debugPrint(
+        '[CUSTOMER_PROFILE][PRESERVE_PHONE] source=${localPhone.isNotEmpty ? "local" : "session"}',
+      );
+    }
+    if (backendPhoneTrimmed.isEmpty && sessionPhone.isNotEmpty) {
+      debugPrint('[CUSTOMER_PROFILE][MERGE_SESSION_PHONE] applied=true');
+    }
+
+    final merged = CustomerProfile(
+      customerId: resolvedCustomerId,
+      name: pickPreferBackend(backendName, existing?.name ?? ''),
+      phone: resolvedPhone,
+      email: pickPreferBackend(
+        backendEmail,
+        existing?.email ?? '',
+      ).toLowerCase(),
+      preferredPostcode: pickPreferBackend(
+        backendPreferredPostcode,
+        existing?.preferredPostcode ?? '',
+      ).toUpperCase(),
+      companyName: pickPreferBackend(
+        backendCompanyName,
+        existing?.companyName ?? '',
+      ),
+      vatNumber: pickPreferBackend(backendVatNumber, existing?.vatNumber ?? ''),
+      createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
+          ? existing!.createdAt
+          : (backendCreatedAt.isNotEmpty ? backendCreatedAt : nowIso),
+      updatedAt: backendUpdatedAt.isNotEmpty
+          ? backendUpdatedAt
+          : (existing?.updatedAt.trim().isNotEmpty ?? false)
+          ? existing!.updatedAt
+          : nowIso,
+    );
+
+    try {
+      final file = await _file();
+      await file.writeAsString(jsonEncode(merged.toJson()));
+      _cache = merged;
+      final scope = _activeLocalScope();
+      _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+      debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=true');
+    } catch (err) {
+      debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=false error=$err');
+    }
+    return merged;
   }
 }

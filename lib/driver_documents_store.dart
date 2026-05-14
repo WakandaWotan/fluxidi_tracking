@@ -5,8 +5,14 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:fluxidi_tracking/app_config.dart'
+    show
+        deleteAdminDriverDocument,
+        listAdminDriverDocuments,
+        uploadAdminDriverDocument;
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 
 /// MVP chauffeur compliance documents (local-first).
 ///
@@ -220,6 +226,7 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
 class DriverDocument {
   const DriverDocument({
     required this.documentId,
+    required this.tenantId,
     required this.companyId,
     required this.driverId,
     required this.documentType,
@@ -230,9 +237,20 @@ class DriverDocument {
     required this.notes,
     required this.createdAt,
     required this.updatedAt,
+    this.storageState = '',
+    this.backendFileName = '',
+    this.backendContentType = '',
+    this.backendSizeBytes = 0,
+    this.backendSyncedAt = '',
+    this.backendSyncError = '',
+    this.backendPendingDelete = false,
+    this.backendPendingUpload = false,
+    this.backendLastSyncAttemptAt = '',
+    this.backendSyncAttemptCount = 0,
   });
 
   final String documentId;
+  final String tenantId;
   final String companyId;
   final String driverId;
   final String documentType;
@@ -245,6 +263,28 @@ class DriverDocument {
   final String notes;
   final String createdAt;
   final String updatedAt;
+  final String storageState;
+  final String backendFileName;
+  final String backendContentType;
+  final int backendSizeBytes;
+  final String backendSyncedAt;
+  final String backendSyncError;
+  final bool backendPendingDelete;
+  final bool backendPendingUpload;
+  final String backendLastSyncAttemptAt;
+  final int backendSyncAttemptCount;
+
+  static const Set<String> allowedStatusValues = <String>{
+    DriverDocumentStatuses.missing,
+    DriverDocumentStatuses.pendingReview,
+    DriverDocumentStatuses.approved,
+    DriverDocumentStatuses.expired,
+    DriverDocumentStatuses.rejected,
+    'active',
+    'verified',
+    'archived',
+    'pending',
+  };
 
   bool get isExpiredByDate {
     final e = expiryDate.trim();
@@ -259,8 +299,12 @@ class DriverDocument {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'documentId': documentId,
+    'tenantId': tenantId,
+    'tenant_id': tenantId,
     'companyId': companyId,
+    'company_id': companyId,
     'driverId': driverId,
+    'driver_id': driverId,
     'documentType': documentType,
     'title': title,
     'filePath': filePath,
@@ -269,39 +313,186 @@ class DriverDocument {
     'notes': notes,
     'createdAt': createdAt,
     'updatedAt': updatedAt,
+    'storageState': storageState,
+    'storage_state': storageState,
+    'backendFileName': backendFileName,
+    'backend_file_name': backendFileName,
+    'backendContentType': backendContentType,
+    'backend_content_type': backendContentType,
+    'backendSizeBytes': backendSizeBytes,
+    'backend_size_bytes': backendSizeBytes,
+    'backendSyncedAt': backendSyncedAt,
+    'backend_synced_at': backendSyncedAt,
+    'backendSyncError': backendSyncError,
+    'backend_sync_error': backendSyncError,
+    'backendPendingDelete': backendPendingDelete,
+    'backend_pending_delete': backendPendingDelete,
+    'backendPendingUpload': backendPendingUpload,
+    'backend_pending_upload': backendPendingUpload,
+    'backendLastSyncAttemptAt': backendLastSyncAttemptAt,
+    'backend_last_sync_attempt_at': backendLastSyncAttemptAt,
+    'backendSyncAttemptCount': backendSyncAttemptCount,
+    'backend_sync_attempt_count': backendSyncAttemptCount,
   };
 
   factory DriverDocument.fromJson(Map<String, dynamic> m) {
-    String r(String k) => (m[k] ?? '').toString();
-    final tid = r('tenantId');
-    final cid = r('companyId');
-    final company = cid.isNotEmpty ? cid : tid;
-    var type = r('documentType').trim();
+    String readAny(List<String> keys) {
+      for (final key in keys) {
+        final text = (m[key] ?? '').toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    int readIntAny(List<String> keys) {
+      for (final key in keys) {
+        final value = m[key];
+        if (value == null) continue;
+        if (value is num) return value.toInt();
+        final parsed = int.tryParse(value.toString().trim());
+        if (parsed != null) return parsed;
+      }
+      return 0;
+    }
+
+    bool readBoolAny(List<String> keys) {
+      for (final key in keys) {
+        final value = m[key];
+        if (value == null) continue;
+        if (value is bool) return value;
+        final text = value.toString().trim().toLowerCase();
+        if (text == 'true' || text == '1' || text == 'yes') return true;
+        if (text == 'false' || text == '0' || text == 'no') return false;
+      }
+      return false;
+    }
+
+    final tenant = readAny(const ['tenantId', 'tenant_id']);
+    final company = readAny(const ['companyId', 'company_id']);
+    final driver = readAny(const ['driverId', 'driver_id']);
+    var type = readAny(const ['documentType', 'document_type']);
     if (type.isEmpty || !DriverDocumentTypes.all.contains(type)) {
       type = DriverDocumentTypes.other;
     }
-    var st = r('status').trim();
-    if (st.isEmpty || !DriverDocumentStatuses.all.contains(st)) {
+    var st = readAny(const ['status']).toLowerCase();
+    if (st.isEmpty || !allowedStatusValues.contains(st)) {
       st = DriverDocumentStatuses.pendingReview;
     }
     return DriverDocument(
       documentId: () {
-        final x = r('documentId').trim();
+        final x = readAny(const ['documentId', 'document_id']);
         if (x.isNotEmpty) return x;
-        final dr = r('driverId');
-        final tl = r('title');
+        final dr = driver;
+        final tl = readAny(const ['title']);
         return 'ddoc_legacy_${dr.hashCode}_${tl.hashCode}';
       }(),
+      tenantId: tenant,
       companyId: company,
-      driverId: r('driverId'),
+      driverId: driver,
       documentType: type,
-      title: r('title'),
-      filePath: r('filePath'),
-      expiryDate: r('expiryDate'),
+      title: readAny(const ['title']),
+      filePath: readAny(const ['filePath', 'file_path']),
+      expiryDate: readAny(const ['expiryDate', 'expiry_date']),
       status: st,
-      notes: r('notes'),
-      createdAt: r('createdAt'),
-      updatedAt: r('updatedAt'),
+      notes: readAny(const ['notes']),
+      createdAt: readAny(const ['createdAt', 'created_at']),
+      updatedAt: readAny(const ['updatedAt', 'updated_at']),
+      storageState: readAny(const ['storageState', 'storage_state']),
+      backendFileName: readAny(const [
+        'backendFileName',
+        'backend_file_name',
+        'file_name',
+        'fileName',
+      ]),
+      backendContentType: readAny(const [
+        'backendContentType',
+        'backend_content_type',
+        'content_type',
+        'contentType',
+      ]),
+      backendSizeBytes: readIntAny(const [
+        'backendSizeBytes',
+        'backend_size_bytes',
+        'size_bytes',
+        'sizeBytes',
+        'size',
+      ]),
+      backendSyncedAt: readAny(const ['backendSyncedAt', 'backend_synced_at']),
+      backendSyncError: readAny(const [
+        'backendSyncError',
+        'backend_sync_error',
+      ]),
+      backendPendingDelete: readBoolAny(const [
+        'backendPendingDelete',
+        'backend_pending_delete',
+      ]),
+      backendPendingUpload: readBoolAny(const [
+        'backendPendingUpload',
+        'backend_pending_upload',
+      ]),
+      backendLastSyncAttemptAt: readAny(const [
+        'backendLastSyncAttemptAt',
+        'backend_last_sync_attempt_at',
+      ]),
+      backendSyncAttemptCount: math.max(
+        0,
+        readIntAny(const [
+          'backendSyncAttemptCount',
+          'backend_sync_attempt_count',
+        ]),
+      ),
+    );
+  }
+
+  DriverDocument copyWith({
+    String? documentId,
+    String? tenantId,
+    String? companyId,
+    String? driverId,
+    String? documentType,
+    String? title,
+    String? filePath,
+    String? expiryDate,
+    String? status,
+    String? notes,
+    String? createdAt,
+    String? updatedAt,
+    String? storageState,
+    String? backendFileName,
+    String? backendContentType,
+    int? backendSizeBytes,
+    String? backendSyncedAt,
+    String? backendSyncError,
+    bool? backendPendingDelete,
+    bool? backendPendingUpload,
+    String? backendLastSyncAttemptAt,
+    int? backendSyncAttemptCount,
+  }) {
+    return DriverDocument(
+      documentId: documentId ?? this.documentId,
+      tenantId: tenantId ?? this.tenantId,
+      companyId: companyId ?? this.companyId,
+      driverId: driverId ?? this.driverId,
+      documentType: documentType ?? this.documentType,
+      title: title ?? this.title,
+      filePath: filePath ?? this.filePath,
+      expiryDate: expiryDate ?? this.expiryDate,
+      status: status ?? this.status,
+      notes: notes ?? this.notes,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      storageState: storageState ?? this.storageState,
+      backendFileName: backendFileName ?? this.backendFileName,
+      backendContentType: backendContentType ?? this.backendContentType,
+      backendSizeBytes: backendSizeBytes ?? this.backendSizeBytes,
+      backendSyncedAt: backendSyncedAt ?? this.backendSyncedAt,
+      backendSyncError: backendSyncError ?? this.backendSyncError,
+      backendPendingDelete: backendPendingDelete ?? this.backendPendingDelete,
+      backendPendingUpload: backendPendingUpload ?? this.backendPendingUpload,
+      backendLastSyncAttemptAt:
+          backendLastSyncAttemptAt ?? this.backendLastSyncAttemptAt,
+      backendSyncAttemptCount:
+          backendSyncAttemptCount ?? this.backendSyncAttemptCount,
     );
   }
 }
@@ -460,16 +651,25 @@ class DriverDocumentsStore {
         return;
       }
       final out = <DriverDocument>[];
+      var migratedAny = false;
       for (final e in list) {
         if (e is! Map) continue;
         try {
-          final doc = DriverDocument.fromJson(Map<String, dynamic>.from(e));
+          final parsed = DriverDocument.fromJson(Map<String, dynamic>.from(e));
+          final doc = _migrateLegacyScopeIfSafe(parsed);
+          if (doc.tenantId != parsed.tenantId ||
+              doc.companyId != parsed.companyId) {
+            migratedAny = true;
+          }
           if (doc.driverId.trim().isEmpty) continue;
           out.add(doc);
         } catch (_) {}
       }
       _memory = out;
       driverDocumentsNotifier.value = List<DriverDocument>.from(out);
+      if (migratedAny) {
+        await _persist();
+      }
     } catch (_) {
       driverDocumentsNotifier.value = <DriverDocument>[];
       _memory = driverDocumentsNotifier.value;
@@ -493,7 +693,300 @@ class DriverDocumentsStore {
       };
       await file.writeAsString(jsonEncode(payload));
       _memory = List<DriverDocument>.from(driverDocumentsNotifier.value);
+      debugPrint(
+        '[DRIVER_DOCS][SAVE] count=${driverDocumentsNotifier.value.length}',
+      );
     } catch (_) {}
+  }
+
+  ({String tenantId, String companyId}) _activeTenantCompanyScope() {
+    final sessionTenant = (activeDriverSessionNotifier.value?.tenantId ?? '')
+        .trim();
+    final sessionCompany = (activeDriverSessionNotifier.value?.companyId ?? '')
+        .trim();
+    if (sessionTenant.isNotEmpty && sessionCompany.isNotEmpty) {
+      return (tenantId: sessionTenant, companyId: sessionCompany);
+    }
+    final company = _activeCompanyIdForDocuments().trim();
+    if (company.isNotEmpty) {
+      return (tenantId: company, companyId: company);
+    }
+    return (tenantId: '', companyId: '');
+  }
+
+  String _activeDriverIdForScope() {
+    return (activeDriverSessionNotifier.value?.driverId ?? '').trim();
+  }
+
+  DriverDocument _copyWithScope(
+    DriverDocument doc, {
+    required String tenantId,
+    required String companyId,
+    String? driverId,
+  }) {
+    return DriverDocument(
+      documentId: doc.documentId,
+      tenantId: tenantId.trim(),
+      companyId: companyId.trim(),
+      driverId: (driverId ?? doc.driverId).trim(),
+      documentType: doc.documentType,
+      title: doc.title,
+      filePath: doc.filePath,
+      expiryDate: doc.expiryDate,
+      status: doc.status,
+      notes: doc.notes,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      storageState: doc.storageState,
+      backendFileName: doc.backendFileName,
+      backendContentType: doc.backendContentType,
+      backendSizeBytes: doc.backendSizeBytes,
+      backendSyncedAt: doc.backendSyncedAt,
+      backendSyncError: doc.backendSyncError,
+      backendPendingDelete: doc.backendPendingDelete,
+      backendPendingUpload: doc.backendPendingUpload,
+      backendLastSyncAttemptAt: doc.backendLastSyncAttemptAt,
+      backendSyncAttemptCount: doc.backendSyncAttemptCount,
+    );
+  }
+
+  String _safeBackendText(dynamic value) {
+    final text = (value ?? '').toString().trim();
+    if (text.toLowerCase() == 'null') return '';
+    return text;
+  }
+
+  int _safeBackendInt(dynamic value) {
+    if (value is num) return value.toInt();
+    final parsed = int.tryParse((value ?? '').toString().trim());
+    if (parsed == null) return 0;
+    return parsed < 0 ? 0 : parsed;
+  }
+
+  String _normalizeBackendStatus(dynamic value) {
+    final status = _safeBackendText(value).toLowerCase();
+    if (status.isEmpty) return DriverDocumentStatuses.pendingReview;
+    if (DriverDocument.allowedStatusValues.contains(status)) return status;
+    return DriverDocumentStatuses.pendingReview;
+  }
+
+  String _safeSyncErrorCode(String raw, {String fallback = 'sync_failed'}) {
+    var out = raw.trim().toLowerCase();
+    if (out.isEmpty) return fallback;
+    out = out.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    out = out.replaceAll(RegExp(r'_+'), '_');
+    out = out.replaceAll(RegExp(r'^_+|_+$'), '');
+    if (out.isEmpty) return fallback;
+    if (out.length > 64) out = out.substring(0, 64);
+    return out;
+  }
+
+  String _documentScopeKey({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required String documentId,
+  }) {
+    final tenant = tenantId.trim();
+    final company = companyId.trim();
+    final driver = driverId.trim();
+    final doc = documentId.trim();
+    if (tenant.isEmpty || company.isEmpty || driver.isEmpty || doc.isEmpty) {
+      return '';
+    }
+    return '$tenant::$company::$driver::$doc';
+  }
+
+  DriverDocument? _findByDocumentScope({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required String documentId,
+  }) {
+    final key = _documentScopeKey(
+      tenantId: tenantId,
+      companyId: companyId,
+      driverId: driverId,
+      documentId: documentId,
+    );
+    if (key.isEmpty) return null;
+    for (final entry in driverDocumentsNotifier.value) {
+      final entryKey = _documentScopeKey(
+        tenantId: entry.tenantId,
+        companyId: entry.companyId,
+        driverId: entry.driverId,
+        documentId: entry.documentId,
+      );
+      if (entryKey == key) return entry;
+    }
+    return null;
+  }
+
+  Future<void> _upsertDocumentAndPersist(DriverDocument doc) async {
+    final key = _documentScopeKey(
+      tenantId: doc.tenantId,
+      companyId: doc.companyId,
+      driverId: doc.driverId,
+      documentId: doc.documentId,
+    );
+    if (key.isEmpty) return;
+    final out = <DriverDocument>[];
+    var replaced = false;
+    for (final existing in driverDocumentsNotifier.value) {
+      final existingKey = _documentScopeKey(
+        tenantId: existing.tenantId,
+        companyId: existing.companyId,
+        driverId: existing.driverId,
+        documentId: existing.documentId,
+      );
+      if (existingKey == key) {
+        out.add(doc);
+        replaced = true;
+      } else {
+        out.add(existing);
+      }
+    }
+    if (!replaced) out.add(doc);
+    driverDocumentsNotifier.value = out;
+    await _persist();
+  }
+
+  DriverDocument _mergeBackendDocumentMetadata({
+    required Map<String, dynamic> backend,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    DriverDocument? existing,
+  }) {
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final backendDocumentId = _safeBackendText(
+      backend['document_id'] ?? backend['documentId'],
+    );
+    final resolvedDocumentId = backendDocumentId.isNotEmpty
+        ? backendDocumentId
+        : (existing?.documentId.trim() ?? '');
+    final backendTenant = _safeBackendText(
+      backend['tenant_id'] ?? backend['tenantId'],
+    );
+    final backendCompany = _safeBackendText(
+      backend['company_id'] ?? backend['companyId'],
+    );
+    final backendDriver = _safeBackendText(
+      backend['driver_id'] ?? backend['driverId'],
+    );
+    final backendType = _safeBackendText(
+      backend['document_type'] ?? backend['documentType'],
+    );
+    final backendTitle = _safeBackendText(backend['title']);
+    final backendExpiry = _safeBackendText(
+      backend['expiry_date'] ?? backend['expiryDate'],
+    );
+    final backendNotes = _safeBackendText(backend['notes']);
+    final backendCreated = _safeBackendText(
+      backend['created_at'] ?? backend['createdAt'],
+    );
+    final backendUpdated = _safeBackendText(
+      backend['updated_at'] ?? backend['updatedAt'],
+    );
+    final backendStorageState = _safeBackendText(
+      backend['storage_state'] ?? backend['storageState'],
+    );
+    final backendFileName = _safeBackendText(
+      backend['file_name'] ??
+          backend['fileName'] ??
+          backend['backend_file_name'],
+    );
+    final backendContentType = _safeBackendText(
+      backend['content_type'] ??
+          backend['contentType'] ??
+          backend['backend_content_type'],
+    );
+    final backendSizeBytes = _safeBackendInt(
+      backend['size_bytes'] ??
+          backend['sizeBytes'] ??
+          backend['size'] ??
+          backend['backend_size_bytes'] ??
+          backend['backendSizeBytes'],
+    );
+
+    return DriverDocument(
+      documentId: resolvedDocumentId,
+      tenantId: backendTenant.isNotEmpty ? backendTenant : tenantId.trim(),
+      companyId: backendCompany.isNotEmpty ? backendCompany : companyId.trim(),
+      driverId: backendDriver.isNotEmpty ? backendDriver : driverId.trim(),
+      documentType: backendType.isNotEmpty
+          ? backendType
+          : (existing?.documentType ?? DriverDocumentTypes.other),
+      title: backendTitle.isNotEmpty ? backendTitle : (existing?.title ?? ''),
+      filePath: (existing?.filePath ?? '').trim(),
+      expiryDate: backendExpiry.isNotEmpty
+          ? backendExpiry
+          : (existing?.expiryDate ?? ''),
+      status: _normalizeBackendStatus(
+        backend['status'] ??
+            existing?.status ??
+            DriverDocumentStatuses.pendingReview,
+      ),
+      notes: backendNotes.isNotEmpty ? backendNotes : (existing?.notes ?? ''),
+      createdAt: backendCreated.isNotEmpty
+          ? backendCreated
+          : ((existing?.createdAt ?? '').trim().isNotEmpty
+                ? existing!.createdAt
+                : nowIso),
+      updatedAt: backendUpdated.isNotEmpty
+          ? backendUpdated
+          : ((existing?.updatedAt ?? '').trim().isNotEmpty
+                ? existing!.updatedAt
+                : nowIso),
+      storageState: backendStorageState.isNotEmpty
+          ? backendStorageState
+          : (existing?.storageState ?? ''),
+      backendFileName: backendFileName.isNotEmpty
+          ? backendFileName
+          : (existing?.backendFileName ?? ''),
+      backendContentType: backendContentType.isNotEmpty
+          ? backendContentType
+          : (existing?.backendContentType ?? ''),
+      backendSizeBytes: backendSizeBytes > 0
+          ? backendSizeBytes
+          : (existing?.backendSizeBytes ?? 0),
+      backendSyncedAt: nowIso,
+      backendSyncError: '',
+      backendPendingDelete: existing?.backendPendingDelete ?? false,
+      backendPendingUpload: false,
+      backendLastSyncAttemptAt: existing?.backendLastSyncAttemptAt ?? '',
+      backendSyncAttemptCount: existing?.backendSyncAttemptCount ?? 0,
+    );
+  }
+
+  DriverDocument _migrateLegacyScopeIfSafe(DriverDocument doc) {
+    var tenant = doc.tenantId.trim();
+    var company = doc.companyId.trim();
+    final driver = doc.driverId.trim();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    var changed = false;
+
+    if (tenant.isEmpty && company.isNotEmpty) {
+      tenant = company;
+      changed = true;
+    }
+    if (company.isEmpty && tenant.isNotEmpty) {
+      company = tenant;
+      changed = true;
+    }
+    if (tenant.isEmpty &&
+        company.isEmpty &&
+        activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (activeDriverId.isEmpty || activeDriverId == driver)) {
+      tenant = activeScope.tenantId;
+      company = activeScope.companyId;
+      changed = true;
+    }
+
+    if (!changed) return doc;
+    return _copyWithScope(doc, tenantId: tenant, companyId: company);
   }
 
   String _activeCompanyIdForDocuments() {
@@ -516,19 +1009,7 @@ class DriverDocumentsStore {
   DriverDocument _copyWithCompanyId(DriverDocument doc, String companyId) {
     final cid = companyId.trim();
     if (doc.companyId.trim() == cid) return doc;
-    return DriverDocument(
-      documentId: doc.documentId,
-      companyId: cid,
-      driverId: doc.driverId,
-      documentType: doc.documentType,
-      title: doc.title,
-      filePath: doc.filePath,
-      expiryDate: doc.expiryDate,
-      status: doc.status,
-      notes: doc.notes,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
-    );
+    return _copyWithScope(doc, tenantId: cid, companyId: cid);
   }
 
   /// Exposed for UI-level pre-save guards.
@@ -537,18 +1018,35 @@ class DriverDocumentsStore {
 
   List<DriverDocument> documentsVisibleForDriver(String driverId) {
     final did = driverId.trim();
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    final rid = resolvedCompanyId.trim();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=visible tenant=${activeScope.tenantId.isNotEmpty} company=${activeScope.companyId.isNotEmpty} activeDriver=${activeDriverId.isNotEmpty}',
+    );
     return driverDocumentsNotifier.value
         .where((d) {
           if (d.driverId.trim() != did) return false;
-          final c = d.companyId.trim();
-          if (activeCompanyId.isNotEmpty) {
-            // Companyless legacy docs are hidden in active-company context to avoid cross-company leakage.
-            return c == activeCompanyId;
+          if (activeDriverId.isNotEmpty &&
+              d.driverId.trim() != activeDriverId) {
+            return false;
           }
-          if (c.isEmpty) return true;
-          return c == rid;
+          final tenant = d.tenantId.trim();
+          final company = d.companyId.trim();
+          if (activeScope.tenantId.isNotEmpty &&
+              activeScope.companyId.isNotEmpty) {
+            final scopeMatch =
+                tenant == activeScope.tenantId &&
+                company == activeScope.companyId;
+            if (!scopeMatch) {
+              debugPrint('[DRIVER_DOCS][LEGACY_HIDDEN] reason=scope_mismatch');
+            }
+            return scopeMatch;
+          }
+          if (tenant.isEmpty || company.isEmpty) {
+            debugPrint('[DRIVER_DOCS][LEGACY_HIDDEN] reason=missing_scope');
+            return false;
+          }
+          return true;
         })
         .toList(growable: false);
   }
@@ -562,25 +1060,38 @@ class DriverDocumentsStore {
   }
 
   Future<void> addDocument(DriverDocument doc) async {
-    if (doc.driverId.trim().isEmpty) return;
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    var candidate = doc;
-    if (activeCompanyId.isNotEmpty) {
-      final docCompanyId = doc.companyId.trim();
-      if (docCompanyId.isEmpty) {
-        candidate = _copyWithCompanyId(doc, activeCompanyId);
-      } else if (docCompanyId != activeCompanyId) {
-        return;
-      }
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    final driverId = doc.driverId.trim();
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=add hasTenant=${tenantId.isNotEmpty} hasCompany=${companyId.isNotEmpty} hasDriver=${driverId.isNotEmpty}',
+    );
+    if (driverId.isEmpty || tenantId.isEmpty || companyId.isEmpty) return;
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (tenantId != activeScope.tenantId ||
+            companyId != activeScope.companyId)) {
+      return;
     }
+    if (activeDriverId.isNotEmpty && driverId != activeDriverId) return;
+    final candidate = doc;
     final next = <DriverDocument>[...driverDocumentsNotifier.value, candidate];
     driverDocumentsNotifier.value = next;
     await _persist();
   }
 
   Future<void> updateDocument(DriverDocument doc) async {
-    if (doc.driverId.trim().isEmpty) return;
-    final activeCompanyId = _activeCompanyIdForDocuments();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=update hasTenant=${tenantId.isNotEmpty} hasCompany=${companyId.isNotEmpty} hasDriver=${driverId.isNotEmpty}',
+    );
+    if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) return;
     DriverDocument? existing;
     for (final entry in driverDocumentsNotifier.value) {
       if (entry.documentId == doc.documentId) {
@@ -589,16 +1100,22 @@ class DriverDocumentsStore {
       }
     }
     if (existing == null) return;
-    var candidate = doc;
-    if (activeCompanyId.isNotEmpty) {
-      if (existing.companyId.trim() != activeCompanyId) return;
-      final docCompanyId = doc.companyId.trim();
-      if (docCompanyId.isEmpty) {
-        candidate = _copyWithCompanyId(doc, activeCompanyId);
-      } else if (docCompanyId != activeCompanyId) {
-        return;
-      }
+    if (existing.tenantId.trim() != tenantId ||
+        existing.companyId.trim() != companyId ||
+        existing.driverId.trim() != driverId) {
+      return;
     }
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (existing.tenantId.trim() != activeScope.tenantId ||
+            existing.companyId.trim() != activeScope.companyId)) {
+      return;
+    }
+    if (activeDriverId.isNotEmpty &&
+        existing.driverId.trim() != activeDriverId) {
+      return;
+    }
+    final candidate = doc;
     final next = driverDocumentsNotifier.value
         .map((d) => d.documentId == candidate.documentId ? candidate : d)
         .toList(growable: false);
@@ -608,23 +1125,504 @@ class DriverDocumentsStore {
 
   Future<void> deleteDocument(String documentId) async {
     final id = documentId.trim();
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    if (activeCompanyId.isNotEmpty) {
-      DriverDocument? target;
-      for (final entry in driverDocumentsNotifier.value) {
-        if (entry.documentId == id) {
-          target = entry;
-          break;
-        }
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    debugPrint('[DRIVER_DOCS][SCOPE] op=delete requested=${id.isNotEmpty}');
+    DriverDocument? target;
+    for (final entry in driverDocumentsNotifier.value) {
+      if (entry.documentId == id) {
+        target = entry;
+        break;
       }
-      if (target == null) return;
-      if (target.companyId.trim() != activeCompanyId) return;
+    }
+    if (target == null) return;
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (target.tenantId.trim() != activeScope.tenantId ||
+            target.companyId.trim() != activeScope.companyId)) {
+      return;
+    }
+    if (activeDriverId.isNotEmpty && target.driverId.trim() != activeDriverId) {
+      return;
     }
     final next = driverDocumentsNotifier.value
         .where((d) => d.documentId != id)
         .toList(growable: false);
     driverDocumentsNotifier.value = next;
     await _persist();
+  }
+
+  Future<DriverDocument?> syncDocumentUpsertToBackend({
+    required DriverDocument doc,
+    required String bookingBaseUrl,
+    required String companySessionToken,
+  }) async {
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    final documentId = doc.documentId.trim();
+    final path = doc.filePath.trim();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_UPLOAD_START] hasScope=${tenantId.isNotEmpty && companyId.isNotEmpty && driverId.isNotEmpty} hasDoc=${documentId.isNotEmpty}',
+    );
+
+    DriverDocument target =
+        _findByDocumentScope(
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          documentId: documentId,
+        ) ??
+        doc;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    target = target.copyWith(
+      backendPendingUpload: true,
+      backendLastSyncAttemptAt: nowIso,
+      backendSyncAttemptCount: target.backendSyncAttemptCount + 1,
+    );
+    await _upsertDocumentAndPersist(target);
+
+    if (companySessionToken.trim().isEmpty) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_company_session_token',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_company_session_token',
+      );
+      return null;
+    }
+    if (tenantId.isEmpty ||
+        companyId.isEmpty ||
+        driverId.isEmpty ||
+        documentId.isEmpty) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'invalid_scope_or_document_id',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=invalid_scope_or_document_id',
+      );
+      return null;
+    }
+    if (path.isEmpty || !await File(path).exists()) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_local_file',
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_local_file',
+      );
+      return null;
+    }
+
+    try {
+      final response = await uploadAdminDriverDocument(
+        bookingBaseUrl: bookingBaseUrl,
+        companySessionToken: companySessionToken,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        documentId: documentId,
+        documentType: doc.documentType,
+        title: doc.title,
+        expiryDate: doc.expiryDate,
+        status: doc.status,
+        notes: doc.notes,
+        filePath: path,
+      );
+      final source = response['document'];
+      final metadata = source is Map
+          ? Map<String, dynamic>.from(source)
+          : Map<String, dynamic>.from(response);
+      final merged = _mergeBackendDocumentMetadata(
+        backend: metadata,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        existing: target,
+      );
+      final persisted = merged.copyWith(
+        backendPendingUpload: false,
+        backendSyncError: '',
+        backendSyncedAt: DateTime.now().toUtc().toIso8601String(),
+        backendLastSyncAttemptAt: nowIso,
+        backendSyncAttemptCount: target.backendSyncAttemptCount,
+      );
+      await _upsertDocumentAndPersist(persisted);
+      debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_OK] ok=true');
+      return persisted;
+    } catch (e) {
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: _safeSyncErrorCode(e.toString()),
+      );
+      await _upsertDocumentAndPersist(withError);
+      debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=exception');
+      return null;
+    }
+  }
+
+  Future<void> refreshDriverDocumentsFromBackend({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_REFRESH_START] hasScope=${scopedTenant.isNotEmpty && scopedCompany.isNotEmpty && scopedDriver.isNotEmpty}',
+    );
+    if (companySessionToken.trim().isEmpty ||
+        scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=missing_scope_or_token',
+      );
+      return;
+    }
+
+    try {
+      final response = await listAdminDriverDocuments(
+        bookingBaseUrl: bookingBaseUrl,
+        companySessionToken: companySessionToken,
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        driverId: scopedDriver,
+      );
+      final rawItems = response['items'];
+      final items = rawItems is List ? rawItems : const <dynamic>[];
+      final current = List<DriverDocument>.from(driverDocumentsNotifier.value);
+      final byScopedKey = <String, DriverDocument>{};
+      for (final entry in current) {
+        final scopedKey = _documentScopeKey(
+          tenantId: entry.tenantId,
+          companyId: entry.companyId,
+          driverId: entry.driverId,
+          documentId: entry.documentId,
+        );
+        if (scopedKey.isEmpty) continue;
+        byScopedKey[scopedKey] = entry;
+      }
+      final remoteByScopedKey = <String, DriverDocument>{};
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        final id = _safeBackendText(map['document_id'] ?? map['documentId']);
+        if (id.isEmpty) continue;
+        final backendTenant = _safeBackendText(
+          map['tenant_id'] ?? map['tenantId'],
+        );
+        final backendCompany = _safeBackendText(
+          map['company_id'] ?? map['companyId'],
+        );
+        final backendDriver = _safeBackendText(
+          map['driver_id'] ?? map['driverId'],
+        );
+        final resolvedTenant = backendTenant.isNotEmpty
+            ? backendTenant
+            : scopedTenant;
+        final resolvedCompany = backendCompany.isNotEmpty
+            ? backendCompany
+            : scopedCompany;
+        final resolvedDriver = backendDriver.isNotEmpty
+            ? backendDriver
+            : scopedDriver;
+        final scopedKey = _documentScopeKey(
+          tenantId: resolvedTenant,
+          companyId: resolvedCompany,
+          driverId: resolvedDriver,
+          documentId: id,
+        );
+        if (scopedKey.isEmpty) continue;
+        final merged = _mergeBackendDocumentMetadata(
+          backend: map,
+          tenantId: scopedTenant,
+          companyId: scopedCompany,
+          driverId: scopedDriver,
+          existing: byScopedKey[scopedKey],
+        );
+        remoteByScopedKey[scopedKey] = merged;
+      }
+
+      final next = <DriverDocument>[];
+      final consumed = <String>{};
+      for (final local in current) {
+        final localScopedKey = _documentScopeKey(
+          tenantId: local.tenantId,
+          companyId: local.companyId,
+          driverId: local.driverId,
+          documentId: local.documentId,
+        );
+        if (localScopedKey.isEmpty) {
+          next.add(local);
+          continue;
+        }
+        final remote = remoteByScopedKey[localScopedKey];
+        if (remote != null) {
+          next.add(remote);
+          consumed.add(localScopedKey);
+        } else {
+          next.add(local);
+        }
+      }
+      for (final entry in remoteByScopedKey.entries) {
+        if (consumed.contains(entry.key)) continue;
+        next.add(entry.value);
+      }
+
+      driverDocumentsNotifier.value = next;
+      await _persist();
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_REFRESH_OK] remote=${remoteByScopedKey.length} local=${next.length}',
+      );
+    } catch (_) {
+      debugPrint('[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=exception');
+    }
+  }
+
+  bool _matchesExactScope(
+    DriverDocument doc, {
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) {
+    return doc.tenantId.trim() == tenantId.trim() &&
+        doc.companyId.trim() == companyId.trim() &&
+        doc.driverId.trim() == driverId.trim();
+  }
+
+  Future<void> retryPendingDriverDocumentSync({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_RETRY_START] hasScope=${scopedTenant.isNotEmpty && scopedCompany.isNotEmpty && scopedDriver.isNotEmpty}',
+    );
+    if (companySessionToken.trim().isEmpty ||
+        scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_scope_or_token',
+      );
+      return;
+    }
+    final scopedDocs = driverDocumentsNotifier.value
+        .where(
+          (doc) => _matchesExactScope(
+            doc,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          ),
+        )
+        .toList(growable: false);
+    for (final doc in scopedDocs) {
+      final hasSyncError = doc.backendSyncError.trim().isNotEmpty;
+      if (doc.backendPendingDelete) {
+        debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DELETE] queued=true');
+        try {
+          await deleteDocumentInBackendThenLocal(
+            bookingBaseUrl: bookingBaseUrl,
+            companySessionToken: companySessionToken,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+            documentId: doc.documentId,
+          );
+        } catch (_) {
+          // Best-effort: leave local pending marker.
+        }
+        continue;
+      }
+      if (!doc.backendPendingUpload && !hasSyncError) continue;
+
+      final path = doc.filePath.trim();
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      if (path.isEmpty || !await File(path).exists()) {
+        final updated = doc.copyWith(
+          backendPendingUpload: true,
+          backendLastSyncAttemptAt: nowIso,
+          backendSyncAttemptCount: doc.backendSyncAttemptCount + 1,
+          backendSyncError: 'missing_local_file_for_retry',
+        );
+        await _upsertDocumentAndPersist(updated);
+        debugPrint(
+          '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_local_file_for_retry',
+        );
+        continue;
+      }
+      debugPrint('[DRIVER_DOCS][BACKEND_RETRY_UPLOAD] queued=true');
+      try {
+        await syncDocumentUpsertToBackend(
+          doc: doc,
+          bookingBaseUrl: bookingBaseUrl,
+          companySessionToken: companySessionToken,
+        );
+      } catch (_) {
+        // Best-effort: upload method persists failure state.
+      }
+    }
+    debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DONE] ok=true');
+  }
+
+  Future<bool> deleteDocumentInBackendThenLocal({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required String documentId,
+  }) async {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    final id = documentId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_DELETE_START] hasScope=${scopedTenant.isNotEmpty && scopedCompany.isNotEmpty && scopedDriver.isNotEmpty} hasDoc=${id.isNotEmpty}',
+    );
+    if (companySessionToken.trim().isEmpty ||
+        scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty ||
+        id.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_DELETE_FAIL] reason=missing_scope_or_token',
+      );
+      return false;
+    }
+
+    final before = _findByDocumentScope(
+      tenantId: scopedTenant,
+      companyId: scopedCompany,
+      driverId: scopedDriver,
+      documentId: id,
+    );
+    try {
+      final out = await deleteAdminDriverDocument(
+        bookingBaseUrl: bookingBaseUrl,
+        companySessionToken: companySessionToken,
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        driverId: scopedDriver,
+        documentId: id,
+      );
+      final ok = out['ok'] == true;
+      final outError = _safeBackendText(
+        out['error'] ?? out['code'] ?? out['message'],
+      ).toLowerCase();
+      final backendNotFound =
+          outError.contains('not_found') || outError.contains('404');
+      if (backendNotFound &&
+          before != null &&
+          _matchesExactScope(
+            before,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          )) {
+        await deleteDocument(id);
+        final after = _findByDocumentScope(
+          tenantId: scopedTenant,
+          companyId: scopedCompany,
+          driverId: scopedDriver,
+          documentId: id,
+        );
+        final removed = after == null;
+        debugPrint('[DRIVER_DOCS][BACKEND_DELETE_OK] ok=$removed');
+        return removed;
+      }
+      if (!ok) {
+        if (before != null &&
+            _matchesExactScope(
+              before,
+              tenantId: scopedTenant,
+              companyId: scopedCompany,
+              driverId: scopedDriver,
+            )) {
+          final pendingDelete = before.copyWith(
+            backendPendingDelete: true,
+            backendPendingUpload: false,
+            backendLastSyncAttemptAt: DateTime.now().toUtc().toIso8601String(),
+            backendSyncAttemptCount: before.backendSyncAttemptCount + 1,
+            backendSyncError: 'delete_pending',
+          );
+          await _upsertDocumentAndPersist(pendingDelete);
+        }
+        debugPrint('[DRIVER_DOCS][BACKEND_DELETE_FAIL] reason=backend_not_ok');
+        return false;
+      }
+      await deleteDocument(id);
+      final after = _findByDocumentScope(
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        driverId: scopedDriver,
+        documentId: id,
+      );
+      final removedLocally = after == null;
+      debugPrint('[DRIVER_DOCS][BACKEND_DELETE_OK] ok=$removedLocally');
+      return removedLocally || before == null;
+    } catch (e) {
+      final reason = e.toString();
+      if (reason.contains('not_found')) {
+        final local = _findByDocumentScope(
+          tenantId: scopedTenant,
+          companyId: scopedCompany,
+          driverId: scopedDriver,
+          documentId: id,
+        );
+        if (local != null &&
+            _matchesExactScope(
+              local,
+              tenantId: scopedTenant,
+              companyId: scopedCompany,
+              driverId: scopedDriver,
+            )) {
+          await deleteDocument(id);
+          final after = _findByDocumentScope(
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+            documentId: id,
+          );
+          final removed = after == null;
+          debugPrint('[DRIVER_DOCS][BACKEND_DELETE_OK] ok=$removed');
+          return removed;
+        }
+      }
+      if (before != null &&
+          _matchesExactScope(
+            before,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          )) {
+        final pendingDelete = before.copyWith(
+          backendPendingDelete: true,
+          backendPendingUpload: false,
+          backendLastSyncAttemptAt: DateTime.now().toUtc().toIso8601String(),
+          backendSyncAttemptCount: before.backendSyncAttemptCount + 1,
+          backendSyncError: 'delete_pending',
+        );
+        await _upsertDocumentAndPersist(pendingDelete);
+      }
+      debugPrint('[DRIVER_DOCS][BACKEND_DELETE_FAIL] reason=exception');
+      return false;
+    }
   }
 
   /// Default [companyId] when saving new docs under an active local tenant.
@@ -634,7 +1632,15 @@ class DriverDocumentsStore {
     return companyProfileNotifier.value != null ? resolvedCompanyId : '';
   }
 
+  String resolvedTenantIdForNewDoc() {
+    final scope = _activeTenantCompanyScope();
+    if (scope.tenantId.isNotEmpty) return scope.tenantId;
+    final company = resolvedCompanyIdForNewDoc().trim();
+    return company;
+  }
+
   static DriverDocument buildNew({
+    required String tenantId,
     required String driverId,
     required String documentType,
     required String title,
@@ -649,6 +1655,7 @@ class DriverDocumentsStore {
     final id = documentId?.trim();
     return DriverDocument(
       documentId: (id != null && id.isNotEmpty) ? id : _newDocumentId(),
+      tenantId: tenantId.trim(),
       companyId: companyId.trim(),
       driverId: driverId.trim(),
       documentType: documentType.trim().isEmpty
@@ -663,6 +1670,16 @@ class DriverDocumentsStore {
       notes: notes.trim(),
       createdAt: now,
       updatedAt: now,
+      storageState: '',
+      backendFileName: '',
+      backendContentType: '',
+      backendSizeBytes: 0,
+      backendSyncedAt: '',
+      backendSyncError: '',
+      backendPendingDelete: false,
+      backendPendingUpload: false,
+      backendLastSyncAttemptAt: '',
+      backendSyncAttemptCount: 0,
     );
   }
 
@@ -678,6 +1695,7 @@ class DriverDocumentsStore {
     final now = DateTime.now().toUtc().toIso8601String();
     return DriverDocument(
       documentId: existing.documentId,
+      tenantId: existing.tenantId,
       companyId: existing.companyId,
       driverId: existing.driverId,
       documentType: documentType.trim().isEmpty
@@ -692,6 +1710,16 @@ class DriverDocumentsStore {
       notes: notes.trim(),
       createdAt: existing.createdAt,
       updatedAt: now,
+      storageState: existing.storageState,
+      backendFileName: existing.backendFileName,
+      backendContentType: existing.backendContentType,
+      backendSizeBytes: existing.backendSizeBytes,
+      backendSyncedAt: existing.backendSyncedAt,
+      backendSyncError: existing.backendSyncError,
+      backendPendingDelete: existing.backendPendingDelete,
+      backendPendingUpload: existing.backendPendingUpload,
+      backendLastSyncAttemptAt: existing.backendLastSyncAttemptAt,
+      backendSyncAttemptCount: existing.backendSyncAttemptCount,
     );
   }
 }

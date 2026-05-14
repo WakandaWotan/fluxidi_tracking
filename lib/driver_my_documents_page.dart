@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
@@ -51,7 +53,69 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   @override
   void initState() {
     super.initState();
-    DriverDocumentsStore.instance.load();
+    unawaited(_loadAndRefreshDocsBestEffort());
+  }
+
+  Future<void> _loadAndRefreshDocsBestEffort() async {
+    await DriverDocumentsStore.instance.load();
+    debugPrint('[DRIVER_DOCS][UI_REFRESH_START] source=driver_page_init');
+    final session = activeDriverSessionNotifier.value;
+    if (session == null) {
+      debugPrint(
+        '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_driver_session',
+      );
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_driver_session');
+      return;
+    }
+    final tenantId = (session.tenantId ?? '').trim();
+    final companyId = (session.companyId ?? '').trim();
+    final driverId = session.driverId.trim();
+    final companySessionToken =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (companySessionToken.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_company_session_token',
+      );
+      debugPrint(
+        '[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_company_session_token',
+      );
+      return;
+    }
+    if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) {
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_scope');
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_scope');
+      return;
+    }
+    try {
+      await DriverDocumentsStore.instance.refreshDriverDocumentsFromBackend(
+        bookingBaseUrl: appConfig.bookingBaseUrl,
+        companySessionToken: companySessionToken,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+      );
+      debugPrint('[DRIVER_DOCS][UI_RETRY_START] source=driver_page_init');
+      unawaited(
+        DriverDocumentsStore.instance
+            .retryPendingDriverDocumentSync(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              companySessionToken: companySessionToken,
+              tenantId: tenantId,
+              companyId: companyId,
+              driverId: driverId,
+            )
+            .then((_) {
+              debugPrint('[DRIVER_DOCS][UI_RETRY_DONE] ok=true');
+            })
+            .catchError((_) {
+              debugPrint('[DRIVER_DOCS][UI_RETRY_DONE] ok=false');
+            }),
+      );
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=true');
+    } catch (_) {
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=refresh_failed');
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=false');
+    }
   }
 
   AppLanguage get _lang => appConfig.currentLanguage;
@@ -127,10 +191,12 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   ];
 
   int _docStatusPriority(String status) {
-    switch (status) {
+    switch (status.trim().toLowerCase()) {
       case DriverDocumentStatuses.approved:
         return 5;
       case DriverDocumentStatuses.pendingReview:
+      case 'active':
+      case 'verified':
         return 4;
       case DriverDocumentStatuses.expired:
         return 3;
@@ -155,9 +221,39 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
         b.status.trim(),
       ).compareTo(_docStatusPriority(a.status.trim()));
       if (prio != 0) return prio;
-      return b.updatedAt.compareTo(a.updatedAt);
+      final bUpdated = b.updatedAt.trim();
+      final aUpdated = a.updatedAt.trim();
+      if (bUpdated != aUpdated) return bUpdated.compareTo(aUpdated);
+      return b.createdAt.trim().compareTo(a.createdAt.trim());
     });
     return matches.first;
+  }
+
+  DriverDocument? _bestRequiredDocForScope({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required List<String> types,
+  }) {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    final allowedTypes = types.map((e) => e.trim()).toSet();
+    if (scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty ||
+        allowedTypes.isEmpty) {
+      return null;
+    }
+    final scoped = driverDocumentsNotifier.value
+        .where((doc) {
+          return doc.tenantId.trim() == scopedTenant &&
+              doc.companyId.trim() == scopedCompany &&
+              doc.driverId.trim() == scopedDriver &&
+              allowedTypes.contains(doc.documentType.trim());
+        })
+        .toList(growable: false);
+    return _bestDocForTypes(scoped, types);
   }
 
   ({String text, Color color}) _docStateChip(DriverDocument? doc) {
@@ -253,8 +349,15 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   }
 
   DriverProfile? _driverForSession(ActiveDriverSession session) {
+    final sessionDriverId = session.driverId.trim();
+    final sessionCompanyId = (session.companyId ?? '').trim();
     for (final d in driversNotifier.value) {
-      if (d.id == session.driverId) return d;
+      if (d.id.trim() != sessionDriverId) continue;
+      final driverCompanyId = (d.companyId ?? '').trim();
+      if (sessionCompanyId.isNotEmpty && driverCompanyId.isNotEmpty) {
+        if (sessionCompanyId != driverCompanyId) continue;
+      }
+      return d;
     }
     return null;
   }
@@ -267,6 +370,27 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     } catch (_) {
       return false;
     }
+  }
+
+  bool _isHttpUrl(String? value) {
+    final lower = (value ?? '').trim().toLowerCase();
+    return lower.startsWith('https://') || lower.startsWith('http://');
+  }
+
+  String? _driverNetworkPhotoUrl(
+    DriverProfile driver,
+    ActiveDriverSession? session,
+  ) {
+    final publicPortraitUrl = (driver.publicPortraitUrl ?? '').trim();
+    if (_isHttpUrl(publicPortraitUrl)) return publicPortraitUrl;
+
+    final sessionPhotoUrl = (session?.driverPhotoUrl ?? '').trim();
+    if (_isHttpUrl(sessionPhotoUrl)) return sessionPhotoUrl;
+
+    final profilePhotoPath = (driver.profilePhotoPath ?? '').trim();
+    if (_isHttpUrl(profilePhotoPath)) return profilePhotoPath;
+
+    return null;
   }
 
   String _driverInitials(DriverProfile driver) {
@@ -450,9 +574,14 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
     }
   }
 
-  Widget _profilePhotoActionCard(DriverProfile driver) {
+  Widget _profilePhotoActionCard(
+    DriverProfile driver, {
+    ActiveDriverSession? session,
+  }) {
     final path = driver.profilePhotoPath?.trim() ?? '';
-    final hasPhoto = _driverPhotoExists(path);
+    final hasLocalPhoto = _driverPhotoExists(path);
+    final networkUrl = _driverNetworkPhotoUrl(driver, session);
+    final hasPhoto = hasLocalPhoto || networkUrl != null;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -472,7 +601,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
               border: Border.all(color: _gold.withOpacity(0.42)),
             ),
             child: ClipOval(
-              child: hasPhoto
+              child: hasLocalPhoto
                   ? Image.file(
                       File(path),
                       fit: BoxFit.cover,
@@ -486,15 +615,29 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                         ),
                       ),
                     )
-                  : Center(
-                      child: Text(
-                        _driverInitials(driver),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
+                  : (networkUrl != null
+                        ? Image.network(
+                            networkUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Center(
+                              child: Text(
+                                _driverInitials(driver),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              _driverInitials(driver),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          )),
             ),
           ),
           const SizedBox(width: 12),
@@ -622,6 +765,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                 builder: (context, _, __) {
                   final docs = DriverDocumentsStore.instance
                       .documentsVisibleForDriver(driver.id);
+                  final scopedTenant = (session.tenantId ?? '').trim();
+                  final scopedCompany = (session.companyId ?? '').trim();
+                  final scopedDriver = session.driverId.trim();
                   final pending = docs
                       .where(
                         (e) => e.status == DriverDocumentStatuses.pendingReview,
@@ -635,7 +781,12 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                       .map(
                         (def) => (
                           def: def,
-                          doc: _bestDocForTypes(docs, def.matchTypes),
+                          doc: _bestRequiredDocForScope(
+                            tenantId: scopedTenant,
+                            companyId: scopedCompany,
+                            driverId: scopedDriver,
+                            types: def.matchTypes,
+                          ),
                         ),
                       )
                       .toList(growable: false);
@@ -727,7 +878,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                           ],
                         ),
                       ),
-                      _profilePhotoActionCard(driver),
+                      _profilePhotoActionCard(driver, session: session),
                       const SizedBox(height: 2),
                       _sectionTitle(
                         _tr(
@@ -808,7 +959,11 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                                 onPressed: () => showDriverDocumentEditorSheet(
                                   context,
                                   driver: driver,
+                                  existing: doc,
                                   driverSelfService: true,
+                                  initialDocumentType: doc == null
+                                      ? def.matchTypes.first
+                                      : null,
                                 ),
                                 child: Text(
                                   doc == null
@@ -958,6 +1113,82 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   }
 
   Widget _driverSelfDocTile(BuildContext context, DriverDocument doc) {
+    bool isBackendSynced(DriverDocument d) =>
+        d.storageState.trim().toLowerCase() == 'stored' ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    bool hasBackendMetadata(DriverDocument d) =>
+        d.backendFileName.trim().isNotEmpty ||
+        d.backendContentType.trim().isNotEmpty ||
+        d.backendSizeBytes > 0 ||
+        d.storageState.trim().isNotEmpty ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    String storageLabel(DriverDocument d) {
+      if (d.backendPendingDelete) {
+        return _tr(
+          nl: 'Verwijderen in wachtrij',
+          en: 'Delete pending',
+          fr: 'Suppression en attente',
+          es: 'Eliminacion pendiente',
+        );
+      }
+      if (d.backendPendingUpload) {
+        return _tr(
+          nl: 'Synchronisatie in wachtrij',
+          en: 'Sync pending',
+          fr: 'Synchronisation en attente',
+          es: 'Sincronizacion pendiente',
+        );
+      }
+      if (d.backendSyncError.trim().isNotEmpty) {
+        return _tr(
+          nl: 'Synchronisatie opnieuw proberen',
+          en: 'Sync needs retry',
+          fr: 'Nouvelle tentative de synchro requise',
+          es: 'Sincronizacion requiere reintento',
+        );
+      }
+      if (isBackendSynced(d)) {
+        return _tr(
+          nl: 'In cloud opgeslagen',
+          en: 'Cloud saved',
+          fr: 'Enregistré dans le cloud',
+          es: 'Guardado en la nube',
+        );
+      }
+      if (d.filePath.trim().isNotEmpty) {
+        return _tr(
+          nl: 'Op dit toestel opgeslagen',
+          en: 'Saved on this device',
+          fr: 'Enregistré sur cet appareil',
+          es: 'Guardado en este dispositivo',
+        );
+      }
+      if (hasBackendMetadata(d)) {
+        return _tr(
+          nl: 'Cloud document',
+          en: 'Cloud document',
+          fr: 'Document cloud',
+          es: 'Documento en la nube',
+        );
+      }
+      return _tr(
+        nl: 'Alleen lokale metadata',
+        en: 'Local metadata only',
+        fr: 'Métadonnées locales uniquement',
+        es: 'Solo metadatos locales',
+      );
+    }
+
+    bool canOpenLocal(DriverDocument d) {
+      final path = d.filePath.trim();
+      if (path.isEmpty || kIsWeb) return false;
+      try {
+        return File(path).existsSync();
+      } catch (_) {
+        return false;
+      }
+    }
+
     final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
     final expiredVisual =
         doc.isExpiredByDate || doc.status == DriverDocumentStatuses.expired;
@@ -1023,16 +1254,18 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
           if (doc.filePath.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             driverDocAttachmentPreview(doc.filePath, _lang),
-            SizedBox(
-              width: double.infinity,
-              child: Text(
-                doc.filePath,
-                style: const TextStyle(fontSize: 10, color: Colors.white38),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
           ],
+          const SizedBox(height: 6),
+          Text(
+            storageLabel(doc),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.70),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
@@ -1050,7 +1283,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
-              onPressed: doc.filePath.trim().isEmpty
+              onPressed: !canOpenLocal(doc)
                   ? null
                   : () => openDriverDocumentFile(context, doc.filePath, _lang),
               child: Text(

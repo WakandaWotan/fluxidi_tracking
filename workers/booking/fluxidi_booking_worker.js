@@ -945,7 +945,21 @@ const DEFAULT_BUSINESS_PROFILE = {
   companyName: "Fluxidi Taxi",
   legalName: "Fluxidi Taxi",
   vatNumber: "",
+  vat_number: "",
+  vatVerificationStatus: "pending",
+  vat_verification_status: "pending",
   companyRegistrationNumber: "",
+  company_registration_number: "",
+  enterpriseNumber: "",
+  enterprise_number: "",
+  kboNumber: "",
+  kbo_number: "",
+  peppolIdentifier: "",
+  peppol_identifier: "",
+  peppolReadinessStatus: "missing_vat",
+  peppol_readiness_status: "missing_vat",
+  chironReadinessStatus: "pending",
+  chiron_readiness_status: "pending",
   address: "",
   postcode: "",
   city: "",
@@ -1145,12 +1159,56 @@ function normalizeBusinessProfile(input = {}) {
     DEFAULT_BUSINESS_PROFILE.email,
     160
   );
+  const enterpriseNumber = sanitizeTenantString(
+    source.enterpriseNumber ??
+      source.enterprise_number ??
+      source.kboNumber ??
+      source.kbo_number ??
+      "",
+    32,
+  ).replace(/\D+/g, "").slice(0, 10);
+  const peppolIdentifier = sanitizeTenantString(
+    source.peppolIdentifier ?? source.peppol_identifier ?? "",
+    48,
+  );
+  const vatVerificationStatus = sanitizeTenantString(
+    source.vatVerificationStatus ??
+      source.vat_verification_status ??
+      DEFAULT_BUSINESS_PROFILE.vatVerificationStatus,
+    32,
+  ).toLowerCase();
+  const peppolReadinessStatus = sanitizeTenantString(
+    source.peppolReadinessStatus ??
+      source.peppol_readiness_status ??
+      DEFAULT_BUSINESS_PROFILE.peppolReadinessStatus,
+    32,
+  ).toLowerCase();
+  const chironReadinessStatus = sanitizeTenantString(
+    source.chironReadinessStatus ??
+      source.chiron_readiness_status ??
+      DEFAULT_BUSINESS_PROFILE.chironReadinessStatus,
+    32,
+  ).toLowerCase();
   return {
     version: 1,
     companyName: sanitizeTenantString(source.companyName ?? DEFAULT_BUSINESS_PROFILE.companyName, 120),
     legalName: sanitizeTenantString(source.legalName ?? DEFAULT_BUSINESS_PROFILE.legalName, 160),
     vatNumber: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
-    companyRegistrationNumber: sanitizeTenantString(source.companyRegistrationNumber ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    vat_number: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
+    vatVerificationStatus,
+    vat_verification_status: vatVerificationStatus,
+    companyRegistrationNumber: sanitizeTenantString(source.companyRegistrationNumber ?? source.company_registration_number ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    company_registration_number: sanitizeTenantString(source.companyRegistrationNumber ?? source.company_registration_number ?? source.registrationNumber ?? DEFAULT_BUSINESS_PROFILE.companyRegistrationNumber, 80),
+    enterpriseNumber,
+    enterprise_number: enterpriseNumber,
+    kboNumber: enterpriseNumber,
+    kbo_number: enterpriseNumber,
+    peppolIdentifier,
+    peppol_identifier: peppolIdentifier,
+    peppolReadinessStatus,
+    peppol_readiness_status: peppolReadinessStatus,
+    chironReadinessStatus,
+    chiron_readiness_status: chironReadinessStatus,
     address: sanitizeTenantString(source.address ?? DEFAULT_BUSINESS_PROFILE.address, 220),
     postcode: sanitizeTenantString(source.postcode ?? source.postalCode ?? DEFAULT_BUSINESS_PROFILE.postcode, 24),
     city: sanitizeTenantString(source.city ?? DEFAULT_BUSINESS_PROFILE.city, 80),
@@ -1377,6 +1435,13 @@ function buildScopedSettingsKeys(scope) {
     pricingProfileKey: `tenant:${tenantId}:company:${companyId}:pricing:v1`,
     subscriptionProfileKey: `tenant:${tenantId}:company:${companyId}:subscription:v1`,
   };
+}
+
+function buildScopedAirportFixedFaresKey(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return "";
+  return `tenant:${tenantId}:company:${companyId}:airport_fixed_fares:v1`;
 }
 
 function communicationTemplatesScopedKeyForScope(scope) {
@@ -1617,6 +1682,6658 @@ function sanitizePublicCompanyId(value) {
   return trimmed.replace(/[^a-zA-Z0-9_.-]/g, "");
 }
 
+const COMPANY_LINK_CODE_INDEX_KEY_PREFIX = "company_link:index:code:";
+const COMPANY_LINK_CODE_INDEX_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_SCOPE_INDEX_KEY_PREFIX = "company_link:index:scope:";
+const COMPANY_LINK_SCOPE_INDEX_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY = "company_link:counter:public_code:v1";
+const COMPANY_LINK_CHALLENGE_KEY_PREFIX = "company_link:challenge:";
+const COMPANY_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_LINK_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_RECOVERY_CHALLENGE_KEY_PREFIX = "company_recovery:challenge:";
+const COMPANY_RECOVERY_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS = 10 * 60;
+const COMPANY_RECOVERY_MAX_ATTEMPTS = 5;
+const COMPANY_RECOVERY_START_RATE_KEY_PREFIX = "company_recovery:rate:start:";
+const COMPANY_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
+const COMPANY_RECOVERY_START_RATE_MAX = 5;
+const COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX = "company_recovery:rate:verify:";
+const COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX = ":v1";
+const COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
+const COMPANY_RECOVERY_VERIFY_RATE_MAX = 20;
+const CUSTOMER_RECOVERY_CHALLENGE_KEY_PREFIX = "customer_recovery:challenge:";
+const CUSTOMER_RECOVERY_CHALLENGE_KEY_SUFFIX = ":v1";
+const CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS = 10 * 60;
+const CUSTOMER_RECOVERY_MAX_ATTEMPTS = 5;
+const CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX = "customer_recovery:rate:start:";
+const CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_RECOVERY_START_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_RECOVERY_START_RATE_MAX = 5;
+const CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_PREFIX = "customer_phone_auth:challenge:";
+const CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS = 10 * 60;
+const CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS = 5;
+const CUSTOMER_PHONE_AUTH_START_RATE_KEY_PREFIX = "customer_phone_auth:rate:start:";
+const CUSTOMER_PHONE_AUTH_START_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_START_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_PHONE_AUTH_START_RATE_MAX = 5;
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX = "customer_phone_auth:rate:verify:";
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
+const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
+const CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX = "customer:global:identity:";
+const CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX = "customer:global:scope_links:";
+const CUSTOMER_GLOBAL_PROFILE_KEY_PREFIX = "customer:global:";
+const CUSTOMER_GLOBAL_PROFILE_KEY_SUFFIX = ":profile:v1";
+const CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES = 25;
+const CUSTOMER_IDENTITY_KEY_PREFIX = "customer:identity:v1:tenant:";
+const CUSTOMER_IDENTITY_KEY_MIDDLE = ":company:";
+const CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE = ":customer:";
+const CUSTOMER_EMAIL_INDEX_KEY_PREFIX = "customer:index:email:v1:tenant:";
+const CUSTOMER_EMAIL_INDEX_KEY_MIDDLE = ":company:";
+const CUSTOMER_EMAIL_INDEX_KEY_HASH_MIDDLE = ":sha256:";
+const CUSTOMER_SESSION_KEY_PREFIX = "customer:session:";
+const CUSTOMER_SESSION_KEY_SUFFIX = ":v1";
+const CUSTOMER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX = "company_link:admin_pairing:challenge:";
+const COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX = "company_link:admin_pairing:active:";
+const COMPANY_ADMIN_PAIRING_ACTIVE_KEY_SUFFIX = ":v1";
+const COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS = 10 * 60;
+const COMPANY_ADMIN_PAIRING_MAX_TTL_SECONDS = 30 * 60;
+const COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS = 5;
+const COMPANY_DRIVER_INDEX_KEY_PREFIX = "tenant:";
+const COMPANY_DRIVER_INDEX_KEY_MIDDLE = ":company:";
+const COMPANY_DRIVER_INDEX_KEY_SUFFIX = ":drivers:index:v1";
+const DRIVER_DOCUMENT_PRIVATE_R2_PREFIX = "driver-documents/v1";
+const DRIVER_DOCUMENT_KV_KEY_PREFIX = "driver_document_v1/tenant/";
+const DRIVER_DOCUMENT_INDEX_KV_KEY_PREFIX = "driver_document_index_v1/tenant/";
+const COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX = "company_driver_link:challenge:";
+const COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
+const COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX = "company_driver_link:active:";
+const COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX = ":v1";
+const COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS = 10 * 60;
+const COMPANY_DRIVER_LINK_MAX_TTL_SECONDS = 30 * 60;
+const COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS = 5;
+const COMPANY_SESSION_KEY_PREFIX = "company_admin:session:";
+const COMPANY_SESSION_KEY_SUFFIX = ":v1";
+const COMPANY_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const PUBLIC_DRIVER_SESSION_KEY_PREFIX = "public_driver:session:";
+const PUBLIC_DRIVER_SESSION_KEY_SUFFIX = ":v1";
+const PUBLIC_DRIVER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+function normalizePublicCompanyCode(value) {
+  let text = sanitizeTenantString(value, 80).trim().toUpperCase();
+  if (!text) return "";
+  text = text.replace(/\s+/g, "-");
+  text = text.replace(/-+/g, "-");
+  return text;
+}
+
+function validatePublicCompanyCode(value) {
+  const code = normalizePublicCompanyCode(value);
+  if (!code) {
+    return { ok: false, code: "", error: "invalid_company_code" };
+  }
+  if (code.length < 4 || code.length > 24) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  if (!/^[A-Z0-9-]+$/.test(code)) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  if (!/[A-Z0-9]/.test(code)) {
+    return { ok: false, code, error: "invalid_company_code" };
+  }
+  return { ok: true, code };
+}
+
+function normalizeTaxOrRegistrationIdForCountry(value, country) {
+  const raw = sanitizeTenantString(value, 96).toUpperCase();
+  if (!raw) return null;
+  const normalizedCountry = sanitizeTenantString(country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  // Country-aware normalization: BE VAT/KBO is supported as a strict variant,
+  // while non-BE values use a generic alphanumeric normalization for safe comparison.
+  if (normalizedCountry === "BE") {
+    const compact = raw.replace(/[\s./-]+/g, "");
+    const withoutPrefix = compact.startsWith("BE") ? compact.slice(2) : compact;
+    if (!/^\d{10}$/.test(withoutPrefix)) return null;
+    return `BE${withoutPrefix}`;
+  }
+  const compact = raw.replace(/[\s./-]+/g, "");
+  const safe = compact.replace(/[^A-Z0-9]/g, "");
+  if (safe.length < 4 || safe.length > 32) return null;
+  if (!/[A-Z0-9]/.test(safe)) return null;
+  return safe;
+}
+
+function normalizeIdentifierType(value) {
+  const type = sanitizeTenantString(value, 40).toLowerCase().replace(/[^a-z_]+/g, "_");
+  if (!type) return "";
+  const allowed = new Set(["vat", "company_registration", "tax_id", "other"]);
+  return allowed.has(type) ? type : "";
+}
+
+function _pickTaxOrRegistrationIdAlias(source) {
+  if (!source || typeof source !== "object") return "";
+  return sanitizeTenantString(
+    source.tax_or_registration_id ??
+      source.taxOrRegistrationId ??
+      source.vat_or_kbo ??
+      source.vatOrKbo ??
+      source.vat_number ??
+      source.vatNumber ??
+      source.business_identifier ??
+      source.businessIdentifier ??
+      source.company_registration_id ??
+      source.companyRegistrationId,
+    96,
+  );
+}
+
+function maskPhoneForPublic(phone) {
+  const raw = sanitizeTenantString(phone, 64);
+  if (!raw) return "";
+  const compact = raw.replace(/[^0-9+]/g, "");
+  const digits = compact.replace(/\D/g, "");
+  if (!digits) return "";
+  const tail = digits.slice(-2).padStart(2, "•");
+  return `••••${tail}`;
+}
+
+function _companyLinkIndexKeyForCode(code) {
+  return `${COMPANY_LINK_CODE_INDEX_KEY_PREFIX}${code}${COMPANY_LINK_CODE_INDEX_KEY_SUFFIX}`;
+}
+
+function buildCompanyLinkScopeIndexKey(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return "";
+  }
+  return `${COMPANY_LINK_SCOPE_INDEX_KEY_PREFIX}${tenantId}:${companyId}${COMPANY_LINK_SCOPE_INDEX_KEY_SUFFIX}`;
+}
+
+function _companyLinkChallengeKey(challengeId) {
+  return `${COMPANY_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_LINK_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyLinkChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cl_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _companyRecoveryChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${COMPANY_RECOVERY_CHALLENGE_KEY_PREFIX}${safeChallengeId}${COMPANY_RECOVERY_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyRecoveryChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cr_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _customerRecoveryChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${CUSTOMER_RECOVERY_CHALLENGE_KEY_PREFIX}${safeChallengeId}${CUSTOMER_RECOVERY_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _customerRecoveryChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cur_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _customerPhoneAuthChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_PREFIX}${safeChallengeId}${CUSTOMER_PHONE_AUTH_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cpa_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _maskRecoveryChallengeId(value) {
+  const id = sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!id) return "-";
+  if (id.length <= 10) return `${id.slice(0, 2)}***${id.slice(-2)}`;
+  return `${id.slice(0, 6)}...${id.slice(-4)}`;
+}
+
+function _normalizeRecoveryEmail(value) {
+  const email = sanitizeTenantString(value, 240).toLowerCase();
+  return isValidEmail(email) ? email : "";
+}
+
+function _maskEmailForPublic(email) {
+  const normalized = _normalizeRecoveryEmail(email);
+  if (!normalized) return "";
+  const [localPart = "", domainPart = ""] = normalized.split("@");
+  if (!localPart || !domainPart) return "";
+  const domainHead = domainPart[0] || "•";
+  const domainTail = domainPart.slice(-3) || "•••";
+  if (localPart.length <= 2) return `${localPart[0] || "•"}•@${domainHead}••${domainTail}`;
+  return `${localPart[0]}•••${localPart.slice(-1)}@${domainHead}••${domainTail}`;
+}
+
+function _generateCompanyRecoveryOtp() {
+  const values = new Uint8Array(6);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += String(value % 10);
+  }
+  return out;
+}
+
+async function _hashRecoveryStartRateKeyPart(email) {
+  const normalized = _normalizeRecoveryEmail(email);
+  if (!normalized) return "";
+  return _sha256Hex(normalized);
+}
+
+function _companyRecoveryStartRateKey(companyCode, emailHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedHash) return "";
+  return `${COMPANY_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${COMPANY_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerRecoveryStartRateKey(companyCode, emailHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedHash) return "";
+  return `${CUSTOMER_RECOVERY_START_RATE_KEY_PREFIX}${normalizedCode}:${normalizedHash}${CUSTOMER_RECOVERY_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthStartRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_PHONE_AUTH_START_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_PHONE_AUTH_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerPhoneAuthVerifyRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+function _globalCustomerPhoneIndexKey(phoneHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  if (!normalizedPhoneHash) return "";
+  return `${CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX}${normalizedPhoneHash}`;
+}
+
+function _globalCustomerIdentityKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _globalCustomerProfileKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_PROFILE_KEY_PREFIX}${safeCustomerId}${CUSTOMER_GLOBAL_PROFILE_KEY_SUFFIX}`;
+}
+
+function _globalCustomerScopeLinksKey(customerId) {
+  const safeCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!safeCustomerId) return "";
+  return `${CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX}${safeCustomerId}`;
+}
+
+function _normalizeCustomerScopeLink(scope) {
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return null;
+  const tenantId = sanitizeTenantString(scope.tenant_id ?? scope.tenantId, 80);
+  const companyId = sanitizeTenantString(scope.company_id ?? scope.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  const linkedAt = sanitizeTenantString(scope.linked_at ?? scope.linkedAt, 80);
+  return {
+    tenant_id: tenantId,
+    tenantId,
+    company_id: companyId,
+    companyId,
+    linked_at: linkedAt || "",
+    linkedAt: linkedAt || "",
+  };
+}
+
+async function _readGlobalCustomerScopeLinks(env, customerId) {
+  if (!env?.BOOKING_KV) return { ok: false, key: "", customer_id: "", scopes: [] };
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  const key = _globalCustomerScopeLinksKey(normalizedCustomerId);
+  if (!key) return { ok: false, key: "", customer_id: "", scopes: [] };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const incomingScopes = Array.isArray(source.scopes) ? source.scopes : [];
+  const deduped = [];
+  const seen = new Set();
+  for (const entry of incomingScopes) {
+    const normalized = _normalizeCustomerScopeLink(entry);
+    if (!normalized) continue;
+    const dedupeKey = `${normalized.tenant_id}::${normalized.company_id}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    deduped.push(normalized);
+    if (deduped.length >= CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES) break;
+  }
+  return {
+    ok: true,
+    key,
+    customer_id: normalizedCustomerId,
+    customerId: normalizedCustomerId,
+    scopes: deduped,
+    updated_at: sanitizeTenantString(source.updated_at ?? source.updatedAt, 80),
+    updatedAt: sanitizeTenantString(source.updated_at ?? source.updatedAt, 80),
+  };
+}
+
+async function _upsertGlobalCustomerScopeLink(env, customerId, scope) {
+  if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  const key = _globalCustomerScopeLinksKey(normalizedCustomerId);
+  const normalizedScope = _normalizeCustomerScopeLink(scope);
+  if (!key || !normalizedScope) {
+    return { ok: false, skipped: true, reason: "invalid_scope_or_customer" };
+  }
+  const nowIso = new Date().toISOString();
+  const read = await _readGlobalCustomerScopeLinks(env, normalizedCustomerId);
+  const scopes = Array.isArray(read?.scopes) ? read.scopes.slice() : [];
+  const dedupeKey = `${normalizedScope.tenant_id}::${normalizedScope.company_id}`;
+  const existingIndex = scopes.findIndex((entry) => {
+    const compare = _normalizeCustomerScopeLink(entry);
+    if (!compare) return false;
+    return `${compare.tenant_id}::${compare.company_id}` === dedupeKey;
+  });
+  const nextScope = {
+    ...normalizedScope,
+    linked_at: nowIso,
+    linkedAt: nowIso,
+  };
+  if (existingIndex >= 0) scopes.splice(existingIndex, 1);
+  scopes.unshift(nextScope);
+  const capped = scopes
+    .map((entry) => _normalizeCustomerScopeLink(entry))
+    .filter((entry) => !!entry)
+    .slice(0, CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES)
+    .map((entry) => {
+      const linkedAt = safeStr(entry.linked_at || entry.linkedAt || nowIso, 80) || nowIso;
+      return {
+        ...entry,
+        linked_at: linkedAt,
+        linkedAt,
+      };
+    });
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      customer_id: normalizedCustomerId,
+      customerId: normalizedCustomerId,
+      scopes: capped,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
+  return { ok: true, key, count: capped.length };
+}
+
+function _maskCustomerPhoneForAuth(phoneE164) {
+  const normalized = sanitizeTenantString(phoneE164, 40);
+  if (!_looksLikeE164Phone(normalized)) return "";
+  const digits = normalized.replace(/\D/g, "");
+  if (!digits) return "";
+  const head = digits.slice(0, 2);
+  const tail = digits.slice(-3);
+  return `+${head}******${tail}`;
+}
+
+function _readCustomerPhoneAuthInputPhone(body) {
+  const phoneRaw = sanitizeTenantString(
+    body?.phone_e164 ??
+      body?.phoneE164 ??
+      body?.phone ??
+      body?.customer_phone ??
+      body?.customerPhone,
+    40,
+  );
+  const normalized = _normalizeCustomerPhone(phoneRaw);
+  return _looksLikeE164Phone(normalized) ? normalized : "";
+}
+
+function _isAllowedCustomerPhoneAuthSmsRegion(phoneE164) {
+  const normalized = sanitizeTenantString(phoneE164, 40);
+  if (!_looksLikeE164Phone(normalized)) return false;
+  const allowedPrefixes = ["+32", "+31", "+33", "+49", "+34", "+44"];
+  return allowedPrefixes.some((prefix) => normalized.startsWith(prefix));
+}
+
+function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedEmailHash || !normalizedClientHash) return "";
+  return `${COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX}${normalizedCode}:${normalizedEmailHash}:${normalizedClientHash}${COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+async function _companyRecoveryVerifyClientHash(request) {
+  if (!request?.headers?.get) return "unknown";
+  const cfConnectingIp = sanitizeTenantString(
+    request.headers.get("cf-connecting-ip"),
+    120,
+  );
+  const xForwardedForRaw = sanitizeTenantString(
+    request.headers.get("x-forwarded-for"),
+    240,
+  );
+  const xRealIp = sanitizeTenantString(request.headers.get("x-real-ip"), 120);
+  const userAgent = sanitizeTenantString(request.headers.get("user-agent"), 240);
+  const cfRay = sanitizeTenantString(request.headers.get("cf-ray"), 120);
+  const xForwardedFor = xForwardedForRaw
+    .split(",")
+    .map((part) => sanitizeTenantString(part, 120))
+    .find((part) => !!part) || "";
+  const fingerprintSource = [
+    cfConnectingIp,
+    xForwardedFor,
+    xRealIp,
+    userAgent,
+    cfRay,
+  ]
+    .filter(Boolean)
+    .join("|");
+  if (!fingerprintSource) return "unknown";
+  return _sha256Hex(fingerprintSource);
+}
+
+function _collectBusinessProfileRecoveryEmails(businessProfile) {
+  if (!businessProfile || typeof businessProfile !== "object" || Array.isArray(businessProfile)) {
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  const candidates = [
+    businessProfile.companyEmail,
+    businessProfile.company_email,
+    businessProfile.email,
+    businessProfile.ownerEmail,
+    businessProfile.owner_email,
+    businessProfile.notificationEmail,
+    businessProfile.notification_email,
+    businessProfile.bookingEmail,
+    businessProfile.booking_email,
+    businessProfile.billingEmail,
+    businessProfile.billing_email,
+    businessProfile.invoiceEmail,
+    businessProfile.invoice_email,
+    businessProfile.supportEmail,
+    businessProfile.support_email,
+    businessProfile.replyToEmail,
+    businessProfile.reply_to_email,
+  ];
+  for (const raw of candidates) {
+    const normalized = _normalizeRecoveryEmail(raw);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function _projectPublicRecoveryStartResponse(challengeId, email) {
+  const maskedEmail = _maskEmailForPublic(email);
+  return {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId,
+    verification_channel: "email_otp",
+    expires_in_seconds: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+    ...(maskedEmail ? { masked_email: maskedEmail, maskedEmail: maskedEmail } : {}),
+    message: "If the details are correct, a verification code has been sent.",
+  };
+}
+
+function _projectPublicCustomerRecoveryStartResponse(challengeId) {
+  return {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId: challengeId,
+    verification_channel: "email",
+    expires_in_seconds: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS,
+  };
+}
+
+function _customerIdentityKey(scope, customerId) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safeCustomerId = sanitizeTenantString(customerId, 160).replace(/[^a-zA-Z0-9._-]+/g, "");
+  if (!tenantId || !companyId || !safeCustomerId) return "";
+  return `${CUSTOMER_IDENTITY_KEY_PREFIX}${tenantId}${CUSTOMER_IDENTITY_KEY_MIDDLE}${companyId}${CUSTOMER_IDENTITY_KEY_CUSTOMER_MIDDLE}${safeCustomerId}`;
+}
+
+function _customerEmailIndexKey(scope, emailHash) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const safeEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!tenantId || !companyId || !safeEmailHash) return "";
+  return `${CUSTOMER_EMAIL_INDEX_KEY_PREFIX}${tenantId}${CUSTOMER_EMAIL_INDEX_KEY_MIDDLE}${companyId}${CUSTOMER_EMAIL_INDEX_KEY_HASH_MIDDLE}${safeEmailHash}`;
+}
+
+function _customerSessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${CUSTOMER_SESSION_KEY_PREFIX}${safeHash}${CUSTOMER_SESSION_KEY_SUFFIX}`;
+}
+
+function _normalizeCustomerIdentityId(value) {
+  return sanitizeTenantString(value, 160).replace(/[^a-zA-Z0-9._-]+/g, "");
+}
+
+function _generateCustomerIdentityId() {
+  return _generateOpaqueToken(24, "cust_");
+}
+
+async function _sendCompanyRecoveryOtpEmail({
+  env,
+  tenantId,
+  companyId,
+  recipientEmail,
+  otp,
+}) {
+  const apiKey = safeStr(env?.RESEND_API_KEY);
+  const emailFrom = safeStr(env?.EMAIL_FROM);
+  const toEmail = _normalizeRecoveryEmail(recipientEmail);
+  const code = sanitizeTenantString(otp, 24);
+  if (!apiKey || !emailFrom || !toEmail || !/^\d{4,8}$/.test(code)) {
+    return { ok: false, reason: "provider_or_input_missing" };
+  }
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    sanitizeTenantString(tenantId, 80),
+    sanitizeTenantString(companyId, 80),
+  );
+  const replyTo = pickFirstValidEmail(
+    commProfile?.replyToEmail,
+    commProfile?.companyEmail,
+    commProfile?.supportEmail,
+    commProfile?.notificationEmail,
+    env?.EMAIL_REPLY_TO,
+  );
+  const brandName = safeBrandName(commProfile?.brandName, "Fluxidi");
+  const subject = "Fluxidi herstelcode / Fluxidi recovery code";
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.55;color:#111">
+      <h2 style="margin:0 0 10px">${escapeHtml(brandName)} herstelcode / recovery code</h2>
+      <p style="margin:0 0 12px">Gebruik deze code om je bedrijfsaccount te herstellen.</p>
+      <p style="margin:0 0 12px">Use this code to recover your company account.</p>
+      <div style="display:inline-block;padding:10px 14px;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:20px;font-weight:800;letter-spacing:3px">
+        ${escapeHtml(code)}
+      </div>
+      <p style="margin:12px 0 0">Deze code vervalt binnen 10 minuten.</p>
+      <p style="margin:4px 0 0">This code expires in 10 minutes.</p>
+      <p style="margin:12px 0 0;color:#555">Heb je dit niet aangevraagd? Dan kan je deze e-mail negeren.</p>
+      <p style="margin:4px 0 0;color:#555">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+  const payload = {
+    from: emailFrom,
+    to: [toEmail],
+    subject,
+    html,
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  };
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: safeStr(body?.message || `HTTP ${response.status}`, 180),
+    };
+  }
+  return { ok: true, id: safeStr(body?.id, 120) };
+}
+
+async function _sendCustomerRecoveryOtpEmail({
+  env,
+  tenantId,
+  companyId,
+  recipientEmail,
+  otp,
+}) {
+  const apiKey = safeStr(env?.RESEND_API_KEY);
+  const emailFrom = safeStr(env?.EMAIL_FROM);
+  const toEmail = _normalizeRecoveryEmail(recipientEmail);
+  const code = sanitizeTenantString(otp, 24);
+  if (!apiKey || !emailFrom || !toEmail || !/^\d{4,8}$/.test(code)) {
+    return { ok: false, reason: "provider_or_input_missing" };
+  }
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    sanitizeTenantString(tenantId, 80),
+    sanitizeTenantString(companyId, 80),
+  );
+  const replyTo = pickFirstValidEmail(
+    commProfile?.replyToEmail,
+    commProfile?.companyEmail,
+    commProfile?.supportEmail,
+    commProfile?.notificationEmail,
+    env?.EMAIL_REPLY_TO,
+  );
+  const brandName = safeBrandName(commProfile?.brandName, "Fluxidi");
+  const subject = "Fluxidi customer recovery code";
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.55;color:#111">
+      <h2 style="margin:0 0 10px">${escapeHtml(brandName)} customer recovery code</h2>
+      <p style="margin:0 0 12px">Use this code to recover your customer session.</p>
+      <div style="display:inline-block;padding:10px 14px;border:1px solid #ddd;border-radius:10px;background:#fafafa;font-size:20px;font-weight:800;letter-spacing:3px">
+        ${escapeHtml(code)}
+      </div>
+      <p style="margin:12px 0 0">This code expires in 10 minutes.</p>
+      <p style="margin:12px 0 0;color:#555">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+  const payload = {
+    from: emailFrom,
+    to: [toEmail],
+    subject,
+    html,
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  };
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: safeStr(body?.message || `HTTP ${response.status}`, 180),
+    };
+  }
+  return { ok: true, id: safeStr(body?.id, 120) };
+}
+
+function _looksLikeE164Phone(value) {
+  const text = sanitizeTenantString(value, 40);
+  return /^\+[1-9]\d{6,14}$/.test(text);
+}
+
+function isValidGeneratedFluxidiCompanyCode(code) {
+  const normalized = normalizePublicCompanyCode(code);
+  if (!normalized) return false;
+  return /^FLX(?:-?[0-9]{4,12})$/.test(normalized);
+}
+
+function _formatSequentialFluxidiCompanyCode(numberValue) {
+  const n = Math.max(1, Math.min(999999999999, Math.round(Number(numberValue) || 0)));
+  const digits = String(n).padStart(5, "0");
+  return `FLX-${digits}`;
+}
+
+function _publicCompanyNameCandidatesFromBusinessProfile(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return [];
+  return [
+    source.company_name,
+    source.companyName,
+    source.public_display_name,
+    source.publicDisplayName,
+    source.legal_name,
+    source.legalName,
+    source.business_name,
+    source.businessName,
+    source.display_name,
+    source.displayName,
+  ];
+}
+
+function _resolvePublicCompanyDisplayName(businessProfile) {
+  const candidates = _publicCompanyNameCandidatesFromBusinessProfile(
+    businessProfile,
+  );
+  for (const raw of candidates) {
+    const text = sanitizeTenantString(raw, 160);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _normalizePublicCompanySlug(rawName, maxLen = 32) {
+  const base = sanitizeTenantString(rawName, 220).trim();
+  if (!base) return "";
+  let text = base;
+  try {
+    text = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  } catch (_) {}
+  text = text.toUpperCase();
+  text = text.replace(/\s+/g, "-");
+  text = text.replace(/[^A-Z0-9-]+/g, "-");
+  text = text.replace(/-+/g, "-");
+  text = text.replace(/^-+|-+$/g, "");
+  if (!text) return "";
+  return text.slice(0, Math.max(4, Math.min(64, Math.round(Number(maxLen) || 32))));
+}
+
+function _publicDisplayCodeFromParts(companyCode, slug) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!normalizedCode) return "";
+  const normalizedSlug = _normalizePublicCompanySlug(slug);
+  if (!normalizedSlug) return normalizedCode;
+  return `${normalizedCode}-${normalizedSlug}`;
+}
+
+async function _readPublicCompanyCodeCounter(env) {
+  if (!env?.BOOKING_KV) return 0;
+  const raw = await env.BOOKING_KV.get(COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const counterRaw = Number(
+    source.counter ?? source.value ?? source.sequence ?? source.next ?? source.current ?? 0,
+  );
+  if (!Number.isFinite(counterRaw)) return 0;
+  return Math.max(0, Math.min(999999999999, Math.round(counterRaw)));
+}
+
+async function _writePublicCompanyCodeCounter(env, counter, nowIso) {
+  if (!env?.BOOKING_KV) return;
+  const safeCounter = Math.max(0, Math.min(999999999999, Math.round(Number(counter) || 0)));
+  await env.BOOKING_KV.put(
+    COMPANY_LINK_PUBLIC_CODE_COUNTER_KEY,
+    JSON.stringify({
+      counter: safeCounter,
+      updated_at: sanitizeTenantString(nowIso, 80) || new Date().toISOString(),
+    }),
+  );
+}
+
+function _companyCodeResultPayload({
+  companyCode,
+  publicCompanySlug = "",
+  publicDisplayCode = "",
+  codeIndexKey = "",
+  scopeIndexKey = "",
+}) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedSlug = _normalizePublicCompanySlug(publicCompanySlug);
+  const normalizedDisplayCode = sanitizeTenantString(
+    publicDisplayCode || _publicDisplayCodeFromParts(normalizedCode, normalizedSlug),
+    240,
+  );
+  return {
+    ok: true,
+    company_code: normalizedCode,
+    companyCode: normalizedCode,
+    public_company_code: normalizedCode,
+    publicCompanyCode: normalizedCode,
+    ...(normalizedSlug
+      ? {
+          public_company_slug: normalizedSlug,
+          publicCompanySlug: normalizedSlug,
+        }
+      : {}),
+    ...(normalizedDisplayCode
+      ? {
+          public_display_code: normalizedDisplayCode,
+          publicDisplayCode: normalizedDisplayCode,
+        }
+      : {}),
+    ...(codeIndexKey ? { code_index_key: codeIndexKey } : {}),
+    ...(scopeIndexKey ? { scope_index_key: scopeIndexKey } : {}),
+  };
+}
+
+function _normalizeCompanyLinkIndexSource(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source =
+    raw.record && typeof raw.record === "object" && !Array.isArray(raw.record)
+      ? raw.record
+      : raw;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  return source;
+}
+
+function _readAnyCompanyCodeAlias(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return "";
+  return normalizePublicCompanyCode(
+    source.company_code ??
+      source.companyCode ??
+      source.public_company_code ??
+      source.publicCompanyCode ??
+      "",
+  );
+}
+
+function _sameCompanyLinkScope(source, tenantId, companyId) {
+  const leftTenant = sanitizeTenantString(source?.tenant_id ?? source?.tenantId, 80);
+  const leftCompany = sanitizeTenantString(source?.company_id ?? source?.companyId, 80);
+  return leftTenant === tenantId && leftCompany === companyId;
+}
+
+function _extractCompanyCodeHints(options = {}) {
+  const profileHints = [];
+  if (options.profile && typeof options.profile === "object") {
+    profileHints.push(
+      options.profile.company_code,
+      options.profile.companyCode,
+      options.profile.public_company_code,
+      options.profile.publicCompanyCode,
+    );
+  }
+  const list = [
+    options.company_code,
+    options.companyCode,
+    options.public_company_code,
+    options.publicCompanyCode,
+    options.preferredCompanyCode,
+    options.session_company_code,
+    options.sessionCompanyCode,
+    ...profileHints,
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const normalized = normalizePublicCompanyCode(raw);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+async function _readCompanyLinkScopeIndexRecord(env, scope) {
+  const key = buildCompanyLinkScopeIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { key: "", record: null };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = _normalizeCompanyLinkIndexSource(raw);
+  return { key, record: source };
+}
+
+async function _readCompanyLinkCodeIndexRecord(env, companyCode) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!normalizedCode || !env?.BOOKING_KV) {
+    return { key: "", record: null, company_code: normalizedCode };
+  }
+  const key = _companyLinkIndexKeyForCode(normalizedCode);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = _normalizeCompanyLinkIndexSource(raw);
+  return { key, record: source, company_code: normalizedCode };
+}
+
+async function _upsertCompanyCodeIndexesForScope(
+  env,
+  { tenantId, companyId, companyCode, nowIso, source = "auto_generated", hints = null },
+) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  if (!isValidGeneratedFluxidiCompanyCode(normalizedCode)) {
+    return { ok: false, error: "invalid_company_code" };
+  }
+  const codeKey = _companyLinkIndexKeyForCode(normalizedCode);
+  const scopeKey = buildCompanyLinkScopeIndexKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  if (!codeKey || !scopeKey) return { ok: false, error: "invalid_scope" };
+  const hintMap = hints && typeof hints === "object" ? hints : {};
+  const businessProfileForDisplay =
+    hintMap.business_profile && typeof hintMap.business_profile === "object"
+      ? hintMap.business_profile
+      : (hintMap.businessProfile && typeof hintMap.businessProfile === "object"
+        ? hintMap.businessProfile
+        : null);
+  const prevCodeRead = await _readCompanyLinkCodeIndexRecord(env, normalizedCode);
+  const prevScopeRead = await _readCompanyLinkScopeIndexRecord(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  const prevCode = prevCodeRead.record;
+  const prevScope = prevScopeRead.record;
+  const createdAt = sanitizeTenantString(
+    prevCode?.created_at ??
+      prevCode?.createdAt ??
+      prevScope?.created_at ??
+      prevScope?.createdAt ??
+      nowIso,
+    80,
+  ) || nowIso;
+  const displayName = _resolvePublicCompanyDisplayName(businessProfileForDisplay);
+  const currentDisplayName = displayName;
+  const currentExplicitSlugRaw = sanitizeTenantString(
+    hintMap.public_company_slug ?? hintMap.publicCompanySlug,
+    120,
+  );
+  const currentSlug = _normalizePublicCompanySlug(
+    currentExplicitSlugRaw || currentDisplayName,
+  );
+  const storedSlug = _normalizePublicCompanySlug(
+    sanitizeTenantString(
+      prevCode?.public_company_slug ??
+        prevCode?.publicCompanySlug ??
+        prevScope?.public_company_slug ??
+        prevScope?.publicCompanySlug ??
+        "",
+      120,
+    ),
+  );
+  const publicCompanySlug = currentSlug || storedSlug;
+  const storedDisplayCode = sanitizeTenantString(
+    prevCode?.public_display_code ??
+      prevCode?.publicDisplayCode ??
+      prevScope?.public_display_code ??
+      prevScope?.publicDisplayCode ??
+      "",
+    240,
+  );
+  const explicitDisplayCode = sanitizeTenantString(
+    hintMap.public_display_code ?? hintMap.publicDisplayCode,
+    240,
+  );
+  const publicDisplayCode = currentSlug
+    ? sanitizeTenantString(
+        explicitDisplayCode || _publicDisplayCodeFromParts(normalizedCode, publicCompanySlug),
+        240,
+      )
+    : sanitizeTenantString(
+        explicitDisplayCode ||
+          storedDisplayCode ||
+          _publicDisplayCodeFromParts(normalizedCode, publicCompanySlug),
+        240,
+      );
+  const country = sanitizeTenantString(
+    hintMap.country ?? prevCode?.country ?? prevScope?.country,
+    8,
+  )
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const linkedRecord = {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: normalizedCode,
+    companyCode: normalizedCode,
+    public_company_code: normalizedCode,
+    publicCompanyCode: normalizedCode,
+    ...(publicCompanySlug
+      ? {
+          public_company_slug: publicCompanySlug,
+          publicCompanySlug: publicCompanySlug,
+        }
+      : {}),
+    ...(publicDisplayCode
+      ? {
+          public_display_code: publicDisplayCode,
+          publicDisplayCode: publicDisplayCode,
+        }
+      : {}),
+    ...(displayName
+      ? {
+          display_name: displayName,
+          displayName: displayName,
+        }
+      : {}),
+    ...(country ? { country } : {}),
+    linking_enabled: _coerceLinkingEnabled(
+      hintMap.linking_enabled ??
+        hintMap.linkingEnabled ??
+        prevCode?.linking_enabled ??
+        prevCode?.linkingEnabled ??
+        prevScope?.linking_enabled ??
+        prevScope?.linkingEnabled,
+    ),
+    created_at: createdAt,
+    updated_at: nowIso,
+    source: sanitizeTenantString(
+      hintMap.source ?? prevCode?.source ?? prevScope?.source ?? source,
+      64,
+    ) || source,
+  };
+  await env.BOOKING_KV.put(codeKey, JSON.stringify(linkedRecord));
+  await env.BOOKING_KV.put(
+    scopeKey,
+    JSON.stringify({
+      ...linkedRecord,
+      code_index_key: codeKey,
+    }),
+  );
+  return _companyCodeResultPayload({
+    companyCode: normalizedCode,
+    publicCompanySlug,
+    publicDisplayCode,
+    codeIndexKey: codeKey,
+    scopeIndexKey: scopeKey,
+  });
+}
+
+async function ensurePublicCompanyCodeForScope(env, scope, options = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "BOOKING_KV binding is missing" };
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return { ok: false, error: "invalid_tenant_or_company_scope" };
+  }
+  const nowIso = new Date().toISOString();
+  const maxAttemptsRaw = Number(options?.maxAttempts);
+  const maxAttempts = Number.isFinite(maxAttemptsRaw)
+    ? Math.max(1, Math.min(200, Math.round(maxAttemptsRaw)))
+    : 25;
+
+  const scopeRead = await _readCompanyLinkScopeIndexRecord(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
+  const scopeCode = _readAnyCompanyCodeAlias(scopeRead.record);
+  const scopeCodeValidation = validatePublicCompanyCode(scopeCode);
+  if (scopeCodeValidation.ok && !isValidGeneratedFluxidiCompanyCode(scopeCode)) {
+    const scopeSlug = sanitizeTenantString(
+      scopeRead.record?.public_company_slug ?? scopeRead.record?.publicCompanySlug,
+      80,
+    );
+    const scopeDisplayCode = sanitizeTenantString(
+      scopeRead.record?.public_display_code ?? scopeRead.record?.publicDisplayCode,
+      240,
+    );
+    return _companyCodeResultPayload({
+      companyCode: scopeCodeValidation.code,
+      publicCompanySlug: scopeSlug,
+      publicDisplayCode: scopeDisplayCode,
+      scopeIndexKey: scopeRead.key,
+    });
+  }
+  if (isValidGeneratedFluxidiCompanyCode(scopeCode)) {
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, scopeCode);
+    if (codeRead.record && _sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+        tenantId,
+        companyId,
+        companyCode: scopeCode,
+        nowIso,
+        source: "auto_generated",
+        hints: { ...scopeRead.record, ...codeRead.record, ...options },
+      });
+      if (repaired.ok) return repaired;
+    } else if (!codeRead.record) {
+      const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+        tenantId,
+        companyId,
+        companyCode: scopeCode,
+        nowIso,
+        source: "auto_generated",
+        hints: { ...scopeRead.record, ...options },
+      });
+      if (repaired.ok) return repaired;
+    }
+  }
+
+  const hintedCodes = _extractCompanyCodeHints(options);
+  for (const hintedCode of hintedCodes) {
+    if (!isValidGeneratedFluxidiCompanyCode(hintedCode)) continue;
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, hintedCode);
+    if (codeRead.record && !_sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      continue;
+    }
+    const repaired = await _upsertCompanyCodeIndexesForScope(env, {
+      tenantId,
+      companyId,
+      companyCode: hintedCode,
+      nowIso,
+      source: "auto_generated",
+      hints: { ...codeRead.record, ...scopeRead.record, ...options },
+    });
+    if (repaired.ok) return repaired;
+  }
+
+  const baseCounter = await _readPublicCompanyCodeCounter(env);
+  let highestCounterUsed = baseCounter;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const candidateCounter = baseCounter + i + 1;
+    highestCounterUsed = Math.max(highestCounterUsed, candidateCounter);
+    const candidate = _formatSequentialFluxidiCompanyCode(candidateCounter);
+    if (!isValidGeneratedFluxidiCompanyCode(candidate)) continue;
+    const codeRead = await _readCompanyLinkCodeIndexRecord(env, candidate);
+    if (codeRead.record && !_sameCompanyLinkScope(codeRead.record, tenantId, companyId)) {
+      continue;
+    }
+    const created = await _upsertCompanyCodeIndexesForScope(env, {
+      tenantId,
+      companyId,
+      companyCode: candidate,
+      nowIso,
+      source: "auto_generated",
+      hints: { ...codeRead.record, ...scopeRead.record, ...options },
+    });
+    if (created.ok) {
+      try {
+        const currentCounter = await _readPublicCompanyCodeCounter(env);
+        if (highestCounterUsed > currentCounter) {
+          await _writePublicCompanyCodeCounter(env, highestCounterUsed, nowIso);
+        }
+      } catch (_) {}
+      return created;
+    }
+  }
+  return { ok: false, error: "company_code_generation_failed", attempts: maxAttempts };
+}
+
+function _looksLikeE164PhoneForAdminUpsert(value) {
+  const text = sanitizeTenantString(value, 40);
+  return /^\+\d{8,15}$/.test(text);
+}
+
+function _isSafeCompanyLinkScopePart(value) {
+  const text = sanitizeTenantString(value, 80);
+  if (!text) return false;
+  return /^[A-Za-z0-9._-]+$/.test(text);
+}
+
+function _normalizeCompanyLinkCountry(value) {
+  const letters = sanitizeTenantString(value, 16).toUpperCase().replace(/[^A-Z]/g, "");
+  if (!letters) return "";
+  if (letters.length >= 2) return letters.slice(0, 2);
+  return "";
+}
+
+function _coerceLinkingEnabled(value) {
+  if (value == null) return true;
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTenantString(value, 16).toLowerCase();
+  if (!text) return true;
+  if (text === "false" || text === "0" || text === "no") return false;
+  return true;
+}
+
+function _coerceBoolean(value, fallback = true) {
+  if (value == null) return fallback;
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTenantString(value, 16).toLowerCase();
+  if (!text) return fallback;
+  if (text === "false" || text === "0" || text === "no") return false;
+  if (text === "true" || text === "1" || text === "yes") return true;
+  return fallback;
+}
+
+function _normalizeCompanyAdminPairingTtl(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS;
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return COMPANY_ADMIN_PAIRING_DEFAULT_TTL_SECONDS;
+  return Math.min(COMPANY_ADMIN_PAIRING_MAX_TTL_SECONDS, rounded);
+}
+
+function _validateCompanyAdminPairingCode(value) {
+  const code = sanitizeTenantString(value, 32).replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(code)) {
+    return { ok: false, code: "", error: "invalid_pairing_code" };
+  }
+  return { ok: true, code };
+}
+
+function _companyAdminPairingChallengeKey(challengeId) {
+  return `${COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_ADMIN_PAIRING_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyAdminPairingActiveKey(companyCode) {
+  return `${COMPANY_ADMIN_PAIRING_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_ADMIN_PAIRING_ACTIVE_KEY_SUFFIX}`;
+}
+
+function _companyAdminPairingChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cap_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _generateCompanyAdminPairingCode() {
+  const values = new Uint8Array(6);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += String(value % 10);
+  }
+  return out;
+}
+
+function _projectCompanyAdminSessionPayload(record, nowIso) {
+  const issuedAtMs = Date.parse(nowIso);
+  const expiresAt = Number.isFinite(issuedAtMs)
+    ? new Date(issuedAtMs + 12 * 60 * 60 * 1000).toISOString()
+    : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  return {
+    ok: true,
+    role: "companyAdmin",
+    link_method: "company_pairing_code",
+    tenant_id: record.tenant_id,
+    company_id: record.company_id,
+    company_code: record.company_code,
+    company: {
+      display_name: sanitizeTenantString(record.display_name, 160),
+      country: sanitizeTenantString(record.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    },
+    issued_at: nowIso,
+    expires_at: expiresAt,
+  };
+}
+
+function _normalizeDriverPairingTtl(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return COMPANY_DRIVER_LINK_DEFAULT_TTL_SECONDS;
+  return Math.min(COMPANY_DRIVER_LINK_MAX_TTL_SECONDS, rounded);
+}
+
+function _normalizeDriverPairingCode(value) {
+  return sanitizeTenantString(value, 40).toUpperCase().replace(/\s+/g, "");
+}
+
+function _validateDriverPairingCode(value) {
+  const code = _normalizeDriverPairingCode(value);
+  if (!code) return { ok: false, code: "", error: "invalid_pairing_code" };
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+    return { ok: false, code, error: "invalid_pairing_code" };
+  }
+  return { ok: true, code };
+}
+
+function _normalizeDriverDisplayName(value) {
+  return sanitizeTenantString(value, 160);
+}
+
+function _normalizeDriverEmployeeNumber(value) {
+  return sanitizeTenantString(value, 80);
+}
+
+function _normalizeSafeRemoteMediaRef(value) {
+  const text = sanitizeTenantString(value, 1200);
+  if (!text) return "";
+  const normalized = text.trim();
+  if (!normalized) return "";
+  if (
+    normalized.startsWith("https://") ||
+    normalized.startsWith("http://") ||
+    normalized.startsWith("/public/media/") ||
+    normalized.startsWith("public-media/")
+  ) {
+    return normalized;
+  }
+  return "";
+}
+
+function _normalizeVehiclePhotoRef(value) {
+  const text = sanitizeTenantString(value, 1200);
+  if (!text) return "";
+  const normalized = text.trim();
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (
+    lower.startsWith("https://") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("/public/media/") ||
+    lower.startsWith("public-media/") ||
+    lower.startsWith("assets/")
+  ) {
+    return normalized;
+  }
+  if (lower.startsWith("file://")) return "";
+  if (lower.startsWith("\\\\") || /^[a-z]:\\/.test(lower)) return "";
+  if (lower.startsWith("/") && !lower.startsWith("/public/media/")) return "";
+  return "";
+}
+
+function _normalizeVehiclePhotoRefList(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value) {
+    const ref = _normalizeVehiclePhotoRef(entry);
+    if (!ref || out.includes(ref)) continue;
+    out.push(ref);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+function _normalizeDriverLoginCode(value) {
+  return sanitizeTenantString(value, 80).trim().toLowerCase();
+}
+
+function _maskPublicDriverLoginValue(value) {
+  const text = sanitizeTenantString(value, 80);
+  if (!text) return "empty";
+  if (text.length <= 2) return "*".repeat(text.length);
+  return `${text.slice(0, 1)}***${text.slice(-1)}(len=${text.length})`;
+}
+
+function _publicDriverLoginFail(reason = "verification_failed") {
+  console.log(`[PUBLIC_DRIVER_LOGIN][FAIL] reason=${sanitizeTenantString(reason, 48) || "verification_failed"}`);
+  return json({ ok: false, error: "verification_failed" }, 403);
+}
+
+function _generateDriverLoginSalt() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `dls_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "")
+    .slice(0, 80);
+}
+
+function _driverLoginHashCandidates(normalizedCode, salt) {
+  const code = _normalizeDriverLoginCode(normalizedCode);
+  if (!code) return [];
+  const out = [code];
+  const safeSalt = sanitizeTenantString(salt, 120);
+  if (safeSalt) out.unshift(`${safeSalt}:${code}`);
+  return out;
+}
+
+async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
+  const normalizedEntered = _normalizeDriverLoginCode(enteredCode);
+  if (!normalizedEntered) return false;
+  const hash = sanitizeTenantString(
+    driverRecord?.driver_code_hash ??
+      driverRecord?.driverCodeHash,
+    200,
+  ).toLowerCase();
+  const salt = sanitizeTenantString(
+    driverRecord?.driver_code_salt ??
+      driverRecord?.driverCodeSalt,
+    120,
+  );
+  if (hash) {
+    const hashCandidates = _driverLoginHashCandidates(normalizedEntered, salt);
+    for (const candidate of hashCandidates) {
+      const computed = (await _sha256Hex(candidate)).toLowerCase();
+      if (_constantTimeEquals(hash, computed)) return true;
+    }
+  }
+  const codeCandidates = [
+    driverRecord?.driver_code,
+    driverRecord?.driverCode,
+    driverRecord?.login_code,
+    driverRecord?.loginCode,
+    driverRecord?.employee_number,
+    driverRecord?.employeeNumber,
+    driverRecord?.driver_id,
+    driverRecord?.driverId,
+    driverRecord?.id,
+  ]
+    .map(_normalizeDriverLoginCode)
+    .filter((value) => !!value);
+  for (const candidate of codeCandidates) {
+    if (_constantTimeEquals(candidate, normalizedEntered)) return true;
+  }
+  return false;
+}
+
+function _normalizeDriverPhone(value) {
+  return sanitizeTenantString(value, 40);
+}
+
+function _normalizeDriverPhoneForAdminUpsert(value) {
+  const raw = sanitizeTenantString(value, 80).trim();
+  if (!raw) return "";
+  if (!raw.startsWith("+")) return "";
+  const digits = raw.slice(1).replace(/[^0-9]/g, "");
+  return `+${digits}`;
+}
+
+function _normalizeDriverPairingSessionExpiry(nowMs = Date.now()) {
+  return new Date(nowMs + 12 * 60 * 60 * 1000).toISOString();
+}
+
+function _companyDriverIndexKey(scope) {
+  return `${COMPANY_DRIVER_INDEX_KEY_PREFIX}${scope.tenant_id}${COMPANY_DRIVER_INDEX_KEY_MIDDLE}${scope.company_id}${COMPANY_DRIVER_INDEX_KEY_SUFFIX}`;
+}
+
+function _safeDriverDocumentScopePart(value, maxLen = 96) {
+  const text = sanitizeTenantString(value, maxLen);
+  if (!text) return "";
+  if (!/^[A-Za-z0-9._-]+$/.test(text)) return "";
+  return text;
+}
+
+function _driverDocumentFileNamePart(value) {
+  const raw = sanitizeTenantString(value, 220);
+  if (!raw) return "document.bin";
+  const noPath = raw.split(/[\\/]/).pop() || "document.bin";
+  const normalized = noPath.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/_+/g, "_");
+  return normalized.slice(0, 180) || "document.bin";
+}
+
+function _driverDocumentMetadataKey(scope = {}) {
+  const tenant = _safeDriverDocumentScopePart(
+    scope.tenantId ?? scope.tenant_id,
+    80,
+  );
+  const company = _safeDriverDocumentScopePart(
+    scope.companyId ?? scope.company_id,
+    80,
+  );
+  const driver = _safeDriverDocumentScopePart(
+    scope.driverId ?? scope.driver_id,
+    96,
+  );
+  const doc = _safeDriverDocumentScopePart(
+    scope.documentId ?? scope.document_id,
+    160,
+  );
+  if (!tenant || !company || !driver || !doc) return "";
+  return `${DRIVER_DOCUMENT_KV_KEY_PREFIX}${tenant}/company/${company}/driver/${driver}/doc/${doc}`;
+}
+
+function _driverDocumentIndexKey(scope = {}) {
+  const tenant = _safeDriverDocumentScopePart(
+    scope.tenantId ?? scope.tenant_id,
+    80,
+  );
+  const company = _safeDriverDocumentScopePart(
+    scope.companyId ?? scope.company_id,
+    80,
+  );
+  const driver = _safeDriverDocumentScopePart(
+    scope.driverId ?? scope.driver_id,
+    96,
+  );
+  if (!tenant || !company || !driver) return "";
+  return `${DRIVER_DOCUMENT_INDEX_KV_KEY_PREFIX}${tenant}/company/${company}/driver/${driver}`;
+}
+
+function _generateDriverDocumentId() {
+  const id = crypto?.randomUUID ? crypto.randomUUID() : `ddoc_${Date.now()}_${Math.random()}`;
+  return _safeDriverDocumentScopePart(id.replace(/[^A-Za-z0-9._-]+/g, "_"), 160);
+}
+
+function _normalizeDriverDocumentStatus(value) {
+  const status = sanitizeTenantString(value, 40).toLowerCase();
+  if (!status) return "pending_review";
+  const allowed = new Set([
+    "missing",
+    "pending_review",
+    "active",
+    "approved",
+    "verified",
+    "expired",
+    "rejected",
+    "archived",
+    "pending",
+  ]);
+  return allowed.has(status) ? status : "pending_review";
+}
+
+function _normalizeDriverDocumentDate(value) {
+  const raw = sanitizeTenantString(value, 40);
+  if (!raw) return "";
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function _sanitizeDriverDocumentMetadata(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  return {
+    tenant_id: _safeDriverDocumentScopePart(record.tenant_id ?? record.tenantId, 80),
+    company_id: _safeDriverDocumentScopePart(record.company_id ?? record.companyId, 80),
+    driver_id: _safeDriverDocumentScopePart(record.driver_id ?? record.driverId, 96),
+    document_id: _safeDriverDocumentScopePart(record.document_id ?? record.documentId, 160),
+    document_type: sanitizeTenantString(record.document_type ?? record.documentType, 80),
+    title: sanitizeTenantString(record.title, 160),
+    expiry_date: _normalizeDriverDocumentDate(record.expiry_date ?? record.expiryDate),
+    status: _normalizeDriverDocumentStatus(record.status),
+    notes: sanitizeTenantString(record.notes, 1600),
+    file_name: _driverDocumentFileNamePart(record.file_name ?? record.fileName),
+    content_type: sanitizeTenantString(record.content_type ?? record.contentType, 120),
+    size_bytes: Math.max(0, Math.round(Number(record.size_bytes ?? record.sizeBytes) || 0)),
+    r2_key: sanitizeTenantString(record.r2_key ?? record.r2Key, 800),
+    storage_state: sanitizeTenantString(record.storage_state ?? record.storageState, 40) || "stored",
+    created_at: sanitizeTenantString(record.created_at ?? record.createdAt, 80),
+    updated_at: sanitizeTenantString(record.updated_at ?? record.updatedAt, 80),
+  };
+}
+
+function _driverDocumentListView(record) {
+  if (!record || typeof record !== "object") return null;
+  return {
+    document_id: record.document_id,
+    document_type: record.document_type,
+    title: record.title,
+    expiry_date: record.expiry_date,
+    status: record.status,
+    notes: record.notes,
+    file_name: record.file_name,
+    content_type: record.content_type,
+    size: record.size_bytes,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    storage_state: record.storage_state,
+  };
+}
+
+async function _readDriverDocumentIndex(env, scope) {
+  const key = _driverDocumentIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { key, record: null, ids: [] };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { key, record: null, ids: [] };
+  }
+  const list = Array.isArray(raw.document_ids ?? raw.documentIds)
+    ? (raw.document_ids ?? raw.documentIds)
+    : [];
+  const ids = [];
+  const seen = new Set();
+  for (const item of list) {
+    const docId = _safeDriverDocumentScopePart(item, 160);
+    if (!docId || seen.has(docId)) continue;
+    seen.add(docId);
+    ids.push(docId);
+  }
+  return { key, record: raw, ids };
+}
+
+async function _writeDriverDocumentIndex(env, scope, ids, nowIso) {
+  const key = _driverDocumentIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  const filtered = [];
+  const seen = new Set();
+  for (const item of Array.isArray(ids) ? ids : []) {
+    const docId = _safeDriverDocumentScopePart(item, 160);
+    if (!docId || seen.has(docId)) continue;
+    seen.add(docId);
+    filtered.push(docId);
+  }
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      tenant_id: sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80),
+      company_id: sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80),
+      driver_id: sanitizeTenantString(scope?.driver_id ?? scope?.driverId, 96),
+      document_ids: filtered,
+      documentIds: filtered,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
+  return { ok: true, key, count: filtered.length };
+}
+
+async function _upsertDriverDocumentIndexId(env, scope, documentId, nowIso) {
+  const current = await _readDriverDocumentIndex(env, scope);
+  const next = current.ids.slice();
+  if (!next.includes(documentId)) next.unshift(documentId);
+  return _writeDriverDocumentIndex(env, scope, next, nowIso);
+}
+
+async function _removeDriverDocumentIndexId(env, scope, documentId, nowIso) {
+  const current = await _readDriverDocumentIndex(env, scope);
+  const next = current.ids.filter((id) => id !== documentId);
+  return _writeDriverDocumentIndex(env, scope, next, nowIso);
+}
+
+function _readDriverDocumentScopeFromInput(input = {}) {
+  const tenantId = _safeDriverDocumentScopePart(
+    input.tenant_id ?? input.tenantId,
+    80,
+  );
+  const companyId = _safeDriverDocumentScopePart(
+    input.company_id ?? input.companyId,
+    80,
+  );
+  const driverId = _safeDriverDocumentScopePart(
+    input.driver_id ?? input.driverId,
+    96,
+  );
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    driver_id: driverId,
+    hasScope: !!(tenantId && companyId && driverId),
+  };
+}
+
+function _driverDocumentsStorageBinding(env) {
+  if (env?.DRIVER_DOCUMENTS_PRIVATE) return env.DRIVER_DOCUMENTS_PRIVATE;
+  if (env?.PRIVATE_MEDIA) return env.PRIVATE_MEDIA;
+  return env?.PUBLIC_MEDIA || null;
+}
+
+async function _resolveDriverDocumentsAuthScope({ request, url, env, inputScope }) {
+  const scoped = inputScope && inputScope.hasScope ? inputScope : _readDriverDocumentScopeFromInput({});
+  if (hasValidAdminToken(request, url, env)) {
+    if (!scoped.hasScope) {
+      return { ok: false, response: json(missingTenantScopeError(), 400) };
+    }
+    return {
+      ok: true,
+      auth_mode: "admin_token",
+      tenant_id: scoped.tenant_id,
+      company_id: scoped.company_id,
+      driver_id: scoped.driver_id,
+    };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    return { ok: false, response: _companyAuthFail() };
+  }
+  if (scoped.hasScope) {
+    if (
+      scoped.tenant_id !== companySession.tenant_id ||
+      scoped.company_id !== companySession.company_id
+    ) {
+      return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
+    }
+  }
+  if (!scoped.driver_id) {
+    return { ok: false, response: json({ ok: false, error: "driver_id is required" }, 400) };
+  }
+  return {
+    ok: true,
+    auth_mode: "company_session",
+    tenant_id: companySession.tenant_id,
+    company_id: companySession.company_id,
+    driver_id: scoped.driver_id,
+    company_session: companySession,
+  };
+}
+
+async function handleAdminDriverDocumentsUpload(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const storage = _driverDocumentsStorageBinding(env);
+  if (!storage) {
+    return json(
+      {
+        ok: false,
+        error: "driver document storage binding is missing (set DRIVER_DOCUMENTS_PRIVATE or PRIVATE_MEDIA)",
+      },
+      500,
+    );
+  }
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("multipart/form-data")) {
+    return json({ ok: false, error: "multipart_form_data_required" }, 400);
+  }
+  const form = await request.formData();
+  const input = {
+    tenant_id: form.get("tenant_id") ?? form.get("tenantId"),
+    company_id: form.get("company_id") ?? form.get("companyId"),
+    driver_id: form.get("driver_id") ?? form.get("driverId"),
+    document_id: form.get("document_id") ?? form.get("documentId"),
+    document_type: form.get("document_type") ?? form.get("documentType"),
+    title: form.get("title"),
+    expiry_date: form.get("expiry_date") ?? form.get("expiryDate"),
+    status: form.get("status"),
+    notes: form.get("notes"),
+  };
+  const scopeInput = _readDriverDocumentScopeFromInput(input);
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const file = form.get("file");
+  if (!file || typeof file.arrayBuffer !== "function") {
+    return json({ ok: false, error: "file is required" }, 400);
+  }
+  const documentType = sanitizeTenantString(input.document_type, 80);
+  const title = sanitizeTenantString(input.title, 160);
+  if (!documentType) return json({ ok: false, error: "document_type is required" }, 400);
+  if (!title) return json({ ok: false, error: "title is required" }, 400);
+  const sizeBytes = Math.max(0, Math.round(Number(file.size) || 0));
+  if (sizeBytes <= 0) return json({ ok: false, error: "file is empty" }, 400);
+  if (sizeBytes > 20 * 1024 * 1024) {
+    return json({ ok: false, error: "file_too_large_max_20mb" }, 400);
+  }
+
+  const nowIso = new Date().toISOString();
+  const documentId = _safeDriverDocumentScopePart(input.document_id, 160) || _generateDriverDocumentId();
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const safeFileName = _driverDocumentFileNamePart(file.name || "document.bin");
+  const r2Key = `${DRIVER_DOCUMENT_PRIVATE_R2_PREFIX}/tenant/${auth.tenant_id}/company/${auth.company_id}/driver/${auth.driver_id}/${documentId}/${safeFileName}`;
+  const contentTypeSafe = sanitizeTenantString(file.type, 120) || "application/octet-stream";
+
+  const metadataKey = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!metadataKey) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+
+  // Private driver-document storage: keep under non-public prefix and never route via /public/media.
+  const buffer = await file.arrayBuffer();
+  await storage.put(r2Key, buffer, {
+    httpMetadata: {
+      contentType: contentTypeSafe,
+      cacheControl: "private, no-store",
+    },
+    customMetadata: {
+      area: "driver_documents_private",
+      tenant_id: auth.tenant_id,
+      company_id: auth.company_id,
+      driver_id: auth.driver_id,
+      document_id: documentId,
+    },
+  });
+
+  const existing = await env.BOOKING_KV.get(metadataKey, { type: "json" });
+  const createdAt = sanitizeTenantString(existing?.created_at ?? existing?.createdAt, 80) || nowIso;
+  const record = _sanitizeDriverDocumentMetadata({
+    tenant_id: auth.tenant_id,
+    company_id: auth.company_id,
+    driver_id: auth.driver_id,
+    document_id: documentId,
+    document_type: documentType,
+    title,
+    expiry_date: input.expiry_date,
+    status: input.status,
+    notes: input.notes,
+    file_name: safeFileName,
+    content_type: contentTypeSafe,
+    size_bytes: sizeBytes,
+    r2_key: r2Key,
+    storage_state: "stored",
+    created_at: createdAt,
+    updated_at: nowIso,
+  });
+  await env.BOOKING_KV.put(metadataKey, JSON.stringify(record));
+  await _upsertDriverDocumentIndexId(
+    env,
+    { tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id },
+    documentId,
+    nowIso,
+  );
+
+  return json({ ok: true, document: record }, 200);
+}
+
+async function handleAdminDriverDocumentsList(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const index = await _readDriverDocumentIndex(env, {
+    tenant_id: auth.tenant_id,
+    company_id: auth.company_id,
+    driver_id: auth.driver_id,
+  });
+  const items = [];
+  for (const documentId of index.ids) {
+    const key = _driverDocumentMetadataKey({
+      tenantId: auth.tenant_id,
+      companyId: auth.company_id,
+      driverId: auth.driver_id,
+      documentId,
+    });
+    if (!key) continue;
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const normalized = _sanitizeDriverDocumentMetadata(raw);
+    if (!normalized) continue;
+    if (
+      normalized.tenant_id !== auth.tenant_id ||
+      normalized.company_id !== auth.company_id ||
+      normalized.driver_id !== auth.driver_id ||
+      normalized.document_id !== documentId
+    ) {
+      continue;
+    }
+    const view = _driverDocumentListView(normalized);
+    if (view) items.push(view);
+  }
+  return json({ ok: true, tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id, items, count: items.length }, 200);
+}
+
+async function handleAdminDriverDocumentsDelete(request, url, env, documentIdInput) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const storage = _driverDocumentsStorageBinding(env);
+  if (!storage) {
+    return json(
+      {
+        ok: false,
+        error: "driver document storage binding is missing (set DRIVER_DOCUMENTS_PRIVATE or PRIVATE_MEDIA)",
+      },
+      500,
+    );
+  }
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const documentId = _safeDriverDocumentScopePart(documentIdInput, 160);
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const key = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!key) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return json({ ok: false, error: "not_found" }, 404);
+  }
+  const normalized = _sanitizeDriverDocumentMetadata(raw);
+  if (!normalized) return json({ ok: false, error: "not_found" }, 404);
+  if (
+    normalized.tenant_id !== auth.tenant_id ||
+    normalized.company_id !== auth.company_id ||
+    normalized.driver_id !== auth.driver_id
+  ) {
+    return json({ ok: false, error: "scope_forbidden" }, 403);
+  }
+
+  if (normalized.r2_key) {
+    await storage.delete(normalized.r2_key);
+  }
+  await env.BOOKING_KV.delete(key);
+  await _removeDriverDocumentIndexId(
+    env,
+    { tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id },
+    documentId,
+    new Date().toISOString(),
+  );
+  return json({ ok: true }, 200);
+}
+
+function _companyDriverLinkChallengeKey(challengeId) {
+  return `${COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX}${challengeId}${COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _companyDriverLinkActiveKey(companyCode) {
+  return `${COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX}${companyCode}${COMPANY_DRIVER_LINK_ACTIVE_KEY_SUFFIX}`;
+}
+
+function _publicDriverSessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${PUBLIC_DRIVER_SESSION_KEY_PREFIX}${safeHash}${PUBLIC_DRIVER_SESSION_KEY_SUFFIX}`;
+}
+
+function _companySessionKey(tokenHash) {
+  const safeHash = sanitizeTenantString(tokenHash, 200).toLowerCase();
+  if (!safeHash) return "";
+  return `${COMPANY_SESSION_KEY_PREFIX}${safeHash}${COMPANY_SESSION_KEY_SUFFIX}`;
+}
+
+function _companyDriverLinkChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `dcl_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _generateDriverPairingCode(length = 6) {
+  const normalizedLength = Math.max(4, Math.min(12, Math.round(Number(length) || 6)));
+  const alphabet = "0123456789";
+  const values = new Uint8Array(normalizedLength);
+  crypto.getRandomValues(values);
+  let out = "";
+  for (const value of values) {
+    out += alphabet[value % alphabet.length];
+  }
+  return out;
+}
+
+function _generateOpaqueToken(byteLength = 32, prefix = "dst_") {
+  const size = Math.max(24, Math.min(96, Math.round(Number(byteLength) || 32)));
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  const normalizedPrefix = sanitizeTenantString(prefix, 16).trim() || "dst_";
+  return `${normalizedPrefix}${base64urlEncodeBytes(bytes)}`;
+}
+
+async function _hashDriverSessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
+async function _hashCompanySessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
+async function _hashCustomerSessionToken(token) {
+  const normalized = sanitizeTenantString(token, 512);
+  if (!normalized) return "";
+  const hash = await _sha256Hex(normalized);
+  return sanitizeTenantString(hash, 200).toLowerCase();
+}
+
+function _extractBearerToken(request) {
+  const auth = request?.headers?.get?.("authorization") || "";
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  const token = sanitizeTenantString(match?.[1], 512);
+  return token || "";
+}
+
+function _publicDriverAuthFail() {
+  return json({ ok: false, error: "unauthorized" }, 401);
+}
+
+function _companyAuthFail() {
+  return json({ ok: false, error: "unauthorized" }, 401);
+}
+
+async function _loadPublicDriverSessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashDriverSessionToken(token);
+  if (!tokenHash) return null;
+  const key = _publicDriverSessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = sanitizeTenantString(record.role, 24).toLowerCase();
+  if (role !== "driver") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const driverId = sanitizeTenantString(record.driver_id ?? record.driverId, 96);
+  const driverName = sanitizeTenantString(record.driver_name ?? record.driverName, 160);
+  const companyDisplayName = sanitizeTenantString(
+    record.company_display_name ?? record.companyDisplayName,
+    160,
+  );
+  const assignedVehicleId = sanitizeTenantString(
+    record.assigned_vehicle_id ?? record.assignedVehicleId,
+    96,
+  );
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId || !driverId) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    role: "driver",
+    tenant_id: tenantId,
+    company_id: companyId,
+    driver_id: driverId,
+    driver_name: driverName,
+    company_display_name: companyDisplayName,
+    assigned_vehicle_id: assignedVehicleId,
+    expires_at: expiresAt,
+  };
+}
+
+async function _loadCompanySessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashCompanySessionToken(token);
+  if (!tokenHash) return null;
+  const key = _companySessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const role = sanitizeTenantString(record.role, 40).toLowerCase();
+  if (role !== "company_admin") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const companyCode = sanitizeTenantString(record.company_code ?? record.companyCode, 80);
+  const companyDisplayName = sanitizeTenantString(
+    record.company_display_name ?? record.companyDisplayName,
+    160,
+  );
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    role: "company_admin",
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: companyCode,
+    company_display_name: companyDisplayName,
+    expires_at: expiresAt,
+  };
+}
+
+async function _loadCustomerSessionFromRequest(request, env) {
+  if (!env?.BOOKING_KV) return null;
+  const token = _extractBearerToken(request);
+  if (!token) return null;
+  const tokenHash = await _hashCustomerSessionToken(token);
+  if (!tokenHash) return null;
+  const key = _customerSessionKey(tokenHash);
+  if (!key) return null;
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  const purpose = sanitizeTenantString(record.purpose, 40).toLowerCase();
+  if (purpose && purpose !== "customer_session") return null;
+  const tenantId = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+  const companyId = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+  const customerId = _normalizeCustomerIdentityId(record.customer_id ?? record.customerId);
+  const emailHash = sanitizeTenantString(record.email_hash ?? record.emailHash, 200).toLowerCase();
+  const phoneHash = sanitizeTenantString(record.phone_hash ?? record.phoneHash, 200).toLowerCase();
+  const expiresAt = sanitizeTenantString(record.expires_at ?? record.expiresAt, 80);
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
+    try {
+      await env.BOOKING_KV.delete(key);
+    } catch (_) {}
+    return null;
+  }
+  if (!tenantId || !companyId || !customerId || (!emailHash && !phoneHash)) return null;
+  return {
+    key,
+    token_hash: tokenHash,
+    purpose: "customer_session",
+    tenant_id: tenantId,
+    company_id: companyId,
+    customer_id: customerId,
+    email_hash: emailHash,
+    phone_hash: phoneHash,
+    recovery_method: sanitizeTenantString(record.recovery_method ?? record.recoveryMethod, 40).toLowerCase(),
+    issued_at: sanitizeTenantString(record.issued_at ?? record.issuedAt, 80),
+    expires_at: expiresAt,
+  };
+}
+
+async function _sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text || ""));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+function _constantTimeEquals(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  const maxLen = Math.max(left.length, right.length);
+  let diff = left.length ^ right.length;
+  for (let i = 0; i < maxLen; i += 1) {
+    const ca = i < left.length ? left.charCodeAt(i) : 0;
+    const cb = i < right.length ? right.charCodeAt(i) : 0;
+    diff |= (ca ^ cb);
+  }
+  return diff === 0;
+}
+
+function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
+  const assignedVehicleId = sanitizeTenantString(
+    challenge.assigned_vehicle_id ?? challenge.assignedVehicleId,
+    96,
+  );
+  return {
+    ok: true,
+    role: "driver",
+    link_method: "driver_pairing_code",
+    tenant_id: challenge.tenant_id,
+    company_id: challenge.company_id,
+    company_code: challenge.company_code,
+    driver: {
+      driver_id: challenge.driver_id,
+      driver_name: challenge.driver_name || "",
+      employee_number: challenge.employee_number || "",
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+    },
+    issued_at: nowIso,
+    expires_at: _normalizeDriverPairingSessionExpiry(Date.parse(nowIso)),
+  };
+}
+
+async function _loadDriverIndexRecord(env, scope) {
+  if (!env?.BOOKING_KV) return null;
+  const key = _companyDriverIndexKey(scope);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { key, drivers: {}, updated_at: "" };
+  }
+  const source = raw.drivers && typeof raw.drivers === "object" && !Array.isArray(raw.drivers)
+    ? raw.drivers
+    : {};
+  const drivers = {};
+  for (const [driverIdRaw, entryRaw] of Object.entries(source)) {
+    const driverId = sanitizeTenantString(driverIdRaw, 96);
+    if (!_isSafeCompanyLinkScopePart(driverId)) continue;
+    const entry = entryRaw && typeof entryRaw === "object" && !Array.isArray(entryRaw) ? entryRaw : {};
+    drivers[driverId] = {
+      driver_id: driverId,
+      display_name: _normalizeDriverDisplayName(
+        entry.display_name ?? entry.displayName ?? entry.driver_name ?? entry.driverName ?? entry.fullName,
+      ),
+      employee_number: _normalizeDriverEmployeeNumber(
+        entry.employee_number ?? entry.employeeNumber,
+      ),
+      employeeNumber: _normalizeDriverEmployeeNumber(
+        entry.employeeNumber ?? entry.employee_number,
+      ),
+      driver_code: _normalizeDriverEmployeeNumber(
+        entry.driver_code ?? entry.driverCode ?? entry.login_code ?? entry.loginCode,
+      ),
+      login_code: _normalizeDriverEmployeeNumber(
+        entry.login_code ?? entry.loginCode ?? entry.driver_code ?? entry.driverCode,
+      ),
+      driver_code_hash: sanitizeTenantString(
+        entry.driver_code_hash ?? entry.driverCodeHash,
+        200,
+      ).toLowerCase(),
+      driver_code_salt: sanitizeTenantString(
+        entry.driver_code_salt ?? entry.driverCodeSalt,
+        120,
+      ),
+      phone: _normalizeDriverPhone(entry.phone),
+      is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      assigned_vehicle_id: sanitizeTenantString(
+        entry.assigned_vehicle_id ?? entry.assignedVehicleId,
+        96,
+      ),
+      driver_photo_url: _normalizeSafeRemoteMediaRef(
+        entry.driver_photo_url ??
+          entry.driverPhotoUrl ??
+          entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
+      ),
+      driverPhotoUrl: _normalizeSafeRemoteMediaRef(
+        entry.driverPhotoUrl ??
+          entry.driver_photo_url ??
+          entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
+      ),
+      public_portrait_url: _normalizeSafeRemoteMediaRef(
+        entry.public_portrait_url ??
+          entry.publicPortraitUrl ??
+          entry.driver_photo_url ??
+          entry.driverPhotoUrl ??
+          entry.profile_photo_url ??
+          entry.profilePhotoUrl,
+      ),
+      publicPortraitUrl: _normalizeSafeRemoteMediaRef(
+        entry.publicPortraitUrl ??
+          entry.public_portrait_url ??
+          entry.driverPhotoUrl ??
+          entry.driver_photo_url ??
+          entry.profilePhotoUrl ??
+          entry.profile_photo_url,
+      ),
+      taxi_driver_card_number: sanitizeTenantString(
+        entry.taxi_driver_card_number ?? entry.taxiDriverCardNumber,
+        120,
+      ),
+      taxiDriverCardNumber: sanitizeTenantString(
+        entry.taxiDriverCardNumber ?? entry.taxi_driver_card_number,
+        120,
+      ),
+      taxi_driver_card_expiry: sanitizeTenantString(
+        entry.taxi_driver_card_expiry ?? entry.taxiDriverCardExpiry,
+        80,
+      ),
+      taxiDriverCardExpiry: sanitizeTenantString(
+        entry.taxiDriverCardExpiry ?? entry.taxi_driver_card_expiry,
+        80,
+      ),
+      public_profile_enabled: _coerceBoolean(
+        entry.public_profile_enabled ?? entry.publicProfileEnabled,
+        false,
+      ),
+      publicProfileEnabled: _coerceBoolean(
+        entry.publicProfileEnabled ?? entry.public_profile_enabled,
+        false,
+      ),
+      public_photo_enabled: _coerceBoolean(
+        entry.public_photo_enabled ?? entry.publicPhotoEnabled,
+        false,
+      ),
+      publicPhotoEnabled: _coerceBoolean(
+        entry.publicPhotoEnabled ?? entry.public_photo_enabled,
+        false,
+      ),
+      public_display_name: sanitizeTenantString(
+        entry.public_display_name ?? entry.publicDisplayName,
+        160,
+      ),
+      publicDisplayName: sanitizeTenantString(
+        entry.publicDisplayName ?? entry.public_display_name,
+        160,
+      ),
+      updated_at: sanitizeTenantString(entry.updated_at ?? entry.updatedAt, 80),
+    };
+  }
+  return {
+    key,
+    drivers,
+    updated_at: sanitizeTenantString(raw.updated_at ?? raw.updatedAt, 80),
+  };
+}
+
+async function _saveDriverIndexRecord(env, scope, doc) {
+  const key = _companyDriverIndexKey(scope);
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      drivers: doc.drivers,
+      updated_at: doc.updated_at,
+    }),
+  );
+  return key;
+}
+
+function _isCompanyLinkSmsProviderConfigured(env) {
+  const provider = sanitizeTenantString(env?.COMPANY_LINK_SMS_PROVIDER, 32).toLowerCase();
+  if (!provider) return false;
+  // Future: wire a concrete provider implementation (e.g. Twilio) with strict validation.
+  return false;
+}
+
+function _readCustomerPhoneAuthSmsConfig(env) {
+  const provider = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_PROVIDER,
+    32,
+  ).toLowerCase();
+  const defaultUrl = "https://api.smsgatewayapi.com/v1/message/send";
+  const url = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_URL, 800) || defaultUrl;
+  const clientId = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_CLIENT_ID,
+    240,
+  );
+  const clientSecret = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_CLIENT_SECRET,
+    480,
+  );
+  const from = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_FROM, 80);
+  return {
+    provider,
+    url,
+    client_id: clientId,
+    client_secret: clientSecret,
+    from,
+    has_url: !!url,
+    has_client_id: !!clientId,
+    has_client_secret: !!clientSecret,
+    has_from: !!from,
+  };
+}
+
+function _isCustomerPhoneAuthSmsConfigured(env) {
+  const cfg = _readCustomerPhoneAuthSmsConfig(env);
+  return !!(
+    cfg.has_url &&
+    cfg.has_from &&
+    cfg.has_client_id &&
+    cfg.has_client_secret
+  );
+}
+
+function _isCustomerPhoneAuthDebugOtpEnabled(env) {
+  const explicit = String(env?.CUSTOMER_PHONE_AUTH_DEBUG_OTP || "")
+    .trim()
+    .toLowerCase() === "true";
+  if (!explicit) return false;
+  const runtimeEnv = mollieRuntimeEnv(env);
+  return isDevelopmentLikeMollieEnv(runtimeEnv);
+}
+
+async function _sendCustomerPhoneAuthOtpSms(
+  env,
+  { phoneE164, otp, locale = "", challengeId = "" } = {},
+) {
+  const normalizedPhone = sanitizeTenantString(phoneE164, 40);
+  const maskedPhone = _maskCustomerPhoneForAuth(normalizedPhone);
+  const normalizedOtp = sanitizeTenantString(otp, 24).replace(/\s+/g, "");
+  if (!_looksLikeE164Phone(normalizedPhone) || !/^\d{6}$/.test(normalizedOtp)) {
+    return { ok: false, reason: "sms_send_failed" };
+  }
+  if (!_isCustomerPhoneAuthSmsConfigured(env)) {
+    return { ok: false, reason: "sms_not_configured" };
+  }
+  const cfg = _readCustomerPhoneAuthSmsConfig(env);
+  const messageTemplate = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_TEMPLATE,
+    320,
+  );
+  const fallbackMessage = `Fluxidi verificatiecode: ${normalizedOtp}. Deze code vervalt over 10 minuten.`;
+  const message = (messageTemplate || fallbackMessage)
+    .replaceAll("{code}", normalizedOtp)
+    .replaceAll("{otp}", normalizedOtp)
+    .replaceAll("{brand}", "Fluxidi")
+    .replaceAll("{ttl_minutes}", "10");
+  const digitsOnlyTo = normalizedPhone.replace(/\D+/g, "");
+  if (!digitsOnlyTo) {
+    return { ok: false, reason: "sms_send_failed" };
+  }
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "X-Client-Id": cfg.client_id,
+    "X-Client-Secret": cfg.client_secret,
+  };
+  const payload = {
+    message,
+    to: digitsOnlyTo,
+    sender: cfg.from,
+  };
+  try {
+    const response = await fetch(cfg.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    const body = (() => {
+      try {
+        return text ? JSON.parse(text) : null;
+      } catch (_) {
+        return null;
+      }
+    })();
+    if (!response.ok) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_provider_error status=${response.status}`,
+      );
+      return { ok: false, reason: "sms_provider_error" };
+    }
+    const providerMessageId = sanitizeTenantString(
+      body?.message_id ??
+        body?.messageId ??
+        body?.id ??
+        body?.sid ??
+        response.headers.get("x-message-id"),
+      160,
+    );
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][SMS_SEND_OK] phone=${maskedPhone || "-"} hasMessageId=${providerMessageId ? "true" : "false"}`,
+    );
+    return providerMessageId
+      ? { ok: true, providerMessageId }
+      : { ok: true };
+  } catch (_) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_send_failed status=0`,
+    );
+    return { ok: false, reason: "sms_send_failed" };
+  }
+}
+
+function normalizeBelgianVatNumber(value) {
+  const raw = sanitizeTenantString(value, 96).toUpperCase();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s.-]+/g, "");
+  if (!compact) return "";
+  if (compact.startsWith("BE")) {
+    const digits = compact.slice(2).replace(/\D+/g, "");
+    if (digits.length !== 10) return "";
+    return `BE${digits}`;
+  }
+  const digits = compact.replace(/\D+/g, "");
+  if (digits.length === 10) return `BE${digits}`;
+  return "";
+}
+
+function belgianEnterpriseNumberFromVat(value) {
+  const vat = normalizeBelgianVatNumber(value);
+  if (!vat) return "";
+  return vat.slice(2);
+}
+
+function isLikelyBelgianVatNumber(value) {
+  return /^BE\d{10}$/.test(normalizeBelgianVatNumber(value));
+}
+
+function peppolIdentifierFromBelgianEnterpriseNumber(value) {
+  const digits = sanitizeTenantString(value, 40).replace(/\D+/g, "");
+  if (digits.length !== 10) return "";
+  return `0208:${digits}`;
+}
+
+function _generateInternalCompanyScopeId(companyName, attempt = 0) {
+  const slug = _normalizePublicCompanySlug(companyName, 24).toLowerCase();
+  const cleanSlug = sanitizeTenantString(slug, 40)
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const suffixSeed = crypto?.randomUUID
+    ? crypto.randomUUID()
+    : `reg_${Date.now()}_${Math.random()}`;
+  const suffix = sanitizeTenantString(suffixSeed, 120)
+    .replace(/[^a-zA-Z0-9]+/g, "")
+    .toLowerCase()
+    .slice(0, 10);
+  const numericAttempt = Math.max(0, Math.min(99, Math.round(Number(attempt) || 0)));
+  const id = `cmp_${cleanSlug || "company"}_${suffix || "seed"}${numericAttempt > 0 ? `_${numericAttempt}` : ""}`;
+  return sanitizeTenantString(id, 80).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80);
+}
+
+async function _allocateNewCompanyScopeForRegistration(env, companyName) {
+  if (!env?.BOOKING_KV) return null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const candidate = _generateInternalCompanyScopeId(companyName, attempt);
+    if (!_isSafeCompanyLinkScopePart(candidate)) continue;
+    const scope = {
+      tenant_id: candidate,
+      company_id: candidate,
+      hasScope: true,
+    };
+    const scopedKeys = buildScopedSettingsKeys(scope);
+    const profileKey = scopedKeys?.businessProfileKey || "";
+    if (!profileKey) continue;
+    const existing = await env.BOOKING_KV.get(profileKey, { type: "json" });
+    if (!existing) return scope;
+  }
+  return null;
+}
+
+/**
+ * Private server-side link index record (never expose directly):
+ * {
+ *   tenant_id,
+ *   company_id,
+ *   company_code,
+ *   display_name,
+ *   country,
+ *   tax_or_registration_id,
+ *   identifier_type,
+ *   registered_phone_e164,
+ *   linking_enabled
+ * }
+ */
+async function loadCompanyLinkRecordByCode(env, rawCode) {
+  const codeValidation = validatePublicCompanyCode(rawCode);
+  if (!codeValidation.ok) return null;
+  if (!env?.BOOKING_KV) return null;
+  const key = _companyLinkIndexKeyForCode(codeValidation.code);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw.record && typeof raw.record === "object" ? raw.record : raw;
+  const companyCode = normalizePublicCompanyCode(
+    source.company_code ?? source.companyCode ?? codeValidation.code,
+  );
+  if (companyCode !== codeValidation.code) return null;
+  const normalized = {
+    tenant_id: sanitizeTenantString(source.tenant_id ?? source.tenantId, 80),
+    company_id: sanitizeTenantString(source.company_id ?? source.companyId, 80),
+    company_code: companyCode,
+    display_name: sanitizeTenantString(
+      source.display_name ?? source.displayName ?? source.company_name ?? source.companyName,
+      160,
+    ),
+    country: sanitizeTenantString(source.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    identifier_type: normalizeIdentifierType(source.identifier_type ?? source.identifierType),
+    tax_or_registration_id: normalizeTaxOrRegistrationIdForCountry(
+      _pickTaxOrRegistrationIdAlias(source),
+      source.country,
+    ),
+    registered_phone_e164: sanitizeTenantString(
+      source.registered_phone_e164 ?? source.registeredPhoneE164,
+      40,
+    ),
+    linking_enabled: source.linking_enabled !== false,
+  };
+  return normalized;
+}
+
+function projectSafeCompanyResolve(record) {
+  const methods = [];
+  if (_looksLikeE164Phone(record?.registered_phone_e164)) methods.push("sms_otp");
+  return {
+    ok: true,
+    company_code: record.company_code,
+    display_name: sanitizeTenantString(record.display_name, 160),
+    country: sanitizeTenantString(record.country, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+    masked_phone: maskPhoneForPublic(record.registered_phone_e164),
+    linking_required: true,
+    link_methods_available: methods,
+  };
+}
+
+async function handlePublicCompanyResolve(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("code") ?? url.searchParams.get("company_code") ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!record || record.linking_enabled !== true) {
+    return json({ ok: false, error: "company_not_found" }, 404);
+  }
+  return json(projectSafeCompanyResolve(record), 200);
+}
+
+async function handlePublicCompanyLinkStart(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: codeValidation.error }, 400);
+  }
+  const country = sanitizeTenantString(body.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const identifierType = normalizeIdentifierType(
+    body.identifier_type ?? body.identifierType,
+  );
+  const requestIdentifierRaw = _pickTaxOrRegistrationIdAlias(body);
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  const compareCountry = country || record?.country || "";
+  const requestIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    requestIdentifierRaw,
+    compareCountry,
+  );
+  const storedIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    record?.tax_or_registration_id,
+    record?.country || compareCountry,
+  );
+  if (
+    !record ||
+    record.linking_enabled !== true ||
+    !storedIdentifier ||
+    !requestIdentifier ||
+    storedIdentifier !== requestIdentifier
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!_looksLikeE164Phone(record.registered_phone_e164)) {
+    return json({ ok: false, error: "registered_phone_missing" }, 409);
+  }
+  const maskedPhone = maskPhoneForPublic(record.registered_phone_e164);
+  if (!_isCompanyLinkSmsProviderConfigured(env)) {
+    return json({ ok: false, error: "sms_not_configured", masked_phone: maskedPhone }, 503);
+  }
+  // TODO(linking-sms): Implement OTP generation + hash + SMS dispatch to record.registered_phone_e164.
+  // Never use claimant-provided phone numbers for verification delivery.
+  // Never persist plaintext OTP codes.
+  const challengeId = _companyLinkChallengeId();
+  if (env?.BOOKING_KV) {
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + COMPANY_LINK_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+    const challengePayload = {
+      version: 1,
+      challenge_id: challengeId,
+      company_code: record.company_code,
+      tenant_id: record.tenant_id,
+      company_id: record.company_id,
+      otp_hash: "",
+      attempts: 0,
+      created_at: nowIso,
+      expires_at: expiresAt,
+      masked_phone: maskedPhone,
+      verification_channel: "sms_otp",
+      identifier_type: identifierType || record.identifier_type || "",
+      device_label: sanitizeTenantString(body.device_label ?? body.deviceLabel, 120),
+      device_type: sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase(),
+    };
+    await env.BOOKING_KV.put(
+      _companyLinkChallengeKey(challengeId),
+      JSON.stringify(challengePayload),
+      { expirationTtl: COMPANY_LINK_CHALLENGE_TTL_SECONDS },
+    );
+  }
+  return json(
+    {
+      ok: false,
+      error: "verification_not_available",
+      challenge_id: challengeId,
+      masked_phone: maskedPhone,
+    },
+    501,
+  );
+}
+
+async function handlePublicCompanyRegister(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  const companyName = sanitizeTenantString(
+    body.company_name ?? body.companyName,
+    120,
+  );
+  if (!companyName) {
+    return json({ ok: false, error: "missing_company_name" }, 400);
+  }
+
+  const email = sanitizeTenantString(
+    body.email ??
+      body.companyEmail ??
+      body.company_email ??
+      body.owner_email ??
+      body.ownerEmail,
+    160,
+  );
+  const phone = sanitizeTenantString(
+    body.phone ?? body.owner_phone ?? body.ownerPhone,
+    64,
+  );
+  const country = _normalizeCompanyLinkCountry(body.country) || "BE";
+  const isBelgianCompany = country === "BE";
+  const vatLikeInput = sanitizeTenantString(
+    body.vat_number ??
+      body.vatNumber ??
+      body.btw_number ??
+      body.btwNumber ??
+      body.enterprise_number ??
+      body.enterpriseNumber ??
+      body.kbo_number ??
+      body.kboNumber,
+    96,
+  );
+  const normalizedBelgianVat = normalizeBelgianVatNumber(vatLikeInput);
+  if (isBelgianCompany && vatLikeInput && !isLikelyBelgianVatNumber(vatLikeInput)) {
+    return json({ ok: false, error: "invalid_belgian_vat_number" }, 400);
+  }
+  const enterpriseNumber = belgianEnterpriseNumberFromVat(normalizedBelgianVat);
+  const peppolIdentifier = peppolIdentifierFromBelgianEnterpriseNumber(enterpriseNumber);
+  const vatVerificationStatus = "pending";
+  const peppolReadinessStatus = enterpriseNumber ? "prepared" : "missing_vat";
+  const chironReadinessStatus = "pending";
+
+  const scope = await _allocateNewCompanyScopeForRegistration(env, companyName);
+  if (!scope?.tenant_id || !scope?.company_id) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  console.log(
+    `[PUBLIC_COMPANY_REGISTER][REQ] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} country=${country}`,
+  );
+
+  let businessProfile = null;
+  try {
+    businessProfile = await saveBusinessProfile(
+      env,
+      {
+        companyName,
+        legalName: sanitizeTenantString(body.legal_name ?? body.legalName, 160),
+        vatNumber: normalizedBelgianVat || "",
+        vat_number: normalizedBelgianVat || "",
+        companyRegistrationNumber: enterpriseNumber || "",
+        company_registration_number: enterpriseNumber || "",
+        enterpriseNumber: enterpriseNumber || "",
+        enterprise_number: enterpriseNumber || "",
+        kboNumber: enterpriseNumber || "",
+        kbo_number: enterpriseNumber || "",
+        peppolIdentifier: peppolIdentifier || "",
+        peppol_identifier: peppolIdentifier || "",
+        vatVerificationStatus,
+        vat_verification_status: vatVerificationStatus,
+        peppolReadinessStatus,
+        peppol_readiness_status: peppolReadinessStatus,
+        chironReadinessStatus,
+        chiron_readiness_status: chironReadinessStatus,
+        address: sanitizeTenantString(body.address, 220),
+        postcode: sanitizeTenantString(body.postcode, 24),
+        city: sanitizeTenantString(body.city, 80),
+        country,
+        phone,
+        email,
+        companyEmail: email,
+        bookingEmail: email,
+        supportEmail: email,
+        notificationEmail: email,
+        billingEmail: email,
+      },
+      scope,
+      { allowTenantLegacyWrite: false },
+    );
+  } catch (err) {
+    console.log(
+      `[PUBLIC_COMPANY_REGISTER][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=save_business_profile_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+    );
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+
+  const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+    business_profile: businessProfile,
+    profile: businessProfile,
+    company_code:
+      businessProfile?.public_company_code ??
+      businessProfile?.publicCompanyCode ??
+      businessProfile?.company_code ??
+      businessProfile?.companyCode,
+    country,
+    source: "public_company_register",
+  });
+  if (!ensuredCode?.ok) {
+    console.log(
+      `[PUBLIC_COMPANY_REGISTER][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_generation_failed`,
+    );
+    return json({ ok: false, error: "company_code_generation_failed" }, 500);
+  }
+
+  const resolvedCompanyCode = sanitizeTenantString(
+    ensuredCode.company_code ?? ensuredCode.companyCode,
+    80,
+  );
+  const resolvedPublicCompanyCode = sanitizeTenantString(
+    ensuredCode.public_company_code ??
+      ensuredCode.publicCompanyCode ??
+      resolvedCompanyCode,
+    80,
+  );
+  const resolvedPublicCompanySlug = sanitizeTenantString(
+    ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+    80,
+  );
+  const resolvedPublicDisplayCode = sanitizeTenantString(
+    ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+    240,
+  );
+
+  const nowIso = new Date().toISOString();
+  const basePayload = _projectCompanyAdminSessionPayload(
+    {
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: resolvedCompanyCode,
+      display_name: companyName,
+      country,
+    },
+    nowIso,
+  );
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    return json({ ok: false, error: "registration_failed" }, 500);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: resolvedCompanyCode,
+      companyCode: resolvedCompanyCode,
+      company_display_name: companyName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_register",
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+
+  console.log(
+    `[PUBLIC_COMPANY_REGISTER][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} code=${_maskPublicDriverLoginValue(resolvedCompanyCode)}`,
+  );
+
+  return json(
+    {
+      ...basePayload,
+      link_method: "public_company_register",
+      linkMethod: "public_company_register",
+      tenant_id: scope.tenant_id,
+      tenantId: scope.tenant_id,
+      company_id: scope.company_id,
+      companyId: scope.company_id,
+      company_code: resolvedCompanyCode,
+      companyCode: resolvedCompanyCode,
+      public_company_code: resolvedPublicCompanyCode,
+      publicCompanyCode: resolvedPublicCompanyCode,
+      ...(resolvedPublicCompanySlug
+        ? {
+            public_company_slug: resolvedPublicCompanySlug,
+            publicCompanySlug: resolvedPublicCompanySlug,
+          }
+        : {}),
+      ...(resolvedPublicDisplayCode
+        ? {
+            public_display_code: resolvedPublicDisplayCode,
+            publicDisplayCode: resolvedPublicDisplayCode,
+          }
+        : {}),
+      belgian_company: isBelgianCompany,
+      vat_number: normalizedBelgianVat || "",
+      enterprise_number: enterpriseNumber || "",
+      peppol_identifier: peppolIdentifier || "",
+      vat_verification_status: vatVerificationStatus,
+      peppol_readiness_status: peppolReadinessStatus,
+      chiron_readiness_status: chironReadinessStatus,
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      company: {
+        display_name: companyName,
+        company_code: resolvedCompanyCode,
+        companyCode: resolvedCompanyCode,
+        public_company_code: resolvedPublicCompanyCode,
+        publicCompanyCode: resolvedPublicCompanyCode,
+        ...(resolvedPublicDisplayCode
+          ? {
+              public_display_code: resolvedPublicDisplayCode,
+              publicDisplayCode: resolvedPublicDisplayCode,
+            }
+          : {}),
+      },
+      business_profile: businessProfile,
+    },
+    200,
+  );
+}
+
+async function handlePublicCompanyRecoveryStart(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const challengeId = _companyRecoveryChallengeId();
+  const companyCode = normalizePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(
+    body.email ?? body.company_email ?? body.companyEmail ?? body.owner_email ?? body.ownerEmail,
+  );
+  console.log(
+    `[COMPANY_RECOVERY][START][REQUESTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"}`,
+  );
+  const genericResponse = _projectPublicRecoveryStartResponse(challengeId, email);
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!codeValidation.ok || !email) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"} bucket=invalid_input`,
+    );
+    return json(genericResponse, 200);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=company_unavailable`,
+    );
+    return json(genericResponse, 200);
+  }
+  const scope = {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=scope_missing`,
+    );
+    return json(genericResponse, 200);
+  }
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
+  const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
+  if (!emailMatches) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=email_unmatched`,
+    );
+    return json(genericResponse, 200);
+  }
+
+  const emailHash = await _hashRecoveryStartRateKeyPart(email);
+  const rateKey = _companyRecoveryStartRateKey(codeValidation.code, emailHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= COMPANY_RECOVERY_START_RATE_MAX) {
+      console.log(
+        `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=start_rate_limited`,
+      );
+      return json(genericResponse, 200);
+    }
+    const nextCount = count + 1;
+    await env.BOOKING_KV.put(
+      rateKey,
+      JSON.stringify({
+        count: nextCount,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS },
+    );
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
+  const challengeKey = _companyRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    console.log(
+      `[COMPANY_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=challenge_key_invalid`,
+    );
+    return json(genericResponse, 200);
+  }
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    company_code: codeValidation.code,
+    email_hash: await _sha256Hex(email),
+    otp_hash: otpHash,
+    attempts: 0,
+    max_attempts: COMPANY_RECOVERY_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+    verification_channel: "email_otp",
+    device_label: sanitizeTenantString(body.device_label ?? body.deviceLabel, 120),
+    device_type: sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase(),
+  };
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+  });
+  console.log(
+    `[COMPANY_RECOVERY][START][ACCEPTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} ttl=${COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS}`,
+  );
+
+  try {
+    const emailSend = await _sendCompanyRecoveryOtpEmail({
+      env,
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      recipientEmail: email,
+      otp,
+    });
+    if (emailSend?.ok) {
+      console.log(
+        `[COMPANY_RECOVERY][EMAIL][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} provider_id=${sanitizeTenantString(emailSend.id, 120) || "-"} bucket=success`,
+      );
+    } else {
+      console.log(
+        `[COMPANY_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=send_failed reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[COMPANY_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=send_exception reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
+    );
+  }
+
+  const out = { ...genericResponse };
+  const debugOtpRequested = sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1";
+  const explicitDebugOtpAllow = sanitizeTenantString(env?.FLUXIDI_ALLOW_DEBUG_OTP_ECHO, 16) === "1";
+  const environmentRaw = sanitizeTenantString(
+    env?.ENVIRONMENT ?? env?.NODE_ENV,
+    32,
+  ).toLowerCase();
+  const nonProductionEnvironmentDeclared =
+    !!environmentRaw && environmentRaw !== "production" && environmentRaw !== "prod";
+  const debugOtpEchoAllowed =
+    debugOtpRequested && (explicitDebugOtpAllow || nonProductionEnvironmentDeclared);
+  if (debugOtpRequested && !debugOtpEchoAllowed) {
+    console.log(
+      `[COMPANY_RECOVERY][DEBUG_OTP_ECHO][BLOCKED] company=${_maskPublicDriverLoginValue(codeValidation.code)} env=${environmentRaw || "unset"} allow_flag=${explicitDebugOtpAllow ? "1" : "0"}`,
+    );
+  }
+  if (debugOtpEchoAllowed) {
+    out.recovery_code = otp;
+    out.recoveryCode = otp;
+  }
+  return json(out, 200);
+}
+
+async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(
+    body.email ?? body.company_email ?? body.companyEmail ?? body.owner_email ?? body.ownerEmail,
+  );
+  const otp = sanitizeTenantString(
+    body.otp ?? body.recovery_code ?? body.recoveryCode ?? body.code_otp,
+    24,
+  ).replace(/\s+/g, "");
+  console.log(
+    `[COMPANY_RECOVERY][VERIFY][REQUESTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
+  const clientFingerprintHash = await _companyRecoveryVerifyClientHash(request);
+  const verifyRateKey = _companyRecoveryVerifyRateKey(
+    codeValidation.code,
+    candidateEmailHash,
+    clientFingerprintHash,
+  );
+  if (verifyRateKey) {
+    const rawRate = await env.BOOKING_KV.get(verifyRateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= COMPANY_RECOVERY_VERIFY_RATE_MAX) {
+      console.log(
+        `[COMPANY_RECOVERY][VERIFY][THROTTLED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=throttled`,
+      );
+      return json({ ok: false, error: "verification_failed" }, 403);
+    }
+    await env.BOOKING_KV.put(
+      verifyRateKey,
+      JSON.stringify({
+        count: count + 1,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS },
+    );
+  }
+  const challengeKey = _companyRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_key_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_missing`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_RECOVERY_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts
+  ) {
+    let bucket = "challenge_state_invalid";
+    if (sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code) {
+      bucket = "company_mismatch";
+    } else if (sanitizeTenantString(challenge.consumed_at, 80)) {
+      bucket = "consumed";
+    } else if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+      bucket = "expired";
+    } else if (attempts >= maxAttempts) {
+      bucket = "max_attempts";
+    }
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=${bucket}`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`))
+    .toLowerCase();
+  const emailOk = _constantTimeEquals(expectedEmailHash, candidateEmailHash);
+  const otpOk = _constantTimeEquals(expectedOtpHash, candidateOtpHash);
+  if (!emailOk || !otpOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+
+  const tenantId = sanitizeTenantString(challenge.tenant_id, 80);
+  const companyId = sanitizeTenantString(challenge.company_id, 80);
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (
+    !companyRecord ||
+    companyRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyRecord.company_id, 80) !== companyId
+  ) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=scope_or_company_unavailable`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
+  const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
+  if (!emailMatches) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=email_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+
+  const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=session_key_unavailable`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ??
+      companyRecord.company_name ??
+      companyRecord.companyName ??
+      basePayload?.company?.display_name,
+    160,
+  );
+  const recoveredDeviceLabel = sanitizeTenantString(
+    challenge.device_label ?? challenge.deviceLabel,
+    120,
+  );
+  const recoveredDeviceType = sanitizeTenantString(
+    challenge.device_type ?? challenge.deviceType,
+    40,
+  ).toLowerCase();
+  const recoveredDevicePlatform = sanitizeTenantString(
+    challenge.device_platform ?? challenge.devicePlatform ?? recoveredDeviceType,
+    40,
+  ).toLowerCase();
+  const recoveryClientFingerprintHash = sanitizeTenantString(clientFingerprintHash, 160)
+    .toLowerCase();
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: tenantId,
+      company_id: companyId,
+      company_code: sanitizeTenantString(companyRecord.company_code ?? codeValidation.code, 80),
+      company_display_name: companyDisplayName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_recovery",
+      recovered_at: nowIso,
+      device_label: recoveredDeviceLabel,
+      device_type: recoveredDeviceType,
+      device_platform: recoveredDevicePlatform,
+      recovery_client_fingerprint_hash: recoveryClientFingerprintHash,
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+  const challengeAuditRemainingSeconds = Math.max(
+    1,
+    Math.floor((expiresAtMs - Date.now()) / 1000),
+  );
+  challenge.recovered_at = nowIso;
+  challenge.link_method = "public_company_recovery";
+  challenge.device_label = recoveredDeviceLabel;
+  challenge.device_type = recoveredDeviceType;
+  challenge.device_platform = recoveredDevicePlatform;
+  challenge.recovery_client_fingerprint_hash = recoveryClientFingerprintHash;
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: challengeAuditRemainingSeconds,
+  });
+  console.log(
+    `[COMPANY_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} link_method=public_company_recovery`,
+  );
+  return json(
+    {
+      ...basePayload,
+      link_method: "public_company_recovery",
+      linkMethod: "public_company_recovery",
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      business_profile: businessProfile,
+      vat_verification_status: sanitizeTenantString(
+        businessProfile?.vatVerificationStatus ?? businessProfile?.vat_verification_status,
+        40,
+      ),
+      peppol_readiness_status: sanitizeTenantString(
+        businessProfile?.peppolReadinessStatus ?? businessProfile?.peppol_readiness_status,
+        40,
+      ),
+      chiron_readiness_status: sanitizeTenantString(
+        businessProfile?.chironReadinessStatus ?? businessProfile?.chiron_readiness_status,
+        40,
+      ),
+    },
+    200,
+  );
+}
+
+async function _customerRecoveryIncrementAttempts({
+  env,
+  challengeKey,
+  challenge,
+  nowIso,
+  nowMs,
+}) {
+  if (!env?.BOOKING_KV || !challengeKey || !challenge || typeof challenge !== "object") return;
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) return;
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  challenge.attempts = attempts + 1;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+}
+
+async function handlePublicCustomerRecoveryStart(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const challengeId = _customerRecoveryChallengeId();
+  const genericResponse = _projectPublicCustomerRecoveryStartResponse(challengeId);
+  const companyCode = normalizePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(body.email ?? body.customer_email ?? body.customerEmail);
+  console.log(
+    `[CUSTOMER_RECOVERY][START][REQUESTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"}`,
+  );
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!codeValidation.ok || !email) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(companyCode)} email=${maskEmailForLog(email) || "-"} bucket=invalid_input`,
+    );
+    return json(genericResponse, 200);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=company_unavailable`,
+    );
+    return json(genericResponse, 200);
+  }
+  const scope = {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=scope_missing`,
+    );
+    return json(genericResponse, 200);
+  }
+  const emailHash = await _hashRecoveryStartRateKeyPart(email);
+  const rateKey = _customerRecoveryStartRateKey(codeValidation.code, emailHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= CUSTOMER_RECOVERY_START_RATE_MAX) {
+      console.log(
+        `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=start_rate_limited`,
+      );
+      return json(genericResponse, 200);
+    }
+    await env.BOOKING_KV.put(
+      rateKey,
+      JSON.stringify({
+        count: count + 1,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: CUSTOMER_RECOVERY_START_RATE_WINDOW_SECONDS },
+    );
+  }
+  const challengeKey = _customerRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    console.log(
+      `[CUSTOMER_RECOVERY][START][REJECTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} bucket=challenge_key_invalid`,
+    );
+    return json(genericResponse, 200);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify({
+      version: 1,
+      challenge_id: challengeId,
+      purpose: "customer_recovery",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      company_code: codeValidation.code,
+      email_hash: sanitizeTenantString(emailHash, 200).toLowerCase(),
+      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+      attempts: 0,
+      max_attempts: CUSTOMER_RECOVERY_MAX_ATTEMPTS,
+      created_at: nowIso,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }),
+    { expirationTtl: CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS },
+  );
+  console.log(
+    `[CUSTOMER_RECOVERY][START][ACCEPTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} ttl=${CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS}`,
+  );
+  try {
+    const emailSend = await _sendCustomerRecoveryOtpEmail({
+      env,
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      recipientEmail: email,
+      otp,
+    });
+    if (emailSend?.ok) {
+      console.log(
+        `[CUSTOMER_RECOVERY][EMAIL][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} provider_id=${sanitizeTenantString(emailSend.id, 120) || "-"}`,
+      );
+    } else {
+      console.log(
+        `[CUSTOMER_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} reason=${sanitizeTenantString(emailSend?.reason, 180) || "send_failed"}`,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[CUSTOMER_RECOVERY][EMAIL][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} reason=${sanitizeTenantString(err?.message ?? err, 180) || "send_failed"}`,
+    );
+  }
+  return json(genericResponse, 200);
+}
+
+async function handlePublicCustomerRecoveryVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const email = _normalizeRecoveryEmail(body.email ?? body.customer_email ?? body.customerEmail);
+  const otp = sanitizeTenantString(
+    body.otp ?? body.recovery_code ?? body.recoveryCode ?? body.code_otp,
+    24,
+  ).replace(/\s+/g, "");
+  console.log(
+    `[CUSTOMER_RECOVERY][VERIFY][REQUESTED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  if (!challengeId || !codeValidation.ok || !email || !/^\d{4,8}$/.test(otp)) {
+    console.log(
+      `[CUSTOMER_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _customerRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : CUSTOMER_RECOVERY_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.purpose, 80) !== "customer_recovery" ||
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts
+  ) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const candidateEmailHash = (await _sha256Hex(email)).toLowerCase();
+  const expectedEmailHash = sanitizeTenantString(challenge.email_hash, 200).toLowerCase();
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`))
+    .toLowerCase();
+  const emailOk = _constantTimeEquals(expectedEmailHash, candidateEmailHash);
+  const otpOk = _constantTimeEquals(expectedOtpHash, candidateOtpHash);
+  if (!emailOk || !otpOk) {
+    await _customerRecoveryIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    console.log(
+      `[CUSTOMER_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_or_email_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const tenantId = sanitizeTenantString(challenge.tenant_id, 80);
+  const companyId = sanitizeTenantString(challenge.company_id, 80);
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (
+    !companyRecord ||
+    companyRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyRecord.company_id, 80) !== companyId
+  ) {
+    await _customerRecoveryIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const emailHash = sanitizeTenantString(candidateEmailHash, 200).toLowerCase();
+  const emailIndexKey = _customerEmailIndexKey(scope, emailHash);
+  if (!emailIndexKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  let customerId = _normalizeCustomerIdentityId(await env.BOOKING_KV.get(emailIndexKey));
+  if (!customerId) {
+    customerId = _generateCustomerIdentityId();
+  }
+  const customerIdentityKey = _customerIdentityKey(scope, customerId);
+  if (!customerIdentityKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const existingIdentity = await env.BOOKING_KV.get(customerIdentityKey, { type: "json" });
+  const identityCreatedAt = sanitizeTenantString(existingIdentity?.created_at, 80) || nowIso;
+  await env.BOOKING_KV.put(
+    customerIdentityKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_identity",
+      customer_id: customerId,
+      tenant_id: tenantId,
+      company_id: companyId,
+      email_hash: emailHash,
+      email_verified: true,
+      email_verified_at: nowIso,
+      created_at: identityCreatedAt,
+      updated_at: nowIso,
+      recovery_method: "email_otp",
+    }),
+  );
+  await env.BOOKING_KV.put(emailIndexKey, customerId);
+  const customerSessionToken = _generateOpaqueToken(32, "cus_");
+  const customerSessionTokenHash = await _hashCustomerSessionToken(customerSessionToken);
+  const customerSessionKey = _customerSessionKey(customerSessionTokenHash);
+  if (!customerSessionKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    customerSessionKey,
+    JSON.stringify({
+      role: "customer",
+      purpose: "customer_session",
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      email_hash: emailHash,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      recovery_method: "email_otp",
+    }),
+    { expirationTtl: CUSTOMER_SESSION_TTL_SECONDS },
+  );
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.recovered_customer_id = customerId;
+  challenge.link_method = "public_customer_recovery";
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  console.log(
+    `[CUSTOMER_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      customer_session_token: customerSessionToken,
+      customerSessionToken: customerSessionToken,
+      expires_in_seconds: CUSTOMER_SESSION_TTL_SECONDS,
+      expiresInSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      customer_id: customerId,
+      customerId: customerId,
+      tenant_id: tenantId,
+      tenantId: tenantId,
+      company_id: companyId,
+      companyId: companyId,
+    },
+    200,
+  );
+}
+
+async function _customerPhoneAuthIncrementAttempts({
+  env,
+  challengeKey,
+  challenge,
+  nowIso,
+  nowMs,
+}) {
+  if (!env?.BOOKING_KV || !challengeKey || !challenge || typeof challenge !== "object") return;
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) return;
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  challenge.attempts = attempts + 1;
+  challenge.updated_at = nowIso;
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+}
+
+async function _incrementSimpleRateLimit({
+  env,
+  rateKey,
+  maxCount,
+  windowSeconds,
+}) {
+  if (!env?.BOOKING_KV || !rateKey) return { limited: false, count: 0 };
+  const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+  const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+    ? rawRate
+    : {};
+  const count = Number.isFinite(Number(rateSource.count))
+    ? Math.max(0, Math.round(Number(rateSource.count)))
+    : 0;
+  if (count >= maxCount) {
+    return { limited: true, count };
+  }
+  await env.BOOKING_KV.put(
+    rateKey,
+    JSON.stringify({
+      count: count + 1,
+      updated_at: new Date().toISOString(),
+    }),
+    { expirationTtl: windowSeconds },
+  );
+  return { limited: false, count: count + 1 };
+}
+
+async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) {
+    return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  if (!_isAllowedCustomerPhoneAuthSmsRegion(phoneE164)) {
+    const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][REGION_REJECT] phone=${maskedPhone || "-"}`,
+    );
+    return json({ ok: false, error: "unsupported_phone_region" }, 400);
+  }
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const startRateKey = _customerPhoneAuthStartRateKey(phoneHash, clientHash);
+  if (startRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: startRateKey,
+      maxCount: CUSTOMER_PHONE_AUTH_START_RATE_MAX,
+      windowSeconds: CUSTOMER_PHONE_AUTH_START_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][RATE_LIMIT] stage=start phone=${maskedPhone || "-"} bucket=start`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  const challengeId = _customerPhoneAuthChallengeId();
+  const challengeKey = _customerPhoneAuthChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`);
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_phone_auth",
+      challenge_id: challengeId,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+      attempts: 0,
+      max_attempts: CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
+      created_at: nowIso,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }),
+    { expirationTtl: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS },
+  );
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][START] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  const debugOtpEnabled = _isCustomerPhoneAuthDebugOtpEnabled(env);
+  const smsConfigured = _isCustomerPhoneAuthSmsConfigured(env);
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][SMS_CONFIG] configured=${smsConfigured} debug=${debugOtpEnabled} phone=${maskedPhone || "-"}`,
+  );
+  let smsSent = false;
+  if (smsConfigured) {
+    const sendResult = await _sendCustomerPhoneAuthOtpSms(env, {
+      phoneE164,
+      otp,
+      locale: sanitizeTenantString(body?.locale ?? body?.language ?? body?.lang, 16),
+      challengeId,
+    });
+    smsSent = sendResult?.ok === true;
+    if (!smsSent && !debugOtpEnabled) {
+      return json({ ok: false, error: "sms_send_failed" }, 502);
+    }
+  } else if (!debugOtpEnabled) {
+    return json({ ok: false, error: "sms_not_configured" }, 503);
+  }
+  const response = {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId: challengeId,
+    verification_channel: "sms_otp",
+    verificationChannel: "sms_otp",
+    expires_in_seconds: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS,
+    masked_phone: maskedPhone,
+    maskedPhone: maskedPhone,
+    sms_sent: smsSent,
+    smsSent: smsSent,
+    debug_otp: null,
+    debugOtp: null,
+  };
+  if (debugOtpEnabled) {
+    response.debug_otp = otp;
+    response.debugOtp = otp;
+  }
+  return json(response, 200);
+}
+
+async function handlePublicCustomerPhoneAuthVerify(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) return json({ ok: false, error: "invalid_phone" }, 400);
+  const otp = sanitizeTenantString(
+    body.otp ?? body.code ?? body.recovery_code ?? body.recoveryCode,
+    24,
+  ).replace(/\s+/g, "");
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const verifyRateKey = _customerPhoneAuthVerifyRateKey(phoneHash, clientHash);
+  if (verifyRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: verifyRateKey,
+      maxCount: CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX,
+      windowSeconds: CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][RATE_LIMIT] stage=verify phone=${maskedPhone || "-"} bucket=verify`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  if (!challengeId || !/^\d{6}$/.test(otp)) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _customerPhoneAuthChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_missing`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  const challengePhoneHash = sanitizeTenantString(
+    challenge.phone_hash ?? challenge.phoneHash,
+    200,
+  ).toLowerCase();
+  if (
+    sanitizeTenantString(challenge.purpose, 80) !== "customer_phone_auth" ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts ||
+    !_constantTimeEquals(challengePhoneHash, phoneHash)
+  ) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`)).toLowerCase();
+  if (!_constantTimeEquals(expectedOtpHash, candidateOtpHash)) {
+    await _customerPhoneAuthIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
+  if (!phoneIndexKey) return json({ ok: false, error: "verification_failed" }, 403);
+  let customerId = _normalizeCustomerIdentityId(await env.BOOKING_KV.get(phoneIndexKey));
+  if (!customerId) {
+    customerId = _generateCustomerIdentityId();
+  }
+  const customerIdentityKey = _globalCustomerIdentityKey(customerId);
+  if (!customerIdentityKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const existingIdentity = await env.BOOKING_KV.get(customerIdentityKey, { type: "json" });
+  const identityCreatedAt = sanitizeTenantString(existingIdentity?.created_at, 80) || nowIso;
+  await env.BOOKING_KV.put(
+    customerIdentityKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_global_identity",
+      customer_id: customerId,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      created_at: identityCreatedAt,
+      updated_at: nowIso,
+      recovery_method: "phone_otp",
+    }),
+  );
+  await env.BOOKING_KV.put(phoneIndexKey, customerId);
+  const customerSessionToken = _generateOpaqueToken(32, "cus_");
+  const customerSessionTokenHash = await _hashCustomerSessionToken(customerSessionToken);
+  const customerSessionKey = _customerSessionKey(customerSessionTokenHash);
+  if (!customerSessionKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    customerSessionKey,
+    JSON.stringify({
+      role: "customer",
+      purpose: "customer_session",
+      tenant_id: "global",
+      company_id: "global",
+      customer_id: customerId,
+      email_hash: "",
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      created_at: nowIso,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      recovery_method: "phone_otp",
+    }),
+    { expirationTtl: CUSTOMER_SESSION_TTL_SECONDS },
+  );
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.recovered_customer_id = customerId;
+  challenge.link_method = "public_customer_phone_auth";
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][VERIFY_OK] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      customer_session_token: customerSessionToken,
+      customerSessionToken: customerSessionToken,
+      expires_in_seconds: CUSTOMER_SESSION_TTL_SECONDS,
+      expiresInSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      customer_id: customerId,
+      customerId: customerId,
+    },
+    200,
+  );
+}
+
+async function handlePublicCustomerSessionBootstrap(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const scope = {
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  };
+  const sessionCustomerId = _normalizeCustomerIdentityId(session.customer_id);
+  const sessionTenantId = sanitizeTenantString(session.tenant_id, 80);
+  const sessionCompanyId = sanitizeTenantString(session.company_id, 80);
+  const isGlobalScopeSession =
+    sessionTenantId.toLowerCase() === "global" &&
+    sessionCompanyId.toLowerCase() === "global";
+  const identityKey = isGlobalScopeSession
+    ? _globalCustomerIdentityKey(sessionCustomerId)
+    : _customerIdentityKey(scope, sessionCustomerId);
+  const identity = identityKey
+    ? await env.BOOKING_KV.get(identityKey, { type: "json" })
+    : null;
+  const customerId = _normalizeCustomerIdentityId(
+    identity?.customer_id ?? identity?.customerId ?? sessionCustomerId,
+  );
+  const normalizedEmailHash = sanitizeTenantString(
+    identity?.email_hash ?? identity?.emailHash ?? session.email_hash,
+    200,
+  ).toLowerCase();
+  const normalizedPhoneHash = sanitizeTenantString(
+    identity?.phone_hash ?? identity?.phoneHash ?? session.phone_hash ?? session.phoneHash,
+    200,
+  ).toLowerCase();
+  const sessionRecoveryMethod = sanitizeTenantString(
+    session.recovery_method ?? session.recoveryMethod,
+    40,
+  ).toLowerCase();
+  const identityPurpose = sanitizeTenantString(identity?.purpose, 80).toLowerCase();
+  const isGlobalPhoneSession =
+    isGlobalScopeSession &&
+    !!customerId &&
+    (!!normalizedPhoneHash ||
+      sessionRecoveryMethod.includes("phone") ||
+      identityPurpose === "customer_global_identity");
+  let mergedItems = [];
+  if (isGlobalPhoneSession) {
+    const scopeLinksRead = await _readGlobalCustomerScopeLinks(env, customerId);
+    const linkedScopes = Array.isArray(scopeLinksRead?.scopes)
+      ? scopeLinksRead.scopes.slice(0, CUSTOMER_GLOBAL_SCOPE_LINKS_MAX_SCOPES)
+      : [];
+    console.log(`[CUSTOMER_BOOTSTRAP][GLOBAL_SCOPES] count=${linkedScopes.length}`);
+    const mergedByKey = new Map();
+    const addMergedBooking = (item, fallbackScope) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return;
+      const tenantId = safeStr(item.tenant_id ?? item.tenantId ?? fallbackScope?.tenant_id, 80);
+      const companyId = safeStr(item.company_id ?? item.companyId ?? fallbackScope?.company_id, 80);
+      const normalizedItem = {
+        ...item,
+        tenant_id: tenantId,
+        tenantId,
+        company_id: companyId,
+        companyId,
+      };
+      const dedupeCandidates = [
+        safeStr(normalizedItem.booking_id ?? normalizedItem.bookingId ?? normalizedItem.id, 160),
+        safeStr(normalizedItem.public_booking_reference ?? normalizedItem.publicBookingReference, 160),
+        safeStr(normalizedItem.booking_reference ?? normalizedItem.bookingReference, 160),
+        safeStr(normalizedItem.payment_booking_id ?? normalizedItem.paymentBookingId, 160),
+      ].filter(Boolean);
+      const dedupeKeys = dedupeCandidates.length > 0 ? dedupeCandidates : [`fallback:${mergedByKey.size + 1}`];
+      let existing = null;
+      for (const key of dedupeKeys) {
+        if (mergedByKey.has(key)) {
+          existing = mergedByKey.get(key);
+          break;
+        }
+      }
+      const merged = { ...(existing || {}), ...normalizedItem };
+      for (const key of dedupeKeys) {
+        mergedByKey.set(key, merged);
+      }
+    };
+    for (const linkedScope of linkedScopes) {
+      if (mergedByKey.size >= 50) break;
+      const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
+        tenant_id: linkedScope.tenant_id,
+        company_id: linkedScope.company_id,
+        customer_id: customerId,
+        email_hash: normalizedEmailHash,
+        phone_hash: normalizedPhoneHash,
+        limit: 50,
+      });
+      const items = hydration?.ok && Array.isArray(hydration.items) ? hydration.items : [];
+      for (const item of items) {
+        addMergedBooking(item, linkedScope);
+        if (mergedByKey.size >= 50) break;
+      }
+    }
+    mergedItems = Array.from(new Set(Array.from(mergedByKey.values())))
+      .sort((a, b) => (
+        Math.max(_toMsOrZero(b?.pickup_iso), _toMsOrZero(b?.updated_at), _toMsOrZero(b?.created_at))
+        - Math.max(_toMsOrZero(a?.pickup_iso), _toMsOrZero(a?.updated_at), _toMsOrZero(a?.created_at))
+      ))
+      .slice(0, 50);
+    console.log(`[CUSTOMER_BOOTSTRAP][GLOBAL_MERGE] count=${mergedItems.length}`);
+  } else {
+    const hydration = await hydrateCustomerBookingsFromScopedIndex(env, {
+      tenant_id: session.tenant_id,
+      company_id: session.company_id,
+      customer_id: customerId,
+      email_hash: normalizedEmailHash,
+      phone_hash: normalizedPhoneHash,
+    });
+    mergedItems = hydration?.ok ? hydration.items : [];
+  }
+  return json(
+    {
+      ok: true,
+      customer: {
+        customer_id: customerId,
+        customerId: customerId,
+        tenant_id: session.tenant_id,
+        tenantId: session.tenant_id,
+        company_id: session.company_id,
+        companyId: session.company_id,
+        email_verified: true,
+        emailVerified: true,
+      },
+      bookings: mergedItems,
+      relationships: [],
+      capabilities: {
+        customer_recovery: true,
+        booking_hydration: true,
+        invoice_pdf_customer_access: false,
+      },
+    },
+    200,
+  );
+}
+
+function _customerSessionPreferredPhoneE164(session) {
+  const normalized = _normalizeCustomerPhone(
+    session?.phone_e164 ??
+    session?.phoneE164 ??
+    session?.customer_phone ??
+    session?.customerPhone,
+  );
+  return _looksLikeE164Phone(normalized) ? normalized : "";
+}
+
+function _sanitizePublicCustomerProfilePayload(body) {
+  const source = body && typeof body === "object" && !Array.isArray(body)
+    ? body
+    : {};
+  const name = sanitizeTenantString(source.name, 160);
+  const email = _normalizeCustomerEmail(source.email);
+  const preferredPostcode = sanitizeTenantString(
+    source.preferred_postcode ?? source.preferredPostcode,
+    32,
+  );
+  const companyName = sanitizeTenantString(
+    source.company_name ?? source.companyName,
+    160,
+  );
+  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const phoneNormalized = _normalizeCustomerPhone(source.phone);
+  const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
+  return {
+    name,
+    phone,
+    email,
+    preferred_postcode: preferredPostcode,
+    preferredPostcode,
+    company_name: companyName,
+    companyName,
+    vat_number: vatNumber,
+    vatNumber,
+  };
+}
+
+function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile) {
+  const source = sourceProfile && typeof sourceProfile === "object" && !Array.isArray(sourceProfile)
+    ? sourceProfile
+    : {};
+  const customerId = _normalizeCustomerIdentityId(
+    source.customer_id ??
+    source.customerId ??
+    sessionCustomerId,
+  );
+  const name = sanitizeTenantString(source.name, 160);
+  const phoneNormalized = _normalizeCustomerPhone(source.phone);
+  const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
+  const email = _normalizeCustomerEmail(source.email);
+  const preferredPostcode = sanitizeTenantString(
+    source.preferred_postcode ?? source.preferredPostcode,
+    32,
+  );
+  const companyName = sanitizeTenantString(
+    source.company_name ?? source.companyName,
+    160,
+  );
+  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const createdAt = sanitizeTenantString(source.created_at ?? source.createdAt, 80);
+  const updatedAt = sanitizeTenantString(source.updated_at ?? source.updatedAt, 80);
+  return {
+    customer_id: customerId,
+    customerId,
+    name,
+    phone,
+    email,
+    preferred_postcode: preferredPostcode,
+    preferredPostcode,
+    company_name: companyName,
+    companyName,
+    vat_number: vatNumber,
+    vatNumber,
+    created_at: createdAt,
+    createdAt,
+    updated_at: updatedAt,
+    updatedAt,
+  };
+}
+
+async function handlePublicCustomerProfileGet(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const customerId = _normalizeCustomerIdentityId(session.customer_id);
+  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
+  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
+  const stored = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  const profile = _projectPublicCustomerProfileResponse(customerId, stored);
+  return json({ ok: true, profile }, 200);
+}
+
+async function handlePublicCustomerProfilePost(request, env, body) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const customerId = _normalizeCustomerIdentityId(session.customer_id);
+  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
+  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
+  const existingRaw = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  const existing = _projectPublicCustomerProfileResponse(customerId, existingRaw);
+  const incoming = _sanitizePublicCustomerProfilePayload(body);
+  const sessionPhone = _customerSessionPreferredPhoneE164(session);
+  const nowIso = new Date().toISOString();
+  const merged = {
+    ...existing,
+    customer_id: customerId,
+    customerId,
+    name: incoming.name || existing.name || "",
+    phone: sessionPhone || existing.phone || "",
+    email: incoming.email || existing.email || "",
+    preferred_postcode: incoming.preferred_postcode || existing.preferred_postcode || "",
+    preferredPostcode: incoming.preferred_postcode || existing.preferred_postcode || "",
+    company_name: incoming.company_name || existing.company_name || "",
+    companyName: incoming.company_name || existing.company_name || "",
+    vat_number: incoming.vat_number || existing.vat_number || "",
+    vatNumber: incoming.vat_number || existing.vat_number || "",
+    created_at: existing.created_at || nowIso,
+    createdAt: existing.created_at || nowIso,
+    updated_at: nowIso,
+    updatedAt: nowIso,
+  };
+  await env.BOOKING_KV.put(
+    profileKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_global_profile",
+      ...merged,
+    }),
+  );
+  return json({ ok: true, profile: merged }, 200);
+}
+
+function _customerBookingIdsFromRecord(rec) {
+  const ids = new Set();
+  const addId = (value) => {
+    const normalized = _normalizeCustomerIdentityId(value);
+    if (normalized) ids.add(normalized);
+  };
+  addId(rec?.customer_id);
+  addId(rec?.customerId);
+  addId(rec?.customer?.customer_id);
+  addId(rec?.customer?.customerId);
+  addId(rec?.booking?.customer_id);
+  addId(rec?.booking?.customerId);
+  addId(rec?.booking?.customer?.customer_id);
+  addId(rec?.booking?.customer?.customerId);
+  return Array.from(ids);
+}
+
+function _enrichBookingRecordWithLinkedCustomer(rec, linkedCustomerId, linkedPhoneHash) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return rec;
+  const customerId = _normalizeCustomerIdentityId(linkedCustomerId);
+  const phoneHash = sanitizeTenantString(linkedPhoneHash, 200).toLowerCase();
+  if (!customerId) return rec;
+  rec.customer_id = customerId;
+  rec.customerId = customerId;
+  if (phoneHash) {
+    rec.phone_hash = phoneHash;
+    rec.phoneHash = phoneHash;
+  }
+  if (rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)) {
+    rec.booking.customer_id = customerId;
+    rec.booking.customerId = customerId;
+    if (phoneHash) {
+      rec.booking.phone_hash = phoneHash;
+      rec.booking.phoneHash = phoneHash;
+    }
+    if (rec.booking.customer && typeof rec.booking.customer === "object" && !Array.isArray(rec.booking.customer)) {
+      rec.booking.customer.customer_id = customerId;
+      rec.booking.customer.customerId = customerId;
+      if (phoneHash) {
+        rec.booking.customer.phone_hash = phoneHash;
+        rec.booking.customer.phoneHash = phoneHash;
+      }
+    }
+  }
+  if (rec.customer && typeof rec.customer === "object" && !Array.isArray(rec.customer)) {
+    rec.customer.customer_id = customerId;
+    rec.customer.customerId = customerId;
+    if (phoneHash) {
+      rec.customer.phone_hash = phoneHash;
+      rec.customer.phoneHash = phoneHash;
+    }
+  }
+  return rec;
+}
+
+async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  const sessionCustomerId = _normalizeCustomerIdentityId(identity?.customer_id);
+  if (sessionCustomerId && bookingCustomerIds.length > 0) {
+    return bookingCustomerIds.includes(sessionCustomerId)
+      ? { matched: true, mode: "customer_id" }
+      : { matched: false, mode: "customer_id_mismatch" };
+  }
+  if (bookingCustomerIds.length > 0) {
+    return { matched: false, mode: "customer_id_missing_session" };
+  }
+  const sessionEmailHash = sanitizeTenantString(identity?.email_hash, 200).toLowerCase();
+  const sessionPhoneHash = sanitizeTenantString(identity?.phone_hash, 200).toLowerCase();
+  if (!sessionEmailHash && !sessionPhoneHash) {
+    return { matched: false, mode: "legacy_no_verified_contact_hash" };
+  }
+  const contacts = _bookingCustomerContacts(rec);
+  const emails = Array.isArray(contacts?.emails) ? contacts.emails : [];
+  for (const email of emails) {
+    const normalized = _normalizeCustomerEmail(email);
+    if (!normalized || !sessionEmailHash) continue;
+    const hashed = (await _sha256Hex(normalized)).toLowerCase();
+    if (_constantTimeEquals(hashed, sessionEmailHash)) {
+      return { matched: true, mode: "legacy_email_hash" };
+    }
+  }
+  const phones = Array.isArray(contacts?.phones) ? contacts.phones : [];
+  for (const phone of phones) {
+    const normalized = _normalizeCustomerPhone(phone);
+    if (!normalized || !sessionPhoneHash) continue;
+    const hashed = (await _sha256Hex(normalized)).toLowerCase();
+    if (_constantTimeEquals(hashed, sessionPhoneHash)) {
+      return { matched: true, mode: "legacy_phone_hash" };
+    }
+  }
+  return { matched: false, mode: "legacy_contact_mismatch" };
+}
+
+function _toMsOrZero(value) {
+  const ms = Date.parse(safeStr(value, 80));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function _projectSafeCustomerBookingSummary(bookingId, rec, scope) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const row = _flattenBookingForRidesList(bookingId, rec);
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference,
+    120,
+  );
+  const planningReference = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      booking?.planning_reference ??
+      booking?.planningReference,
+    120,
+  );
+  const createdAt = safeStr(
+    rec?.created_at ??
+      rec?.createdAt ??
+      booking?.created_at ??
+      booking?.createdAt,
+    80,
+  );
+  const updatedAt = safeStr(
+    rec?.updated_at ??
+      rec?.updatedAt ??
+      booking?.updated_at ??
+      booking?.updatedAt,
+    80,
+  );
+  return {
+    booking_id: safeStr(bookingId, 160),
+    bookingId: safeStr(bookingId, 160),
+    status: safeStr(row?.status, 40),
+    from: safeStr(row?.from, 240),
+    to: safeStr(row?.to, 240),
+    pickup_iso: safeStr(row?.pickup_iso, 80),
+    created_at: createdAt || undefined,
+    updated_at: updatedAt || undefined,
+    amount_total: Number.isFinite(Number(row?.price)) ? Number(row.price) : undefined,
+    currency: safeStr(row?.currency, 16) || "EUR",
+    payment_status: safeStr(row?.payment_status ?? row?.paymentStatus, 40) || undefined,
+    paymentStatus: safeStr(row?.paymentStatus ?? row?.payment_status, 40) || undefined,
+    service: safeStr(
+      booking?.service ??
+        booking?.extra_service ??
+        booking?.extra_service_key,
+      64,
+    ) || undefined,
+    tier: safeStr(row?.tier, 40) || undefined,
+    ...(publicBookingReference
+      ? {
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          booking_reference: publicBookingReference,
+          bookingReference: publicBookingReference,
+        }
+      : {}),
+    ...(planningReference
+      ? { planning_reference: planningReference, planningReference: planningReference }
+      : {}),
+    tenant_id: safeStr(scope?.tenant_id, 80),
+    company_id: safeStr(scope?.company_id, 80),
+    _sort_ts: Math.max(_toMsOrZero(row?.pickup_iso), _toMsOrZero(createdAt), _toMsOrZero(updatedAt)),
+  };
+}
+
+function customerScopedBookingsIndexKey(tenantId, companyId, customerId) {
+  const tenant = sanitizeTenantString(tenantId, 80);
+  const company = sanitizeTenantString(companyId, 80);
+  const customer = _normalizeCustomerIdentityId(customerId);
+  if (!tenant || !company || !customer) return "";
+  return `tenant:${tenant}:company:${company}:customer:${customer}:bookings:v1`;
+}
+
+async function readCustomerScopedBookingIndex(env, scope) {
+  if (!env?.BOOKING_KV) return { ok: false, key: "", index: null };
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const customerId = _normalizeCustomerIdentityId(scope?.customer_id ?? scope?.customerId);
+  const key = customerScopedBookingsIndexKey(tenantId, companyId, customerId);
+  if (!key) return { ok: false, key: "", index: null };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const incomingItems = Array.isArray(source.items) ? source.items : [];
+  const items = incomingItems
+    .map((entry) => {
+      const item = entry && typeof entry === "object" ? entry : {};
+      const bookingId = safeStr(item.booking_id ?? item.bookingId, 160);
+      if (!bookingId) return null;
+      const sortTsRaw = Number(item.sort_ts ?? item.sortTs);
+      const sortTs = Number.isFinite(sortTsRaw) ? Math.max(0, Math.trunc(sortTsRaw)) : 0;
+      return {
+        booking_id: bookingId,
+        sort_ts: sortTs,
+        created_at: safeStr(item.created_at ?? item.createdAt, 80),
+        updated_at: safeStr(item.updated_at ?? item.updatedAt, 80),
+        pickup_iso: safeStr(item.pickup_iso ?? item.pickupIso, 80),
+        public_booking_reference: safeStr(
+          item.public_booking_reference ?? item.publicBookingReference,
+          120,
+        ),
+        planning_reference: safeStr(item.planning_reference ?? item.planningReference, 120),
+      };
+    })
+    .filter((entry) => !!entry);
+  return {
+    ok: true,
+    key,
+    index: {
+      version: 1,
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      updated_at: safeStr(source.updated_at ?? source.updatedAt, 80),
+      items,
+    },
+  };
+}
+
+async function upsertCustomerScopedBookingIndexForBooking(env, bookingId, rec) {
+  if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const tenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(recordScope?.company_id, 80);
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  const customerId = bookingCustomerIds[0] || "";
+  if (!tenantId || !companyId || !customerId) {
+    return { ok: false, skipped: true, reason: "missing_scope_or_customer_id" };
+  }
+  const key = customerScopedBookingsIndexKey(tenantId, companyId, customerId);
+  if (!key) return { ok: false, skipped: true, reason: "index_key_invalid" };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const nowIso = new Date().toISOString();
+  const createdAt = safeStr(
+    rec?.created_at ?? rec?.createdAt ?? rec?.booking?.created_at ?? rec?.booking?.createdAt,
+    80,
+  );
+  const updatedAt = safeStr(
+    rec?.updated_at ?? rec?.updatedAt ?? rec?.booking?.updated_at ?? rec?.booking?.updatedAt,
+    80,
+  ) || nowIso;
+  const pickupIso = safeStr(
+    rec?.booking?.pickup_iso ?? rec?.booking?.pickupStartIso ?? rec?.quote?.pickup_iso,
+    80,
+  );
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.booking?.public_booking_reference ??
+      rec?.booking?.publicBookingReference ??
+      rec?.booking?.booking_reference ??
+      rec?.booking?.bookingReference,
+    120,
+  );
+  const planningReference = safeStr(
+    rec?.planning_reference ??
+      rec?.planningReference ??
+      rec?.booking?.planning_reference ??
+      rec?.booking?.planningReference,
+    120,
+  );
+  const sortTs = Math.max(
+    _toMsOrZero(pickupIso),
+    _toMsOrZero(updatedAt),
+    _toMsOrZero(createdAt),
+    Date.now(),
+  );
+  const incoming = {
+    booking_id: safeStr(bookingId, 160),
+    sort_ts: sortTs,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    pickup_iso: pickupIso,
+    public_booking_reference: publicBookingReference,
+    planning_reference: planningReference,
+  };
+  const existingItems = Array.isArray(source.items) ? source.items : [];
+  const deduped = existingItems
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!safeStr(entry?.booking_id ?? entry?.bookingId, 160))
+    .filter((entry) => safeStr(entry?.booking_id ?? entry?.bookingId, 160) !== incoming.booking_id);
+  deduped.push(incoming);
+  deduped.sort((a, b) => Number(b?.sort_ts || b?.sortTs || 0) - Number(a?.sort_ts || a?.sortTs || 0));
+  const capped = deduped.slice(0, 250);
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      tenant_id: tenantId,
+      company_id: companyId,
+      customer_id: customerId,
+      updated_at: nowIso,
+      items: capped.map((entry) => ({
+        booking_id: safeStr(entry?.booking_id ?? entry?.bookingId, 160),
+        sort_ts: Number.isFinite(Number(entry?.sort_ts ?? entry?.sortTs))
+          ? Math.max(0, Math.trunc(Number(entry?.sort_ts ?? entry?.sortTs)))
+          : 0,
+        created_at: safeStr(entry?.created_at ?? entry?.createdAt, 80),
+        updated_at: safeStr(entry?.updated_at ?? entry?.updatedAt, 80),
+        pickup_iso: safeStr(entry?.pickup_iso ?? entry?.pickupIso, 80),
+        public_booking_reference: safeStr(
+          entry?.public_booking_reference ?? entry?.publicBookingReference,
+          120,
+        ),
+        planning_reference: safeStr(entry?.planning_reference ?? entry?.planningReference, 120),
+      })),
+    }),
+  );
+  return { ok: true, key, count: capped.length };
+}
+
+async function hydrateCustomerBookingsFromScopedIndex(
+  env,
+  {
+    tenant_id,
+    company_id,
+    customer_id,
+    email_hash,
+    phone_hash,
+    limit = 50,
+  } = {},
+) {
+  const tenantScope = normalizeFleetTenantScope({ tenant_id, company_id });
+  const scopeMask = _bookingIntentScopeMask(tenantScope);
+  const safeCustomerMask = _maskPublicDriverLoginValue(customer_id);
+  const lim = Math.min(50, Math.max(1, Number(limit) || 50));
+  console.log(
+    `[CUSTOMER_BOOTSTRAP][HYDRATE][REQUESTED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"}`,
+  );
+  if (!tenantScope?.hasScope || !env?.BOOKING_KV) {
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][FAILED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} reason=missing_scope_or_kv`,
+    );
+    return { ok: false, items: [] };
+  }
+  try {
+    const indexRead = await readCustomerScopedBookingIndex(env, {
+      tenant_id: tenantScope.tenant_id,
+      company_id: tenantScope.company_id,
+      customer_id,
+    });
+    if (!indexRead?.ok || !indexRead?.index) {
+      console.log(
+        `[CUSTOMER_BOOTSTRAP][HYDRATE][SUCCESS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} count=0 bucket=index_missing`,
+      );
+      // TODO: add admin-controlled scoped backfill tool for legacy bookings not yet indexed.
+      return { ok: true, items: [] };
+    }
+    const candidates = Array.isArray(indexRead.index.items) ? indexRead.index.items : [];
+    const sortedCandidates = candidates
+      .slice()
+      .sort((a, b) => Number(b?.sort_ts || 0) - Number(a?.sort_ts || 0));
+    const out = [];
+    for (const entry of sortedCandidates) {
+      if (out.length >= lim) break;
+      const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=missing_booking`,
+        );
+        continue;
+      }
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=scope_mismatch`,
+        );
+        continue;
+      }
+      const identityMatch = await _bookingMatchesCustomerSessionIdentity(rec, {
+        customer_id,
+        email_hash,
+        phone_hash,
+      });
+      if (!identityMatch?.matched) {
+        console.log(
+          `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=identity_mismatch`,
+        );
+        continue;
+      }
+      out.push(_projectSafeCustomerBookingSummary(bookingId, rec, tenantScope));
+    }
+    out.sort((a, b) => Number(b?._sort_ts || 0) - Number(a?._sort_ts || 0));
+    const items = out.slice(0, lim).map((entry) => {
+      const next = { ...entry };
+      delete next._sort_ts;
+      return next;
+    });
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][SUCCESS] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} count=${items.length}`,
+    );
+    return { ok: true, items };
+  } catch (err) {
+    const reason = sanitizeTenantString(err?.message ?? err, 160) || "unexpected_failure";
+    console.log(
+      `[CUSTOMER_BOOTSTRAP][HYDRATE][FAILED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} reason=${reason}`,
+    );
+    return { ok: false, items: [] };
+  }
+}
+
+async function handlePublicCompanyLinkVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeRead = readAndValidateCompanyLinkCode(body, null);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const pairingValidation = _validateCompanyAdminPairingCode(
+    body.pairing_code ?? body.pairingCode,
+  );
+  if (!pairingValidation.ok) {
+    return json({ ok: false, error: "invalid_pairing_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const activeKey = _companyAdminPairingActiveKey(codeRead.code);
+  const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
+  const challengeId = sanitizeTenantString(active?.challenge_id ?? active?.challengeId, 120)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!challengeId) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _companyAdminPairingChallengeKey(challengeId);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeRead.code ||
+    sanitizeTenantString(challenge.tenant_id, 80) !== sanitizeTenantString(companyRecord.tenant_id, 80) ||
+    sanitizeTenantString(challenge.company_id, 80) !== sanitizeTenantString(companyRecord.company_id, 80)
+  ) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (sanitizeTenantString(challenge.consumed_at, 80)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (attempts >= maxAttempts) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedHash = sanitizeTenantString(challenge.pairing_code_hash, 200).toLowerCase();
+  const candidateHash = await _sha256Hex(`${codeRead.code}:${pairingValidation.code}`);
+  const hashOk = _constantTimeEquals(expectedHash, candidateHash);
+  if (!hashOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    if (nextAttempts >= maxAttempts) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.last_device_label = sanitizeTenantString(body.device_label ?? body.deviceLabel, 120);
+  challenge.last_device_type = sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase();
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  await env.BOOKING_KV.delete(activeKey);
+  const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ??
+      companyRecord.company_name ??
+      companyRecord.companyName ??
+      basePayload?.company?.display_name,
+    160,
+  );
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+      company_id: sanitizeTenantString(companyRecord.company_id, 80),
+      company_code: sanitizeTenantString(companyRecord.company_code ?? codeRead.code, 80),
+      company_display_name: companyDisplayName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_pairing",
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[COMPANY_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(companyRecord.tenant_id)} company=${_maskPublicDriverLoginValue(companyRecord.company_id)} code=${_maskPublicDriverLoginValue(companyRecord.company_code ?? codeRead.code)}`,
+  );
+  return json(
+    {
+      ...basePayload,
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+    },
+    200,
+  );
+}
+
+async function readAdminCompanyLinkBody(request) {
+  const text = await request.text();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    return {};
+  } catch {
+    const params = new URLSearchParams(text);
+    const out = {};
+    for (const [key, value] of params.entries()) {
+      out[key] = value;
+    }
+    return out;
+  }
+}
+
+function _readCompanyLinkBodyCompanyCode(body) {
+  return body?.company_code ?? body?.companyCode ?? body?.code ?? "";
+}
+
+function readAndValidateCompanyLinkCode(body, url) {
+  const bodyCode = _readCompanyLinkBodyCompanyCode(body);
+  const rawCompanyCode = sanitizeTenantString(
+    bodyCode ||
+      url?.searchParams?.get("company_code") ||
+      url?.searchParams?.get("companyCode") ||
+      url?.searchParams?.get("code") ||
+      "",
+    80,
+  );
+  const normalizedCompanyCode = normalizePublicCompanyCode(rawCompanyCode);
+  const codeValidation = validatePublicCompanyCode(normalizedCompanyCode);
+  if (!codeValidation.ok) {
+    return { ok: false, error: codeValidation.error || "invalid_company_code" };
+  }
+  return { ok: true, code: codeValidation.code };
+}
+
+function _readPublicCompanyCodeFromBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, code: "", error: "invalid_company_code" };
+  }
+  const raw = _scopeText(
+    body?.company_code ??
+      body?.companyCode ??
+      body?.payload?.company_code ??
+      body?.payload?.companyCode ??
+      "",
+  );
+  return validatePublicCompanyCode(raw);
+}
+
+async function _resolvePublicCompanyBookingScope(env, body) {
+  const codeValidation = _readPublicCompanyCodeFromBody(body);
+  if (!codeValidation.ok) {
+    return { ok: false, status: 400, error: "invalid_company_code" };
+  }
+  const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!record || record.linking_enabled !== true) {
+    return { ok: false, status: 404, error: "company_not_found" };
+  }
+  const tenantId = sanitizeTenantString(record.tenant_id, 80);
+  const companyId = sanitizeTenantString(record.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, status: 404, error: "company_not_found" };
+  }
+  return {
+    ok: true,
+    company_code: codeValidation.code,
+    scope: {
+      tenant_id: tenantId,
+      company_id: companyId,
+      hasScope: true,
+    },
+  };
+}
+
+function _derivePublicDateAndTimeFromPickupIso(pickupIsoRaw) {
+  const pickupIso = safeStr(pickupIsoRaw, 80);
+  if (!pickupIso) return { date: "", time: "" };
+  const parts = brusselsDateTimePartsFromIso(pickupIso);
+  let date = safeStr(parts?.date, 24);
+  let time = safeStr(parts?.time, 16);
+  if (!date || !time) {
+    const m1 = pickupIso.match(/^([0-9]{4}-[0-9]{2}-[0-9]{2})[T ]([0-9]{2}:[0-9]{2})/);
+    if (m1) {
+      date = m1[1];
+      time = m1[2];
+    }
+  }
+  if (!date || !time) {
+    const m2 = pickupIso.match(/^([0-9]{2})\/([0-9]{2})\/([0-9]{4})[ T]([0-9]{2}:[0-9]{2})/);
+    if (m2) {
+      date = `${m2[1]}/${m2[2]}/${m2[3]}`;
+      time = m2[4];
+    }
+  }
+  return { date, time };
+}
+
+function _sanitizePublicStopsList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => safeStr(entry, 200))
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+  const single = safeStr(value, 200);
+  return single ? [single] : [];
+}
+
+function _normalizePublicQuoteBody(body, resolvedScope) {
+  function readPublicPremiumFlag(value) {
+    if (typeof value === "boolean") return value;
+    const raw = safeStr(value, 16).toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  }
+  const from = safeStr(body?.from, 320);
+  const to = safeStr(body?.to, 320);
+  const pickupIso = safeStr(body?.pickup_iso ?? body?.pickupIso, 80);
+  let date = safeStr(body?.date, 24);
+  let time = safeStr(body?.time, 16);
+  if ((!date || !time) && pickupIso) {
+    const derived = _derivePublicDateAndTimeFromPickupIso(pickupIso);
+    date = date || derived.date;
+    time = time || derived.time;
+  }
+  if (!from || !to) return { ok: false, error: "missing_required_fields", missing: ["from", "to"] };
+  if ((!date || !time) && !pickupIso) {
+    return { ok: false, error: "missing_required_fields", missing: ["pickup_iso"] };
+  }
+  if (!date || !time) {
+    return {
+      ok: false,
+      error: "invalid_pickup_iso",
+      message: "Could not derive date/time from pickup_iso. Provide pickup_iso or date/time.",
+    };
+  }
+  const paxRaw = Number(body?.pax);
+  const bagsRaw = Number(body?.bags);
+  const stopsInput = [];
+  const stopsCandidates = [
+    body?.stops,
+    body?.stop_points,
+    body?.stops_addresses,
+    body?.stop_addresses,
+    body?.waypoints,
+    body?.stop1,
+    body?.stop_1,
+    body?.stop,
+  ];
+  for (const candidate of stopsCandidates) {
+    if (Array.isArray(candidate)) {
+      stopsInput.push(...candidate);
+    } else if (candidate != null) {
+      stopsInput.push(candidate);
+    }
+  }
+  const normalized = {
+    from,
+    to,
+    date,
+    time,
+    pickup_iso: pickupIso,
+    pickupIso: pickupIso,
+    pax: Number.isFinite(paxRaw) ? Math.max(1, Math.round(paxRaw)) : 1,
+    bags: Number.isFinite(bagsRaw) ? Math.max(0, Math.round(bagsRaw)) : 0,
+    notes: safeStr(body?.notes, 1200),
+    customer_name: safeStr(body?.customer_name ?? body?.customerName, 160),
+    customerName: safeStr(body?.customer_name ?? body?.customerName, 160),
+    customer_phone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
+    customerPhone: safeStr(body?.customer_phone ?? body?.customerPhone, 64),
+    from_raw: safeStr(
+      body?.from_raw ?? body?.fromRaw ?? body?.from_input ?? body?.fromInput,
+      320,
+    ),
+    to_raw: safeStr(
+      body?.to_raw ?? body?.toRaw ?? body?.to_input ?? body?.toInput,
+      320,
+    ),
+    from_label: safeStr(
+      body?.from_label ?? body?.fromLabel ?? body?.origin_label ?? body?.originLabel,
+      320,
+    ),
+    to_label: safeStr(
+      body?.to_label ?? body?.toLabel ?? body?.destination_label ?? body?.destinationLabel,
+      320,
+    ),
+    from_full_address: safeStr(body?.from_full_address ?? body?.fromFullAddress, 360),
+    to_full_address: safeStr(body?.to_full_address ?? body?.toFullAddress, 360),
+    service: safeStr(body?.service, 40),
+    tier: safeStr(body?.tier, 40),
+    wait_min: parseDurationMin(
+      body?.wait_min ?? body?.waitMin ?? body?.wait_minutes ?? body?.waiting_min ?? body?.wait,
+      0,
+    ),
+    return_enabled: (() => {
+      const raw =
+        body?.return_enabled ??
+        body?.returnEnabled ??
+        body?.return;
+      if (typeof raw === "boolean") return raw;
+      const normalizedRaw = safeStr(raw, 16).toLowerCase();
+      return normalizedRaw === "1" || normalizedRaw === "true" || normalizedRaw === "yes" || normalizedRaw === "on";
+    })(),
+    return_date: safeStr(body?.return_date ?? body?.returnDate, 24),
+    return_time: safeStr(body?.return_time ?? body?.returnTime, 16),
+    stops: _sanitizePublicStopsList(stopsInput),
+    tenant_id: resolvedScope.scope.tenant_id,
+    tenantId: resolvedScope.scope.tenant_id,
+    company_id: resolvedScope.scope.company_id,
+    companyId: resolvedScope.scope.company_id,
+    company_code: resolvedScope.company_code,
+    companyCode: resolvedScope.company_code,
+  };
+  const normalizedTier = normalizeTier(normalized.tier || body?.tier || "comfort");
+  const drinkServiceRaw = body?.drink_service ?? body?.drinkService;
+  const workTableRaw = body?.work_table ?? body?.workTable;
+  if (normalizedTier === "premium") {
+    const drinkService = readPublicPremiumFlag(drinkServiceRaw);
+    const workTable = readPublicPremiumFlag(workTableRaw);
+    normalized.drink_service = drinkService;
+    normalized.work_table = workTable;
+    const extrasInput = Array.isArray(body?.extras)
+      ? body.extras
+      : [];
+    const extrasOut = [];
+    if (drinkService) extrasOut.push("drink_service");
+    if (workTable) extrasOut.push("work_table");
+    for (const entry of extrasInput) {
+      const key = safeStr(entry, 40).toLowerCase();
+      if (!key) continue;
+      if (key === "drink_service" || key === "work_table") {
+        if (!extrasOut.includes(key)) extrasOut.push(key);
+      }
+    }
+    if (extrasOut.length) normalized.extras = extrasOut;
+  } else {
+    normalized.drink_service = false;
+    normalized.work_table = false;
+  }
+  const fromLat = parseFiniteCoordinateNumber(body?.from_lat ?? body?.fromLat);
+  const fromLng = parseFiniteCoordinateNumber(body?.from_lng ?? body?.fromLng);
+  const toLat = parseFiniteCoordinateNumber(body?.to_lat ?? body?.toLat);
+  const toLng = parseFiniteCoordinateNumber(body?.to_lng ?? body?.toLng);
+  if (Number.isFinite(fromLat) && Number.isFinite(fromLng)) {
+    normalized.from_lat = fromLat;
+    normalized.from_lng = fromLng;
+  }
+  if (Number.isFinite(toLat) && Number.isFinite(toLng)) {
+    normalized.to_lat = toLat;
+    normalized.to_lng = toLng;
+  }
+  return { ok: true, payload: normalized };
+}
+
+function _normalizePublicBookBody(body, resolvedScope) {
+  const quoteBody = _normalizePublicQuoteBody(body, resolvedScope);
+  if (!quoteBody.ok) return quoteBody;
+  const customerName = safeStr(body?.customer_name ?? body?.customerName, 160);
+  const customerPhone = safeStr(body?.customer_phone ?? body?.customerPhone, 64);
+  const customerEmail = safeStr(body?.customer_email ?? body?.customerEmail, 180);
+  const missing = [];
+  if (!customerName) missing.push("customer_name");
+  if (!customerPhone) missing.push("customer_phone");
+  if (missing.length) return { ok: false, error: "missing_required_fields", missing };
+  const payload = {
+    ...quoteBody.payload,
+    customer_name: customerName,
+    customerName: customerName,
+    customer_phone: customerPhone,
+    customerPhone: customerPhone,
+    customer_email: customerEmail,
+    customerEmail: customerEmail,
+    custName: customerName,
+    custPhone: customerPhone,
+    custEmail: customerEmail,
+    name: customerName,
+    phone: customerPhone,
+    email: customerEmail,
+    language: safeStr(body?.language ?? body?.lang, 16),
+    lang: safeStr(body?.lang ?? body?.language, 16),
+  };
+  return { ok: true, payload };
+}
+
+const PUBLIC_INTERNAL_RESPONSE_KEYS = new Set([
+  "tenant_id",
+  "tenantid",
+  "company_id",
+  "companyid",
+  "company_session_token",
+  "companysessiontoken",
+  "driver_session_token",
+  "driversessiontoken",
+  "session_token",
+  "sessiontoken",
+  "admin_token",
+  "admintoken",
+  "authorization",
+]);
+
+function _stripInternalScopeFromPublicResponse(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => _stripInternalScopeFromPublicResponse(entry));
+  }
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const lower = String(key).toLowerCase();
+    if (PUBLIC_INTERNAL_RESPONSE_KEYS.has(lower)) continue;
+    if (lower.endsWith("_token") || lower.endsWith("token")) continue;
+    out[key] = _stripInternalScopeFromPublicResponse(entry);
+  }
+  return out;
+}
+
+function _projectPublicBookResponse(out, companyCode) {
+  if (!out || typeof out !== "object") {
+    return { ok: false, error: "booking_failed", company_code: companyCode };
+  }
+  if (!out.ok) {
+    return {
+      ok: false,
+      error: safeStr(out.error, 180) || "booking_failed",
+      company_code: companyCode,
+    };
+  }
+  const bookingId = safeStr(out.booking_id ?? out.bookingId ?? out.public_booking_id, 80);
+  const publicReference = safeStr(
+    out.public_booking_reference ??
+      out.publicBookingReference ??
+      out.booking_reference ??
+      out.bookingReference ??
+      out.public_reference ??
+      out.publicReference,
+    80,
+  );
+  const resolvedReference = publicReference || bookingId;
+  return {
+    ok: true,
+    company_code: companyCode,
+    booking_id: bookingId || resolvedReference || "",
+    public_booking_reference: resolvedReference || "",
+    booking_reference: resolvedReference || "",
+  };
+}
+
+async function _handleQuoteRequestInternal({ body, env, request, url }) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { status: 400, out: { ok: false, error: "Invalid JSON body" } };
+  }
+
+  if (!body.from || !body.to || !body.date || !body.time) {
+    return { status: 400, out: { ok: false, error: "Missing fields: from, to, date, time" } };
+  }
+
+  const requestedPublicPartnerId = _extractRequestedPublicPartnerId({ url, body });
+  let quoteScope = null;
+  let routedPublicPartner = null;
+  if (requestedPublicPartnerId) {
+    routedPublicPartner = await resolvePublicPartnerBookingScope(
+      env,
+      requestedPublicPartnerId,
+    );
+    if (!routedPublicPartner?.ok) {
+      return {
+        status: routedPublicPartner?.status || 400,
+        out: { ok: false, error: routedPublicPartner?.error || "invalid public partner" },
+      };
+    }
+    quoteScope = {
+      tenant_id: routedPublicPartner.tenant_id,
+      company_id: routedPublicPartner.company_id,
+      hasScope: true,
+    };
+  } else {
+    const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+    quoteScope = resolveExplicitBookingRequestScope({
+      request,
+      url,
+      body,
+      allowLegacyFallback: allowLegacyScopeFallback,
+    });
+  }
+  if (!quoteScope?.hasScope) {
+    return {
+      status: 400,
+      out: quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+    };
+  }
+  body = {
+    ...body,
+    tenant_id: quoteScope.tenant_id,
+    tenantId: quoteScope.tenant_id,
+    company_id: quoteScope.company_id,
+    companyId: quoteScope.company_id,
+    ...(routedPublicPartner?.ok
+      ? {
+          public_partner_id: routedPublicPartner.partner_id,
+          publicPartnerId: routedPublicPartner.partner_id,
+          partner_id: routedPublicPartner.partner_id,
+          partnerId: routedPublicPartner.partner_id,
+        }
+      : {}),
+  };
+  const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
+  const vat_rate = clampNumber(
+    pricingProfile?.vat_rate,
+    clampNumber(body.vat_rate, 0.06, 0, 1),
+    0,
+    1,
+  );
+
+  // Enforce business rules (Tesla Model 3)
+  const pax = clampInt(body.pax, 1, 3);
+  const bags = Math.max(0, clampInt(body.bags, 0, 99));
+
+  const tier = normalizeTier(body.tier || "comfort");
+  const service = normalizeService(body.service || "passenger");
+
+  // Stops + wait (tolerant input)
+  const stops = normalizeStops(body); // array of stop addresses
+  const wait_min = parseDurationMin(body.wait_min ?? body.wait_minutes ?? body.waiting_min ?? body.wait, 0);
+  const stop_count = stops.length;
+
+  // ✅ Business detection (NEW)
+  const biz = normalizeBusiness(body);
+  const business_detected = !!biz.vat_number;
+  const invoice_requested = business_detected ? true : !!biz.invoice_requested;
+  const fromPoint = readExplicitCoordinatePair(body, "from");
+  const toPoint = readExplicitCoordinatePair(body, "to");
+
+  // Route WITH waypoints + per-leg breakdown
+  const routeOut = await routeFromTextsWithStopsDetailed({
+    fromText: body.from,
+    toText: body.to,
+    fromPoint,
+    toPoint,
+    stopsTexts: stops,
+    token: env.MAPBOX_TOKEN
+  });
+  const route_source =
+    routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
+      ? "coordinates"
+      : (routeOut.fromSource === "coordinates" || routeOut.toSource === "coordinates")
+        ? "mixed"
+        : "text";
+
+  const route = routeOut.route;
+  const legs = routeOut.legs || [];
+
+  const distance_km = round1(route.distance / 1000);
+  const duration_route_min = Math.round(route.duration / 60);
+
+  const mainWhen = normalizeWhen(body.date, body.time);
+  const quoteReturnRequested = _fixedFareReturnRequested(body);
+  const quoteExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(body, quoteScope);
+  const quoteFixedFareEligible =
+    _isAirportFixedFareEligiblePayload(body) &&
+    quoteExplicitScopeAllowed &&
+    quoteReturnRequested !== true;
+  let fixedFareQuoteResult = {
+    matched: false,
+    pricing_source: "route_calc",
+    fixed_fare_applied: false,
+    fixed_fare_rule_id: null,
+    pricing: null,
+  };
+  if (quoteFixedFareEligible) {
+    fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
+      pricingProfile,
+      fallbackVatRate: vat_rate,
+      returnRequested: quoteReturnRequested,
+    });
+  }
+  const quoteUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
+  const quotePricingSource = quoteUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+  const quoteFixedFareApplied = quoteUsesFixedFare;
+  const quoteFixedFareRuleId = quoteUsesFixedFare
+    ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
+    : null;
+
+  // Pricing: server truth
+  const mainPricing = quoteUsesFixedFare
+    ? fixedFareQuoteResult.pricing
+    : calcPrice({
+      distance_km,
+      duration_min: duration_route_min,
+      tier,
+      service,
+      when: mainWhen,
+      time_str: body.time,
+      pax,
+      bags,
+      vat_rate,
+      stop_count,
+      wait_min,
+      pricing_profile: pricingProfile,
+      apply_return_fee: false,
+    });
+
+  // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
+  let returnQuote = null;
+  try {
+    if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
+      const rf = body.return_from || body.to;
+      const rt = body.return_to || body.from;
+      if (!rf || !rt) throw new Error("Missing return_from/return_to");
+      const retRouteOut = await routeFromTextsWithStopsDetailed({
+        fromText: rf,
+        toText: rt,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN
+      });
+
+      const retRoute = retRouteOut.route;
+      const retDistance_km = round1(retRoute.distance / 1000);
+      const retDuration_min = Math.round(retRoute.duration / 60);
+      const retWhen = normalizeWhen(body.return_date, body.return_time);
+
+      const retPricing = calcPrice({
+        distance_km: retDistance_km,
+        duration_min: retDuration_min,
+        tier,
+        service,
+        when: retWhen,
+        time_str: body.return_time,
+        pax,
+        bags,
+        vat_rate,
+        stop_count: 0,
+        wait_min: 0,
+        pricing_profile: pricingProfile,
+        apply_return_fee: true,
+      });
+
+      returnQuote = {
+        distance_km: retDistance_km,
+        duration_min: retDuration_min,
+        price_ex_vat: retPricing.price_ex_vat,
+        price_vat: retPricing.price_vat,
+        price_incl_vat: retPricing.price_incl_vat,
+        note: retPricing.note
+      };
+    }
+  } catch (e) {
+    // If return quote fails, we keep main quote and simply omit returnQuote
+    returnQuote = null;
+  }
+  function moneyNumber(value) {
+    const n = Number(String(value ?? "0").replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  const mainEx = moneyNumber(mainPricing.price_ex_vat);
+  const mainVat = moneyNumber(mainPricing.price_vat);
+  const mainIncl = moneyNumber(mainPricing.price_incl_vat);
+  const retEx = returnQuote ? moneyNumber(returnQuote.price_ex_vat) : 0;
+  const retVat = returnQuote ? moneyNumber(returnQuote.price_vat) : 0;
+  const retIncl = returnQuote ? moneyNumber(returnQuote.price_incl_vat) : 0;
+
+  return {
+    status: 200,
+    out: {
+      ok: true,
+      inputs: {
+        from: body.from,
+        to: body.to,
+        date: body.date,
+        time: body.time,
+        tier,
+        service,
+        pax,
+        bags,
+        vat_rate,
+        stop_count,
+        wait_min,
+        stops,
+        route_source,
+
+        // ✅ business fields echoed back
+        business_detected,
+        invoice_requested,
+        company_name: biz.company_name || "",
+        vat_number: biz.vat_number || ""
+      },
+      distance_km,
+      duration_min: duration_route_min,
+      legs,
+
+      price_ex_vat: mainPricing.price_ex_vat,
+      price_vat: mainPricing.price_vat,
+      price_incl_vat: mainPricing.price_incl_vat,
+      note: mainPricing.note,
+      pricing_profile: pricingProfile,
+      pricing_source: quotePricingSource,
+      fixed_fare_applied: quoteFixedFareApplied,
+      fixed_fare_rule_id: quoteFixedFareRuleId,
+
+      // totals (main + optional return)
+      total_price_ex_vat: round2(mainEx + retEx),
+      total_price_vat: round2(mainVat + retVat),
+      total_price_incl_vat: round2(mainIncl + retIncl),
+
+      return: returnQuote,
+      breakdown: mainPricing.breakdown
+    },
+  };
+}
+
+function _readCompanyLinkBodyPhone(body) {
+  return sanitizeTenantString(
+    body?.registered_phone_e164 ?? body?.registeredPhoneE164,
+    40,
+  );
+}
+
+function _readCompanyLinkBodyIdentifierType(body) {
+  return normalizeIdentifierType(body?.identifier_type ?? body?.identifierType);
+}
+
+async function handleAdminCompanyLinkIndexUpsert(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error }, 400);
+  }
+  const country = _normalizeCompanyLinkCountry(body.country);
+  if (!country) {
+    return json({ ok: false, error: "invalid_country" }, 400);
+  }
+  const normalizedIdentifier = normalizeTaxOrRegistrationIdForCountry(
+    _pickTaxOrRegistrationIdAlias(body),
+    country,
+  );
+  if (!normalizedIdentifier) {
+    return json({ ok: false, error: "invalid_tax_or_registration_id" }, 400);
+  }
+  const identifierType = _readCompanyLinkBodyIdentifierType(body);
+  const registeredPhone = _readCompanyLinkBodyPhone(body);
+  if (registeredPhone && !_looksLikeE164PhoneForAdminUpsert(registeredPhone)) {
+    return json({ ok: false, error: "invalid_registered_phone_e164" }, 400);
+  }
+  const linkingEnabled = _coerceLinkingEnabled(
+    body.linking_enabled ?? body.linkingEnabled,
+  );
+  const key = _companyLinkIndexKeyForCode(codeRead.code);
+  const existingRaw = await env.BOOKING_KV.get(key, { type: "json" });
+  const existing = existingRaw && typeof existingRaw === "object" && !Array.isArray(existingRaw)
+    ? existingRaw
+    : null;
+  const nowIso = new Date().toISOString();
+  const record = {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeRead.code,
+    display_name: sanitizeTenantString(
+      body.display_name ?? body.displayName,
+      160,
+    ),
+    country,
+    tax_or_registration_id: normalizedIdentifier,
+    identifier_type: identifierType || normalizeIdentifierType(existing?.identifier_type),
+    registered_phone_e164: registeredPhone || sanitizeTenantString(existing?.registered_phone_e164, 40),
+    linking_enabled: linkingEnabled,
+    updated_at: nowIso,
+    created_or_updated_by: "admin",
+    created_at: sanitizeTenantString(existing?.created_at, 80) || nowIso,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+  return json(
+    {
+      ok: true,
+      company_code: record.company_code,
+      key,
+      linking_enabled: record.linking_enabled === true,
+      has_registered_phone: _looksLikeE164PhoneForAdminUpsert(record.registered_phone_e164),
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyLinkIndexGet(request, url, env) {
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeRead = readAndValidateCompanyLinkCode(null, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error }, 400);
+  }
+  const key = _companyLinkIndexKeyForCode(codeRead.code);
+  const record = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return json({ ok: false, error: "company_link_index_not_found" }, 404);
+  }
+  return json({ ok: true, key, record }, 200);
+}
+
+async function handleAdminCompanyLinkCodeCreate(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error || "invalid_company_code" }, 400);
+  }
+  const companyLinkRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (
+    !companyLinkRecord ||
+    companyLinkRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyLinkRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyLinkRecord.company_id, 80) !== companyId
+  ) {
+    return json({ ok: false, error: "invalid_company_scope_for_code" }, 403);
+  }
+  const ttlSeconds = _normalizeCompanyAdminPairingTtl(
+    body.expires_in_seconds ?? body.expiresInSeconds,
+  );
+  const pairingCode = _generateCompanyAdminPairingCode();
+  const pairingCodeHash = await _sha256Hex(`${codeRead.code}:${pairingCode}`);
+  const challengeId = _companyAdminPairingChallengeId();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + ttlSeconds * 1000).toISOString();
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeRead.code,
+    pairing_code_hash: pairingCodeHash,
+    attempts: 0,
+    max_attempts: COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+  };
+  const challengeKey = _companyAdminPairingChallengeKey(challengeId);
+  const activeKey = _companyAdminPairingActiveKey(codeRead.code);
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: ttlSeconds,
+  });
+  await env.BOOKING_KV.put(
+    activeKey,
+    JSON.stringify({
+      challenge_id: challengeId,
+      company_code: codeRead.code,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+    }),
+    { expirationTtl: ttlSeconds },
+  );
+  return json(
+    {
+      ok: true,
+      company_code: codeRead.code,
+      pairing_code: pairingCode,
+      expires_in_seconds: ttlSeconds,
+      expires_at: expiresAt,
+      challenge_id: challengeId,
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId ?? body.id,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const displayName = _normalizeDriverDisplayName(
+    body.display_name ??
+      body.displayName ??
+      body.driver_name ??
+      body.driverName ??
+      body.full_name ??
+      body.fullName ??
+      body.name,
+  );
+  const employeeNumberInput = _normalizeDriverEmployeeNumber(
+    body.employee_number ?? body.employeeNumber,
+  );
+  const loginCodeInput = _normalizeDriverEmployeeNumber(
+    body.driver_code ??
+      body.driverCode ??
+      body.login_code ??
+      body.loginCode ??
+      body.chauffeur_code ??
+      body.chauffeurCode,
+  );
+  const phone = _normalizeDriverPhoneForAdminUpsert(body.phone);
+  if (phone && !_looksLikeE164PhoneForAdminUpsert(phone)) {
+    return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  const assignedVehicleId = sanitizeTenantString(
+    body.assigned_vehicle_id ?? body.assignedVehicleId,
+    96,
+  );
+  if (assignedVehicleId && !_isSafeCompanyLinkScopePart(assignedVehicleId)) {
+    return json({ ok: false, error: "invalid_assigned_vehicle_id" }, 400);
+  }
+  const isActive = _coerceBoolean(body.is_active ?? body.isActive, true);
+  const driverPhotoUrlInput = _normalizeSafeRemoteMediaRef(
+    body.driver_photo_url ??
+      body.driverPhotoUrl ??
+      body.public_portrait_url ??
+      body.publicPortraitUrl ??
+      body.profile_photo_url ??
+      body.profilePhotoUrl,
+  );
+  const taxiDriverCardNumberInput = sanitizeTenantString(
+    body.taxi_driver_card_number ?? body.taxiDriverCardNumber,
+    120,
+  );
+  const taxiDriverCardExpiryInput = sanitizeTenantString(
+    body.taxi_driver_card_expiry ?? body.taxiDriverCardExpiry,
+    80,
+  );
+  const publicDisplayNameInput = sanitizeTenantString(
+    body.public_display_name ?? body.publicDisplayName,
+    160,
+  );
+  const hasPublicProfileEnabled = Object.prototype.hasOwnProperty.call(body, "public_profile_enabled") ||
+    Object.prototype.hasOwnProperty.call(body, "publicProfileEnabled");
+  const hasPublicPhotoEnabled = Object.prototype.hasOwnProperty.call(body, "public_photo_enabled") ||
+    Object.prototype.hasOwnProperty.call(body, "publicPhotoEnabled");
+  const nowIso = new Date().toISOString();
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const existingDriver = existing?.drivers?.[driverId] || {};
+  const resolvedLoginCode = _normalizeDriverEmployeeNumber(
+    loginCodeInput || employeeNumberInput || existingDriver.driver_code || existingDriver.login_code,
+  );
+  const resolvedEmployeeNumber = _normalizeDriverEmployeeNumber(
+    employeeNumberInput || resolvedLoginCode || existingDriver.employee_number,
+  );
+  const resolvedTaxiDriverCardNumber = sanitizeTenantString(
+    taxiDriverCardNumberInput || existingDriver.taxi_driver_card_number || existingDriver.taxiDriverCardNumber,
+    120,
+  );
+  const resolvedTaxiDriverCardExpiry = sanitizeTenantString(
+    taxiDriverCardExpiryInput || existingDriver.taxi_driver_card_expiry || existingDriver.taxiDriverCardExpiry,
+    80,
+  );
+  const resolvedPublicDisplayName = sanitizeTenantString(
+    publicDisplayNameInput || existingDriver.public_display_name || existingDriver.publicDisplayName,
+    160,
+  );
+  const resolvedPublicProfileEnabled = hasPublicProfileEnabled
+    ? _coerceBoolean(body.public_profile_enabled ?? body.publicProfileEnabled, false)
+    : _coerceBoolean(
+      existingDriver.public_profile_enabled ?? existingDriver.publicProfileEnabled,
+      false,
+    );
+  const resolvedPublicPhotoEnabled = hasPublicPhotoEnabled
+    ? _coerceBoolean(body.public_photo_enabled ?? body.publicPhotoEnabled, false)
+    : _coerceBoolean(
+      existingDriver.public_photo_enabled ?? existingDriver.publicPhotoEnabled,
+      false,
+    );
+  const resolvedDriverPhotoUrl = driverPhotoUrlInput || _normalizeSafeRemoteMediaRef(
+    existingDriver.driver_photo_url ??
+      existingDriver.driverPhotoUrl ??
+      existingDriver.public_portrait_url ??
+      existingDriver.publicPortraitUrl,
+  );
+  const existingHash = sanitizeTenantString(existingDriver.driver_code_hash, 200).toLowerCase();
+  const existingSalt = sanitizeTenantString(existingDriver.driver_code_salt, 120);
+  let nextDriverCodeHash = existingHash;
+  let nextDriverCodeSalt = existingSalt;
+  if (resolvedLoginCode) {
+    nextDriverCodeSalt = _generateDriverLoginSalt();
+    nextDriverCodeHash = (await _sha256Hex(
+      `${nextDriverCodeSalt}:${_normalizeDriverLoginCode(resolvedLoginCode)}`,
+    )).toLowerCase();
+  }
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  nextDrivers[driverId] = {
+    driver_id: driverId,
+    display_name: displayName,
+    employee_number: resolvedEmployeeNumber,
+    employeeNumber: resolvedEmployeeNumber,
+    driver_code: resolvedLoginCode,
+    login_code: resolvedLoginCode,
+    driver_code_hash: nextDriverCodeHash,
+    driver_code_salt: nextDriverCodeSalt,
+    phone,
+    is_active: isActive,
+    assigned_vehicle_id: assignedVehicleId,
+    driver_photo_url: resolvedDriverPhotoUrl,
+    driverPhotoUrl: resolvedDriverPhotoUrl,
+    public_portrait_url: resolvedDriverPhotoUrl,
+    publicPortraitUrl: resolvedDriverPhotoUrl,
+    taxi_driver_card_number: resolvedTaxiDriverCardNumber,
+    taxiDriverCardNumber: resolvedTaxiDriverCardNumber,
+    taxi_driver_card_expiry: resolvedTaxiDriverCardExpiry,
+    taxiDriverCardExpiry: resolvedTaxiDriverCardExpiry,
+    public_profile_enabled: resolvedPublicProfileEnabled,
+    publicProfileEnabled: resolvedPublicProfileEnabled,
+    public_photo_enabled: resolvedPublicPhotoEnabled,
+    publicPhotoEnabled: resolvedPublicPhotoEnabled,
+    public_display_name: resolvedPublicDisplayName,
+    publicDisplayName: resolvedPublicDisplayName,
+    updated_at: nowIso,
+  };
+  const key = await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      is_active: isActive,
+      key,
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyDriversIndexDelete(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (Array.isArray(body.driver_ids) || Array.isArray(body.driverIds)) {
+    return json({ ok: false, error: "bulk_delete_not_supported" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId ?? body.id,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  const deleted = Object.prototype.hasOwnProperty.call(nextDrivers, driverId);
+  if (deleted) {
+    delete nextDrivers[driverId];
+  }
+  const nowIso = new Date().toISOString();
+  await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      deleted,
+    },
+    200,
+  );
+}
+
+async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const codeRead = readAndValidateCompanyLinkCode(body, url);
+  if (!codeRead.ok) {
+    return json({ ok: false, error: codeRead.error || "invalid_company_code" }, 400);
+  }
+  const companyLinkRecord = await loadCompanyLinkRecordByCode(env, codeRead.code);
+  if (
+    !companyLinkRecord ||
+    companyLinkRecord.linking_enabled !== true ||
+    sanitizeTenantString(companyLinkRecord.tenant_id, 80) !== tenantId ||
+    sanitizeTenantString(companyLinkRecord.company_id, 80) !== companyId
+  ) {
+    return json({ ok: false, error: "invalid_company_scope_for_code" }, 403);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const driverIndex = await _loadDriverIndexRecord(env, scope);
+  const driverRecord = driverIndex?.drivers?.[driverId] || null;
+  if (!driverRecord || driverRecord.is_active !== true) {
+    return json({ ok: false, error: "driver_not_found_or_inactive" }, 404);
+  }
+  const ttlSeconds = _normalizeDriverPairingTtl(body.expires_in_seconds ?? body.expiresInSeconds);
+  const pairingCode = _generateDriverPairingCode(6);
+  const pairingCodeHash = await _sha256Hex(`${codeRead.code}:${pairingCode}`);
+  const challengeId = _companyDriverLinkChallengeId();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + ttlSeconds * 1000).toISOString();
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeRead.code,
+    driver_id: driverId,
+    driver_name: sanitizeTenantString(driverRecord.display_name, 160),
+    employee_number: sanitizeTenantString(driverRecord.employee_number, 80),
+    assigned_vehicle_id: sanitizeTenantString(
+      driverRecord.assigned_vehicle_id ?? driverRecord.assignedVehicleId,
+      96,
+    ),
+    pairing_code_hash: pairingCodeHash,
+    attempts: 0,
+    max_attempts: COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+  };
+  const challengeKey = _companyDriverLinkChallengeKey(challengeId);
+  const activeKey = _companyDriverLinkActiveKey(codeRead.code);
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: ttlSeconds,
+  });
+  await env.BOOKING_KV.put(
+    activeKey,
+    JSON.stringify({
+      challenge_id: challengeId,
+      company_code: codeRead.code,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+    }),
+    { expirationTtl: ttlSeconds },
+  );
+  return json(
+    {
+      ok: true,
+      company_code: codeRead.code,
+      driver_id: driverId,
+      pairing_code: pairingCode,
+      expires_in_seconds: ttlSeconds,
+      expires_at: expiresAt,
+      challenge_id: challengeId,
+    },
+    200,
+  );
+}
+
+async function handlePublicCompanyDriverLinkVerify(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const pairingValidation = _validateDriverPairingCode(
+    body.pairing_code ?? body.pairingCode,
+  );
+  if (!pairingValidation.ok) {
+    return json({ ok: false, error: "invalid_pairing_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const activeKey = _companyDriverLinkActiveKey(codeValidation.code);
+  const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
+  const challengeId = sanitizeTenantString(active?.challenge_id ?? active?.challengeId, 120)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!challengeId) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _companyDriverLinkChallengeKey(challengeId);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : COMPANY_DRIVER_LINK_DEFAULT_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  if (
+    sanitizeTenantString(challenge.company_code, 80) !== codeValidation.code ||
+    sanitizeTenantString(challenge.tenant_id, 80) !== sanitizeTenantString(companyRecord.tenant_id, 80) ||
+    sanitizeTenantString(challenge.company_id, 80) !== sanitizeTenantString(companyRecord.company_id, 80)
+  ) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (sanitizeTenantString(challenge.consumed_at, 80)) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (attempts >= maxAttempts) {
+    await env.BOOKING_KV.delete(activeKey);
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedHash = sanitizeTenantString(challenge.pairing_code_hash, 200).toLowerCase();
+  const candidateHash = await _sha256Hex(`${codeValidation.code}:${pairingValidation.code}`);
+  const hashOk = _constantTimeEquals(expectedHash, candidateHash);
+  if (!hashOk) {
+    const nextAttempts = attempts + 1;
+    challenge.attempts = nextAttempts;
+    challenge.updated_at = nowIso;
+    const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+    await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+      expirationTtl: remainingSeconds,
+    });
+    if (nextAttempts >= maxAttempts) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.last_device_label = sanitizeTenantString(body.device_label ?? body.deviceLabel, 120);
+  challenge.last_device_type = sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase();
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  await env.BOOKING_KV.delete(activeKey);
+  return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso), 200);
+}
+
+async function handlePublicDriverLogin(body, env) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return _publicDriverLoginFail("invalid_body");
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const companyCode = sanitizeTenantString(
+    body.company_code ?? body.companyCode ?? body.code,
+    80,
+  );
+  const driverCode = sanitizeTenantString(
+    body.driver_code ??
+      body.driverCode ??
+      body.login_code ??
+      body.loginCode ??
+      body.employee_number ??
+      body.employeeNumber,
+    80,
+  );
+  console.log(
+    `[PUBLIC_DRIVER_LOGIN][REQ] company=${_maskPublicDriverLoginValue(companyCode)} driver=${_maskPublicDriverLoginValue(driverCode)}`,
+  );
+  if (!companyCode || !driverCode) {
+    return _publicDriverLoginFail("missing_fields");
+  }
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!codeValidation.ok) {
+    return _publicDriverLoginFail("invalid_company_code");
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return _publicDriverLoginFail("verification_failed");
+  }
+  const scope = {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    return _publicDriverLoginFail("invalid_company_scope");
+  }
+  const driverIndex = await _loadDriverIndexRecord(env, scope);
+  const entries = Object.values(driverIndex?.drivers || {});
+  let match = null;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    if (entry.is_active !== true) continue;
+    if (await _driverRecordMatchesLoginCode(entry, driverCode)) {
+      match = entry;
+      break;
+    }
+  }
+  if (!match) {
+    return _publicDriverLoginFail("verification_failed");
+  }
+  const driverId = sanitizeTenantString(
+    match.driver_id ?? match.driverId ?? match.id,
+    96,
+  );
+  if (!driverId) {
+    return _publicDriverLoginFail("driver_id_missing");
+  }
+  const driverName = sanitizeTenantString(
+    match.display_name ?? match.displayName ?? match.driver_name ?? match.driverName,
+    160,
+  );
+  const driverPhotoUrl = _normalizeSafeRemoteMediaRef(
+    match.driver_photo_url ??
+      match.driverPhotoUrl ??
+      match.public_portrait_url ??
+      match.publicPortraitUrl ??
+      match.profile_photo_url ??
+      match.profilePhotoUrl,
+  );
+  let assignedVehicleId = sanitizeTenantString(
+    match.assigned_vehicle_id ??
+      match.assignedVehicleId ??
+      match.vehicle_id ??
+      match.vehicleId ??
+      match.assigned_vehicle?.vehicle_id ??
+      match.assigned_vehicle?.id,
+    96,
+  );
+  let vehiclePhotoUrl = "";
+  if (!assignedVehicleId) {
+    try {
+      const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+      const fleetRows = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+      for (const row of fleetRows) {
+        if (!row || typeof row !== "object") continue;
+        const vehicleId = sanitizeTenantString(
+          row.vehicle_id ?? row.vehicleId ?? row.id,
+          96,
+        );
+        if (!vehicleId) continue;
+        const assignedDriverId = sanitizeTenantString(
+          row.assigned_driver?.driver_id ??
+            row.assigned_driver?.driverId ??
+            row.assigned_driver?.id ??
+            row.assignedDriver?.driver_id ??
+            row.assignedDriver?.driverId ??
+            row.assignedDriver?.id ??
+            row.driver_id ??
+            row.driverId ??
+            row.driver?.driver_id ??
+            row.driver?.driverId ??
+            row.driver?.id,
+          96,
+        );
+        if (assignedDriverId && assignedDriverId === driverId) {
+          assignedVehicleId = vehicleId;
+          vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+            row.vehicle_photo_url ??
+              row.vehiclePhotoUrl ??
+              row.public_photo_url ??
+              row.publicPhotoUrl ??
+              row.photo_url ??
+              row.photoUrl ??
+              row.media?.photo_url ??
+              row.media?.photoUrl,
+          );
+          break;
+        }
+      }
+    } catch (_) {
+      // best-effort only
+    }
+  }
+  if (!vehiclePhotoUrl && assignedVehicleId) {
+    try {
+      const fleetRead = await _loadFleetInventoryRawForScope(env, scope);
+      const fleetRows = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+      for (const row of fleetRows) {
+        if (!row || typeof row !== "object") continue;
+        const rowVehicleId = sanitizeTenantString(row.vehicle_id ?? row.vehicleId ?? row.id, 96);
+        if (!rowVehicleId || rowVehicleId !== assignedVehicleId) continue;
+        vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+          row.vehicle_photo_url ??
+            row.vehiclePhotoUrl ??
+            row.public_photo_url ??
+            row.publicPhotoUrl ??
+            row.photo_url ??
+            row.photoUrl ??
+            row.media?.photo_url ??
+            row.media?.photoUrl,
+        );
+        break;
+      }
+    } catch (_) {
+      // best-effort only
+    }
+  }
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ?? companyRecord.company_name ?? companyRecord.companyName,
+    160,
+  );
+  let companyLogoUrl = "";
+  try {
+    const businessProfile = await loadBusinessProfile(env, scope, {
+      allowLegacyFallback: false,
+    });
+    companyLogoUrl = _normalizeSafeRemoteMediaRef(
+      businessProfile?.publicLogoUrl ??
+        businessProfile?.public_logo_url ??
+        businessProfile?.logoUrl ??
+        businessProfile?.logo_url,
+    );
+  } catch (_) {
+    companyLogoUrl = "";
+  }
+  const sessionToken = _generateOpaqueToken(32);
+  const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
+  const sessionKey = _publicDriverSessionKey(sessionTokenHash);
+  if (!sessionKey) {
+    return _publicDriverLoginFail("session_key_invalid");
+  }
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + PUBLIC_DRIVER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    sessionKey,
+    JSON.stringify({
+      role: "driver",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      driver_id: driverId,
+      driver_name: driverName,
+      company_display_name: companyDisplayName,
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      issued_at: issuedAt,
+      expires_at: expiresAt,
+      link_method: "public_driver_login",
+    }),
+    { expirationTtl: PUBLIC_DRIVER_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[DRIVER_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
+  );
+  console.log(
+    `[PUBLIC_DRIVER_LOGIN][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      role: "driver",
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      driver_id: driverId,
+      driver_name: driverName,
+      company_display_name: companyDisplayName,
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      ...(driverPhotoUrl
+        ? {
+            driver_photo_url: driverPhotoUrl,
+            driverPhotoUrl: driverPhotoUrl,
+          }
+        : {}),
+      ...(companyLogoUrl
+        ? {
+            company_logo_url: companyLogoUrl,
+            companyLogoUrl: companyLogoUrl,
+          }
+        : {}),
+      ...(vehiclePhotoUrl
+        ? {
+            vehicle_photo_url: vehiclePhotoUrl,
+            vehiclePhotoUrl: vehiclePhotoUrl,
+          }
+        : {}),
+      driver_session_token: sessionToken,
+      driverSessionToken: sessionToken,
+      expires_in: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
+      expiresIn: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
+    },
+    200,
+  );
+}
+
+async function handleCompanyBootstrap(request, env) {
+  const session = await _loadCompanySessionFromRequest(request, env);
+  if (!session) {
+    console.log("[COMPANY_BOOTSTRAP][DENY] reason=unauthorized");
+    return _companyAuthFail();
+  }
+  const scope = normalizeFleetTenantScope({
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  });
+  if (!scope?.tenant_id || !scope?.company_id) {
+    console.log("[COMPANY_BOOTSTRAP][DENY] reason=invalid_scope");
+    return _companyAuthFail();
+  }
+  console.log(
+    `[COMPANY_BOOTSTRAP][REQ] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)}`,
+  );
+
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const taxProfile = await loadTaxProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const pricingProfile = await _loadTenantPricingProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const subscriptionProfile = await loadSubscriptionProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+  const communicationTemplates = await loadCommunicationTemplates(env, scope, null, {
+    allowTenantLegacyFallback: false,
+  });
+
+  const fleetRead = await _loadFleetInventoryRawForScope(env, scope, {
+    allowLegacyFallback: false,
+  });
+  const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+  const vehicles = [];
+  for (const row of vehiclesRaw) {
+    if (!row || typeof row !== "object") continue;
+    const normalized = _normalizeVehicleEntry(row, { scope });
+    if (!normalized) continue;
+    const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+      normalized.vehicle_photo_url ??
+        normalized.vehiclePhotoUrl ??
+        normalized.public_photo_url ??
+        normalized.publicPhotoUrl ??
+        row.vehicle_photo_url ??
+        row.vehiclePhotoUrl ??
+        row.public_photo_url ??
+        row.publicPhotoUrl ??
+        row.photo_url ??
+        row.photoUrl ??
+        row.media?.photo_url ??
+        row.media?.photoUrl,
+    );
+    const publicPhotoUrl = _normalizeSafeRemoteMediaRef(
+      normalized.public_photo_url ??
+        normalized.publicPhotoUrl ??
+        vehiclePhotoUrl,
+    );
+    const primaryPhotoRef = _normalizeVehiclePhotoRef(
+      normalized.primary_photo_ref ??
+        normalized.primaryPhotoRef ??
+        row.primary_photo_ref ??
+        row.primaryPhotoRef,
+    );
+    const galleryPhotoRefs = _normalizeVehiclePhotoRefList(
+      normalized.gallery_photo_refs ??
+        normalized.galleryPhotoRefs ??
+        row.gallery_photo_refs ??
+        row.galleryPhotoRefs ??
+        [],
+    );
+    vehicles.push({
+      ...normalized,
+      ...(publicPhotoUrl
+        ? {
+            public_photo_url: publicPhotoUrl,
+            publicPhotoUrl: publicPhotoUrl,
+          }
+        : {}),
+      ...(vehiclePhotoUrl
+        ? {
+            vehicle_photo_url: vehiclePhotoUrl,
+            vehiclePhotoUrl: vehiclePhotoUrl,
+          }
+        : {}),
+      ...(primaryPhotoRef
+        ? {
+            primary_photo_ref: primaryPhotoRef,
+            primaryPhotoRef: primaryPhotoRef,
+          }
+        : {}),
+      ...(galleryPhotoRefs.length > 0
+        ? {
+            gallery_photo_refs: galleryPhotoRefs,
+            galleryPhotoRefs: galleryPhotoRefs,
+          }
+        : {}),
+    });
+  }
+
+  const driverIndex = await _loadDriverIndexRecord(env, scope);
+  const driverEntries = Object.values(driverIndex?.drivers || {});
+  const drivers = [];
+  for (const entry of driverEntries) {
+    if (!entry || typeof entry !== "object") continue;
+    const driverId = sanitizeTenantString(entry.driver_id ?? entry.driverId ?? entry.id, 96);
+    if (!driverId) continue;
+    const displayName = sanitizeTenantString(
+      entry.display_name ?? entry.displayName ?? entry.driver_name ?? entry.driverName,
+      160,
+    );
+    const publicDisplayName = sanitizeTenantString(
+      entry.public_display_name ?? entry.publicDisplayName,
+      160,
+    );
+    const employeeNumber = sanitizeTenantString(
+      entry.employee_number ?? entry.employeeNumber,
+      80,
+    );
+    const phone = sanitizeTenantString(entry.phone, 64);
+    const assignedVehicleId = sanitizeTenantString(
+      entry.assigned_vehicle_id ?? entry.assignedVehicleId,
+      96,
+    );
+    const taxiDriverCardNumber = sanitizeTenantString(
+      entry.taxi_driver_card_number ?? entry.taxiDriverCardNumber,
+      120,
+    );
+    const taxiDriverCardExpiry = sanitizeTenantString(
+      entry.taxi_driver_card_expiry ?? entry.taxiDriverCardExpiry,
+      80,
+    );
+    const publicProfileEnabled = _coerceBoolean(
+      entry.public_profile_enabled ?? entry.publicProfileEnabled,
+      false,
+    );
+    const publicPhotoEnabled = _coerceBoolean(
+      entry.public_photo_enabled ?? entry.publicPhotoEnabled,
+      false,
+    );
+    const driverPhotoUrl = _normalizeSafeRemoteMediaRef(
+      entry.driver_photo_url ??
+        entry.driverPhotoUrl ??
+        entry.public_portrait_url ??
+        entry.publicPortraitUrl ??
+        entry.profile_photo_url ??
+        entry.profilePhotoUrl,
+    );
+    const rawLoginCode = sanitizeTenantString(
+      entry.driver_code ??
+        entry.driverCode ??
+        entry.login_code ??
+        entry.loginCode ??
+        entry.employee_number ??
+        entry.employeeNumber ??
+        entry.chauffeur_code ??
+        entry.chauffeurCode,
+      80,
+    );
+    const hasLoginCode =
+      rawLoginCode.length > 0 ||
+      sanitizeTenantString(entry.driver_code_hash ?? entry.driverCodeHash, 200).length > 0;
+    const driverCodeLast4 = rawLoginCode.length >= 4 ? rawLoginCode.slice(-4) : "";
+    drivers.push({
+      driver_id: driverId,
+      driverId: driverId,
+      tenant_id: scope.tenant_id,
+      tenantId: scope.tenant_id,
+      company_id: scope.company_id,
+      companyId: scope.company_id,
+      display_name: displayName,
+      displayName: displayName,
+      ...(publicDisplayName
+        ? {
+            public_display_name: publicDisplayName,
+            publicDisplayName: publicDisplayName,
+          }
+        : {}),
+      ...(employeeNumber
+        ? {
+            employee_number: employeeNumber,
+            employeeNumber: employeeNumber,
+          }
+        : {}),
+      ...(phone ? { phone } : {}),
+      is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      isActive: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      public_profile_enabled: publicProfileEnabled,
+      publicProfileEnabled: publicProfileEnabled,
+      public_photo_enabled: publicPhotoEnabled,
+      publicPhotoEnabled: publicPhotoEnabled,
+      ...(assignedVehicleId
+        ? {
+            assigned_vehicle_id: assignedVehicleId,
+            assignedVehicleId: assignedVehicleId,
+          }
+        : {}),
+      ...(taxiDriverCardNumber
+        ? {
+            taxi_driver_card_number: taxiDriverCardNumber,
+            taxiDriverCardNumber: taxiDriverCardNumber,
+          }
+        : {}),
+      ...(taxiDriverCardExpiry
+        ? {
+            taxi_driver_card_expiry: taxiDriverCardExpiry,
+            taxiDriverCardExpiry: taxiDriverCardExpiry,
+          }
+        : {}),
+      ...(driverPhotoUrl
+        ? {
+            driver_photo_url: driverPhotoUrl,
+            driverPhotoUrl: driverPhotoUrl,
+            public_portrait_url: driverPhotoUrl,
+            publicPortraitUrl: driverPhotoUrl,
+          }
+        : {}),
+      has_login_code: hasLoginCode,
+      hasLoginCode: hasLoginCode,
+      ...(driverCodeLast4
+        ? {
+            driver_code_last4: driverCodeLast4,
+            driverCodeLast4: driverCodeLast4,
+          }
+        : {}),
+    });
+  }
+
+  const sessionCompanyCode = sanitizeTenantString(session.company_code, 80);
+  let companyCode = sessionCompanyCode;
+  let companyPublicSlug = "";
+  let companyDisplayCode = "";
+  try {
+    const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+      session_company_code: session.company_code,
+      business_profile: businessProfile,
+      profile: businessProfile,
+      country: businessProfile?.country,
+      source: "auto_generated",
+    });
+    if (ensuredCode?.ok) {
+      companyCode = sanitizeTenantString(ensuredCode.company_code, 80) || companyCode;
+      companyPublicSlug = sanitizeTenantString(
+        ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+        80,
+      );
+      companyDisplayCode = sanitizeTenantString(
+        ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+        240,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[COMPANY_BOOTSTRAP][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_ensure_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+    );
+  }
+  if (!companyCode) {
+    companyCode = sessionCompanyCode;
+  }
+  if (
+    companyCode &&
+    sessionCompanyCode &&
+    companyCode !== sessionCompanyCode &&
+    session?.key &&
+    env?.BOOKING_KV
+  ) {
+    try {
+      const expiresAtMs = Date.parse(sanitizeTenantString(session.expires_at, 80));
+      const ttlSeconds = Number.isFinite(expiresAtMs)
+        ? Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000))
+        : null;
+      const nextSessionRecord = {
+        role: "company_admin",
+        tenant_id: sanitizeTenantString(session.tenant_id, 80),
+        company_id: sanitizeTenantString(session.company_id, 80),
+        company_code: companyCode,
+        companyCode: companyCode,
+        company_display_name: sanitizeTenantString(session.company_display_name, 160),
+        expires_at: sanitizeTenantString(session.expires_at, 80),
+      };
+      await env.BOOKING_KV.put(
+        session.key,
+        JSON.stringify(nextSessionRecord),
+        ttlSeconds ? { expirationTtl: ttlSeconds } : undefined,
+      );
+    } catch (_) {}
+  }
+  if (companyCode && (!companyPublicSlug || !companyDisplayCode)) {
+    try {
+      const scopeRead = await _readCompanyLinkScopeIndexRecord(env, scope);
+      if (scopeRead.record) {
+        const indexedCode = _readAnyCompanyCodeAlias(scopeRead.record);
+        if (indexedCode && indexedCode === companyCode) {
+          if (!companyPublicSlug) {
+            companyPublicSlug = sanitizeTenantString(
+              scopeRead.record.public_company_slug ?? scopeRead.record.publicCompanySlug,
+              80,
+            );
+          }
+          if (!companyDisplayCode) {
+            companyDisplayCode = sanitizeTenantString(
+              scopeRead.record.public_display_code ?? scopeRead.record.publicDisplayCode,
+              240,
+            );
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  if (companyCode && !companyPublicSlug) {
+    const displayNameHint = _resolvePublicCompanyDisplayName(businessProfile);
+    companyPublicSlug = _normalizePublicCompanySlug(displayNameHint);
+  }
+  if (companyCode && !companyDisplayCode) {
+    companyDisplayCode = _publicDisplayCodeFromParts(companyCode, companyPublicSlug);
+  }
+  const companyDisplayName = sanitizeTenantString(
+    session.company_display_name ??
+      businessProfile?.companyName ??
+      businessProfile?.legalName,
+    160,
+  );
+  const companyLogoUrl = _normalizeSafeRemoteMediaRef(
+    businessProfile?.publicLogoUrl ??
+      businessProfile?.public_logo_url ??
+      businessProfile?.logoUrl ??
+      businessProfile?.logo_url,
+  );
+  console.log(
+    `[COMPANY_BOOTSTRAP][RES] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} vehicles=${vehicles.length} drivers=${drivers.length}`,
+  );
+  return json(
+    {
+      ok: true,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      ...(companyCode
+        ? {
+            company_code: companyCode,
+            companyCode: companyCode,
+            public_company_code: companyCode,
+            publicCompanyCode: companyCode,
+            ...(companyPublicSlug
+              ? {
+                  public_company_slug: companyPublicSlug,
+                  publicCompanySlug: companyPublicSlug,
+                }
+              : {}),
+            ...(companyDisplayCode
+              ? {
+                  public_display_code: companyDisplayCode,
+                  publicDisplayCode: companyDisplayCode,
+                }
+              : {}),
+          }
+        : {}),
+      company: {
+        display_name: companyDisplayName,
+        ...(companyCode
+          ? {
+              company_code: companyCode,
+              companyCode: companyCode,
+              public_company_code: companyCode,
+              publicCompanyCode: companyCode,
+              ...(companyPublicSlug
+                ? {
+                    public_company_slug: companyPublicSlug,
+                    publicCompanySlug: companyPublicSlug,
+                  }
+                : {}),
+              ...(companyDisplayCode
+                ? {
+                    public_display_code: companyDisplayCode,
+                    publicDisplayCode: companyDisplayCode,
+                  }
+                : {}),
+            }
+          : {}),
+      },
+      business_profile: businessProfile,
+      tax_profile: taxProfile,
+      pricing_profile: pricingProfile,
+      subscription_profile: subscriptionProfile,
+      communication_templates: communicationTemplates,
+      vehicles,
+      drivers,
+      media: {
+        ...(companyLogoUrl
+          ? {
+              company_logo_url: companyLogoUrl,
+              companyLogoUrl: companyLogoUrl,
+            }
+          : {}),
+      },
+    },
+    200,
+  );
+}
+
 function pickFirstPublicValue(...values) {
   for (const value of values) {
     const candidate = sanitizeTenantString(value, 240);
@@ -1795,77 +8512,1009 @@ function publicPreviewCopy(lang) {
   const dictionary = {
     nl: {
       pageTitle: "Publieke boekingspagina",
-      heading: "Online boeken wordt binnenkort beschikbaar.",
+      heading: "Boek uw rit online",
       description:
-        "Deze publieke boekingspagina is voorbereid voor websiteboekingen, QR-codes en sociale media.",
-      cta: "Boeking binnenkort beschikbaar",
+        "Gebruik deze pagina om rechtstreeks een rit aan te vragen bij dit bedrijf.",
+      backToHome: "Terug naar startpagina",
+      calculatorChip: "Fluxidi calculator",
+      calculatorTitle: "Ritprijs berekenen",
+      calculatorSubtitle: "Bereken en boek ritten met een premium app-ervaring.",
+      cardRouteTitle: "Van → Naar",
+      cardCustomerTitle: "Klantgegevens",
+      cardServiceTitle: "Service",
+      cta: "Boekingsformulier volgt binnenkort",
+      formTitle: "Ritgegevens",
+      formSubtitle: "Vul uw gegevens in en bereken direct de prijs.",
+      fieldFrom: "Vertrekadres",
+      fieldTo: "Bestemmingsadres",
+      fieldPickupDate: "Ophaaldatum",
+      fieldPickupTime: "Ophaaltijd",
+      fieldReturnEnabled: "Retourrit",
+      fieldReturnDate: "Retourdatum",
+      fieldReturnTime: "Retouruur",
+      missingReturnDateTime: "Vul retourdatum en retouruur in.",
+      quickToday: "Vandaag",
+      quickTomorrow: "Morgen",
+      quickNextTime: "+30 min",
+      fieldName: "Uw naam",
+      fieldPhone: "Telefoonnummer",
+      fieldEmail: "E-mail (optioneel)",
+      fieldPax: "Passagiers",
+      fieldBags: "Bagage",
+      fieldNotes: "Opmerkingen (optioneel)",
+      fieldService: "Dienst",
+      servicePassenger: "Personenvervoer",
+      serviceAirport: "Luchthavenvervoer",
+      serviceBusiness: "Zakelijk vervoer",
+      serviceEvent: "Event vervoer",
+      serviceHourly: "Uurservice",
+      serviceCare: "Zorgvervoer",
+      serviceCourier: "Koerier",
+      fieldTier: "Categorie",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      premiumOptionsTitle: "Premium opties",
+      premiumOptionsHint: "Beschikbaar met Premium",
+      premiumOptionsRequired: "Kies minstens één Premium-optie.",
+      premiumOptionDrinkService: "Drankservice",
+      premiumOptionWorkTable: "Werktafel",
+      fieldWaitMin: "Wachttijd",
+      waitNone: "Geen wachttijd",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Tussenstop (optioneel)",
+      stopsDirect: "0 - rechtstreeks",
+      stepperMinusAria: "Verlaag waarde",
+      stepperPlusAria: "Verhoog waarde",
+      quoteButton: "Bereken mijn ritprijs",
+      bookButton: "Boeking aanvragen",
+      resetButton: "Nieuwe quote",
+      quoteLoading: "Prijs wordt berekend...",
+      quoteSuccess: "Prijsberekening voltooid. U kunt nu de boeking aanvragen.",
+      quoteError: "Kon prijs niet berekenen. Controleer uw gegevens en probeer opnieuw.",
+      bookingLoading: "Boeking wordt verwerkt...",
+      bookingSuccess: "Boeking succesvol aangevraagd.",
+      bookingError: "Boeking kon niet worden aangemaakt. Probeer opnieuw.",
+      estimatedPrice: "Geschatte prijs",
+      distance: "Afstand",
+      duration: "Reisduur",
+      offerDetailsTitle: "Offertedetails",
+      offerRoute: "Route",
+      offerDateTime: "Datum en tijd",
+      offerServiceCategory: "Service / categorie",
+      offerPassengersBaggage: "Passagiers / bagage",
+      offerSelectedExtras: "Geselecteerde extra's",
+      offerPriceBreakdown: "Prijsopbouw",
+      offerReturnTrip: "Retour",
+      offerReturnDateTime: "Retourdatum en -uur",
+      offerExclVat: "Excl. btw",
+      offerVat: "Btw",
+      offerInclVat: "Incl. btw",
+      offerTotalPrice: "Totaalprijs",
+      offerMainTrip: "Heenrit",
+      offerReturnSegment: "Terugrit",
+      offerNotAvailable: "-",
+      offerYes: "Ja",
+      offerNo: "Nee",
+      offerUnknownLabel: "Overige kosten",
+      offerBreakdownStartFee: "Starttarief",
+      offerBreakdownDistanceCost: "Afstandskosten",
+      offerBreakdownTimeCost: "Tijdskosten",
+      offerBreakdownWaiting: "Wachttijd",
+      offerBreakdownReturnFee: "Retourtoeslag",
+      offerBreakdownFuelSurcharge: "Brandstoftoeslag",
+      offerBreakdownBags: "Bagage",
+      offerBreakdownTierFee: "Categorie",
+      offerReturnDistance: "Afstand",
+      offerReturnDuration: "Reistijd",
+      bookingReference: "Boekingsreferentie",
+      requiredFieldsMissing: "Vul alle verplichte velden in.",
+      invalidPickupDateTime: "Ongeldige ophaaldatum of -tijd.",
+      quoteFirst: "Bereken eerst een prijs voordat u boekt.",
+      unavailableForBooking: "Deze pagina kan momenteel geen boekingen verwerken.",
+      suggestionUnavailable: "Adres-suggesties zijn momenteel niet beschikbaar.",
+      suggestionNoResults: "Geen suggesties gevonden.",
+      useCurrentLocation: "Gebruik huidige locatie",
+      locating: "Locatie ophalen...",
+      locationPermissionDenied: "Locatietoegang geweigerd.",
+      locationUnavailable: "Locatie niet beschikbaar.",
+      locationFound: "Locatie gevonden.",
+      quoteChangedRecalculate: "Offerte gewijzigd. Bereken opnieuw.",
+      poweredByFluxidi: "Aangedreven door Fluxidi",
+      codeLabel: "Fluxidi-code",
       contactTitle: "Publiek contact",
       email: "E-mail",
       phone: "Telefoon",
       website: "Website",
+      unavailable: "Deze boekingspagina is niet beschikbaar.",
     },
     en: {
       pageTitle: "Public booking page",
-      heading: "Online booking will be available soon.",
+      heading: "Book your ride online",
       description:
-        "This public booking page is prepared for website bookings, QR codes and social media.",
-      cta: "Booking coming soon",
+        "Use this page to request a ride directly with this company.",
+      backToHome: "Back to homepage",
+      calculatorChip: "Fluxidi calculator",
+      calculatorTitle: "Calculate ride price",
+      calculatorSubtitle: "Calculate and book rides with a premium app experience.",
+      cardRouteTitle: "From → To",
+      cardCustomerTitle: "Customer details",
+      cardServiceTitle: "Service",
+      cta: "Booking form coming soon",
+      formTitle: "Trip details",
+      formSubtitle: "Enter your trip details and calculate your price instantly.",
+      fieldFrom: "Pickup address",
+      fieldTo: "Destination address",
+      fieldPickupDate: "Pickup date",
+      fieldPickupTime: "Pickup time",
+      fieldReturnEnabled: "Return trip",
+      fieldReturnDate: "Return date",
+      fieldReturnTime: "Return time",
+      missingReturnDateTime: "Enter return date and return time.",
+      quickToday: "Today",
+      quickTomorrow: "Tomorrow",
+      quickNextTime: "+30 min",
+      fieldName: "Your name",
+      fieldPhone: "Phone number",
+      fieldEmail: "Email (optional)",
+      fieldPax: "Passengers",
+      fieldBags: "Luggage",
+      fieldNotes: "Notes (optional)",
+      fieldService: "Service",
+      servicePassenger: "Passenger transport",
+      serviceAirport: "Airport transfer",
+      serviceBusiness: "Business transport",
+      serviceEvent: "Event transport",
+      serviceHourly: "Hourly service",
+      serviceCare: "Care transport",
+      serviceCourier: "Courier",
+      fieldTier: "Category",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      premiumOptionsTitle: "Premium options",
+      premiumOptionsHint: "Available with Premium",
+      premiumOptionsRequired: "Choose at least one Premium option.",
+      premiumOptionDrinkService: "Drink service",
+      premiumOptionWorkTable: "Work table",
+      fieldWaitMin: "Waiting time",
+      waitNone: "No waiting",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Intermediate stop (optional)",
+      stopsDirect: "0 - direct",
+      stepperMinusAria: "Decrease value",
+      stepperPlusAria: "Increase value",
+      quoteButton: "Calculate my ride price",
+      bookButton: "Request booking",
+      resetButton: "New quote",
+      quoteLoading: "Calculating price...",
+      quoteSuccess: "Price calculated. You can now request your booking.",
+      quoteError: "Could not calculate the price. Please check your input and try again.",
+      bookingLoading: "Submitting booking...",
+      bookingSuccess: "Booking request submitted successfully.",
+      bookingError: "Could not create booking. Please try again.",
+      estimatedPrice: "Estimated price",
+      distance: "Distance",
+      duration: "Duration",
+      offerDetailsTitle: "Quote details",
+      offerRoute: "Route",
+      offerDateTime: "Date and time",
+      offerServiceCategory: "Service / category",
+      offerPassengersBaggage: "Passengers / baggage",
+      offerSelectedExtras: "Selected extras",
+      offerPriceBreakdown: "Price breakdown",
+      offerReturnTrip: "Return",
+      offerReturnDateTime: "Return date and time",
+      offerExclVat: "Excl. VAT",
+      offerVat: "VAT",
+      offerInclVat: "Incl. VAT",
+      offerTotalPrice: "Total price",
+      offerMainTrip: "Outbound trip",
+      offerReturnSegment: "Return trip",
+      offerNotAvailable: "-",
+      offerYes: "Yes",
+      offerNo: "No",
+      offerUnknownLabel: "Other costs",
+      offerBreakdownStartFee: "Start fee",
+      offerBreakdownDistanceCost: "Distance cost",
+      offerBreakdownTimeCost: "Time cost",
+      offerBreakdownWaiting: "Waiting time",
+      offerBreakdownReturnFee: "Return surcharge",
+      offerBreakdownFuelSurcharge: "Fuel surcharge",
+      offerBreakdownBags: "Luggage",
+      offerBreakdownTierFee: "Category",
+      offerReturnDistance: "Distance",
+      offerReturnDuration: "Duration",
+      bookingReference: "Booking reference",
+      requiredFieldsMissing: "Please fill in all required fields.",
+      invalidPickupDateTime: "Invalid pickup date or time.",
+      quoteFirst: "Calculate a quote before requesting a booking.",
+      unavailableForBooking: "This page is currently unavailable for bookings.",
+      suggestionUnavailable: "Address suggestions are currently unavailable.",
+      suggestionNoResults: "No suggestions found.",
+      useCurrentLocation: "Use current location",
+      locating: "Locating...",
+      locationPermissionDenied: "Location permission denied.",
+      locationUnavailable: "Location unavailable.",
+      locationFound: "Location found.",
+      quoteChangedRecalculate: "Quote changed. Recalculate price.",
+      poweredByFluxidi: "Powered by Fluxidi",
+      codeLabel: "Fluxidi code",
       contactTitle: "Public contact",
       email: "Email",
       phone: "Phone",
       website: "Website",
+      unavailable: "This booking page is unavailable.",
     },
     fr: {
       pageTitle: "Page de réservation publique",
-      heading: "La réservation en ligne sera bientôt disponible.",
+      heading: "Réservez votre trajet en ligne",
       description:
-        "Cette page de réservation publique est préparée pour les réservations via site web, QR codes et réseaux sociaux.",
-      cta: "Réservation bientôt disponible",
+        "Utilisez cette page pour demander une course directement auprès de cette entreprise.",
+      backToHome: "Retour à la page d'accueil",
+      calculatorChip: "Calculateur Fluxidi",
+      calculatorTitle: "Calculer le prix du trajet",
+      calculatorSubtitle: "Calculez et réservez vos trajets avec une expérience premium.",
+      cardRouteTitle: "Départ → Destination",
+      cardCustomerTitle: "Données client",
+      cardServiceTitle: "Service",
+      cta: "Formulaire de réservation bientôt disponible",
+      formTitle: "Détails du trajet",
+      formSubtitle: "Saisissez votre trajet et calculez votre prix immédiatement.",
+      fieldFrom: "Adresse de départ",
+      fieldTo: "Adresse de destination",
+      fieldPickupDate: "Date de prise en charge",
+      fieldPickupTime: "Heure de prise en charge",
+      fieldReturnEnabled: "Trajet retour",
+      fieldReturnDate: "Date retour",
+      fieldReturnTime: "Heure retour",
+      missingReturnDateTime: "Saisissez la date et l’heure du retour.",
+      quickToday: "Aujourd'hui",
+      quickTomorrow: "Demain",
+      quickNextTime: "+30 min",
+      fieldName: "Votre nom",
+      fieldPhone: "Numéro de téléphone",
+      fieldEmail: "E-mail (optionnel)",
+      fieldPax: "Passagers",
+      fieldBags: "Bagages",
+      fieldNotes: "Remarques (optionnel)",
+      fieldService: "Service",
+      servicePassenger: "Transport passagers",
+      serviceAirport: "Transfert aeroport",
+      serviceBusiness: "Transport business",
+      serviceEvent: "Transport evenement",
+      serviceHourly: "Service horaire",
+      serviceCare: "Transport de soins",
+      serviceCourier: "Coursier",
+      fieldTier: "Categorie",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      premiumOptionsTitle: "Options Premium",
+      premiumOptionsHint: "Disponible avec Premium",
+      premiumOptionsRequired: "Choisissez au moins une option Premium.",
+      premiumOptionDrinkService: "Service boissons",
+      premiumOptionWorkTable: "Table de travail",
+      fieldWaitMin: "Temps d'attente",
+      waitNone: "Pas d'attente",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Arret intermediaire (optionnel)",
+      stopsDirect: "0 - direct",
+      stepperMinusAria: "Diminuer la valeur",
+      stepperPlusAria: "Augmenter la valeur",
+      quoteButton: "Calculer le prix du trajet",
+      bookButton: "Demander la réservation",
+      resetButton: "Nouveau devis",
+      quoteLoading: "Calcul du prix en cours...",
+      quoteSuccess: "Prix calculé. Vous pouvez maintenant demander la réservation.",
+      quoteError: "Impossible de calculer le prix. Vérifiez vos données et réessayez.",
+      bookingLoading: "Envoi de la réservation...",
+      bookingSuccess: "Demande de réservation envoyée avec succès.",
+      bookingError: "Impossible de créer la réservation. Veuillez réessayer.",
+      estimatedPrice: "Prix estimé",
+      distance: "Distance",
+      duration: "Durée",
+      offerDetailsTitle: "Détails du devis",
+      offerRoute: "Trajet",
+      offerDateTime: "Date et heure",
+      offerServiceCategory: "Service / catégorie",
+      offerPassengersBaggage: "Passagers / bagages",
+      offerSelectedExtras: "Options sélectionnées",
+      offerPriceBreakdown: "Détail du prix",
+      offerReturnTrip: "Retour",
+      offerReturnDateTime: "Date et heure du retour",
+      offerExclVat: "HTVA",
+      offerVat: "TVA",
+      offerInclVat: "TVAC",
+      offerTotalPrice: "Prix total",
+      offerMainTrip: "Trajet aller",
+      offerReturnSegment: "Trajet retour",
+      offerNotAvailable: "-",
+      offerYes: "Oui",
+      offerNo: "Non",
+      offerUnknownLabel: "Autres frais",
+      offerBreakdownStartFee: "Frais de départ",
+      offerBreakdownDistanceCost: "Coût distance",
+      offerBreakdownTimeCost: "Coût temps",
+      offerBreakdownWaiting: "Temps d'attente",
+      offerBreakdownReturnFee: "Supplément retour",
+      offerBreakdownFuelSurcharge: "Supplément carburant",
+      offerBreakdownBags: "Bagages",
+      offerBreakdownTierFee: "Catégorie",
+      offerReturnDistance: "Distance",
+      offerReturnDuration: "Durée",
+      bookingReference: "Référence de réservation",
+      requiredFieldsMissing: "Veuillez remplir tous les champs obligatoires.",
+      invalidPickupDateTime: "Date ou heure de prise en charge invalide.",
+      quoteFirst: "Calculez d'abord un devis avant de réserver.",
+      unavailableForBooking: "Cette page ne peut pas traiter de réservation pour le moment.",
+      suggestionUnavailable: "Les suggestions d'adresse sont actuellement indisponibles.",
+      suggestionNoResults: "Aucune suggestion trouvée.",
+      useCurrentLocation: "Utiliser la position actuelle",
+      locating: "Localisation en cours...",
+      locationPermissionDenied: "Autorisation de localisation refusée.",
+      locationUnavailable: "Localisation indisponible.",
+      locationFound: "Position trouvee.",
+      quoteChangedRecalculate: "Le devis a change. Recalculez le prix.",
+      poweredByFluxidi: "Propulse par Fluxidi",
+      codeLabel: "Code Fluxidi",
       contactTitle: "Contact public",
       email: "E-mail",
       phone: "Téléphone",
       website: "Site web",
+      unavailable: "Cette page de réservation n’est pas disponible.",
     },
     es: {
       pageTitle: "Página pública de reserva",
-      heading: "La reserva online estará disponible pronto.",
+      heading: "Reserva tu viaje en línea",
       description:
-        "Esta página pública de reserva está preparada para reservas desde la web, códigos QR y redes sociales.",
-      cta: "Reserva próximamente",
+        "Usa esta página para solicitar un viaje directamente con esta empresa.",
+      backToHome: "Volver a la página de inicio",
+      calculatorChip: "Calculadora Fluxidi",
+      calculatorTitle: "Calcular precio del viaje",
+      calculatorSubtitle: "Calcula y reserva viajes con una experiencia premium.",
+      cardRouteTitle: "Origen → Destino",
+      cardCustomerTitle: "Datos del cliente",
+      cardServiceTitle: "Servicio",
+      cta: "Formulario de reserva próximamente",
+      formTitle: "Detalles del viaje",
+      formSubtitle: "Introduce tu viaje y calcula el precio al instante.",
+      fieldFrom: "Dirección de recogida",
+      fieldTo: "Dirección de destino",
+      fieldPickupDate: "Fecha de recogida",
+      fieldPickupTime: "Hora de recogida",
+      fieldReturnEnabled: "Viaje de regreso",
+      fieldReturnDate: "Fecha de regreso",
+      fieldReturnTime: "Hora de regreso",
+      missingReturnDateTime: "Introduce la fecha y hora de regreso.",
+      quickToday: "Hoy",
+      quickTomorrow: "Manana",
+      quickNextTime: "+30 min",
+      fieldName: "Tu nombre",
+      fieldPhone: "Número de teléfono",
+      fieldEmail: "Correo (opcional)",
+      fieldPax: "Pasajeros",
+      fieldBags: "Equipaje",
+      fieldNotes: "Notas (opcional)",
+      fieldService: "Servicio",
+      servicePassenger: "Transporte de pasajeros",
+      serviceAirport: "Traslado al aeropuerto",
+      serviceBusiness: "Transporte empresarial",
+      serviceEvent: "Transporte para eventos",
+      serviceHourly: "Servicio por horas",
+      serviceCare: "Transporte asistencial",
+      serviceCourier: "Mensajeria",
+      fieldTier: "Categoria",
+      tierComfort: "Comfort",
+      tierPrivate: "Private",
+      tierPremium: "Premium",
+      premiumOptionsTitle: "Opciones Premium",
+      premiumOptionsHint: "Disponible con Premium",
+      premiumOptionsRequired: "Elige al menos una opción Premium.",
+      premiumOptionDrinkService: "Servicio de bebidas",
+      premiumOptionWorkTable: "Mesa de trabajo",
+      fieldWaitMin: "Tiempo de espera",
+      waitNone: "Sin espera",
+      wait15: "15 min",
+      wait30: "30 min",
+      wait45: "45 min",
+      wait60: "60 min",
+      fieldStops: "Parada intermedia (opcional)",
+      stopsDirect: "0 - directo",
+      stepperMinusAria: "Disminuir valor",
+      stepperPlusAria: "Aumentar valor",
+      quoteButton: "Calcular mi precio",
+      bookButton: "Solicitar reserva",
+      resetButton: "Nueva cotización",
+      quoteLoading: "Calculando precio...",
+      quoteSuccess: "Precio calculado. Ya puedes solicitar la reserva.",
+      quoteError: "No se pudo calcular el precio. Revisa los datos e inténtalo de nuevo.",
+      bookingLoading: "Enviando reserva...",
+      bookingSuccess: "Solicitud de reserva enviada correctamente.",
+      bookingError: "No se pudo crear la reserva. Inténtalo de nuevo.",
+      estimatedPrice: "Precio estimado",
+      distance: "Distancia",
+      duration: "Duración",
+      offerDetailsTitle: "Detalles del presupuesto",
+      offerRoute: "Ruta",
+      offerDateTime: "Fecha y hora",
+      offerServiceCategory: "Servicio / categoría",
+      offerPassengersBaggage: "Pasajeros / equipaje",
+      offerSelectedExtras: "Extras seleccionados",
+      offerPriceBreakdown: "Desglose del precio",
+      offerReturnTrip: "Regreso",
+      offerReturnDateTime: "Fecha y hora de regreso",
+      offerExclVat: "Sin IVA",
+      offerVat: "IVA",
+      offerInclVat: "Con IVA",
+      offerTotalPrice: "Precio total",
+      offerMainTrip: "Viaje de ida",
+      offerReturnSegment: "Viaje de regreso",
+      offerNotAvailable: "-",
+      offerYes: "Sí",
+      offerNo: "No",
+      offerUnknownLabel: "Otros costes",
+      offerBreakdownStartFee: "Tarifa inicial",
+      offerBreakdownDistanceCost: "Coste por distancia",
+      offerBreakdownTimeCost: "Coste por tiempo",
+      offerBreakdownWaiting: "Tiempo de espera",
+      offerBreakdownReturnFee: "Recargo de regreso",
+      offerBreakdownFuelSurcharge: "Recargo de combustible",
+      offerBreakdownBags: "Equipaje",
+      offerBreakdownTierFee: "Categoría",
+      offerReturnDistance: "Distancia",
+      offerReturnDuration: "Duración",
+      bookingReference: "Referencia de reserva",
+      requiredFieldsMissing: "Completa todos los campos obligatorios.",
+      invalidPickupDateTime: "Fecha u hora de recogida no válida.",
+      quoteFirst: "Calcula primero una cotización antes de reservar.",
+      unavailableForBooking: "Esta página no puede procesar reservas en este momento.",
+      suggestionUnavailable: "Las sugerencias de dirección no están disponibles en este momento.",
+      suggestionNoResults: "No se encontraron sugerencias.",
+      useCurrentLocation: "Usar ubicacion actual",
+      locating: "Obteniendo ubicacion...",
+      locationPermissionDenied: "Permiso de ubicacion denegado.",
+      locationUnavailable: "Ubicacion no disponible.",
+      locationFound: "Ubicacion encontrada.",
+      quoteChangedRecalculate: "La cotizacion cambio. Recalcula el precio.",
+      poweredByFluxidi: "Con tecnologia de Fluxidi",
+      codeLabel: "Código Fluxidi",
       contactTitle: "Contacto público",
       email: "Correo",
       phone: "Teléfono",
       website: "Sitio web",
+      unavailable: "Esta página de reservas no está disponible.",
     },
   };
   return dictionary[lang] || dictionary.nl;
 }
 
-async function handlePublicBookingPreview(url, env) {
-  const rawCompanyId =
-    url.searchParams.get("company_id") ??
-    url.searchParams.get("companyId") ??
-    "";
-  const companyId = sanitizePublicCompanyId(rawCompanyId);
-  if (!companyId) {
-    return html(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:system-ui;background:#0B1020;color:#fff;padding:24px"><h1 style="font-size:20px;margin:0 0 8px">missing_company_id</h1><p style="margin:0;color:#AEB8D0">Provide ?company_id=...</p></body></html>`,
-      400,
+function _publicWebsiteHref(rawWebsite) {
+  const value = sanitizeTenantString(rawWebsite, 240).trim();
+  if (!value) return "";
+  if (/\s/.test(value)) return "";
+  const lower = value.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:")) return "";
+  if (lower.startsWith("http://") || lower.startsWith("https://")) return value;
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return "";
+  return `https://${value}`;
+}
+
+function _publicLogoHref(rawLogo) {
+  const normalized = _normalizeSafeRemoteMediaRef(rawLogo);
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("https://")) return normalized;
+  if (lower.startsWith("/public/media/")) return normalized;
+  return "";
+}
+
+function _publicDisplayInitials(value) {
+  const text = sanitizeTenantString(value, 120).trim();
+  if (!text) return "F";
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return "F";
+  const first = tokens[0].slice(0, 1);
+  const second = tokens.length > 1 ? tokens[1].slice(0, 1) : "";
+  return sanitizeTenantString((first + second).toUpperCase(), 2) || "F";
+}
+
+function _publicSuggestLanguage(value) {
+  const normalized = sanitizeTenantString(value, 16).toLowerCase();
+  if (["nl", "en", "fr", "es"].includes(normalized)) return normalized;
+  return "nl";
+}
+
+function _publicSuggestField(value) {
+  const field = sanitizeTenantString(value, 16).toLowerCase();
+  if (field === "from" || field === "to") return field;
+  return "";
+}
+
+function _publicSuggestText(value) {
+  return sanitizeTenantString(value, 120).trim();
+}
+
+function _publicMapboxContextValue(feature, prefix) {
+  if (!Array.isArray(feature?.context)) return "";
+  const keyPrefix = `${prefix}.`;
+  for (const entry of feature.context) {
+    const id = sanitizeTenantString(entry?.id, 120);
+    if (!id.startsWith(keyPrefix)) continue;
+    const text = sanitizeTenantString(
+      entry?.text ?? entry?.text_en ?? entry?.place_name,
+      120,
     );
+    if (text) return text;
+  }
+  return "";
+}
+
+function _publicMapboxContextCountry(feature) {
+  if (!Array.isArray(feature?.context)) return "";
+  for (const entry of feature.context) {
+    const id = sanitizeTenantString(entry?.id, 120);
+    if (!id.startsWith("country.")) continue;
+    const shortCode = sanitizeTenantString(
+      entry?.short_code ?? entry?.shortCode,
+      16,
+    ).toUpperCase().replace(/[^A-Z]/g, "");
+    if (shortCode.length >= 2) return shortCode.slice(0, 2);
+    const text = sanitizeTenantString(
+      entry?.text ?? entry?.text_en ?? entry?.place_name,
+      120,
+    ).toUpperCase().replace(/[^A-Z]/g, "");
+    if (text.length >= 2) return text.slice(0, 2);
+  }
+  return "";
+}
+
+function _pickBestPublicAddressLabel(source) {
+  if (!source || typeof source !== "object") return "";
+  const candidates = [
+    source.place_name,
+    source.placeName,
+    source.formatted_address,
+    source.formattedAddress,
+    source.full_address,
+    source.fullAddress,
+    source.label,
+    source.address,
+    source.name,
+    source.text,
+  ];
+  for (const candidate of candidates) {
+    const text = sanitizeTenantString(candidate, 320);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _normalizePublicAddressSuggestion(feature) {
+  const center = Array.isArray(feature?.center) ? feature.center : [];
+  const lng = Number(center[0]);
+  const lat = Number(center[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const id = sanitizeTenantString(feature?.id, 120);
+  const placeName = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? "",
+    320,
+  );
+  const formattedAddress = sanitizeTenantString(
+    feature?.formatted_address ?? feature?.formattedAddress ?? "",
+    320,
+  );
+  const fullAddress = sanitizeTenantString(
+    feature?.full_address ?? feature?.fullAddress ?? "",
+    320,
+  );
+  const name = sanitizeTenantString(
+    feature?.name ?? feature?.text ?? "",
+    240,
+  );
+  const label = sanitizeTenantString(
+    _pickBestPublicAddressLabel({
+      place_name: placeName,
+      formatted_address: formattedAddress,
+      full_address: fullAddress,
+      label: feature?.label,
+      address: feature?.address,
+      name,
+      text: feature?.text,
+    }),
+    320,
+  );
+  if (!label) return null;
+  const street = sanitizeTenantString(feature?.text, 120);
+  const houseNumber = sanitizeTenantString(feature?.address, 24);
+  const address =
+    sanitizeTenantString([street, houseNumber].filter(Boolean).join(" "), 180) || label;
+  const city = _publicMapboxContextValue(feature, "place") || _publicMapboxContextValue(feature, "locality");
+  const postcode =
+    sanitizeTenantString(feature?.properties?.postcode, 24) ||
+    _publicMapboxContextValue(feature, "postcode");
+  const country =
+    _publicMapboxContextCountry(feature) ||
+    sanitizeTenantString(feature?.properties?.short_code, 8).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+  return {
+    id,
+    label,
+    address,
+    place_name: placeName || label,
+    formatted_address: formattedAddress || label,
+    full_address: fullAddress || formattedAddress || placeName || label,
+    name: name || street || label,
+    city,
+    postcode,
+    country,
+    lat: Number(lat.toFixed(7)),
+    lng: Number(lng.toFixed(7)),
+  };
+}
+
+function _normalizePublicAddressReverseFeature(feature, fallbackLat, fallbackLng) {
+  const fallbackLatRounded = Number(Number(fallbackLat).toFixed(7));
+  const fallbackLngRounded = Number(Number(fallbackLng).toFixed(7));
+  const normalized = _normalizePublicAddressSuggestion(feature);
+  if (normalized) {
+    return {
+      ...normalized,
+      lat: Number.isFinite(normalized.lat) ? normalized.lat : fallbackLatRounded,
+      lng: Number.isFinite(normalized.lng) ? normalized.lng : fallbackLngRounded,
+    };
+  }
+  const label = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? feature?.text ?? "",
+    240,
+  );
+  if (!label) return null;
+  const placeName = sanitizeTenantString(
+    feature?.place_name ?? feature?.placeName ?? "",
+    320,
+  );
+  const formattedAddress = sanitizeTenantString(
+    feature?.formatted_address ?? feature?.formattedAddress ?? "",
+    320,
+  );
+  const fullAddress = sanitizeTenantString(
+    feature?.full_address ?? feature?.fullAddress ?? "",
+    320,
+  );
+  const name = sanitizeTenantString(
+    feature?.name ?? feature?.text ?? "",
+    240,
+  );
+  return {
+    id: sanitizeTenantString(feature?.id, 120),
+    label,
+    address: label,
+    place_name: placeName || label,
+    formatted_address: formattedAddress || label,
+    full_address: fullAddress || formattedAddress || placeName || label,
+    name: name || label,
+    city: "",
+    postcode: "",
+    country: "",
+    lat: fallbackLatRounded,
+    lng: fallbackLngRounded,
+  };
+}
+
+async function _reverseGeocodePublicAddress({ lat, lng, lang, countryCode, token }) {
+  if (!token) throw new Error("missing_mapbox_token");
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("invalid_coordinates");
+  const coordsPath = `${Number(lng.toFixed(7))},${Number(lat.toFixed(7))}`;
+  const reverseUrl =
+    "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+    encodeURIComponent(coordsPath) +
+    `.json?limit=1&types=address,place,postcode,locality,neighborhood&language=${encodeURIComponent(lang || "nl")}&country=${encodeURIComponent(countryCode || "BE")}&access_token=${encodeURIComponent(token)}`;
+  const response = await fetch(reverseUrl);
+  if (!response.ok) throw new Error("reverse_geocode_failed");
+  const payload = await response.json().catch(() => ({}));
+  const features = Array.isArray(payload?.features) ? payload.features : [];
+  if (!features.length) throw new Error("reverse_geocode_not_found");
+  const normalized = _normalizePublicAddressReverseFeature(features[0], lat, lng);
+  if (!normalized) throw new Error("reverse_geocode_not_found");
+  return normalized;
+}
+
+async function handlePublicAddressSuggest(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "invalid_company_code" }, 404);
+  }
+  const query = _publicSuggestText(url.searchParams.get("q"));
+  if (query.length < 3) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  const field = _publicSuggestField(url.searchParams.get("field"));
+  if (!field) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  const lang = _publicSuggestLanguage(url.searchParams.get("lang"));
+  const limitRequested = Number(url.searchParams.get("limit") || "5");
+  const limit = Math.max(1, Math.min(5, Number.isFinite(limitRequested) ? Math.round(limitRequested) : 5));
+  if (!env?.MAPBOX_TOKEN) {
+    return json({ ok: false, error: "suggestion_unavailable" }, 503);
   }
 
-  const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
+  const companyCountry = sanitizeTenantString(companyRecord?.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  const fallbackCountry = inferMapboxCountryCodeFromQuery(query);
+  const countryCode = companyCountry || fallbackCountry || "BE";
+  const suggestUrl =
+    "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+    encodeURIComponent(query) +
+    `.json?autocomplete=true&limit=${encodeURIComponent(String(limit))}&types=address,place,postcode,locality,neighborhood&language=${encodeURIComponent(lang)}&country=${encodeURIComponent(countryCode)}&access_token=${encodeURIComponent(env.MAPBOX_TOKEN)}`;
+
+  try {
+    const response = await fetch(suggestUrl);
+    if (!response.ok) {
+      return json({ ok: false, error: "suggestion_unavailable" }, 502);
+    }
+    const payload = await response.json().catch(() => ({}));
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    const suggestions = [];
+    for (const feature of features) {
+      const normalized = _normalizePublicAddressSuggestion(feature);
+      if (!normalized) continue;
+      suggestions.push(normalized);
+      if (suggestions.length >= limit) break;
+    }
+    return json({ ok: true, suggestions }, 200);
+  } catch (_) {
+    return json({ ok: false, error: "suggestion_unavailable" }, 503);
+  }
+}
+
+async function handlePublicAddressReverse(url, env) {
+  const codeValidation = validatePublicCompanyCode(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+  );
+  if (!codeValidation.ok) {
+    return json({ ok: false, error: "invalid_company_code" }, 400);
+  }
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return json({ ok: false, error: "invalid_company_code" }, 404);
+  }
+  const lat = parseFiniteCoordinateNumber(url.searchParams.get("lat"));
+  const lng = parseFiniteCoordinateNumber(url.searchParams.get("lng"));
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    return json({ ok: false, error: "invalid_request" }, 400);
+  }
+  if (!env?.MAPBOX_TOKEN) {
+    return json({ ok: false, error: "location_unavailable" }, 503);
+  }
+  const lang = _publicSuggestLanguage(url.searchParams.get("lang"));
+  const companyCountry = sanitizeTenantString(companyRecord?.country, 8)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  try {
+    const result = await _reverseGeocodePublicAddress({
+      lat,
+      lng,
+      lang,
+      countryCode: companyCountry || "BE",
+      token: env.MAPBOX_TOKEN,
+    });
+    return json({
+      ok: true,
+      address: sanitizeTenantString(result.address || result.label, 240),
+      label: sanitizeTenantString(result.label || result.address, 240),
+      place_name: sanitizeTenantString(result.place_name || result.label || result.address, 320),
+      formatted_address: sanitizeTenantString(
+        result.formatted_address || result.place_name || result.label || result.address,
+        320,
+      ),
+      full_address: sanitizeTenantString(
+        result.full_address || result.formatted_address || result.place_name || result.label || result.address,
+        320,
+      ),
+      name: sanitizeTenantString(result.name || result.label || result.address, 240),
+      city: sanitizeTenantString(result.city, 120),
+      postcode: sanitizeTenantString(result.postcode, 24),
+      country: sanitizeTenantString(result.country, 8),
+      lat: Number(result.lat),
+      lng: Number(result.lng),
+    }, 200);
+  } catch (_) {
+    return json({ ok: false, error: "location_unavailable" }, 503);
+  }
+}
+
+function renderPublicBookingUnavailablePage(lang, status = 404) {
   const copy = publicPreviewCopy(lang);
-  const data = await buildPublicBootstrapPayload(companyId, env);
+  return html(
+    `<!doctype html><html lang="${escapeHtml(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(copy.pageTitle)}</title></head><body style="margin:0;background:#0B1020;color:#E8EEFF;font-family:Inter,Segoe UI,system-ui,-apple-system,sans-serif;"><main style="max-width:680px;margin:0 auto;padding:24px 16px;"><section style="background:#121A30;border:1px solid #26314F;border-radius:16px;padding:18px;"><h1 style="margin:0 0 10px;font-size:22px;line-height:1.2;">${escapeHtml(copy.unavailable)}</h1><p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.45;">${escapeHtml(copy.pageTitle)}</p></section></main></body></html>`,
+    status,
+  );
+}
+
+async function _buildPublicBookingGatewayPayload({
+  scope,
+  companyCode = "",
+  displayNameHint = "",
+} = {}, env) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const business =
+    businessProfile && typeof businessProfile === "object"
+      ? businessProfile
+      : {};
+  const displayName = pickFirstPublicValue(
+    displayNameHint,
+    business.companyName,
+    business.legalName,
+    business.name,
+    business.displayName,
+    "Fluxidi",
+  );
+  const defaultLanguage = pickFirstPublicValue(
+    business.locale,
+    "nl",
+  ).toLowerCase();
+  const safeLogoUrl = _publicLogoHref(
+    pickFirstPublicValue(
+      business.publicLogoUrl,
+      business.public_logo_url,
+      business.logoUrl,
+      business.logo_url,
+    ),
+  );
+  return {
+    ok: true,
+    phase: "public_booking_gateway_v2a",
+    booking_enabled: true,
+    public_booking_status: "prepared",
+    company_code: sanitizeTenantString(companyCode, 80),
+    display_name: displayName || "Fluxidi",
+    logo_url: safeLogoUrl,
+    logoUrl: safeLogoUrl,
+    default_language: defaultLanguage || "nl",
+    supported_languages: ["nl", "en", "fr", "es"],
+    public_contact: {
+      email: pickFirstPublicValue(
+        business.companyEmail,
+        business.email,
+        business.supportEmail,
+        business.bookingEmail,
+      ),
+      phone: pickFirstPublicValue(
+        business.phone,
+        business.companyPhone,
+      ),
+      website: pickFirstPublicValue(business.website),
+    },
+    branding: {
+      logo_url: safeLogoUrl,
+      logoUrl: safeLogoUrl,
+      primary_color: pickFirstPublicValue(
+        business.primaryColor,
+        business.primary_color,
+      ),
+      accent_color: pickFirstPublicValue(
+        business.accentColor,
+        business.accent_color,
+      ),
+    },
+  };
+}
+
+async function handlePublicBookingPreview(url, env) {
+  const lang = normalizePublicPreviewLanguage(url.searchParams.get("lang"));
+  let resolvedScope = null;
+  let resolvedCompanyCode = "";
+  let resolvedDisplayName = "";
+  const rawCode = sanitizeTenantString(
+    url.searchParams.get("company_code") ??
+      url.searchParams.get("companyCode") ??
+      "",
+    80,
+  );
+  if (rawCode) {
+    const codeValidation = validatePublicCompanyCode(rawCode);
+    if (!codeValidation.ok) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    const record = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+    if (!record || record.linking_enabled !== true) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    resolvedScope = {
+      tenant_id: sanitizeTenantString(record.tenant_id, 80),
+      company_id: sanitizeTenantString(record.company_id, 80),
+    };
+    resolvedCompanyCode = sanitizeTenantString(record.company_code, 80);
+    resolvedDisplayName = sanitizeTenantString(record.display_name, 160);
+  } else {
+    // Backward-compatible fallback for internal/testing links that still use company_id.
+    const rawCompanyId =
+      url.searchParams.get("company_id") ??
+      url.searchParams.get("companyId") ??
+      "";
+    const companyId = sanitizePublicCompanyId(rawCompanyId);
+    if (!companyId) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    resolvedScope = { tenant_id: companyId, company_id: companyId };
+  }
+
+  const copy = publicPreviewCopy(lang);
+  const data = await _buildPublicBookingGatewayPayload(
+    {
+      scope: resolvedScope,
+      companyCode: resolvedCompanyCode,
+      displayNameHint: resolvedDisplayName,
+    },
+    env,
+  );
+  if (!data || data.ok !== true) {
+    return renderPublicBookingUnavailablePage(lang, 404);
+  }
   const localizedStatus = publicStatusLabel(lang, data?.public_booking_status);
   const displayName = sanitizeTenantString(data?.display_name || "Fluxidi", 120);
+  const branding = data?.branding && typeof data.branding === "object"
+    ? data.branding
+    : {};
+  const companyLogoUrl = _publicLogoHref(
+    pickFirstPublicValue(
+      data?.logo_url,
+      data?.logoUrl,
+      branding?.logo_url,
+      branding?.logoUrl,
+    ),
+  );
+  const companyInitials = _publicDisplayInitials(displayName);
   const contact = data?.public_contact && typeof data.public_contact === "object"
     ? data.public_contact
     : {};
   const contactEmail = sanitizeTenantString(contact.email, 240);
   const contactPhone = sanitizeTenantString(contact.phone, 120);
   const contactWebsite = sanitizeTenantString(contact.website, 240);
+  const contactWebsiteHref = _publicWebsiteHref(contactWebsite);
   const hasContact = !!(contactEmail || contactPhone || contactWebsite);
+  const companyCodeForUi = sanitizeTenantString(data?.company_code, 80);
+  const companyIdForUi = sanitizeTenantString(resolvedScope?.company_id, 80);
   const supportedLanguages = Array.isArray(data?.supported_languages)
     ? data.supported_languages.filter((code) => ["nl", "en", "fr", "es"].includes(String(code || "").toLowerCase()))
     : ["nl", "en", "fr", "es"];
@@ -1875,8 +9524,12 @@ async function handlePublicBookingPreview(url, env) {
     .filter((code, idx, arr) => code && arr.indexOf(code) === idx)
     .map((code) => {
       const active = code === lang;
-      const href = `/public/book?company_id=${encodeURIComponent(companyId)}&lang=${encodeURIComponent(code)}`;
-      return `<a href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
+      const href = companyCodeForUi
+        ? `/public/book?company_code=${encodeURIComponent(companyCodeForUi)}&lang=${encodeURIComponent(code)}`
+        : `/public/book?company_id=${encodeURIComponent(
+            sanitizeTenantString(resolvedScope?.company_id, 80),
+          )}&lang=${encodeURIComponent(code)}`;
+      return `<a class="fx-lang-link" data-lang="${escapeHtml(code)}" href="${href}" style="text-decoration:none;border:1px solid ${active ? "#22C55E" : "#2D3859"};background:${active ? "#12331F" : "#131C33"};color:${active ? "#B9F5CA" : "#D7E1FF"};padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:0.2px">${escapeHtml(code.toUpperCase())}</a>`;
     })
     .join("");
 
@@ -1887,33 +9540,1879 @@ async function handlePublicBookingPreview(url, env) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(copy.pageTitle)} - ${escapeHtml(displayName)}</title>
+    <style>
+      :root {
+        --fx-bg: #07090f;
+        --fx-card: #0f121d;
+        --fx-card-soft: #111626;
+        --fx-text: #edf2ff;
+        --fx-subtle: #aab4cc;
+        --fx-border: #3e3320;
+        --fx-border-soft: #2b3348;
+        --fx-gold: #d4af4a;
+        --fx-gold-strong: #f0c85d;
+        --fx-gold-dark: #30230f;
+        --fx-ok: #31b66b;
+      }
+      * { box-sizing: border-box; }
+      .fx-page {
+        margin: 0;
+        background:
+          radial-gradient(circle at 15% -10%, rgba(212,175,74,0.18), transparent 32%),
+          radial-gradient(circle at 90% -5%, rgba(212,175,74,0.08), transparent 28%),
+          var(--fx-bg);
+        color: var(--fx-text);
+        font-family: Inter, Segoe UI, system-ui, -apple-system, sans-serif;
+      }
+      .fx-main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 20px 14px 32px;
+      }
+      .fx-hero {
+        background: linear-gradient(180deg, rgba(24, 31, 52, 0.9), rgba(14, 18, 30, 0.95));
+        border: 1px solid #2a3248;
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 18px 34px rgba(0,0,0,0.35);
+      }
+      .fx-hero-head {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr);
+        gap: 28px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .fx-hero-left {
+        min-width: 0;
+      }
+      .fx-brand-row {
+        display: block;
+        margin-bottom: 8px;
+      }
+      .fx-brand-logo-wrap {
+        position: relative;
+        width: 100%;
+        height: 230px;
+        border-radius: 22px;
+        border: 1px solid rgba(212, 175, 74, 0.62);
+        background: linear-gradient(180deg, #11182a, #0e1422);
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px;
+        box-shadow:
+          inset 0 0 0 1px rgba(240, 200, 93, 0.16),
+          0 10px 24px rgba(0, 0, 0, 0.28);
+      }
+      .fx-brand-logo {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transform: scale(1.45);
+        transform-origin: center;
+      }
+      .fx-brand-logo-fallback {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #f8dc8f;
+        font-size: 82px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+      }
+      .fx-brand-copy {
+        min-width: 0;
+      }
+      .fx-brand-name {
+        font-size: 22px;
+        font-weight: 800;
+        color: #f3f6ff;
+        line-height: 1.2;
+      }
+      .fx-brand-code {
+        margin-top: 3px;
+        color: #aeb8d0;
+        font-size: 12px;
+      }
+      .fx-brand-powered {
+        margin-top: 3px;
+        color: #f0c85d;
+        font-size: 11px;
+        letter-spacing: 0.2px;
+      }
+      .fx-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(212,175,74,0.52);
+        background: rgba(54, 42, 18, 0.45);
+        color: #f8dc8f;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 11px;
+        letter-spacing: 0.4px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .fx-topline {
+        color: var(--fx-subtle);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .fx-title {
+        margin: 6px 0 6px;
+        font-size: 29px;
+        line-height: 1.15;
+      }
+      .fx-subtitle {
+        margin: 0;
+        color: var(--fx-subtle);
+        font-size: 14px;
+        line-height: 1.48;
+      }
+      .fx-meta {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .fx-meta-pill {
+        border: 1px solid var(--fx-border-soft);
+        background: #12182a;
+        color: #d7def4;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .fx-lang-row {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .fx-form-wrap {
+        margin-top: 16px;
+      }
+      .fx-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+        align-items: start;
+      }
+      .fx-left-stack {
+        display: grid;
+        gap: 12px;
+      }
+      .fx-card {
+        background: linear-gradient(180deg, var(--fx-card-soft), var(--fx-card));
+        border: 1px solid var(--fx-border);
+        border-radius: 16px;
+        padding: 14px;
+        box-shadow: inset 0 0 0 1px rgba(212,175,74,0.04), 0 8px 22px rgba(0,0,0,0.24);
+      }
+      .fx-card-title {
+        margin: 0 0 10px;
+        font-size: 16px;
+        color: #f2ddb0;
+      }
+      .fx-input-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .fx-field {
+        display: block;
+        position: relative;
+      }
+      .fx-field-full {
+        grid-column: 1 / -1;
+      }
+      .fx-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: #c2cbe3;
+      }
+      .fx-input, .fx-textarea {
+        width: 100%;
+        border: 1px solid #5b4a24;
+        border-radius: 12px;
+        padding: 10px 11px;
+        background: #0b0f19;
+        color: #f3f6ff;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+      .fx-input:focus, .fx-textarea:focus {
+        border-color: var(--fx-gold-strong);
+        box-shadow: 0 0 0 2px rgba(212,175,74,0.2);
+      }
+      .fx-textarea { resize: vertical; min-height: 96px; }
+      .fx-suggest-list {
+        position: absolute;
+        z-index: 30;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        max-height: 230px;
+        overflow-y: auto;
+        border: 1px solid #6f5a2a;
+        border-radius: 10px;
+        background: #111728;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+      }
+      .fx-suggest-item {
+        width: 100%;
+        border: none;
+        border-bottom: 1px solid #2b3147;
+        background: transparent;
+        color: #e7edff;
+        text-align: left;
+        padding: 9px 10px;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .fx-suggest-item:last-child {
+        border-bottom: none;
+      }
+      .fx-suggest-item:hover {
+        background: #1a2237;
+      }
+      .fx-suggest-empty {
+        padding: 9px 10px;
+        color: #aeb8d0;
+        font-size: 12px;
+      }
+      .fx-actions {
+        display: grid;
+        gap: 8px;
+      }
+      .fx-btn {
+        border: none;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: filter 120ms ease, opacity 120ms ease;
+      }
+      .fx-btn:hover { filter: brightness(1.04); }
+      .fx-btn-primary {
+        background: linear-gradient(180deg, #e4bf59, #cda440);
+        color: #1d1507;
+      }
+      .fx-btn-secondary {
+        background: linear-gradient(180deg, #d6b362, #bb953b);
+        color: #1d1507;
+      }
+      .fx-btn-tertiary {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+      }
+      .fx-btn-inline {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        width: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .fx-quick-row {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .fx-btn-quick {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+        border-radius: 10px;
+        padding: 7px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .fx-stepper {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 34px;
+        gap: 6px;
+        align-items: center;
+      }
+      .fx-stepper-btn {
+        border: 1px solid #5c4f2c;
+        background: #171b2a;
+        color: #e0e8ff;
+        border-radius: 10px;
+        height: 38px;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .fx-stepper-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .fx-stepper-input {
+        text-align: center;
+        -moz-appearance: textfield;
+      }
+      .fx-stepper-input::-webkit-outer-spin-button,
+      .fx-stepper-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .fx-status,
+      .fx-quote,
+      .fx-booking {
+        margin-top: 12px;
+        border-radius: 12px;
+        padding: 12px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .fx-status {
+        border: 1px solid #4a3f26;
+        background: #1a1f2f;
+        color: #dce5ff;
+      }
+      .fx-quote {
+        border: 1px solid #5b4a24;
+        background: linear-gradient(180deg, #171e2e, #121927);
+        color: #f2e3bc;
+      }
+      .fx-booking {
+        border: 1px solid #6a5224;
+        background: linear-gradient(180deg, #1b202f, #141925);
+        color: #ffecbf;
+      }
+      .fx-contact {
+        margin-top: 14px;
+        background: #111729;
+        border: 1px solid #2b3348;
+        border-radius: 16px;
+        padding: 14px;
+      }
+      @media (max-width: 900px) {
+        .fx-main { padding: 16px 12px 26px; }
+        .fx-title { font-size: 24px; }
+        .fx-grid { grid-template-columns: 1fr; }
+        .fx-hero-head {
+          grid-template-columns: 1fr;
+          gap: 10px;
+          align-items: start;
+          margin-bottom: 12px;
+        }
+        .fx-brand-logo-wrap {
+          width: min(90%, 280px);
+          max-width: 280px;
+          height: 140px;
+          border-radius: 16px;
+          padding: 6px;
+          justify-self: center;
+          align-self: center;
+        }
+        .fx-brand-logo {
+          transform: scale(1.1);
+        }
+        .fx-brand-logo-fallback {
+          font-size: 46px;
+        }
+      }
+      @media (max-width: 640px) {
+        .fx-input-grid { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
-  <body style="margin:0;background:#0B1020;color:#E8EEFF;font-family:Inter,Segoe UI,system-ui,-apple-system,sans-serif;">
-    <main style="max-width:760px;margin:0 auto;padding:22px 16px 28px;">
-      <section style="background:#121A30;border:1px solid #26314F;border-radius:16px;padding:18px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-          <div>
-            <div style="font-size:12px;color:#AEB8D0;">Fluxidi</div>
-            <h1 style="margin:4px 0 0;font-size:23px;line-height:1.2;">${escapeHtml(displayName)}</h1>
+  <body class="fx-page">
+    <main class="fx-main">
+      <section class="fx-hero">
+        <div class="fx-hero-head">
+          <div class="fx-hero-left">
+            <div class="fx-brand-row">
+              <div class="fx-brand-copy">
+                <div class="fx-brand-name">${escapeHtml(displayName)}</div>
+                ${
+                  companyCodeForUi
+                    ? `<div class="fx-brand-code">${escapeHtml(copy.codeLabel)}: ${escapeHtml(companyCodeForUi)}</div>`
+                    : ""
+                }
+                <div class="fx-brand-powered">${escapeHtml(copy.poweredByFluxidi || "Powered by Fluxidi")}</div>
+              </div>
+            </div>
+            <div class="fx-chip">${escapeHtml(copy.calculatorChip || "Fluxidi calculator")}</div>
+            <div class="fx-topline">${escapeHtml(copy.backToHome || "")}</div>
+            <h1 class="fx-title">${escapeHtml(copy.calculatorTitle || copy.heading)}</h1>
+            <p class="fx-subtitle">${escapeHtml(copy.calculatorSubtitle || copy.description)}</p>
+
+            <div class="fx-meta">
+              <span class="fx-meta-pill">${escapeHtml(localizedStatus)}</span>
+            </div>
+            <div class="fx-lang-row">${langChips}</div>
           </div>
-          <span style="display:inline-flex;align-items:center;border:1px solid #355C3C;background:#12331F;color:#B9F5CA;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;">
-            ${escapeHtml(localizedStatus)}
-          </span>
+          <div class="fx-brand-logo-wrap">
+            ${
+              companyLogoUrl
+                ? `<img src="${escapeHtml(companyLogoUrl)}" alt="${escapeHtml(displayName)}" class="fx-brand-logo" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none';var f=this.nextElementSibling;if(f)f.style.display='flex';" /><span class="fx-brand-logo-fallback" style="display:none;">${escapeHtml(companyInitials)}</span>`
+                : `<span class="fx-brand-logo-fallback">${escapeHtml(companyInitials)}</span>`
+            }
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">${langChips}</div>
-        <h2 style="margin:18px 0 8px;font-size:21px;line-height:1.28;">${escapeHtml(copy.heading)}</h2>
-        <p style="margin:0;color:#AEB8D0;font-size:14px;line-height:1.5;">${escapeHtml(copy.description)}</p>
-        <button type="button" disabled style="margin-top:16px;width:100%;border:none;border-radius:12px;padding:13px 16px;background:#28324C;color:#A4AFCB;font-size:15px;font-weight:700;cursor:not-allowed;opacity:0.95;">
-          ${escapeHtml(copy.cta)}
-        </button>
+
+        <div class="fx-form-wrap">
+          <form id="public-booking-form" onsubmit="return false;">
+            <div class="fx-grid">
+              <div class="fx-left-stack">
+                <section class="fx-card">
+                  <h3 class="fx-card-title">${escapeHtml(copy.cardRouteTitle || copy.formTitle)}</h3>
+                  <div class="fx-input-grid">
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldFrom)}</span>
+                      <input id="public-field-from" class="fx-input" type="text" required />
+                      <button id="public-from-current-location-btn" class="fx-btn fx-btn-tertiary fx-btn-inline" type="button">
+                        ${escapeHtml(copy.useCurrentLocation || "Use current location")}
+                      </button>
+                      <div id="public-from-suggestions" class="fx-suggest-list" style="display:none;"></div>
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldTo)}</span>
+                      <input id="public-field-to" class="fx-input" type="text" required />
+                      <div id="public-to-suggestions" class="fx-suggest-list" style="display:none;"></div>
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPickupDate)}</span>
+                      <input id="public-field-date" class="fx-input" type="date" required />
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPickupTime)}</span>
+                      <input id="public-field-time" class="fx-input" type="time" step="300" required />
+                    </label>
+                    <div class="fx-quick-row">
+                      <button id="public-date-today-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickToday || "Today")}</button>
+                      <button id="public-date-tomorrow-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickTomorrow || "Tomorrow")}</button>
+                      <button id="public-time-next-btn" class="fx-btn-quick" type="button">${escapeHtml(copy.quickNextTime || "+30 min")}</button>
+                    </div>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldReturnEnabled || "Return trip")}</span>
+                      <input id="public-field-return-enabled" type="checkbox" />
+                    </label>
+                    <div id="public-return-fields" class="fx-input-grid fx-field-full" style="display:none;grid-template-columns:repeat(2,minmax(0,1fr));">
+                      <label class="fx-field">
+                        <span class="fx-label">${escapeHtml(copy.fieldReturnDate || "Return date")}</span>
+                        <input id="public-field-return-date" class="fx-input" type="date" />
+                      </label>
+                      <label class="fx-field">
+                        <span class="fx-label">${escapeHtml(copy.fieldReturnTime || "Return time")}</span>
+                        <input id="public-field-return-time" class="fx-input" type="time" step="300" />
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="fx-card">
+                  <h3 class="fx-card-title">${escapeHtml(copy.cardCustomerTitle || "Customer")}</h3>
+                  <div class="fx-input-grid">
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldName)}</span>
+                      <input id="public-field-name" class="fx-input" type="text" required />
+                    </label>
+                    <label class="fx-field">
+                      <span class="fx-label">${escapeHtml(copy.fieldPhone)}</span>
+                      <input id="public-field-phone" class="fx-input" type="tel" required />
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldEmail)}</span>
+                      <input id="public-field-email" class="fx-input" type="email" />
+                    </label>
+                    <label class="fx-field fx-field-full">
+                      <span class="fx-label">${escapeHtml(copy.fieldNotes)}</span>
+                      <textarea id="public-field-notes" class="fx-textarea" rows="3"></textarea>
+                    </label>
+                  </div>
+                </section>
+              </div>
+
+              <section class="fx-card">
+                <h3 class="fx-card-title">${escapeHtml(copy.cardServiceTitle || "Service")}</h3>
+                <div class="fx-input-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                  <label class="fx-field fx-field-full">
+                    <span class="fx-label">${escapeHtml(copy.fieldService || "Service")}</span>
+                    <select id="public-field-service" class="fx-input">
+                      <option value="passenger">${escapeHtml(copy.servicePassenger || "Passenger transport")}</option>
+                      <option value="airport">${escapeHtml(copy.serviceAirport || "Airport transfer")}</option>
+                      <option value="business">${escapeHtml(copy.serviceBusiness || "Business transport")}</option>
+                      <option value="event">${escapeHtml(copy.serviceEvent || "Event transport")}</option>
+                      <option value="hourly">${escapeHtml(copy.serviceHourly || "Hourly service")}</option>
+                      <option value="care">${escapeHtml(copy.serviceCare || "Care transport")}</option>
+                      <option value="courier">${escapeHtml(copy.serviceCourier || "Courier")}</option>
+                    </select>
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldTier || "Category")}</span>
+                    <select id="public-field-tier" class="fx-input">
+                      <option value="comfort">${escapeHtml(copy.tierComfort || "Comfort")}</option>
+                      <option value="private">${escapeHtml(copy.tierPrivate || "Private")}</option>
+                      <option value="premium">${escapeHtml(copy.tierPremium || "Premium")}</option>
+                    </select>
+                  </label>
+                  <div id="public-premium-options" class="fx-field fx-field-full" style="display:none;">
+                    <span class="fx-label">${escapeHtml(copy.premiumOptionsTitle || "Premium options")}</span>
+                    <div id="public-premium-options-hint" style="margin:4px 0 8px;color:#aeb8d0;font-size:12px;">
+                      ${escapeHtml(copy.premiumOptionsHint || "Available with Premium")}
+                    </div>
+                    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+                      <label style="display:flex;align-items:center;gap:6px;color:#e7edf8;font-size:13px;">
+                        <input id="public-field-drink-service" type="checkbox" disabled />
+                        <span>${escapeHtml(copy.premiumOptionDrinkService || "Drink service")}</span>
+                      </label>
+                      <label style="display:flex;align-items:center;gap:6px;color:#e7edf8;font-size:13px;">
+                        <input id="public-field-work-table" type="checkbox" disabled />
+                        <span>${escapeHtml(copy.premiumOptionWorkTable || "Work table")}</span>
+                      </label>
+                    </div>
+                  </div>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldWaitMin || "Waiting time")}</span>
+                    <select id="public-field-wait-min" class="fx-input">
+                      <option value="0">${escapeHtml(copy.waitNone || "No waiting")}</option>
+                      <option value="15">${escapeHtml(copy.wait15 || "15 min")}</option>
+                      <option value="30">${escapeHtml(copy.wait30 || "30 min")}</option>
+                      <option value="45">${escapeHtml(copy.wait45 || "45 min")}</option>
+                      <option value="60">${escapeHtml(copy.wait60 || "60 min")}</option>
+                    </select>
+                  </label>
+                  <label class="fx-field fx-field-full">
+                    <span class="fx-label">${escapeHtml(copy.fieldStops || "Intermediate stop (optional)")}</span>
+                    <input id="public-field-stop-1" class="fx-input" type="text" placeholder="${escapeHtml(copy.stopsDirect || "0 - direct")}" />
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldPax)}</span>
+                    <div class="fx-stepper">
+                      <button id="public-pax-minus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperMinusAria || "Decrease value")}">-</button>
+                      <input id="public-field-pax" class="fx-input fx-stepper-input" type="number" min="1" step="1" value="1" />
+                      <button id="public-pax-plus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperPlusAria || "Increase value")}">+</button>
+                    </div>
+                  </label>
+                  <label class="fx-field">
+                    <span class="fx-label">${escapeHtml(copy.fieldBags)}</span>
+                    <div class="fx-stepper">
+                      <button id="public-bags-minus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperMinusAria || "Decrease value")}">-</button>
+                      <input id="public-field-bags" class="fx-input fx-stepper-input" type="number" min="0" step="1" value="0" />
+                      <button id="public-bags-plus" class="fx-stepper-btn" type="button" aria-label="${escapeHtml(copy.stepperPlusAria || "Increase value")}">+</button>
+                    </div>
+                  </label>
+                </div>
+
+                <div class="fx-actions" style="margin-top:12px;">
+                  <button id="public-quote-btn" class="fx-btn fx-btn-primary" type="button">
+                    ${escapeHtml(copy.quoteButton)}
+                  </button>
+                  <button id="public-book-btn" class="fx-btn fx-btn-secondary" type="button" disabled>
+                    ${escapeHtml(copy.bookButton)}
+                  </button>
+                  <button id="public-reset-btn" class="fx-btn fx-btn-tertiary" type="button">
+                    ${escapeHtml(copy.resetButton)}
+                  </button>
+                </div>
+
+                <div id="public-booking-status" class="fx-status" style="display:none;"></div>
+              </section>
+            </div>
+          </form>
+
+          <div id="public-quote-panel" class="fx-quote" style="display:none;">
+            <div><strong>${escapeHtml(copy.estimatedPrice)}:</strong> <span id="public-quote-price">-</span></div>
+            <div style="margin-top:6px;"><strong>${escapeHtml(copy.distance)}:</strong> <span id="public-quote-distance">-</span></div>
+            <div style="margin-top:6px;"><strong>${escapeHtml(copy.duration)}:</strong> <span id="public-quote-duration">-</span></div>
+            <div id="public-quote-note-wrap" style="margin-top:6px;display:none;"><strong>Info:</strong> <span id="public-quote-note"></span></div>
+            <div id="public-quote-detail-card" style="display:none;"></div>
+          </div>
+
+          <div id="public-booking-result" class="fx-booking" style="display:none;"></div>
+        </div>
+          <script>
+            (function () {
+              const companyCode = ${JSON.stringify(companyCodeForUi || "")};
+              const companyId = ${JSON.stringify(companyIdForUi || "")};
+              const uiText = ${JSON.stringify({
+                quoteLoading: copy.quoteLoading,
+                quoteSuccess: copy.quoteSuccess,
+                quoteError: copy.quoteError,
+                bookingLoading: copy.bookingLoading,
+                bookingSuccess: copy.bookingSuccess,
+                bookingError: copy.bookingError,
+                requiredFieldsMissing: copy.requiredFieldsMissing,
+                invalidPickupDateTime: copy.invalidPickupDateTime,
+                quoteFirst: copy.quoteFirst,
+                bookingReference: copy.bookingReference,
+                unavailableForBooking: copy.unavailableForBooking,
+                suggestionUnavailable: copy.suggestionUnavailable,
+                suggestionNoResults: copy.suggestionNoResults,
+                useCurrentLocation: copy.useCurrentLocation,
+                locating: copy.locating,
+                locationPermissionDenied: copy.locationPermissionDenied,
+                locationUnavailable: copy.locationUnavailable,
+                locationFound: copy.locationFound,
+                quoteChangedRecalculate: copy.quoteChangedRecalculate,
+                stopsDirect: copy.stopsDirect,
+                missingReturnDateTime: copy.missingReturnDateTime,
+                premiumOptionsRequired: copy.premiumOptionsRequired,
+                offerDetailsTitle: copy.offerDetailsTitle,
+                offerRoute: copy.offerRoute,
+                offerDateTime: copy.offerDateTime,
+                offerServiceCategory: copy.offerServiceCategory,
+                offerPassengersBaggage: copy.offerPassengersBaggage,
+                offerSelectedExtras: copy.offerSelectedExtras,
+                offerPriceBreakdown: copy.offerPriceBreakdown,
+                offerReturnTrip: copy.offerReturnTrip,
+                offerReturnDateTime: copy.offerReturnDateTime,
+                offerExclVat: copy.offerExclVat,
+                offerVat: copy.offerVat,
+                offerInclVat: copy.offerInclVat,
+                offerTotalPrice: copy.offerTotalPrice,
+                offerMainTrip: copy.offerMainTrip,
+                offerReturnSegment: copy.offerReturnSegment,
+                offerNotAvailable: copy.offerNotAvailable,
+                offerYes: copy.offerYes,
+                offerNo: copy.offerNo,
+                offerUnknownLabel: copy.offerUnknownLabel,
+                offerBreakdownStartFee: copy.offerBreakdownStartFee,
+                offerBreakdownDistanceCost: copy.offerBreakdownDistanceCost,
+                offerBreakdownTimeCost: copy.offerBreakdownTimeCost,
+                offerBreakdownWaiting: copy.offerBreakdownWaiting,
+                offerBreakdownReturnFee: copy.offerBreakdownReturnFee,
+                offerBreakdownFuelSurcharge: copy.offerBreakdownFuelSurcharge,
+                offerBreakdownBags: copy.offerBreakdownBags,
+                offerBreakdownTierFee: copy.offerBreakdownTierFee,
+                offerReturnDistance: copy.offerReturnDistance,
+                offerReturnDuration: copy.offerReturnDuration,
+                premiumOptionDrinkService: copy.premiumOptionDrinkService,
+                premiumOptionWorkTable: copy.premiumOptionWorkTable,
+                fieldService: copy.fieldService,
+                fieldTier: copy.fieldTier,
+                fieldPax: copy.fieldPax,
+                fieldBags: copy.fieldBags,
+              })};
+              const currentLang = ${JSON.stringify(lang)};
+              const publicGatewayStateKey =
+                "fx_public_booking_state_v1:" + String(companyCode || companyId || "default");
+
+              const quoteBtn = document.getElementById("public-quote-btn");
+              const bookBtn = document.getElementById("public-book-btn");
+              const resetBtn = document.getElementById("public-reset-btn");
+              const statusEl = document.getElementById("public-booking-status");
+              const resultEl = document.getElementById("public-booking-result");
+              const quotePanelEl = document.getElementById("public-quote-panel");
+              const quotePriceEl = document.getElementById("public-quote-price");
+              const quoteDistanceEl = document.getElementById("public-quote-distance");
+              const quoteDurationEl = document.getElementById("public-quote-duration");
+              const quoteNoteWrapEl = document.getElementById("public-quote-note-wrap");
+              const quoteNoteEl = document.getElementById("public-quote-note");
+              const quoteDetailCardEl = document.getElementById("public-quote-detail-card");
+              const fieldFrom = document.getElementById("public-field-from");
+              const fieldTo = document.getElementById("public-field-to");
+              const fieldDate = document.getElementById("public-field-date");
+              const fieldTime = document.getElementById("public-field-time");
+              const fieldReturnEnabled = document.getElementById("public-field-return-enabled");
+              const fieldReturnDate = document.getElementById("public-field-return-date");
+              const fieldReturnTime = document.getElementById("public-field-return-time");
+              const returnFieldsEl = document.getElementById("public-return-fields");
+              const fieldName = document.getElementById("public-field-name");
+              const fieldPhone = document.getElementById("public-field-phone");
+              const fieldEmail = document.getElementById("public-field-email");
+              const fieldPax = document.getElementById("public-field-pax");
+              const fieldBags = document.getElementById("public-field-bags");
+              const fieldService = document.getElementById("public-field-service");
+              const fieldTier = document.getElementById("public-field-tier");
+              const premiumOptionsEl = document.getElementById("public-premium-options");
+              const premiumOptionsHintEl = document.getElementById("public-premium-options-hint");
+              const fieldDrinkService = document.getElementById("public-field-drink-service");
+              const fieldWorkTable = document.getElementById("public-field-work-table");
+              const fieldWaitMin = document.getElementById("public-field-wait-min");
+              const fieldStop1 = document.getElementById("public-field-stop-1");
+              const dateTodayBtn = document.getElementById("public-date-today-btn");
+              const dateTomorrowBtn = document.getElementById("public-date-tomorrow-btn");
+              const timeNextBtn = document.getElementById("public-time-next-btn");
+              const fieldNotes = document.getElementById("public-field-notes");
+              const fromSuggestEl = document.getElementById("public-from-suggestions");
+              const toSuggestEl = document.getElementById("public-to-suggestions");
+              const currentLocationBtn = document.getElementById("public-from-current-location-btn");
+              const paxMinusBtn = document.getElementById("public-pax-minus");
+              const paxPlusBtn = document.getElementById("public-pax-plus");
+              const bagsMinusBtn = document.getElementById("public-bags-minus");
+              const bagsPlusBtn = document.getElementById("public-bags-plus");
+
+              let lastQuotePayload = null;
+              let lastQuoteSignature = "";
+              let fromSuggestTimer = null;
+              let toSuggestTimer = null;
+              let fromResolved = null;
+              let toResolved = null;
+
+              function esc(value) {
+                return String(value == null ? "" : value)
+                  .replace(/&/g, "&amp;")
+                  .replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;")
+                  .replace(/"/g, "&quot;")
+                  .replace(/'/g, "&#39;");
+              }
+
+              function maybeFiniteNumber(value) {
+                const n = Number(value);
+                return Number.isFinite(n) ? n : null;
+              }
+
+              function pickBestAddressLabel(obj) {
+                if (!obj || typeof obj !== "object") return "";
+                const candidates = [
+                  obj.place_name,
+                  obj.formatted_address,
+                  obj.full_address,
+                  obj.label,
+                  obj.address,
+                  obj.name,
+                ];
+                for (const candidate of candidates) {
+                  const text = String(candidate || "").trim();
+                  if (text) return text;
+                }
+                return "";
+              }
+
+              function normalizeResolvedAddress(obj) {
+                if (!obj || typeof obj !== "object") return null;
+                return {
+                  place_name: String(obj.place_name || "").trim(),
+                  formatted_address: String(obj.formatted_address || "").trim(),
+                  full_address: String(obj.full_address || "").trim(),
+                  label: String(obj.label || "").trim(),
+                  address: String(obj.address || "").trim(),
+                  name: String(obj.name || "").trim(),
+                  city: String(obj.city || "").trim(),
+                  postcode: String(obj.postcode || "").trim(),
+                  country: String(obj.country || "").trim(),
+                  lat: maybeFiniteNumber(obj.lat),
+                  lng: maybeFiniteNumber(obj.lng),
+                };
+              }
+
+              function setStatus(message, tone) {
+                const text = String(message || "").trim();
+                if (!text) {
+                  statusEl.style.display = "none";
+                  statusEl.textContent = "";
+                  return;
+                }
+                statusEl.style.display = "block";
+                statusEl.textContent = text;
+                if (tone === "error") {
+                  statusEl.style.borderColor = "#69414A";
+                  statusEl.style.background = "#2A1720";
+                  statusEl.style.color = "#FFD1D9";
+                } else if (tone === "success") {
+                  statusEl.style.borderColor = "#355C3C";
+                  statusEl.style.background = "#12331F";
+                  statusEl.style.color = "#CFF5D7";
+                } else {
+                  statusEl.style.borderColor = "#2C3A5C";
+                  statusEl.style.background = "#111A2E";
+                  statusEl.style.color = "#CFD8F2";
+                }
+              }
+
+              function setBusy(isBusy, mode) {
+                quoteBtn.disabled = !!isBusy;
+                resetBtn.disabled = !!isBusy;
+                if (currentLocationBtn) currentLocationBtn.disabled = !!isBusy;
+                if (paxMinusBtn) paxMinusBtn.disabled = !!isBusy;
+                if (paxPlusBtn) paxPlusBtn.disabled = !!isBusy;
+                if (bagsMinusBtn) bagsMinusBtn.disabled = !!isBusy;
+                if (bagsPlusBtn) bagsPlusBtn.disabled = !!isBusy;
+                if (dateTodayBtn) dateTodayBtn.disabled = !!isBusy;
+                if (dateTomorrowBtn) dateTomorrowBtn.disabled = !!isBusy;
+                if (timeNextBtn) timeNextBtn.disabled = !!isBusy;
+                if (isBusy && mode === "quote") {
+                  bookBtn.disabled = true;
+                } else if (isBusy && mode === "book") {
+                  bookBtn.disabled = true;
+                } else {
+                  bookBtn.disabled = !lastQuotePayload;
+                }
+                quoteBtn.style.opacity = quoteBtn.disabled ? "0.7" : "1";
+                quoteBtn.style.cursor = quoteBtn.disabled ? "not-allowed" : "pointer";
+                bookBtn.style.opacity = bookBtn.disabled ? "0.7" : "1";
+                bookBtn.style.cursor = bookBtn.disabled ? "not-allowed" : "pointer";
+                resetBtn.style.opacity = resetBtn.disabled ? "0.7" : "1";
+                resetBtn.style.cursor = resetBtn.disabled ? "not-allowed" : "pointer";
+                if (currentLocationBtn) {
+                  currentLocationBtn.style.opacity = currentLocationBtn.disabled ? "0.7" : "1";
+                  currentLocationBtn.style.cursor = currentLocationBtn.disabled ? "not-allowed" : "pointer";
+                }
+                const premiumSelected = isPremiumTierSelected();
+                if (fieldDrinkService) fieldDrinkService.disabled = !!isBusy || !premiumSelected;
+                if (fieldWorkTable) fieldWorkTable.disabled = !!isBusy || !premiumSelected;
+              }
+
+              function getSessionStorageSafe() {
+                try {
+                  if (typeof window === "undefined" || !window || !window.sessionStorage) return null;
+                  return window.sessionStorage;
+                } catch (_) {
+                  return null;
+                }
+              }
+
+              function clearPublicGatewayQuoteUi() {
+                lastQuotePayload = null;
+                lastQuoteSignature = "";
+                if (quotePanelEl) quotePanelEl.style.display = "none";
+                if (quoteDetailCardEl) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                }
+                if (resultEl) {
+                  resultEl.style.display = "none";
+                  resultEl.innerHTML = "";
+                }
+                setBusy(false);
+              }
+
+              function savePublicGatewayState() {
+                const storage = getSessionStorageSafe();
+                if (!storage) return;
+                try {
+                  const state = {
+                    from: String((fieldFrom && fieldFrom.value) || "").trim(),
+                    to: String((fieldTo && fieldTo.value) || "").trim(),
+                    fromResolved: fromResolved && typeof fromResolved === "object" ? fromResolved : null,
+                    toResolved: toResolved && typeof toResolved === "object" ? toResolved : null,
+                    date: String((fieldDate && fieldDate.value) || "").trim(),
+                    time: String((fieldTime && fieldTime.value) || "").trim(),
+                    service: String((fieldService && fieldService.value) || "").trim(),
+                    tier: String((fieldTier && fieldTier.value) || "").trim(),
+                    wait_min: String((fieldWaitMin && fieldWaitMin.value) || "").trim(),
+                    stop1: String((fieldStop1 && fieldStop1.value) || "").trim(),
+                    pax: String((fieldPax && fieldPax.value) || "").trim(),
+                    bags: String((fieldBags && fieldBags.value) || "").trim(),
+                    return_enabled: !!(fieldReturnEnabled && fieldReturnEnabled.checked),
+                    return_date: String((fieldReturnDate && fieldReturnDate.value) || "").trim(),
+                    return_time: String((fieldReturnTime && fieldReturnTime.value) || "").trim(),
+                    drink_service: !!(fieldDrinkService && fieldDrinkService.checked),
+                    work_table: !!(fieldWorkTable && fieldWorkTable.checked),
+                    customer_name: String((fieldName && fieldName.value) || "").trim(),
+                    customer_phone: String((fieldPhone && fieldPhone.value) || "").trim(),
+                    customer_email: String((fieldEmail && fieldEmail.value) || "").trim(),
+                    notes: String((fieldNotes && fieldNotes.value) || "").trim(),
+                    saved_at: new Date().toISOString(),
+                    lang: String(currentLang || "nl"),
+                  };
+                  storage.setItem(publicGatewayStateKey, JSON.stringify(state));
+                } catch (_) {
+                  // Best-effort only.
+                }
+              }
+
+              function restorePublicGatewayState() {
+                const storage = getSessionStorageSafe();
+                if (!storage) return false;
+                try {
+                  const raw = storage.getItem(publicGatewayStateKey);
+                  if (!raw) return false;
+                  const parsed = JSON.parse(raw);
+                  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+                  if (fieldFrom && parsed.from != null) fieldFrom.value = String(parsed.from);
+                  if (fieldTo && parsed.to != null) fieldTo.value = String(parsed.to);
+                  fromResolved = parsed.fromResolved && typeof parsed.fromResolved === "object"
+                    ? normalizeResolvedAddress(parsed.fromResolved)
+                    : null;
+                  toResolved = parsed.toResolved && typeof parsed.toResolved === "object"
+                    ? normalizeResolvedAddress(parsed.toResolved)
+                    : null;
+                  if (fieldDate && parsed.date != null) fieldDate.value = String(parsed.date);
+                  if (fieldTime && parsed.time != null) fieldTime.value = String(parsed.time);
+                  if (fieldService && parsed.service != null) fieldService.value = String(parsed.service);
+                  if (fieldTier && parsed.tier != null) fieldTier.value = String(parsed.tier);
+                  if (fieldWaitMin && parsed.wait_min != null) fieldWaitMin.value = String(parsed.wait_min);
+                  if (fieldStop1 && parsed.stop1 != null) fieldStop1.value = String(parsed.stop1);
+                  if (fieldPax && parsed.pax != null) fieldPax.value = String(parsed.pax);
+                  if (fieldBags && parsed.bags != null) fieldBags.value = String(parsed.bags);
+                  if (fieldReturnEnabled) fieldReturnEnabled.checked = parsed.return_enabled === true;
+                  if (fieldReturnDate && parsed.return_date != null) fieldReturnDate.value = String(parsed.return_date);
+                  if (fieldReturnTime && parsed.return_time != null) fieldReturnTime.value = String(parsed.return_time);
+                  if (fieldDrinkService) fieldDrinkService.checked = parsed.drink_service === true;
+                  if (fieldWorkTable) fieldWorkTable.checked = parsed.work_table === true;
+                  if (fieldName && parsed.customer_name != null) fieldName.value = String(parsed.customer_name);
+                  if (fieldPhone && parsed.customer_phone != null) fieldPhone.value = String(parsed.customer_phone);
+                  if (fieldEmail && parsed.customer_email != null) fieldEmail.value = String(parsed.customer_email);
+                  if (fieldNotes && parsed.notes != null) fieldNotes.value = String(parsed.notes);
+
+                  syncReturnFieldsVisibility();
+                  syncPremiumOptionsVisibility();
+                  clearPublicGatewayQuoteUi();
+                  setStatus(
+                    uiText.quoteChangedRecalculate || uiText.quoteFirst || uiText.quoteError,
+                    "info",
+                  );
+                  return true;
+                } catch (_) {
+                  return false;
+                }
+              }
+
+              function normalizeInt(value, fallback, minValue) {
+                const num = Number(value);
+                if (!Number.isFinite(num)) return fallback;
+                const rounded = Math.round(num);
+                return Math.max(minValue, rounded);
+              }
+
+              function normalizeWaitMin(value) {
+                const allowed = new Set([0, 15, 30, 45, 60]);
+                const parsed = normalizeInt(value, 0, 0);
+                return allowed.has(parsed) ? parsed : 0;
+              }
+
+              function formatMoney(value) {
+                const num = Number(value);
+                if (!Number.isFinite(num)) return "-";
+                return "EUR " + num.toFixed(2);
+              }
+
+              function renderQuoteDetailCard(out, payload) {
+                if (!quoteDetailCardEl) return;
+                if (!out || typeof out !== "object" || out.ok !== true) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                  return;
+                }
+                const safePayload = payload && typeof payload === "object" ? payload : {};
+                const inputs = out.inputs && typeof out.inputs === "object" ? out.inputs : {};
+                const notAvailable = String(uiText.offerNotAvailable || "-");
+                const routeFrom = String(inputs.from || safePayload.from || fieldFrom.value || "").trim();
+                const routeTo = String(inputs.to || safePayload.to || fieldTo.value || "").trim();
+                const routeText = routeFrom && routeTo ? (routeFrom + " -> " + routeTo) : notAvailable;
+                const dateText = String(inputs.date || safePayload.date || fieldDate.value || "").trim();
+                const timeText = String(inputs.time || safePayload.time || fieldTime.value || "").trim();
+                const dateTimeText = (dateText || timeText) ? [dateText, timeText].filter(Boolean).join(" ") : notAvailable;
+                const serviceRawInput = String(inputs.service || safePayload.service || fieldService.value || "").trim();
+                const serviceRaw = serviceRawInput.toLowerCase();
+                const tierRaw = String(inputs.tier || safePayload.tier || fieldTier.value || "").trim().toLowerCase();
+                const langCode = String(currentLang || "nl").toLowerCase();
+                const serviceLabelsByLang = {
+                  nl: {
+                    passenger: "Personenvervoer",
+                    person: "Personenvervoer",
+                    personenvervoer: "Personenvervoer",
+                    business: "Zakelijk vervoer",
+                    event: "Event vervoer",
+                    airport: "Luchthavenvervoer",
+                    hourly: "Uurservice",
+                    care: "Zorgvervoer",
+                  },
+                  en: {
+                    passenger: "Passenger transport",
+                    person: "Passenger transport",
+                    business: "Business transport",
+                    event: "Event transport",
+                    airport: "Airport transfer",
+                    hourly: "Hourly service",
+                    care: "Care transport",
+                  },
+                  fr: {
+                    passenger: "Transport de personnes",
+                    person: "Transport de personnes",
+                    business: "Transport professionnel",
+                    event: "Transport événementiel",
+                    airport: "Transfert aéroport",
+                    hourly: "Service horaire",
+                    care: "Transport médicalisé",
+                  },
+                  es: {
+                    passenger: "Transporte de pasajeros",
+                    person: "Transporte de pasajeros",
+                    business: "Transporte empresarial",
+                    event: "Transporte para eventos",
+                    airport: "Traslado al aeropuerto",
+                    hourly: "Servicio por horas",
+                    care: "Transporte asistencial",
+                  },
+                };
+                const tierLabelsByLang = {
+                  nl: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  en: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  fr: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                  es: { comfort: "Comfort", private: "Private", premium: "Premium" },
+                };
+                function looksHumanReadableLabel(value) {
+                  const text = String(value || "").trim();
+                  if (text.length < 2 || text.length > 60) return false;
+                  if (text.includes("_")) return false;
+                  if (/[{}[\]<>]/.test(text)) return false;
+                  if (/^[0-9\W]+$/.test(text)) return false;
+                  return true;
+                }
+                const serviceLabels = serviceLabelsByLang[langCode] || serviceLabelsByLang.nl;
+                const serviceText = serviceLabels[serviceRaw]
+                  || (looksHumanReadableLabel(serviceRawInput) ? serviceRawInput : notAvailable);
+                const tierLabels = tierLabelsByLang[langCode] || tierLabelsByLang.nl;
+                const tierText = tierLabels[tierRaw] || notAvailable;
+                const paxRaw = Number(inputs.pax ?? safePayload.pax);
+                const bagsRaw = Number(inputs.bags ?? safePayload.bags);
+                const paxText = Number.isFinite(paxRaw) ? String(Math.max(1, Math.round(paxRaw))) : notAvailable;
+                const bagsText = Number.isFinite(bagsRaw) ? String(Math.max(0, Math.round(bagsRaw))) : notAvailable;
+
+                const extras = [];
+                if (safePayload.drink_service === true) {
+                  extras.push(String(uiText.premiumOptionDrinkService || "Drink service"));
+                }
+                if (safePayload.work_table === true) {
+                  extras.push(String(uiText.premiumOptionWorkTable || "Work table"));
+                }
+                const extrasText = extras.length ? extras.map(esc).join(", ") : esc(notAvailable);
+
+                const breakdown = out.breakdown && typeof out.breakdown === "object" ? out.breakdown : null;
+                const breakdownRows = [];
+                if (breakdown) {
+                  const skipKeys = new Set([
+                    "total_ex",
+                    "vat_amount",
+                    "total_incl",
+                    "price_ex_vat",
+                    "price_vat",
+                    "price_incl_vat",
+                    "total_price_ex_vat",
+                    "total_price_vat",
+                    "total_price_incl_vat",
+                  ]);
+                  const knownMap = {
+                    start_fee_ex: uiText.offerBreakdownStartFee || "Start fee",
+                    distance_cost_ex: uiText.offerBreakdownDistanceCost || "Distance cost",
+                    time_cost_ex: uiText.offerBreakdownTimeCost || "Time cost",
+                    waiting_ex: uiText.offerBreakdownWaiting || "Waiting time",
+                    return_fee_ex: uiText.offerBreakdownReturnFee || "Return surcharge",
+                    fuel_surcharge_ex: uiText.offerBreakdownFuelSurcharge || "Fuel surcharge",
+                    bags_ex: uiText.offerBreakdownBags || "Luggage",
+                    tier_fee_ex: uiText.offerBreakdownTierFee || "Category",
+                  };
+                  const knownOrder = [
+                    "start_fee_ex",
+                    "distance_cost_ex",
+                    "time_cost_ex",
+                    "waiting_ex",
+                    "return_fee_ex",
+                    "fuel_surcharge_ex",
+                    "bags_ex",
+                    "tier_fee_ex",
+                  ];
+                  for (const key of knownOrder) {
+                    if (skipKeys.has(key)) continue;
+                    if (!Object.prototype.hasOwnProperty.call(breakdown, key)) continue;
+                    const value = Number(breakdown[key]);
+                    if (!Number.isFinite(value)) continue;
+                    breakdownRows.push(
+                      '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;">' +
+                        '<span>' + esc(String(knownMap[key] || uiText.offerUnknownLabel || "Other costs")) + '</span>' +
+                        '<strong>' + esc(formatMoney(value)) + '</strong>' +
+                      '</div>'
+                    );
+                  }
+                }
+
+                const totalEx = out.total_price_ex_vat != null ? out.total_price_ex_vat : out.price_ex_vat;
+                const totalVat = out.total_price_vat != null ? out.total_price_vat : out.price_vat;
+                const totalIncl = out.total_price_incl_vat != null ? out.total_price_incl_vat : out.price_incl_vat;
+                const mainEx = out.price_ex_vat;
+                const mainVat = out.price_vat;
+                const mainIncl = out.price_incl_vat;
+
+                const returnObj = out.return && typeof out.return === "object" ? out.return : null;
+                const hasReturn = !!returnObj;
+                const returnDate = String(safePayload.return_date || "").trim();
+                const returnTime = String(safePayload.return_time || "").trim();
+                const returnDateTime = (returnDate || returnTime)
+                  ? [returnDate, returnTime].filter(Boolean).join(" ")
+                  : notAvailable;
+                const returnSummary = hasReturn
+                  ? (
+                      esc(String(uiText.offerReturnDistance || "Distance")) + ": " +
+                      esc(String(returnObj.distance_km != null ? String(returnObj.distance_km) + " km" : notAvailable)) +
+                      " • " +
+                      esc(String(uiText.offerReturnDuration || "Duration")) + ": " +
+                      esc(String(returnObj.duration_min != null ? String(returnObj.duration_min) + " min" : notAvailable)) +
+                      " • " +
+                      esc(String(uiText.offerInclVat || "Incl. VAT")) + ": " +
+                      esc(formatMoney(returnObj.price_incl_vat))
+                    )
+                  : esc(notAvailable);
+
+                quoteDetailCardEl.innerHTML =
+                  '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #263351;">' +
+                    '<div style="font-weight:700;color:#f0c85d;margin-bottom:8px;">' + esc(String(uiText.offerDetailsTitle || "Quote details")) + '</div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerRoute || "Route")) + '</span><strong>' + esc(routeText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerDateTime || "Date and time")) + '</span><strong>' + esc(dateTimeText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerServiceCategory || "Service / category")) + '</span><strong>' + esc(serviceText + " / " + tierText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerPassengersBaggage || "Passengers / baggage")) + '</span><strong>' + esc(paxText + " / " + bagsText) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerSelectedExtras || "Selected extras")) + '</span><strong>' + extrasText + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerMainTrip || "Outbound trip")) + " (" + esc(String(uiText.offerInclVat || "Incl. VAT")) + ')</span><strong>' + esc(formatMoney(mainIncl)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerExclVat || "Excl. VAT")) + '</span><strong>' + esc(formatMoney(mainEx)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerVat || "VAT")) + '</span><strong>' + esc(formatMoney(mainVat)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerReturnTrip || "Return")) + '</span><strong>' + esc(hasReturn ? String(uiText.offerYes || "Yes") : String(uiText.offerNo || "No")) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerReturnDateTime || "Return date and time")) + '</span><strong>' + esc(returnDateTime) + '</strong></div>' +
+                    '<div style="margin-top:4px;color:#c7d2ec;">' + esc(String(uiText.offerReturnSegment || "Return trip")) + ": " + returnSummary + '</div>' +
+                    (breakdownRows.length
+                      ? (
+                          '<div style="margin-top:8px;">' +
+                            '<div style="font-weight:600;color:#c7d2ec;">' + esc(String(uiText.offerPriceBreakdown || "Price breakdown")) + "</div>" +
+                            breakdownRows.join("") +
+                          "</div>"
+                        )
+                      : "") +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:8px;"><span>' + esc(String(uiText.offerExclVat || "Excl. VAT")) + '</span><strong>' + esc(formatMoney(totalEx)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerVat || "VAT")) + '</span><strong>' + esc(formatMoney(totalVat)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px;"><span>' + esc(String(uiText.offerInclVat || "Incl. VAT")) + '</span><strong>' + esc(formatMoney(totalIncl)) + '</strong></div>' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px;padding-top:6px;border-top:1px dashed #314266;"><span style="font-weight:700;">' + esc(String(uiText.offerTotalPrice || "Total price")) + '</span><strong style="font-weight:700;">' + esc(formatMoney(totalIncl)) + '</strong></div>' +
+                  "</div>";
+                quoteDetailCardEl.style.display = "block";
+              }
+
+              function pad2(value) {
+                return String(value).padStart(2, "0");
+              }
+
+              function toLocalDateInputValue(date) {
+                return String(date.getFullYear()) + "-" + pad2(date.getMonth() + 1) + "-" + pad2(date.getDate());
+              }
+
+              function toLocalTimeInputValue(date) {
+                return pad2(date.getHours()) + ":" + pad2(date.getMinutes());
+              }
+
+              function roundedNowPlusMinutes(minutesAhead) {
+                const now = new Date();
+                const target = new Date(now.getTime() + (Math.max(0, Number(minutesAhead) || 0) * 60 * 1000));
+                target.setSeconds(0, 0);
+                target.setMinutes(Math.ceil(target.getMinutes() / 5) * 5);
+                return target;
+              }
+
+              function openNativePicker(inputEl) {
+                if (!inputEl) return;
+                if (typeof inputEl.showPicker === "function") {
+                  try {
+                    inputEl.showPicker();
+                    return;
+                  } catch (_) {
+                    // Fallback to focus for browsers that block showPicker.
+                  }
+                }
+                try { inputEl.focus(); } catch (_) {}
+              }
+
+              function applyDateTimeDefaults() {
+                const now = new Date();
+                if (!Number.isFinite(now.getTime())) return;
+                const today = toLocalDateInputValue(now);
+                if (fieldDate) {
+                  fieldDate.min = today;
+                  if (!String(fieldDate.value || "").trim()) {
+                    fieldDate.value = today;
+                  }
+                }
+                if (fieldTime && !String(fieldTime.value || "").trim()) {
+                  const localTarget = roundedNowPlusMinutes(30);
+                  fieldTime.value = toLocalTimeInputValue(localTarget);
+                }
+              }
+
+              function syncReturnFieldsVisibility() {
+                if (!fieldReturnEnabled) return;
+                const enabled = !!fieldReturnEnabled.checked;
+                if (returnFieldsEl) {
+                  returnFieldsEl.style.display = enabled ? "grid" : "none";
+                }
+                if (fieldReturnDate) {
+                  fieldReturnDate.disabled = !enabled;
+                  if (enabled && !String(fieldReturnDate.value || "").trim() && fieldDate) {
+                    const pickupDate = String(fieldDate.value || "").trim();
+                    if (pickupDate) fieldReturnDate.value = pickupDate;
+                  }
+                }
+                if (fieldReturnTime) {
+                  fieldReturnTime.disabled = !enabled;
+                }
+              }
+
+              function isPremiumTierSelected() {
+                return String((fieldTier && fieldTier.value) || "").trim().toLowerCase() === "premium";
+              }
+
+              function syncPremiumOptionsVisibility() {
+                const premium = isPremiumTierSelected();
+                if (premiumOptionsEl) premiumOptionsEl.style.display = premium ? "" : "none";
+                if (premiumOptionsHintEl) {
+                  premiumOptionsHintEl.style.display = premium ? "block" : "none";
+                }
+                if (fieldDrinkService) fieldDrinkService.disabled = !premium;
+                if (fieldWorkTable) fieldWorkTable.disabled = !premium;
+                if (!premium) {
+                  if (fieldDrinkService) fieldDrinkService.checked = false;
+                  if (fieldWorkTable) fieldWorkTable.checked = false;
+                }
+              }
+
+              function normalizeQuoteSignatureText(value) {
+                return String(value || "")
+                  .trim()
+                  .replace(/\s+/g, " ")
+                  .toLowerCase();
+              }
+
+              function buildQuoteSignature() {
+                const stop1 = fieldStop1
+                  ? normalizeQuoteSignatureText(fieldStop1.value)
+                  : "";
+                return JSON.stringify({
+                  from: normalizeQuoteSignatureText(fieldFrom.value),
+                  to: normalizeQuoteSignatureText(fieldTo.value),
+                  pickup_date: String(fieldDate.value || "").trim(),
+                  pickup_time: String(fieldTime.value || "").trim(),
+                  service: normalizeQuoteSignatureText(fieldService && fieldService.value),
+                  tier: normalizeQuoteSignatureText(fieldTier && fieldTier.value),
+                  drink_service: !!(fieldDrinkService && fieldDrinkService.checked),
+                  work_table: !!(fieldWorkTable && fieldWorkTable.checked),
+                  wait_min: normalizeWaitMin(fieldWaitMin && fieldWaitMin.value),
+                  stop1,
+                  pax: normalizeInt(fieldPax.value, 1, 1),
+                  bags: normalizeInt(fieldBags.value, 0, 0),
+                });
+              }
+
+              function markQuoteStaleIfNeeded() {
+                if (!lastQuotePayload) return;
+                const nextSignature = buildQuoteSignature();
+                if (!nextSignature || nextSignature === lastQuoteSignature) return;
+                lastQuotePayload = null;
+                lastQuoteSignature = "";
+                setBusy(false);
+                setStatus(
+                  uiText.quoteChangedRecalculate || uiText.quoteFirst || uiText.quoteError,
+                  "info",
+                );
+              }
+
+              function hideSuggestions(container) {
+                if (!container) return;
+                container.style.display = "none";
+                container.innerHTML = "";
+              }
+
+              function renderSuggestions(container, inputField, suggestions) {
+                if (!container) return;
+                if (!Array.isArray(suggestions) || !suggestions.length) {
+                  hideSuggestions(container);
+                  return;
+                }
+                const html = suggestions.slice(0, 5).map(function (item, index) {
+                  const label = esc(
+                    pickBestAddressLabel(item) ||
+                      (item && (item.label || item.address) ? (item.label || item.address) : ""),
+                  );
+                  const address = esc(item && item.address ? item.address : "");
+                  const subtitleParts = [];
+                  if (item && item.postcode) subtitleParts.push(String(item.postcode));
+                  if (item && item.city) subtitleParts.push(String(item.city));
+                  if (item && item.country) subtitleParts.push(String(item.country));
+                  const subtitle = esc(subtitleParts.join(" "));
+                  return (
+                    '<button class="fx-suggest-item" data-idx="' + index + '" type="button">' +
+                      '<div>' + label + '</div>' +
+                      (subtitle || address ? '<div style="margin-top:2px;color:#aeb8d0;font-size:11px;">' + (subtitle || address) + '</div>' : '') +
+                    "</button>"
+                  );
+                }).join("");
+                container.innerHTML = html;
+                container.style.display = "block";
+                const buttons = container.querySelectorAll(".fx-suggest-item");
+                buttons.forEach(function (button) {
+                  button.addEventListener("click", function () {
+                    const idx = Number(button.getAttribute("data-idx") || "-1");
+                    const selected = suggestions[idx];
+                    if (!selected) return;
+                    const nextValue = String(
+                      pickBestAddressLabel(selected) || selected.label || selected.address || "",
+                    ).trim();
+                    if (nextValue) inputField.value = nextValue;
+                    const resolved = normalizeResolvedAddress(selected);
+                    if (inputField === fieldFrom || container === fromSuggestEl) {
+                      fromResolved = resolved;
+                    } else if (inputField === fieldTo || container === toSuggestEl) {
+                      toResolved = resolved;
+                    }
+                    hideSuggestions(container);
+                    markQuoteStaleIfNeeded();
+                  });
+                });
+              }
+
+              function scheduleSuggest(field, inputField, container) {
+                if (!inputField || !container) return;
+                const query = String(inputField.value || "").trim();
+                if (field === "from") {
+                  if (fromSuggestTimer) clearTimeout(fromSuggestTimer);
+                } else if (field === "to") {
+                  if (toSuggestTimer) clearTimeout(toSuggestTimer);
+                }
+                if (!companyCode || query.length < 3) {
+                  hideSuggestions(container);
+                  return;
+                }
+                const run = async function () {
+                  try {
+                    const params = new URLSearchParams();
+                    params.set("company_code", companyCode);
+                    params.set("q", query);
+                    params.set("field", field);
+                    params.set("lang", currentLang || "nl");
+                    params.set("limit", "5");
+                    const response = await fetch("/public/address/suggest?" + params.toString(), {
+                      method: "GET",
+                    });
+                    const out = await response.json().catch(function () {
+                      return { ok: false, suggestions: [] };
+                    });
+                    if (!response.ok || !out || out.ok !== true) {
+                      hideSuggestions(container);
+                      return;
+                    }
+                    renderSuggestions(container, inputField, Array.isArray(out.suggestions) ? out.suggestions : []);
+                  } catch (_) {
+                    hideSuggestions(container);
+                  }
+                };
+                if (field === "from") {
+                  fromSuggestTimer = setTimeout(run, 280);
+                } else if (field === "to") {
+                  toSuggestTimer = setTimeout(run, 280);
+                }
+              }
+
+              function buildPickupIso(dateValue, timeValue) {
+                if (!dateValue || !timeValue) return "";
+                // Interpret the selected date/time as local browser time, then serialize to ISO.
+                const localCandidate = new Date(String(dateValue) + "T" + String(timeValue));
+                if (!Number.isFinite(localCandidate.getTime())) return "";
+                return localCandidate.toISOString();
+              }
+
+              function readCommonPublicPayload() {
+                const from = String(fieldFrom.value || "").trim();
+                const to = String(fieldTo.value || "").trim();
+                const pickupDate = String(fieldDate.value || "").trim();
+                const pickupTime = String(fieldTime.value || "").trim();
+                if (!from || !to || !pickupDate || !pickupTime) {
+                  return { ok: false, error: uiText.requiredFieldsMissing };
+                }
+                const pickupIso = buildPickupIso(pickupDate, pickupTime);
+                if (!pickupIso) {
+                  return { ok: false, error: uiText.invalidPickupDateTime };
+                }
+                const payload = {
+                  company_code: companyCode,
+                  from,
+                  to,
+                  pickup_iso: pickupIso,
+                  service: String((fieldService && fieldService.value) || "passenger").trim().toLowerCase(),
+                  tier: String((fieldTier && fieldTier.value) || "comfort").trim().toLowerCase(),
+                  wait_min: normalizeWaitMin(fieldWaitMin && fieldWaitMin.value),
+                  pax: normalizeInt(fieldPax.value, 1, 1),
+                  bags: normalizeInt(fieldBags.value, 0, 0),
+                };
+                const premiumSelected = payload.tier === "premium";
+                if (premiumSelected) {
+                  const drinkService = !!(fieldDrinkService && fieldDrinkService.checked);
+                  const workTable = !!(fieldWorkTable && fieldWorkTable.checked);
+                  if (!drinkService && !workTable) {
+                    return {
+                      ok: false,
+                      error:
+                        uiText.premiumOptionsRequired ||
+                        "Choose at least one Premium option.",
+                    };
+                  }
+                  payload.drink_service = drinkService;
+                  payload.work_table = workTable;
+                  const extras = [];
+                  if (drinkService) extras.push("drink_service");
+                  if (workTable) extras.push("work_table");
+                  if (extras.length) payload.extras = extras;
+                }
+                payload.from_raw = from;
+                payload.to_raw = to;
+                const fromResolvedLabel = pickBestAddressLabel(fromResolved);
+                const toResolvedLabel = pickBestAddressLabel(toResolved);
+                if (fromResolvedLabel) payload.from_label = fromResolvedLabel;
+                if (toResolvedLabel) payload.to_label = toResolvedLabel;
+                const fromFullAddress = String(
+                  (fromResolved && (
+                    fromResolved.full_address ||
+                    fromResolved.formatted_address ||
+                    fromResolved.place_name ||
+                    fromResolved.label ||
+                    fromResolved.address
+                  )) || "",
+                ).trim();
+                const toFullAddress = String(
+                  (toResolved && (
+                    toResolved.full_address ||
+                    toResolved.formatted_address ||
+                    toResolved.place_name ||
+                    toResolved.label ||
+                    toResolved.address
+                  )) || "",
+                ).trim();
+                if (fromFullAddress) payload.from_full_address = fromFullAddress;
+                if (toFullAddress) payload.to_full_address = toFullAddress;
+                if (fromResolved && Number.isFinite(fromResolved.lat) && Number.isFinite(fromResolved.lng)) {
+                  payload.from_lat = Number(fromResolved.lat);
+                  payload.from_lng = Number(fromResolved.lng);
+                }
+                if (toResolved && Number.isFinite(toResolved.lat) && Number.isFinite(toResolved.lng)) {
+                  payload.to_lat = Number(toResolved.lat);
+                  payload.to_lng = Number(toResolved.lng);
+                }
+                const returnEnabled = !!(fieldReturnEnabled && fieldReturnEnabled.checked);
+                payload.return_enabled = returnEnabled;
+                if (returnEnabled) {
+                  const returnDate = String((fieldReturnDate && fieldReturnDate.value) || "").trim();
+                  const returnTime = String((fieldReturnTime && fieldReturnTime.value) || "").trim();
+                  if (!returnDate || !returnTime) {
+                    return { ok: false, error: uiText.missingReturnDateTime || uiText.requiredFieldsMissing };
+                  }
+                  payload.return_date = returnDate;
+                  payload.return_time = returnTime;
+                }
+                const stop1 = String((fieldStop1 && fieldStop1.value) || "").trim();
+                if (stop1) payload.stops = [stop1];
+                const notes = String(fieldNotes.value || "").trim();
+                if (notes) payload.notes = notes;
+                return { ok: true, payload };
+              }
+
+              function applyStepperValue(inputEl, delta, minValue) {
+                if (!inputEl) return;
+                const next = normalizeInt(Number(inputEl.value || 0) + Number(delta || 0), minValue, minValue);
+                inputEl.value = String(next);
+                markQuoteStaleIfNeeded();
+              }
+
+              function setPickupDateToday() {
+                if (!fieldDate) return;
+                const today = toLocalDateInputValue(new Date());
+                fieldDate.value = today;
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldDate);
+              }
+
+              function setPickupDateTomorrow() {
+                if (!fieldDate) return;
+                const target = new Date();
+                target.setDate(target.getDate() + 1);
+                fieldDate.value = toLocalDateInputValue(target);
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldDate);
+              }
+
+              function setPickupTimeNextAvailable() {
+                if (!fieldTime) return;
+                fieldTime.value = toLocalTimeInputValue(roundedNowPlusMinutes(30));
+                markQuoteStaleIfNeeded();
+                openNativePicker(fieldTime);
+              }
+
+              async function onQuoteRequest() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                const base = readCommonPublicPayload();
+                if (!base.ok) {
+                  setStatus(base.error || uiText.quoteError, "error");
+                  return;
+                }
+                resultEl.style.display = "none";
+                resultEl.innerHTML = "";
+                setBusy(true, "quote");
+                setStatus(uiText.quoteLoading, "info");
+                try {
+                  const response = await fetch("/public/quote", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(base.payload),
+                  });
+                  const out = await response.json().catch(function () {
+                    return { ok: false, error: "quote_failed" };
+                  });
+                  if (!response.ok || !out || out.ok !== true) {
+                    const errorCode = String(out && out.error ? out.error : "quote_failed");
+                    setStatus(uiText.quoteError + " (" + errorCode + ")", "error");
+                    quotePanelEl.style.display = "none";
+                    if (quoteDetailCardEl) {
+                      quoteDetailCardEl.style.display = "none";
+                      quoteDetailCardEl.innerHTML = "";
+                    }
+                    lastQuotePayload = null;
+                    lastQuoteSignature = "";
+                    setBusy(false);
+                    return;
+                  }
+                  const amount = out.total_price_incl_vat != null ? out.total_price_incl_vat : out.price_incl_vat;
+                  quotePriceEl.textContent = formatMoney(amount);
+                  quoteDistanceEl.textContent = out.distance_km != null ? String(out.distance_km) + " km" : "-";
+                  quoteDurationEl.textContent = out.duration_min != null ? String(out.duration_min) + " min" : "-";
+                  const note = String(out.note || "").trim();
+                  if (note) {
+                    quoteNoteWrapEl.style.display = "block";
+                    quoteNoteEl.textContent = note;
+                  } else {
+                    quoteNoteWrapEl.style.display = "none";
+                    quoteNoteEl.textContent = "";
+                  }
+                  renderQuoteDetailCard(out, base.payload || lastQuotePayload || {});
+                  quotePanelEl.style.display = "block";
+                  lastQuotePayload = base.payload;
+                  lastQuoteSignature = buildQuoteSignature();
+                  setStatus(uiText.quoteSuccess, "success");
+                } catch (_) {
+                  quotePanelEl.style.display = "none";
+                  if (quoteDetailCardEl) {
+                    quoteDetailCardEl.style.display = "none";
+                    quoteDetailCardEl.innerHTML = "";
+                  }
+                  lastQuotePayload = null;
+                  lastQuoteSignature = "";
+                  setStatus(uiText.quoteError, "error");
+                } finally {
+                  setBusy(false);
+                }
+              }
+
+              async function onBookRequest() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                if (lastQuotePayload && buildQuoteSignature() !== lastQuoteSignature) {
+                  markQuoteStaleIfNeeded();
+                }
+                if (!lastQuotePayload) {
+                  setStatus(uiText.quoteFirst, "error");
+                  return;
+                }
+                const customerName = String(fieldName.value || "").trim();
+                const customerPhone = String(fieldPhone.value || "").trim();
+                const customerEmail = String(fieldEmail.value || "").trim();
+                if (!customerName || !customerPhone) {
+                  setStatus(uiText.requiredFieldsMissing, "error");
+                  return;
+                }
+                const bookPayload = {
+                  ...lastQuotePayload,
+                  customer_name: customerName,
+                  customer_phone: customerPhone,
+                };
+                if (customerEmail) {
+                  bookPayload.customer_email = customerEmail;
+                }
+                setBusy(true, "book");
+                setStatus(uiText.bookingLoading, "info");
+                try {
+                  const response = await fetch("/public/book", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(bookPayload),
+                  });
+                  const out = await response.json().catch(function () {
+                    return { ok: false, error: "booking_failed" };
+                  });
+                  if (!response.ok || !out || out.ok !== true) {
+                    const errorCode = String(out && out.error ? out.error : "booking_failed");
+                    setStatus(uiText.bookingError + " (" + errorCode + ")", "error");
+                    return;
+                  }
+                  const bookingRef = String(
+                    out.public_booking_reference ||
+                    out.booking_reference ||
+                    out.booking_id ||
+                    "",
+                  ).trim();
+                  resultEl.style.display = "block";
+                  resultEl.innerHTML =
+                    "<strong>" + esc(uiText.bookingSuccess) + "</strong><br>" +
+                    "<span>" + esc(uiText.bookingReference) + ":</span> <strong>" + esc(bookingRef || "-") + "</strong>";
+                  setStatus(uiText.bookingSuccess, "success");
+                } catch (_) {
+                  setStatus(uiText.bookingError, "error");
+                } finally {
+                  setBusy(false);
+                }
+              }
+
+              function onResetFlow() {
+                lastQuotePayload = null;
+                lastQuoteSignature = "";
+                quotePanelEl.style.display = "none";
+                if (quoteDetailCardEl) {
+                  quoteDetailCardEl.style.display = "none";
+                  quoteDetailCardEl.innerHTML = "";
+                }
+                resultEl.style.display = "none";
+                resultEl.innerHTML = "";
+                setStatus("", "info");
+                setBusy(false);
+              }
+
+              function reverseGeocodeCurrentLocation(position) {
+                const coords = position && position.coords ? position.coords : null;
+                const lat = coords ? Number(coords.latitude) : Number.NaN;
+                const lng = coords ? Number(coords.longitude) : Number.NaN;
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                  setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  return;
+                }
+                const params = new URLSearchParams();
+                params.set("company_code", companyCode);
+                params.set("lat", String(lat));
+                params.set("lng", String(lng));
+                params.set("lang", currentLang || "nl");
+                fetch("/public/address/reverse?" + params.toString(), { method: "GET" })
+                  .then(function (response) {
+                    return response.json().catch(function () { return { ok: false, error: "location_unavailable" }; })
+                      .then(function (out) { return { response: response, out: out }; });
+                  })
+                  .then(function (result) {
+                    const response = result.response;
+                    const out = result.out || {};
+                    if (!response.ok || out.ok !== true) {
+                      setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                      return;
+                    }
+                    const nextValue = String(
+                      pickBestAddressLabel(out) || out.label || out.address || "",
+                    ).trim();
+                    if (!nextValue) {
+                      setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                      return;
+                    }
+                    fieldFrom.value = nextValue;
+                    fromResolved = normalizeResolvedAddress(out);
+                    hideSuggestions(fromSuggestEl);
+                    markQuoteStaleIfNeeded();
+                    setStatus(uiText.locationFound || uiText.quoteChangedRecalculate, "success");
+                  })
+                  .catch(function () {
+                    setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  });
+              }
+
+              function onUseCurrentLocation() {
+                if (!companyCode) {
+                  setStatus(uiText.unavailableForBooking, "error");
+                  return;
+                }
+                if (!navigator || !navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== "function") {
+                  setStatus(uiText.locationUnavailable || uiText.suggestionUnavailable, "error");
+                  return;
+                }
+                setStatus(uiText.locating || uiText.quoteLoading, "info");
+                navigator.geolocation.getCurrentPosition(
+                  function (position) {
+                    reverseGeocodeCurrentLocation(position);
+                  },
+                  function (error) {
+                    const denied = !!(error && Number(error.code) === 1);
+                    setStatus(
+                      denied
+                        ? (uiText.locationPermissionDenied || uiText.locationUnavailable || uiText.suggestionUnavailable)
+                        : (uiText.locationUnavailable || uiText.suggestionUnavailable),
+                      "error",
+                    );
+                  },
+                  {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 30000,
+                  },
+                );
+              }
+
+              quoteBtn.addEventListener("click", onQuoteRequest);
+              bookBtn.addEventListener("click", onBookRequest);
+              resetBtn.addEventListener("click", onResetFlow);
+              fieldFrom.addEventListener("input", function () {
+                fromResolved = null;
+                markQuoteStaleIfNeeded();
+                scheduleSuggest("from", fieldFrom, fromSuggestEl);
+              });
+              fieldFrom.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldTo.addEventListener("input", function () {
+                toResolved = null;
+                markQuoteStaleIfNeeded();
+                scheduleSuggest("to", fieldTo, toSuggestEl);
+              });
+              fieldTo.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldTime.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldTime.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldDate.addEventListener("click", function () { openNativePicker(fieldDate); });
+              fieldDate.addEventListener("focus", function () { openNativePicker(fieldDate); });
+              fieldTime.addEventListener("click", function () { openNativePicker(fieldTime); });
+              fieldTime.addEventListener("focus", function () { openNativePicker(fieldTime); });
+              if (fieldReturnEnabled) {
+                fieldReturnEnabled.addEventListener("change", function () {
+                  syncReturnFieldsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+              }
+              if (fieldReturnDate) {
+                fieldReturnDate.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldReturnDate.addEventListener("change", markQuoteStaleIfNeeded);
+                fieldReturnDate.addEventListener("click", function () { openNativePicker(fieldReturnDate); });
+                fieldReturnDate.addEventListener("focus", function () { openNativePicker(fieldReturnDate); });
+              }
+              if (fieldReturnTime) {
+                fieldReturnTime.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldReturnTime.addEventListener("change", markQuoteStaleIfNeeded);
+                fieldReturnTime.addEventListener("click", function () { openNativePicker(fieldReturnTime); });
+                fieldReturnTime.addEventListener("focus", function () { openNativePicker(fieldReturnTime); });
+              }
+              fieldPax.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldPax.addEventListener("change", markQuoteStaleIfNeeded);
+              fieldBags.addEventListener("input", markQuoteStaleIfNeeded);
+              fieldBags.addEventListener("change", markQuoteStaleIfNeeded);
+              if (fieldService) {
+                fieldService.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldService.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldTier) {
+                fieldTier.addEventListener("input", function () {
+                  syncPremiumOptionsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+                fieldTier.addEventListener("change", function () {
+                  syncPremiumOptionsVisibility();
+                  markQuoteStaleIfNeeded();
+                });
+              }
+              if (fieldDrinkService) {
+                fieldDrinkService.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldWorkTable) {
+                fieldWorkTable.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldWaitMin) {
+                fieldWaitMin.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldWaitMin.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              if (fieldStop1) {
+                fieldStop1.addEventListener("input", markQuoteStaleIfNeeded);
+                fieldStop1.addEventListener("change", markQuoteStaleIfNeeded);
+              }
+              fieldFrom.addEventListener("blur", function () {
+                setTimeout(function () { hideSuggestions(fromSuggestEl); }, 120);
+              });
+              fieldTo.addEventListener("blur", function () {
+                setTimeout(function () { hideSuggestions(toSuggestEl); }, 120);
+              });
+              fieldFrom.addEventListener("focus", function () {
+                scheduleSuggest("from", fieldFrom, fromSuggestEl);
+              });
+              fieldTo.addEventListener("focus", function () {
+                scheduleSuggest("to", fieldTo, toSuggestEl);
+              });
+              if (currentLocationBtn) {
+                currentLocationBtn.addEventListener("click", onUseCurrentLocation);
+              }
+              const langLinks = document.querySelectorAll(".fx-lang-link");
+              if (langLinks && langLinks.length) {
+                langLinks.forEach(function (link) {
+                  link.addEventListener("click", function () {
+                    savePublicGatewayState();
+                  });
+                });
+              }
+              if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") {
+                window.addEventListener("beforeunload", savePublicGatewayState);
+              }
+              if (paxMinusBtn) {
+                paxMinusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldPax, -1, 1);
+                });
+              }
+              if (paxPlusBtn) {
+                paxPlusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldPax, 1, 1);
+                });
+              }
+              if (bagsMinusBtn) {
+                bagsMinusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldBags, -1, 0);
+                });
+              }
+              if (bagsPlusBtn) {
+                bagsPlusBtn.addEventListener("click", function () {
+                  applyStepperValue(fieldBags, 1, 0);
+                });
+              }
+              if (dateTodayBtn) {
+                dateTodayBtn.addEventListener("click", setPickupDateToday);
+              }
+              if (dateTomorrowBtn) {
+                dateTomorrowBtn.addEventListener("click", setPickupDateTomorrow);
+              }
+              if (timeNextBtn) {
+                timeNextBtn.addEventListener("click", setPickupTimeNextAvailable);
+              }
+              applyDateTimeDefaults();
+              syncReturnFieldsVisibility();
+              syncPremiumOptionsVisibility();
+              restorePublicGatewayState();
+              syncReturnFieldsVisibility();
+              syncPremiumOptionsVisibility();
+              if (!companyCode) {
+                quoteBtn.disabled = true;
+                bookBtn.disabled = true;
+                if (currentLocationBtn) currentLocationBtn.disabled = true;
+                if (paxMinusBtn) paxMinusBtn.disabled = true;
+                if (paxPlusBtn) paxPlusBtn.disabled = true;
+                if (bagsMinusBtn) bagsMinusBtn.disabled = true;
+                if (bagsPlusBtn) bagsPlusBtn.disabled = true;
+                setStatus(uiText.unavailableForBooking, "error");
+              } else {
+                setBusy(false);
+              }
+            })();
+          </script>
+        </div>
       </section>
       ${
         hasContact
-          ? `<section style="margin-top:14px;background:#121A30;border:1px solid #26314F;border-radius:16px;padding:16px;">
+          ? `<section class="fx-contact">
         <h3 style="margin:0 0 10px;font-size:16px;">${escapeHtml(copy.contactTitle)}</h3>
         ${contactEmail ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.email)}:</strong> ${escapeHtml(contactEmail)}</div>` : ""}
         ${contactPhone ? `<div style="margin:0 0 6px;color:#D7E1FF;"><strong>${escapeHtml(copy.phone)}:</strong> ${escapeHtml(contactPhone)}</div>` : ""}
-        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${escapeHtml(contactWebsite)}</div>` : ""}
+        ${contactWebsite ? `<div style="margin:0;color:#D7E1FF;"><strong>${escapeHtml(copy.website)}:</strong> ${contactWebsiteHref ? `<a href="${escapeHtml(contactWebsiteHref)}" target="_blank" rel="noopener noreferrer" style="color:#f0c85d;text-decoration:underline;">${escapeHtml(contactWebsite)}</a>` : escapeHtml(contactWebsite)}</div>` : ""}
       </section>`
           : ""
       }
@@ -3282,205 +12781,86 @@ GET /oauth/callback
         let body = {};
         try { body = await request.json(); }
         catch { return json({ ok: false, error: "Invalid JSON body" }, 400); }
+        const quoteResult = await _handleQuoteRequestInternal({
+          body,
+          env,
+          request,
+          url,
+        });
+        return json(quoteResult.out, quoteResult.status);
+      }
 
-        if (!body.from || !body.to || !body.date || !body.time) {
-          return json({ ok: false, error: "Missing fields: from, to, date, time" }, 400);
+      if (url.pathname === "/public/address/suggest") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
         }
+        return handlePublicAddressSuggest(url, env);
+      }
+      if (url.pathname === "/public/address/reverse") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicAddressReverse(url, env);
+      }
 
-        const requestedPublicPartnerId = _extractRequestedPublicPartnerId({ url, body });
-        let quoteScope = null;
-        let routedPublicPartner = null;
-        if (requestedPublicPartnerId) {
-          routedPublicPartner = await resolvePublicPartnerBookingScope(
-            env,
-            requestedPublicPartnerId,
-          );
-          if (!routedPublicPartner?.ok) {
-            return json({ ok: false, error: routedPublicPartner?.error || "invalid public partner" }, routedPublicPartner?.status || 400);
-          }
-          quoteScope = {
-            tenant_id: routedPublicPartner.tenant_id,
-            company_id: routedPublicPartner.company_id,
-            hasScope: true,
-          };
-        } else {
-          const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
-          quoteScope = resolveExplicitBookingRequestScope({
-            request,
-            url,
-            body,
-            allowLegacyFallback: allowLegacyScopeFallback,
-          });
+      if (url.pathname === "/public/quote" && request.method === "POST") {
+        const body = await safeJson(request);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
         }
-        if (!quoteScope?.hasScope) {
+        const bodyKeys = Object.keys(body).slice(0, 16).join(",");
+        const publicCode = _readPublicCompanyCodeFromBody(body);
+        console.log(
+          `[PUBLIC_QUOTE][INPUT] keys=${bodyKeys || "none"} company_code=${publicCode?.ok ? publicCode.code : "invalid"}`,
+        );
+        const resolvedScope = await _resolvePublicCompanyBookingScope(env, body);
+        if (!resolvedScope.ok) {
+          return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
+        }
+        const normalized = _normalizePublicQuoteBody(body, resolvedScope);
+        if (!normalized.ok) {
           return json(
-            quoteScope?.error === "tenant_scope_conflict" ? scopeConflictError() : missingTenantScopeError(),
+            {
+              ok: false,
+              error: normalized.error || "invalid_request",
+              ...(Array.isArray(normalized.missing) ? { missing: normalized.missing } : {}),
+              ...(normalized.message ? { message: normalized.message } : {}),
+            },
             400,
           );
         }
-        body = {
-          ...body,
-          tenant_id: quoteScope.tenant_id,
-          tenantId: quoteScope.tenant_id,
-          company_id: quoteScope.company_id,
-          companyId: quoteScope.company_id,
-          ...(routedPublicPartner?.ok
-            ? {
-                public_partner_id: routedPublicPartner.partner_id,
-                publicPartnerId: routedPublicPartner.partner_id,
-                partner_id: routedPublicPartner.partner_id,
-                partnerId: routedPublicPartner.partner_id,
-              }
-            : {}),
-        };
-        const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
-        const vat_rate = clampNumber(
-          pricingProfile?.vat_rate,
-          clampNumber(body.vat_rate, 0.06, 0, 1),
-          0,
-          1,
+        const quotePayloadKeys = Object.keys(normalized.payload).slice(0, 24).join(",");
+        const hasTenantAliases = !!(
+          safeStr(normalized.payload?.tenant_id, 80) &&
+          safeStr(normalized.payload?.tenantId, 80) &&
+          safeStr(normalized.payload?.company_id, 80) &&
+          safeStr(normalized.payload?.companyId, 80)
         );
-
-        // Enforce business rules (Tesla Model 3)
-        const pax = clampInt(body.pax, 1, 3);
-        const bags = Math.max(0, clampInt(body.bags, 0, 99));
-
-        const tier = normalizeTier(body.tier || "comfort");
-        const service = normalizeService(body.service || "passenger");
-
-        // Stops + wait (tolerant input)
-        const stops = normalizeStops(body); // array of stop addresses
-        const wait_min = parseDurationMin(body.wait_min ?? body.wait_minutes ?? body.waiting_min ?? body.wait, 0);
-        const stop_count = stops.length;
-        
-
-        // ✅ Business detection (NEW)
-        const biz = normalizeBusiness(body);
-        const business_detected = !!biz.vat_number;
-        const invoice_requested = business_detected ? true : !!biz.invoice_requested;
-
-        // Route WITH waypoints + per-leg breakdown
-        const routeOut = await routeFromTextsWithStopsDetailed({
-          fromText: body.from,
-          toText: body.to,
-          stopsTexts: stops,
-          token: env.MAPBOX_TOKEN
+        console.log(
+          `[PUBLIC_QUOTE][FORWARD] keys=${quotePayloadKeys || "none"} scope_aliases=${hasTenantAliases ? "yes" : "no"}`,
+        );
+        const quoteResult = await _handleQuoteRequestInternal({
+          body: normalized.payload,
+          env,
+          request,
+          url,
         });
-
-        const route = routeOut.route;
-        const legs = routeOut.legs || [];
-
-        const distance_km = round1(route.distance / 1000);
-        const duration_route_min = Math.round(route.duration / 60);
-
-        const mainWhen = normalizeWhen(body.date, body.time);
-
-        // Pricing: server truth
-        const mainPricing = calcPrice({
-          distance_km,
-          duration_min: duration_route_min,
-          tier,
-          service,
-          when: mainWhen,
-          time_str: body.time,
-          pax,
-          bags,
-          vat_rate,
-          stop_count,
-          wait_min,
-          pricing_profile: pricingProfile,
-          apply_return_fee: false,
-        });
-
-        // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
-        let returnQuote = null;
-        try {
-          if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
-            const rf = body.return_from || body.to;
-            const rt = body.return_to || body.from;
-            if (!rf || !rt) throw new Error('Missing return_from/return_to');
-            const retRouteOut = await routeFromTextsWithStopsDetailed({
-              fromText: rf,
-              toText: rt,
-              stopsTexts: [],
-              token: env.MAPBOX_TOKEN
-            });
-
-            const retRoute = retRouteOut.route;
-            const retDistance_km = round1(retRoute.distance / 1000);
-            const retDuration_min = Math.round(retRoute.duration / 60);
-            const retWhen = normalizeWhen(body.return_date, body.return_time);
-
-            const retPricing = calcPrice({
-              distance_km: retDistance_km,
-              duration_min: retDuration_min,
-              tier,
-              service,
-              when: retWhen,
-              time_str: body.return_time,
-              pax,
-              bags,
-              vat_rate,
-              stop_count: 0,
-              wait_min: 0,
-              pricing_profile: pricingProfile,
-              apply_return_fee: true,
-            });
-
-            returnQuote = {
-              distance_km: retDistance_km,
-              duration_min: retDuration_min,
-              price_ex_vat: retPricing.price_ex_vat,
-              price_vat: retPricing.price_vat,
-              price_incl_vat: retPricing.price_incl_vat,
-              note: retPricing.note
-            };
-          }
-        } catch (e) {
-          // If return quote fails, we keep main quote and simply omit returnQuote
-          returnQuote = null;
+        const quoteOut = quoteResult?.out || { ok: false, error: "quote_failed" };
+        console.log(
+          `[PUBLIC_QUOTE][RES] status=${Number(quoteResult?.status || 500)} error=${safeStr(quoteOut?.error, 80) || "none"}`,
+        );
+        const safeQuote = _stripInternalScopeFromPublicResponse(quoteOut);
+        if (safeQuote && typeof safeQuote === "object" && !Array.isArray(safeQuote)) {
+          safeQuote.company_code = resolvedScope.company_code;
+          safeQuote.companyCode = resolvedScope.company_code;
         }
+        return json(safeQuote, Number(quoteResult?.status || 500));
+      }
 
-        return json({
-          ok: true,
-          inputs: {
-            from: body.from,
-            to: body.to,
-            date: body.date,
-            time: body.time,
-            tier,
-            service,
-            pax,
-            bags,
-            vat_rate,
-            stop_count,
-            wait_min,
-            stops,
-
-            // ✅ business fields echoed back
-            business_detected,
-            invoice_requested,
-            company_name: biz.company_name || "",
-            vat_number: biz.vat_number || ""
-          },
-          distance_km,
-          duration_min: duration_route_min,
-          legs,
-
-          price_ex_vat: mainPricing.price_ex_vat,
-          price_vat: mainPricing.price_vat,
-          price_incl_vat: mainPricing.price_incl_vat,
-          note: mainPricing.note,
-          pricing_profile: pricingProfile,
-
-          // totals (main + optional return)
-          total_price_ex_vat: round2((mainPricing.price_ex_vat || 0) + (returnQuote ? (returnQuote.price_ex_vat || 0) : 0)),
-          total_price_vat: round2((mainPricing.price_vat || 0) + (returnQuote ? (returnQuote.price_vat || 0) : 0)),
-          total_price_incl_vat: round2((mainPricing.price_incl_vat || 0) + (returnQuote ? (returnQuote.price_incl_vat || 0) : 0)),
-
-          return: returnQuote,
-          breakdown: mainPricing.breakdown
-        });
+      // PUBLIC BOOKING GATEWAY ALIAS
+      // Keep GET /book as a public gateway route while POST /book remains booking creation.
+      if (url.pathname === "/book" && request.method === "GET") {
+        return handlePublicBookingPreview(url, env);
       }
 
       // LEAD
@@ -3598,7 +12978,10 @@ GET /oauth/callback
         const out = await handleBooking(normalizedBody, env, request);
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
-        return json(out, 200);
+        const statusCode = out?.ok === true
+          ? 200
+          : (out?.error === "payment_checkout_unavailable" ? 502 : 400);
+        return json(out, statusCode);
       }
 
       // PUBLIC BOOTSTRAP (phase 2B, read-only)
@@ -3609,12 +12992,279 @@ GET /oauth/callback
         return handlePublicBootstrap(url, env);
       }
 
-      // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
-      if (url.pathname === "/public/book") {
+      if (url.pathname === "/public/company/resolve") {
         if (request.method !== "GET") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
-        return handlePublicBookingPreview(url, env);
+        return handlePublicCompanyResolve(url, env);
+      }
+
+      if (url.pathname === "/public/company/register") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRegister(body, env);
+      }
+
+      if (url.pathname === "/public/company/recovery/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRecoveryStart(body, env);
+      }
+
+      if (url.pathname === "/public/company/recovery/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyRecoveryVerify(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/recovery/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerRecoveryStart(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/recovery/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerRecoveryVerify(body, env);
+      }
+
+      if (url.pathname === "/public/customer/auth/phone/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerPhoneAuthStart(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/auth/phone/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerPhoneAuthVerify(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/profile") {
+        if (request.method === "GET") {
+          return handlePublicCustomerProfileGet(request, env);
+        }
+        if (request.method === "POST") {
+          const body = await safeJson(request);
+          return handlePublicCustomerProfilePost(request, env, body);
+        }
+        return json({ ok: false, error: "method_not_allowed" }, 405);
+      }
+
+      if (url.pathname === "/public/customer/session/bootstrap") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicCustomerSessionBootstrap(request, env);
+      }
+
+      if (url.pathname === "/public/company/link/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyLinkStart(body, env);
+      }
+
+      if (url.pathname === "/public/company/link/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyLinkVerify(body, env);
+      }
+
+      if (url.pathname === "/admin/company/link-index/upsert") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkIndexUpsert(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/link-index/get") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkIndexGet(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/link-code/create") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyLinkCodeCreate(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/index/upsert") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriversIndexUpsert(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/index/delete") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriversIndexDelete(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/driver-link-code/create") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriverLinkCodeCreate(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/upload") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsUpload(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/list") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsList(request, url, env);
+      }
+
+      const adminDriverDocumentsDeleteMatch = url.pathname.match(
+        /^\/admin\/driver-documents\/([A-Za-z0-9._-]+)$/,
+      );
+      if (adminDriverDocumentsDeleteMatch) {
+        if (request.method !== "DELETE") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsDelete(
+          request,
+          url,
+          env,
+          adminDriverDocumentsDeleteMatch[1],
+        );
+      }
+
+      if (url.pathname === "/public/company/driver-link/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyDriverLinkVerify(body, env);
+      }
+
+      if (url.pathname === "/public/driver/login") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicDriverLogin(body, env);
+      }
+
+      if (url.pathname === "/driver/bookings") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const session = await _loadPublicDriverSessionFromRequest(request, env);
+        if (!session) {
+          console.log("[DRIVER_BOOKINGS][DENY] reason=unauthorized");
+          return _publicDriverAuthFail();
+        }
+        const limit = Number(url.searchParams.get("limit") || "50");
+        const includeHistory =
+          (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const tenantScope = normalizeFleetTenantScope({
+          tenant_id: session.tenant_id,
+          company_id: session.company_id,
+        });
+        console.log(
+          `[DRIVER_BOOKINGS][REQ] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)}`,
+        );
+        const items = await listBookingsAuthoritative(env, {
+          limit,
+          includeHistory,
+          tenantScope,
+        });
+        const filtered = items.filter((item) => {
+          const assignedDriverId = bookingAssignedDriverId(item);
+          const assignedVehicleId = bookingAssignedVehicleId(item);
+          if (assignedDriverId && assignedDriverId === session.driver_id) return true;
+          if (
+            session.assigned_vehicle_id &&
+            assignedVehicleId &&
+            assignedVehicleId === session.assigned_vehicle_id
+          ) {
+            return true;
+          }
+          return false;
+        });
+        console.log(
+          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${filtered.length}`,
+        );
+        return json({ ok: true, items: filtered, count: filtered.length }, 200);
+      }
+
+      if (url.pathname === "/company/bootstrap") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleCompanyBootstrap(request, env);
+      }
+
+      // PUBLIC BOOKING PREVIEW (phase 3A, read-only)
+      if (url.pathname === "/public/book") {
+        if (request.method === "GET") {
+          return handlePublicBookingPreview(url, env);
+        }
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return json({ ok: false, error: "invalid_body" }, 400);
+        }
+        const bodyKeys = Object.keys(body).slice(0, 16).join(",");
+        const publicCode = _readPublicCompanyCodeFromBody(body);
+        console.log(
+          `[PUBLIC_BOOK][INPUT] keys=${bodyKeys || "none"} company_code=${publicCode?.ok ? publicCode.code : "invalid"}`,
+        );
+        const resolvedScope = await _resolvePublicCompanyBookingScope(env, body);
+        if (!resolvedScope.ok) {
+          return json({ ok: false, error: resolvedScope.error }, resolvedScope.status || 400);
+        }
+        const normalized = _normalizePublicBookBody(body, resolvedScope);
+        if (!normalized.ok) {
+          return json(
+            {
+              ok: false,
+              error: normalized.error || "invalid_request",
+              ...(Array.isArray(normalized.missing) ? { missing: normalized.missing } : {}),
+              ...(normalized.message ? { message: normalized.message } : {}),
+            },
+            400,
+          );
+        }
+        const bookingOut = await handleBooking(normalized.payload, env, request);
+        const projected = _projectPublicBookResponse(
+          _stripInternalScopeFromPublicResponse(bookingOut),
+          resolvedScope.company_code,
+        );
+        return json(projected, projected.ok ? 200 : 400);
       }
 
       // PUBLIC MEDIA (read-only, path-limited)
@@ -3874,6 +13524,65 @@ GET /oauth/callback
         }, 200);
       }
 
+      if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const key = buildScopedAirportFixedFaresKey(explicitScope);
+        const emptyDocument = { version: 1, updated_at: null, rules: [] };
+        if (!key) {
+          return json({
+            ok: true,
+            key: "",
+            airport_fixed_fares: emptyDocument,
+          }, 200);
+        }
+        const raw = await env.BOOKING_KV.get(key, { type: "json" });
+        const airport_fixed_fares =
+          raw && typeof raw === "object"
+            ? _normalizeAirportFixedFaresDocument(raw)
+            : emptyDocument;
+        return json({
+          ok: true,
+          key,
+          airport_fixed_fares,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/pricing/airport-fixed-fares" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const incoming = body?.airport_fixed_fares && typeof body.airport_fixed_fares === "object"
+          ? body.airport_fixed_fares
+          : body;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
+        if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
+        const validated = _validateAirportFixedFaresForAdmin(incoming);
+        if (!validated.ok) {
+          return json({
+            ok: false,
+            error: "invalid_airport_fixed_fares",
+            details: validated.details,
+          }, 400);
+        }
+        const saved = await _saveScopedAirportFixedFares(env, incoming, explicitScope);
+        return json({
+          ok: true,
+          key: saved.key,
+          airport_fixed_fares: saved.airport_fixed_fares,
+        }, 200);
+      }
+
       if (url.pathname === "/admin/business/profile" && request.method === "GET") {
         _requireAdmin(request, url, env);
         const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url });
@@ -3884,10 +13593,70 @@ GET /oauth/callback
         const profile = await loadBusinessProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
         });
+        let resolvedCompanyCode = "";
+        let ensuredPublicCompanyCode = "";
+        let ensuredPublicCompanySlug = "";
+        let ensuredPublicDisplayCode = "";
+        try {
+          const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
+            profile,
+            business_profile: profile,
+            company_code:
+              profile?.company_code ??
+              profile?.companyCode ??
+              profile?.public_company_code ??
+              profile?.publicCompanyCode,
+            country: profile?.country,
+            source: "auto_generated",
+          });
+          if (ensuredCode?.ok) {
+            resolvedCompanyCode = sanitizeTenantString(ensuredCode.company_code, 80);
+            ensuredPublicCompanyCode = sanitizeTenantString(
+              ensuredCode.public_company_code ?? ensuredCode.company_code,
+              80,
+            );
+            ensuredPublicCompanySlug = sanitizeTenantString(
+              ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+              80,
+            );
+            ensuredPublicDisplayCode = sanitizeTenantString(
+              ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+              240,
+            );
+          }
+        } catch (err) {
+          console.log(
+            `[ADMIN_BUSINESS_PROFILE][WARN] reason=company_code_ensure_failed tenant=${_maskPublicDriverLoginValue(explicitScope.tenant_id)} company=${_maskPublicDriverLoginValue(explicitScope.company_id)} error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+          );
+        }
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ...(resolvedCompanyCode
+            ? {
+                company_code: resolvedCompanyCode,
+                companyCode: resolvedCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanyCode
+            ? {
+                public_company_code: ensuredPublicCompanyCode,
+                publicCompanyCode: ensuredPublicCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanySlug
+            ? {
+                public_company_slug: ensuredPublicCompanySlug,
+                publicCompanySlug: ensuredPublicCompanySlug,
+              }
+            : {}),
+          ...(ensuredPublicDisplayCode
+            ? {
+                public_display_code: ensuredPublicDisplayCode,
+                publicDisplayCode: ensuredPublicDisplayCode,
+              }
+            : {}),
         }, 200);
       }
 
@@ -3909,10 +13678,74 @@ GET /oauth/callback
         const profile = await saveBusinessProfile(env, incoming, explicitScope, {
           allowTenantLegacyWrite: false,
         });
+        let resolvedCompanyCode = "";
+        let ensuredPublicCompanyCode = "";
+        let ensuredPublicCompanySlug = "";
+        let ensuredPublicDisplayCode = "";
+        try {
+          const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
+            profile,
+            business_profile: profile,
+            company_code:
+              incoming?.company_code ??
+              incoming?.companyCode ??
+              incoming?.public_company_code ??
+              incoming?.publicCompanyCode ??
+              profile?.company_code ??
+              profile?.companyCode ??
+              profile?.public_company_code ??
+              profile?.publicCompanyCode,
+            country: incoming?.country ?? profile?.country,
+            source: "auto_generated",
+          });
+          if (ensuredCode?.ok) {
+            resolvedCompanyCode = sanitizeTenantString(ensuredCode.company_code, 80);
+            ensuredPublicCompanyCode = sanitizeTenantString(
+              ensuredCode.public_company_code ?? ensuredCode.company_code,
+              80,
+            );
+            ensuredPublicCompanySlug = sanitizeTenantString(
+              ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+              80,
+            );
+            ensuredPublicDisplayCode = sanitizeTenantString(
+              ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+              240,
+            );
+          }
+        } catch (err) {
+          console.log(
+            `[ADMIN_BUSINESS_PROFILE][WARN] reason=company_code_ensure_failed tenant=${_maskPublicDriverLoginValue(explicitScope.tenant_id)} company=${_maskPublicDriverLoginValue(explicitScope.company_id)} error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
+          );
+        }
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ...(resolvedCompanyCode
+            ? {
+                company_code: resolvedCompanyCode,
+                companyCode: resolvedCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanyCode
+            ? {
+                public_company_code: ensuredPublicCompanyCode,
+                publicCompanyCode: ensuredPublicCompanyCode,
+              }
+            : {}),
+          ...(ensuredPublicCompanySlug
+            ? {
+                public_company_slug: ensuredPublicCompanySlug,
+                publicCompanySlug: ensuredPublicCompanySlug,
+              }
+            : {}),
+          ...(ensuredPublicDisplayCode
+            ? {
+                public_display_code: ensuredPublicDisplayCode,
+                publicDisplayCode: ensuredPublicDisplayCode,
+              }
+            : {}),
         }, 200);
       }
 
@@ -4322,7 +14155,16 @@ GET /oauth/callback
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
-          const { rec } = await loadBookingRecord(env, bookingId);
+          let rec = null;
+          try {
+            const loaded = await loadBookingRecord(env, bookingId);
+            rec = loaded?.rec || null;
+          } catch (loadErr) {
+            if (String(loadErr?.message || "") === "Booking not found") {
+              return json({ ok: false, error: "booking_not_found" }, 404);
+            }
+            throw loadErr;
+          }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const adminAuthorized = hasValidAdminToken(request, url, env);
           if (!adminAuthorized) {
@@ -4411,6 +14253,15 @@ GET /oauth/callback
 
         if (
           pathParts.length === 4 &&
+          pathParts[2] === "invoice" &&
+          pathParts[3] === "pdf" &&
+          request.method === "GET"
+        ) {
+          return await handleBookingInvoicePdfGet(request, url, env, bookingId);
+        }
+
+        if (
+          pathParts.length === 4 &&
           pathParts[2] === "receipt" &&
           pathParts[3] === "email" &&
           request.method === "POST"
@@ -4419,6 +14270,17 @@ GET /oauth/callback
           const out = await handleManualReceiptEmail(request, url, env, bookingId, body);
           if (out?.ok && out?.status === "already_sent") return json(out, 200);
           if (out?.ok) return json(out, 200);
+          if (out?.error === "invoice_artifact_not_persisted") {
+            const reason = safeStr(out?.reason, 80);
+            const conflictReasons = new Set([
+              "missing_booking_scope",
+              "missing_booking_id",
+              "empty_pdf_bytes",
+              "pdf_missing",
+            ]);
+            const statusCode = conflictReasons.has(reason) ? 409 : 500;
+            return json(out, statusCode);
+          }
           if (out?.status === "missing_email") return json(out, 400);
           if (out?.status === "skipped") return json(out, 400);
           return json(out, 500);
@@ -6176,6 +16038,13 @@ async function mollieCreatePayment(payload, env, request) {
     const redirectUrl = `${base}/pay/return?id=${encodeURIComponent(bookingId)}&return_to=${encodeURIComponent(returnTo)}`;
     // webhookUrl: points to this worker
     const webhookUrl = `${base}/webhook/mollie`;
+    const scopeMask = _bookingIntentScopeMask({
+      tenant_id: paymentTenantId,
+      company_id: paymentCompanyId,
+    });
+    console.log(
+      `[MOLLIE_CREATE][REQ] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} amount=${amountValue} currency=EUR hasRedirectUrl=${!!redirectUrl} hasWebhookUrl=${!!webhookUrl} mode=${safeStr(mollieConfig?.mode, 16) || "unknown"}`,
+    );
 
     const commProfile = await resolveTenantCommunicationProfile(env, paymentTenantId, paymentCompanyId);
     const description = `${safeBrandName(commProfile?.brandName, "Fluxidi Taxi")} booking ${bookingId}`;
@@ -6196,6 +16065,25 @@ async function mollieCreatePayment(payload, env, request) {
     });
 
     const mollie = await mollieRes.json().catch(() => ({}));
+    const mollieCheckoutHref = safeStr(mollie?._links?.checkout?.href, 2000);
+    let checkoutHost = "";
+    try {
+      checkoutHost = mollieCheckoutHref ? safeStr(new URL(mollieCheckoutHref).host, 120).toLowerCase() : "";
+    } catch (_) {
+      checkoutHost = "";
+    }
+    const mollieErrorCode = safeStr(mollie?.detail || mollie?.code || mollie?.error, 64);
+    const mollieErrorMessage = safeStr(
+      mollie?.title ||
+        mollie?.message ||
+        mollie?.detail ||
+        mollie?.error_description ||
+        mollie?.error,
+      160,
+    );
+    console.log(
+      `[MOLLIE_CREATE][RES] httpStatus=${Number(mollieRes?.status || 0)} ok=${mollieRes?.ok === true} hasId=${!!safeStr(mollie?.id, 120)} hasCheckout=${!!mollieCheckoutHref} checkoutHost=${checkoutHost || "-"} errorCode=${mollieErrorCode || "-"} errorMessage=${mollieErrorMessage || "-"}`,
+    );
     if (!mollieRes.ok || !mollie?.id || !mollie?._links?.checkout?.href) {
       // Keep booking in KV for debugging
       await env.BOOKING_KV.put(
@@ -6633,6 +16521,72 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
       booking?.payment_status ||
       booking?.paymentStatus,
   );
+  const paymentMode = safeStr(
+    rec?.payment_mode ||
+      rec?.paymentMode ||
+      booking?.payment_mode ||
+      booking?.paymentMode,
+  ).toLowerCase();
+  const checkoutUrl = normalizeMollieCheckoutUrl(
+    rec?.checkoutUrl ??
+      rec?.checkout_url ??
+      rec?.paymentUrl ??
+      rec?.payment_url ??
+      rec?.mollie?.checkout_url ??
+      rec?.mollie?.checkoutUrl ??
+      rec?.mollie?._links?.checkout?.href ??
+      booking?.checkoutUrl ??
+      booking?.checkout_url ??
+      booking?.paymentUrl ??
+      booking?.payment_url ??
+      booking?.mollie?.checkout_url ??
+      booking?.mollie?.checkoutUrl ??
+      booking?.mollie?._links?.checkout?.href,
+  );
+  const boolish = (value) => {
+    if (typeof value === "boolean") return value;
+    const raw = safeStr(value, 24).toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  };
+  const businessDetected = boolish(
+    rec?.business_detected ??
+      rec?.businessDetected ??
+      booking?.business_detected ??
+      booking?.businessDetected,
+  );
+  const invoiceRequested = boolish(
+    rec?.invoice_requested ??
+      rec?.invoiceRequested ??
+      booking?.invoice_requested ??
+      booking?.invoiceRequested,
+  );
+  const requiresPayment = boolish(
+    rec?.requiresPayment ??
+      rec?.requires_payment ??
+      rec?.payment_required ??
+      booking?.requiresPayment ??
+      booking?.requires_payment ??
+      booking?.payment_required,
+  ) || businessDetected || invoiceRequested || paymentMode === "mollie";
+  const normalizedPaymentStatus = paymentStatus.toLowerCase();
+  const paymentSettled = [
+    "paid",
+    "confirmed",
+    "completed",
+    "success",
+    "settled",
+  ].includes(normalizedPaymentStatus);
+  if (requiresPayment && !paymentSettled && !checkoutUrl) {
+    return {
+      ok: false,
+      error: "payment_checkout_unavailable",
+      message: "Online payment checkout could not be created",
+      requiresPayment: true,
+      paymentMode: "mollie",
+      booking_id: canonicalBookingId,
+      bookingId: canonicalBookingId,
+    };
+  }
   return {
     ok: true,
     booking_id: canonicalBookingId,
@@ -6649,7 +16603,37 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
     status: _normLifecycleStatus(rec?.status || rec?.stage || null),
     payment_status: paymentStatus || undefined,
     paymentStatus: paymentStatus || undefined,
+    checkout_url: checkoutUrl || undefined,
+    checkoutUrl: checkoutUrl || undefined,
+    requiresPayment: requiresPayment || undefined,
+    paymentMode: paymentMode || undefined,
   };
+}
+
+function normalizeMollieCheckoutUrl(value) {
+  const raw = safeStr(value, 2000);
+  if (!raw) return "";
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    return "";
+  }
+  if (safeStr(parsed?.protocol).toLowerCase() !== "https:") return "";
+  const host = safeStr(parsed?.hostname).toLowerCase();
+  if (!host || !host.includes("mollie.")) return "";
+  return parsed.toString();
+}
+
+function readMollieCheckoutUrlFromPaymentResult(pay) {
+  if (!pay || typeof pay !== "object") return "";
+  return normalizeMollieCheckoutUrl(
+    pay?.checkoutUrl ||
+      pay?.checkout_url ||
+      pay?.paymentUrl ||
+      pay?.payment_url ||
+      pay?._links?.checkout?.href,
+  );
 }
 
 async function handleBooking(payload, env, request) {
@@ -6723,6 +16707,74 @@ async function handleBooking(payload, env, request) {
     const business_detected = !!biz.vat_number;
     const customerContact = normalizeCustomerContact(payload);
     const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
+    let linkedCustomerId = "";
+    let linkedPhoneHash = "";
+    let customerPhoneLinkReason = "no_customer_phone";
+    let customerPhoneLinkHasPhone = false;
+    let customerPhoneLinkIsE164 = false;
+    let customerPhoneLinkHasIndex = false;
+    let customerPhoneLookupStep = "-";
+    let customerPhoneLookupErrorName = "-";
+    let customerPhoneLookupErrorMessage = "-";
+    try {
+      customerPhoneLookupStep = "normalize_phone";
+      const normalizedCustomerPhone = _normalizeCustomerPhone(customerContact.phone);
+      customerPhoneLinkHasPhone = !!safeStr(customerContact.phone, 80);
+      customerPhoneLinkIsE164 = _looksLikeE164Phone(normalizedCustomerPhone);
+      if (customerPhoneLinkIsE164) {
+        customerPhoneLookupStep = "hash_phone";
+        const phoneHash = sanitizeTenantString(await _sha256Hex(normalizedCustomerPhone), 200).toLowerCase();
+        customerPhoneLookupStep = "build_index_key";
+        const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
+        if (phoneIndexKey) {
+          customerPhoneLookupStep = "read_global_phone_index";
+          const indexRaw = await env.BOOKING_KV.get(phoneIndexKey);
+          const indexRawText = safeStr(indexRaw, 400).trim();
+          customerPhoneLinkHasIndex = indexRawText.isNotEmpty;
+          customerPhoneLookupStep = "parse_index";
+          let parsedIndex = null;
+          if (indexRaw && typeof indexRaw === "object") {
+            parsedIndex = indexRaw;
+            customerPhoneLinkHasIndex = true;
+          } else if (indexRawText.isNotEmpty) {
+            if (indexRawText.startsWith("{") || indexRawText.startsWith("[")) {
+              try {
+                parsedIndex = JSON.parse(indexRawText);
+              } catch (_) {
+                customerPhoneLinkReason = "index_parse_error";
+              }
+            } else {
+              parsedIndex = indexRawText;
+            }
+          }
+          const resolvedCustomerId = _normalizeCustomerIdentityId(
+            parsedIndex?.customer_id ?? parsedIndex?.customerId ?? parsedIndex,
+          );
+          if (resolvedCustomerId) {
+            customerPhoneLookupStep = "extract_customer_id";
+            linkedCustomerId = resolvedCustomerId;
+            linkedPhoneHash = phoneHash;
+            customerPhoneLinkReason = "linked";
+          } else if (customerPhoneLinkHasIndex) {
+            if (customerPhoneLinkReason !== "index_parse_error") {
+              customerPhoneLinkReason = "index_invalid_shape";
+            }
+          } else {
+            customerPhoneLinkReason = "no_global_phone_index";
+          }
+        } else {
+          customerPhoneLinkReason = "no_global_phone_index";
+        }
+      } else if (customerPhoneLinkHasPhone) {
+        customerPhoneLinkReason = "normalized_not_e164";
+      }
+    } catch (_lookupErr) {
+      customerPhoneLinkReason = "lookup_error";
+      customerPhoneLookupErrorName = safeStr(_lookupErr?.name || "Error", 40) || "Error";
+      customerPhoneLookupErrorMessage =
+        safeStr(_lookupErr?.message || _lookupErr, 120) || "lookup_failed";
+      // Best-effort link only.
+    }
 
     // Business rule: if VAT is provided => upfront payment required (Mollie test/live).
     // Private customers can book without immediate payment.
@@ -6858,6 +16910,13 @@ async function handleBooking(payload, env, request) {
     });
     attachPlanningReferenceAliases(payload, planningReference);
     payload.__planning_reference = planningReference;
+    const customerPhoneLinkScopeMask = _bookingIntentScopeMask({
+      tenant_id: tenantContext.tenant_id,
+      company_id: tenantContext.company_id,
+    });
+    console.log(
+      `[CUSTOMER_PHONE_LINK][BOOKING_RESOLVE] linked=${linkedCustomerId ? "true" : "false"} reason=${customerPhoneLinkReason} hasPhone=${customerPhoneLinkHasPhone ? "true" : "false"} e164=${customerPhoneLinkIsE164 ? "true" : "false"} hasIndex=${customerPhoneLinkHasIndex ? "true" : "false"} lookupStep=${customerPhoneLookupStep} errorName=${customerPhoneLookupErrorName} errorMessage=${customerPhoneLookupErrorMessage} booking=${_bookingIntentMask(canonicalBookingId)} scope=${customerPhoneLinkScopeMask.tenant || "-"}/${customerPhoneLinkScopeMask.company || "-"}`,
+    );
 
 
 
@@ -6884,6 +16943,32 @@ async function handleBooking(payload, env, request) {
     const return_time = safeStr(payload?.return_time || payload?.returnTime);
     const hasReturnSchedule = !!(ret.enabled && return_date && return_time);
     const return_pickup_iso = hasReturnSchedule ? brusselsIsoFromDateTime(return_date, return_time) : null;
+    const bookingReturnRequested = ret.enabled || hasReturnSchedule;
+    const bookingExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(payload, tenantContext);
+    const bookingFixedFareEligible =
+      _isAirportFixedFareEligiblePayload(payload) &&
+      bookingExplicitScopeAllowed &&
+      bookingReturnRequested !== true;
+    let fixedFareBookingResult = {
+      matched: false,
+      pricing_source: "route_calc",
+      fixed_fare_applied: false,
+      fixed_fare_rule_id: null,
+      pricing: null,
+    };
+    if (bookingFixedFareEligible) {
+      fixedFareBookingResult = await resolveAirportFixedFare(env, tenantContext, payload, {
+        pricingProfile,
+        fallbackVatRate: vat_rate,
+        returnRequested: bookingReturnRequested,
+      });
+    }
+    const bookingUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
+    const bookingPricingSource = bookingUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+    const bookingFixedFareApplied = bookingUsesFixedFare;
+    const bookingFixedFareRuleId = bookingUsesFixedFare
+      ? (fixedFareBookingResult.fixed_fare_rule_id || null)
+      : null;
 
     let return_from = "";
     let return_to = "";
@@ -6924,21 +17009,23 @@ async function handleBooking(payload, env, request) {
     }
 
     const when = normalizeWhen(date, time);
-    const mainPricing = calcPrice({
-      distance_km,
-      duration_min: duration_route_min,
-      tier,
-      service,
-      when,
-      time_str: time,
-      pax,
-      bags,
-      vat_rate,
-      stop_count,
-      wait_min,
-      pricing_profile: pricingProfile,
-      apply_return_fee: false,
-    });
+    const mainPricing = bookingUsesFixedFare
+      ? fixedFareBookingResult.pricing
+      : calcPrice({
+        distance_km,
+        duration_min: duration_route_min,
+        tier,
+        service,
+        when,
+        time_str: time,
+        pax,
+        bags,
+        vat_rate,
+        stop_count,
+        wait_min,
+        pricing_profile: pricingProfile,
+        apply_return_fee: false,
+      });
 
     // Total pricing = main + (optional) return
     const totalPricing = (() => {
@@ -7128,6 +17215,216 @@ async function handleBooking(payload, env, request) {
         // only when Mollie has actually reported "paid".
         if (business_detected && !molliePaidConfirmed) {
           calendarPaymentHandled = true;
+          const nowIso = new Date().toISOString();
+          const provisionalRecord = {
+            id: canonicalBookingId,
+            stage: "PENDING",
+            status: "PENDING",
+            lifecycle_status: "pending",
+            lifecycleStatus: "pending",
+            booking_status: "payment_initializing",
+            bookingStatus: "payment_initializing",
+            payment_status: "initializing",
+            paymentStatus: "initializing",
+            payment_mode: "mollie",
+            paymentMode: "mollie",
+            payment_required: true,
+            paymentRequired: true,
+            requiresPayment: true,
+            payment_booking_id: null,
+            paymentBookingId: null,
+            booking_id: canonicalBookingId,
+            bookingId: canonicalBookingId,
+            booking_uuid,
+            public_booking_reference: publicBookingReference,
+            publicBookingReference: publicBookingReference,
+            booking_reference: publicBookingReference,
+            bookingReference: publicBookingReference,
+            public_reference: publicBookingReference,
+            publicReference: publicBookingReference,
+            planning_reference: planningReference,
+            planningReference: planningReference,
+            tenant_id: tenantContext.tenant_id,
+            company_id: tenantContext.company_id,
+            tenantId: tenantContext.tenant_id,
+            companyId: tenantContext.company_id,
+            customer_name: customerContact.name,
+            customer_phone: customerContact.phone,
+            customer_email: customerContact.email,
+            from,
+            to,
+            date,
+            time,
+            pickup_iso,
+            return_enabled: ret.enabled,
+            return_from,
+            return_to,
+            return_pickup_iso,
+            service,
+            tier,
+            pax,
+            bags,
+            wait_min,
+            stops,
+            business_detected,
+            invoice_requested,
+            company_name: biz.company_name || "",
+            vat_number: biz.vat_number || "",
+            invoice_address: biz.invoice_address || "",
+            invoice_email: biz.invoice_email || customerContact.email || "",
+            vat_rate,
+            price_ex_vat: totalPricing?.price_ex_vat,
+            price_vat: totalPricing?.price_vat,
+            price_incl_vat: totalPricing?.price_incl_vat,
+            price_ex_vat_main: mainPricing?.price_ex_vat,
+            price_vat_main: mainPricing?.price_vat,
+            price_incl_vat_main: mainPricing?.price_incl_vat,
+            price_ex_vat_return: returnPricing?.price_ex_vat,
+            price_vat_return: returnPricing?.price_vat,
+            price_incl_vat_return: returnPricing?.price_incl_vat,
+            pricing_source: bookingPricingSource,
+            fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_rule_id: bookingFixedFareRuleId,
+            distance_km,
+            duration_route_min,
+            booking_source: tenantContext.booking_source,
+            entry_channel: tenantContext.entry_channel,
+            source_context: tenantContext.source_context,
+            tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+            tenant_resolved_at: tenantContext.tenant_resolved_at,
+            createdAt: nowIso,
+            created_at: nowIso,
+            updatedAt: nowIso,
+            updated_at: nowIso,
+            booking: {
+              id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+              booking_id: canonicalBookingId,
+              booking_uuid,
+              createdAt: nowIso,
+              created_at: nowIso,
+              tenant_id: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              tenantId: tenantContext.tenant_id,
+              companyId: tenantContext.company_id,
+              public_booking_reference: publicBookingReference,
+              publicBookingReference: publicBookingReference,
+              booking_reference: publicBookingReference,
+              bookingReference: publicBookingReference,
+              public_reference: publicBookingReference,
+              publicReference: publicBookingReference,
+              planning_reference: planningReference,
+              planningReference: planningReference,
+              booking_source: tenantContext.booking_source,
+              entry_channel: tenantContext.entry_channel,
+              source_context: tenantContext.source_context,
+              status: "PENDING",
+              stage: "PENDING",
+              lifecycle_status: "pending",
+              lifecycleStatus: "pending",
+              booking_status: "payment_initializing",
+              bookingStatus: "payment_initializing",
+              payment_status: "initializing",
+              paymentStatus: "initializing",
+              payment_mode: "mollie",
+              paymentMode: "mollie",
+              payment_required: true,
+              paymentRequired: true,
+              requiresPayment: true,
+              payment_booking_id: null,
+              paymentBookingId: null,
+              customer_name: customerContact.name,
+              customer_phone: customerContact.phone,
+              customer_email: customerContact.email,
+              name: customerContact.name,
+              phone: customerContact.phone,
+              email: customerContact.email,
+              custName: customerContact.name,
+              custPhone: customerContact.phone,
+              custEmail: customerContact.email,
+              from,
+              to,
+              date,
+              time,
+              pickupStartIso: pickup_iso,
+              pickup_iso,
+              return_enabled: ret.enabled,
+              return_from,
+              return_to,
+              returnPickupIso: return_pickup_iso,
+              service,
+              tier,
+              pax,
+              bags,
+              wait_min,
+              stops,
+              business_detected,
+              invoice_requested,
+              company_name: biz.company_name || "",
+              vat_number: biz.vat_number || "",
+              invoice_address: biz.invoice_address || "",
+              invoice_email: biz.invoice_email || customerContact.email || "",
+              vat_rate,
+              price_ex_vat: totalPricing?.price_ex_vat,
+              price_vat: totalPricing?.price_vat,
+              price_incl_vat: totalPricing?.price_incl_vat,
+              price_ex_vat_main: mainPricing?.price_ex_vat,
+              price_vat_main: mainPricing?.price_vat,
+              price_incl_vat_main: mainPricing?.price_incl_vat,
+              price_ex_vat_return: returnPricing?.price_ex_vat,
+              price_vat_return: returnPricing?.price_vat,
+              price_incl_vat_return: returnPricing?.price_incl_vat,
+              pricing_source: bookingPricingSource,
+              fixed_fare_applied: bookingFixedFareApplied,
+              fixed_fare_rule_id: bookingFixedFareRuleId,
+              distance_km,
+              duration_route_min,
+            },
+            payload: {
+              ...payload,
+              booking_id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+              tenant_id: tenantContext.tenant_id,
+              company_id: tenantContext.company_id,
+              tenantId: tenantContext.tenant_id,
+              companyId: tenantContext.company_id,
+              public_booking_reference: publicBookingReference,
+              publicBookingReference: publicBookingReference,
+              planning_reference: planningReference,
+              planningReference: planningReference,
+              payment_booking_id: null,
+              paymentBookingId: null,
+              payment_status: "initializing",
+              paymentStatus: "initializing",
+            },
+            quote: {
+              from,
+              to,
+              date,
+              time,
+              pickup_iso,
+              stops,
+              pricing: {
+                price_ex_vat: totalPricing?.price_ex_vat,
+                price_vat: totalPricing?.price_vat,
+                price_incl_vat: totalPricing?.price_incl_vat,
+                pricing_source: bookingPricingSource,
+                fixed_fare_applied: bookingFixedFareApplied,
+                fixed_fare_rule_id: bookingFixedFareRuleId,
+              },
+              pricing_main: mainPricing,
+              pricing_return: returnPricing,
+              distance_km,
+              duration_min: duration_route_min,
+            },
+            tracking_last: null,
+            trip: null,
+          };
+          _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
+          await env.BOOKING_KV.put(
+            `booking:${canonicalBookingId}`,
+            JSON.stringify(provisionalRecord),
+          );
           const pay = await mollieCreatePayment(
             {
               ...payload,
@@ -7145,6 +17442,142 @@ async function handleBooking(payload, env, request) {
             env,
             request
           );
+          const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+          if (pay?.ok !== true || !checkoutUrl) {
+            const failIso = new Date().toISOString();
+            provisionalRecord.payment_status = "payment_checkout_failed";
+            provisionalRecord.paymentStatus = "payment_checkout_failed";
+            provisionalRecord.booking_status = "payment_checkout_failed";
+            provisionalRecord.bookingStatus = "payment_checkout_failed";
+            provisionalRecord.payment_error_code = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
+            provisionalRecord.paymentErrorCode = safeStr(pay?.error || pay?.code, 80) || "payment_checkout_unavailable";
+            provisionalRecord.payment_error_message =
+              safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
+            provisionalRecord.paymentErrorMessage =
+              safeStr(pay?.message || pay?.error, 180) || "Online payment checkout could not be created";
+            provisionalRecord.updatedAt = failIso;
+            provisionalRecord.updated_at = failIso;
+            if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
+              provisionalRecord.booking.payment_status = "payment_checkout_failed";
+              provisionalRecord.booking.paymentStatus = "payment_checkout_failed";
+              provisionalRecord.booking.booking_status = "payment_checkout_failed";
+              provisionalRecord.booking.bookingStatus = "payment_checkout_failed";
+            }
+            if (provisionalRecord.payload && typeof provisionalRecord.payload === "object") {
+              provisionalRecord.payload.payment_status = "payment_checkout_failed";
+              provisionalRecord.payload.paymentStatus = "payment_checkout_failed";
+            }
+            await env.BOOKING_KV.put(
+              `booking:${canonicalBookingId}`,
+              JSON.stringify(provisionalRecord),
+            );
+            console.log(
+              `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid`,
+            );
+            return {
+              ok: false,
+              error: "payment_checkout_unavailable",
+              message: "Online payment checkout could not be created",
+              requiresPayment: true,
+              paymentMode: "mollie",
+              booking_id: canonicalBookingId,
+              bookingId: canonicalBookingId,
+            };
+          }
+          const successIso = new Date().toISOString();
+          provisionalRecord.payment_status = "pending";
+          provisionalRecord.paymentStatus = "pending";
+          provisionalRecord.booking_status = "pending";
+          provisionalRecord.bookingStatus = "pending";
+          provisionalRecord.payment_mode = "mollie";
+          provisionalRecord.paymentMode = "mollie";
+          provisionalRecord.payment_required = true;
+          provisionalRecord.paymentRequired = true;
+          provisionalRecord.requiresPayment = true;
+          provisionalRecord.payment_booking_id = pay?.bookingId || null;
+          provisionalRecord.paymentBookingId = pay?.bookingId || null;
+          provisionalRecord.checkout_url = checkoutUrl;
+          provisionalRecord.checkoutUrl = checkoutUrl;
+          provisionalRecord.payment_url = checkoutUrl;
+          provisionalRecord.paymentUrl = checkoutUrl;
+          provisionalRecord.status_url = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          provisionalRecord.statusUrl = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          provisionalRecord.amount = pay?.amount || null;
+          provisionalRecord.updatedAt = successIso;
+          provisionalRecord.updated_at = successIso;
+          if (provisionalRecord.booking && typeof provisionalRecord.booking === "object") {
+            provisionalRecord.booking.payment_status = "pending";
+            provisionalRecord.booking.paymentStatus = "pending";
+            provisionalRecord.booking.booking_status = "pending";
+            provisionalRecord.booking.bookingStatus = "pending";
+            provisionalRecord.booking.payment_mode = "mollie";
+            provisionalRecord.booking.paymentMode = "mollie";
+            provisionalRecord.booking.payment_required = true;
+            provisionalRecord.booking.paymentRequired = true;
+            provisionalRecord.booking.requiresPayment = true;
+            provisionalRecord.booking.payment_booking_id = pay?.bookingId || null;
+            provisionalRecord.booking.paymentBookingId = pay?.bookingId || null;
+            provisionalRecord.booking.checkout_url = checkoutUrl;
+            provisionalRecord.booking.checkoutUrl = checkoutUrl;
+            provisionalRecord.booking.payment_url = checkoutUrl;
+            provisionalRecord.booking.paymentUrl = checkoutUrl;
+            provisionalRecord.booking.status_url = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+            provisionalRecord.booking.statusUrl = safeStr(pay?.statusUrl || pay?.status_url, 2000) || null;
+          }
+          if (provisionalRecord.payload && typeof provisionalRecord.payload === "object") {
+            provisionalRecord.payload.payment_booking_id = pay?.bookingId || null;
+            provisionalRecord.payload.paymentBookingId = pay?.bookingId || null;
+            provisionalRecord.payload.payment_status = "pending";
+            provisionalRecord.payload.paymentStatus = "pending";
+            provisionalRecord.payload.checkout_url = checkoutUrl;
+            provisionalRecord.payload.checkoutUrl = checkoutUrl;
+          }
+          await env.BOOKING_KV.put(
+            `booking:${canonicalBookingId}`,
+            JSON.stringify(provisionalRecord),
+          );
+          try {
+            await upsertCustomerScopedBookingIndexForBooking(
+              env,
+              canonicalBookingId,
+              provisionalRecord,
+            );
+          } catch (customerIndexErr) {
+            const scopeMask = _bookingIntentScopeMask(
+              resolveBookingTenantScopeFromRecord(provisionalRecord),
+            );
+            const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+            console.log(
+              `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+            );
+            if (linkedCustomerId) {
+              console.log(
+                `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+              );
+            }
+          }
+          if (linkedCustomerId) {
+            const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+            const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+            if (
+              normalizedTenantId &&
+              normalizedCompanyId &&
+              normalizedTenantId.toLowerCase() !== "global" &&
+              normalizedCompanyId.toLowerCase() !== "global"
+            ) {
+              try {
+                await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+                  tenant_id: normalizedTenantId,
+                  company_id: normalizedCompanyId,
+                });
+              } catch (scopeLinkErr) {
+                const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+                console.log(
+                  `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+                );
+              }
+            }
+          }
 
           return {
             ok: true,
@@ -7163,8 +17596,12 @@ async function handleBooking(payload, env, request) {
             paymentBookingId: pay.bookingId || null,
             requiresPayment: true,
             paymentMode: "mollie",
-            checkoutUrl: pay.checkoutUrl,
-            statusUrl: pay.statusUrl || null,
+            checkout_url: checkoutUrl,
+            checkoutUrl: checkoutUrl,
+            payment_url: checkoutUrl,
+            paymentUrl: checkoutUrl,
+            status_url: pay.statusUrl || pay.status_url || null,
+            statusUrl: pay.statusUrl || pay.status_url || null,
             amount: pay.amount || null,
           };
         }
@@ -7401,6 +17838,238 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         env,
         request
       );
+      const checkoutUrl = readMollieCheckoutUrlFromPaymentResult(pay);
+      if (pay?.ok !== true || !checkoutUrl) {
+        console.log(
+          `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=non_calendar_or_sync_suppressed_business_unpaid`,
+        );
+        return {
+          ok: false,
+          error: "payment_checkout_unavailable",
+          message: "Online payment checkout could not be created",
+          requiresPayment: true,
+          paymentMode: "mollie",
+          booking_id: canonicalBookingId,
+          bookingId: canonicalBookingId,
+        };
+      }
+      const pendingPaymentStatus = "pending";
+      const nowIso = new Date().toISOString();
+      const provisionalRecord = {
+        stage: "PENDING",
+        status: "PENDING",
+        lifecycle_status: "pending",
+        lifecycleStatus: "pending",
+        booking_status: "pending",
+        bookingStatus: "pending",
+        payment_status: pendingPaymentStatus,
+        paymentStatus: pendingPaymentStatus,
+        payment_mode: "mollie",
+        paymentMode: "mollie",
+        payment_required: true,
+        paymentRequired: true,
+        requiresPayment: true,
+        payment_booking_id: pay?.bookingId || null,
+        paymentBookingId: pay?.bookingId || null,
+        checkout_url: checkoutUrl,
+        checkoutUrl: checkoutUrl,
+        status_url: pay?.statusUrl || pay?.status_url || null,
+        statusUrl: pay?.statusUrl || pay?.status_url || null,
+        amount: pay?.amount || null,
+        booking_id: canonicalBookingId,
+        bookingId: canonicalBookingId,
+        booking_uuid,
+        public_booking_reference: publicBookingReference,
+        publicBookingReference: publicBookingReference,
+        booking_reference: publicBookingReference,
+        bookingReference: publicBookingReference,
+        public_reference: publicBookingReference,
+        publicReference: publicBookingReference,
+        planning_reference: planningReference,
+        planningReference: planningReference,
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        tenantId: tenantContext.tenant_id,
+        companyId: tenantContext.company_id,
+        booking_source: tenantContext.booking_source,
+        entry_channel: tenantContext.entry_channel,
+        source_context: tenantContext.source_context,
+        tenant_resolution_mode: tenantContext.tenant_resolution_mode,
+        tenant_resolved_at: tenantContext.tenant_resolved_at,
+        createdAt: nowIso,
+        created_at: nowIso,
+        updatedAt: nowIso,
+        updated_at: nowIso,
+        booking: {
+          bookingId: canonicalBookingId,
+          booking_id: canonicalBookingId,
+          booking_uuid,
+          createdAt: nowIso,
+          created_at: nowIso,
+          tenant_id: tenantContext.tenant_id,
+          company_id: tenantContext.company_id,
+          tenantId: tenantContext.tenant_id,
+          companyId: tenantContext.company_id,
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          booking_reference: publicBookingReference,
+          bookingReference: publicBookingReference,
+          public_reference: publicBookingReference,
+          publicReference: publicBookingReference,
+          planning_reference: planningReference,
+          planningReference: planningReference,
+          booking_source: tenantContext.booking_source,
+          entry_channel: tenantContext.entry_channel,
+          source_context: tenantContext.source_context,
+          status: "PENDING",
+          stage: "PENDING",
+          lifecycle_status: "pending",
+          lifecycleStatus: "pending",
+          booking_status: "pending",
+          bookingStatus: "pending",
+          payment_status: pendingPaymentStatus,
+          paymentStatus: pendingPaymentStatus,
+          payment_mode: "mollie",
+          paymentMode: "mollie",
+          payment_required: true,
+          paymentRequired: true,
+          requiresPayment: true,
+          payment_booking_id: pay?.bookingId || null,
+          paymentBookingId: pay?.bookingId || null,
+          customer_name: customerContact.name,
+          customer_phone: customerContact.phone,
+          customer_email: customerContact.email,
+          name: customerContact.name,
+          phone: customerContact.phone,
+          email: customerContact.email,
+          custName: customerContact.name,
+          custPhone: customerContact.phone,
+          custEmail: customerContact.email,
+          from,
+          to,
+          date,
+          time,
+          pickupStartIso: pickup_iso,
+          pickup_iso,
+          return_enabled: ret.enabled,
+          return_from,
+          return_to,
+          returnPickupIso: return_pickup_iso,
+          service,
+          tier,
+          pax,
+          bags,
+          wait_min,
+          stops,
+          business_detected,
+          invoice_requested,
+          company_name: biz.company_name || "",
+          vat_number: biz.vat_number || "",
+          invoice_address: biz.invoice_address || "",
+          invoice_email: biz.invoice_email || customerContact.email || "",
+          vat_rate,
+          price_ex_vat: totalPricing?.price_ex_vat,
+          price_vat: totalPricing?.price_vat,
+          price_incl_vat: totalPricing?.price_incl_vat,
+          price_ex_vat_main: mainPricing?.price_ex_vat,
+          price_vat_main: mainPricing?.price_vat,
+          price_incl_vat_main: mainPricing?.price_incl_vat,
+          price_ex_vat_return: returnPricing?.price_ex_vat,
+          price_vat_return: returnPricing?.price_vat,
+          price_incl_vat_return: returnPricing?.price_incl_vat,
+          pricing_source: bookingPricingSource,
+          fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_rule_id: bookingFixedFareRuleId,
+          distance_km,
+          duration_route_min,
+        },
+        payload: {
+          ...payload,
+          booking_id: canonicalBookingId,
+          bookingId: canonicalBookingId,
+          tenant_id: tenantContext.tenant_id,
+          company_id: tenantContext.company_id,
+          tenantId: tenantContext.tenant_id,
+          companyId: tenantContext.company_id,
+          public_booking_reference: publicBookingReference,
+          publicBookingReference: publicBookingReference,
+          planning_reference: planningReference,
+          planningReference: planningReference,
+          payment_booking_id: pay?.bookingId || null,
+          paymentBookingId: pay?.bookingId || null,
+          payment_status: pendingPaymentStatus,
+          paymentStatus: pendingPaymentStatus,
+        },
+        quote: {
+          from,
+          to,
+          date,
+          time,
+          pickup_iso,
+          stops,
+          pricing: {
+            price_ex_vat: totalPricing?.price_ex_vat,
+            price_vat: totalPricing?.price_vat,
+            price_incl_vat: totalPricing?.price_incl_vat,
+            pricing_source: bookingPricingSource,
+            fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_rule_id: bookingFixedFareRuleId,
+          },
+          pricing_main: mainPricing,
+          pricing_return: returnPricing,
+          distance_km,
+          duration_min: duration_route_min,
+        },
+        tracking_last: null,
+        trip: null,
+      };
+      _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
+      await env.BOOKING_KV.put(
+        `booking:${canonicalBookingId}`,
+        JSON.stringify(provisionalRecord),
+      );
+      try {
+        await upsertCustomerScopedBookingIndexForBooking(
+          env,
+          canonicalBookingId,
+          provisionalRecord,
+        );
+      } catch (customerIndexErr) {
+        const scopeMask = _bookingIntentScopeMask(
+          resolveBookingTenantScopeFromRecord(provisionalRecord),
+        );
+        const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+        console.log(
+          `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+        );
+        if (linkedCustomerId) {
+          console.log(
+            `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+          );
+        }
+      }
+      if (linkedCustomerId) {
+        const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+        const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+        if (
+          normalizedTenantId &&
+          normalizedCompanyId &&
+          normalizedTenantId.toLowerCase() !== "global" &&
+          normalizedCompanyId.toLowerCase() !== "global"
+        ) {
+          try {
+            await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+              tenant_id: normalizedTenantId,
+              company_id: normalizedCompanyId,
+            });
+          } catch (scopeLinkErr) {
+            const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+            console.log(
+              `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
+            );
+          }
+        }
+      }
 
       return {
         ok: true,
@@ -7419,8 +18088,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         paymentBookingId: pay.bookingId || null,
         requiresPayment: true,
         paymentMode: "mollie",
-        checkoutUrl: pay.checkoutUrl,
-        statusUrl: pay.statusUrl || null,
+        checkout_url: checkoutUrl,
+        checkoutUrl: checkoutUrl,
+        status_url: pay.statusUrl || pay.status_url || null,
+        statusUrl: pay.statusUrl || pay.status_url || null,
         amount: pay.amount || null,
       };
     }
@@ -7489,6 +18160,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       price_ex_vat: totalPricing?.price_ex_vat,
       price_vat: totalPricing?.price_vat,
       price_incl_vat: totalPricing?.price_incl_vat,
+      pricing_source: bookingPricingSource,
+      fixed_fare_applied: bookingFixedFareApplied,
+      fixed_fare_rule_id: bookingFixedFareRuleId,
 
       // parts (handig voor UI/agenda)
       price_ex_vat_main: mainPricing?.price_ex_vat,
@@ -7597,6 +18271,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         wait_min: booking.wait_min,
         stops: Array.isArray(booking.stops) ? booking.stops : [],
         duration_route_min: booking.duration_route_min,
+        pricing_source: booking.pricing_source || "route_calc",
+        fixed_fare_applied: booking.fixed_fare_applied === true,
+        fixed_fare_rule_id: booking.fixed_fare_rule_id || null,
         return_enabled: !!booking.return_enabled,
         returnPickupIso: booking.returnPickupIso || null,
         return_duration_min: Number(
@@ -7633,10 +18310,18 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         stops,
         distance_km,
         duration_min: duration_route_min,
-        pricing: totalPricing,
+        pricing: {
+          ...totalPricing,
+          pricing_source: bookingPricingSource,
+          fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_rule_id: bookingFixedFareRuleId,
+        },
         pricing_main: mainPricing,
         pricing_return: returnPricing,
         pricing_profile: pricingProfile,
+        pricing_source: bookingPricingSource,
+        fixed_fare_applied: bookingFixedFareApplied,
+        fixed_fare_rule_id: bookingFixedFareRuleId,
         return: ret.enabled ? {
           enabled: true,
           from: return_from,
@@ -7649,6 +18334,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tracking_last: null,
       trip: null
     };
+    _enrichBookingRecordWithLinkedCustomer(record, linkedCustomerId, linkedPhoneHash);
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
@@ -7665,6 +18351,53 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         }
       }
       throw persistErr;
+    }
+    try {
+      const indexResult = await upsertCustomerScopedBookingIndexForBooking(
+        env,
+        booking.bookingId,
+        record,
+      );
+      if (indexResult?.ok) {
+        const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
+        const bookingCustomerIds = _customerBookingIdsFromRecord(record);
+        console.log(
+          `[CUSTOMER_BOOKING_INDEX][UPSERT][OK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${_maskPublicDriverLoginValue(bookingCustomerIds[0] || "") || "-"} booking=${_bookingIntentMask(booking.bookingId)} count=${Number(indexResult?.count || 0)}`,
+        );
+      }
+    } catch (customerIndexErr) {
+      const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
+      const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
+      console.log(
+        `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+      );
+      if (linkedCustomerId) {
+        console.log(
+          `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+        );
+      }
+    }
+    if (linkedCustomerId) {
+      const normalizedTenantId = sanitizeTenantString(tenantContext?.tenant_id, 80);
+      const normalizedCompanyId = sanitizeTenantString(tenantContext?.company_id, 80);
+      if (
+        normalizedTenantId &&
+        normalizedCompanyId &&
+        normalizedTenantId.toLowerCase() !== "global" &&
+        normalizedCompanyId.toLowerCase() !== "global"
+      ) {
+        try {
+          await _upsertGlobalCustomerScopeLink(env, linkedCustomerId, {
+            tenant_id: normalizedTenantId,
+            company_id: normalizedCompanyId,
+          });
+        } catch (scopeLinkErr) {
+          const reason = safeStr(scopeLinkErr?.message || scopeLinkErr, 140) || "unknown";
+          console.log(
+            `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
+          );
+        }
+      }
     }
     const maskedScope = _bookingIntentScopeMask(idempotencyScope);
     let idempotencyStored = false;
@@ -8403,17 +19136,85 @@ function normalizeWhen(dateStr, timeStr) {
 
 async function geocode(query, token) {
   if (!token) throw new Error("Missing MAPBOX_TOKEN in Worker secrets");
+  const countryCode = inferMapboxCountryCodeFromQuery(query);
 
   const u =
     "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
     encodeURIComponent(query) +
-    ".json?limit=1&country=BE&language=nl&access_token=" +
+    `.json?limit=1&country=${encodeURIComponent(countryCode)}&language=nl&access_token=` +
     token;
 
   const r = await fetch(u);
   const j = await r.json();
   if (!j.features?.length) throw new Error("Geocode failed");
   const [lng, lat] = j.features[0].center;
+  return { lat, lng };
+}
+
+function inferMapboxCountryCodeFromQuery(query) {
+  const raw = String(query || "").trim();
+  if (!raw) return "BE";
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ");
+  const compact = ` ${normalized.replace(/\s+/g, " ").trim()} `;
+
+  const hasWord = (word) => compact.includes(` ${word} `);
+  const hasPhrase = (phrase) => compact.includes(` ${phrase} `);
+
+  if (hasWord("nederland") || hasWord("netherlands") || hasWord("holland")) {
+    return "NL";
+  }
+  if (hasWord("frankrijk") || hasWord("france")) {
+    return "FR";
+  }
+  if (hasWord("duitsland") || hasWord("germany") || hasWord("deutschland")) {
+    return "DE";
+  }
+  if (hasWord("luxemburg") || hasWord("luxembourg")) {
+    return "LU";
+  }
+  if (
+    hasPhrase("verenigd koninkrijk") ||
+    hasPhrase("united kingdom") ||
+    hasPhrase("great britain")
+  ) {
+    return "GB";
+  }
+  if (hasWord("spanje") || hasWord("spain") || hasWord("espana")) {
+    return "ES";
+  }
+  if (hasWord("belgie") || hasWord("belgium")) {
+    return "BE";
+  }
+
+  return "BE";
+}
+
+function parseFiniteCoordinateNumber(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function readExplicitCoordinatePair(body, prefix) {
+  const key = String(prefix || "").trim().toLowerCase();
+  if (key !== "from" && key !== "to") return null;
+
+  const lat = parseFiniteCoordinateNumber(
+    body?.[`${key}_lat`] ?? body?.[`${key}Lat`]
+  );
+  const lng = parseFiniteCoordinateNumber(
+    body?.[`${key}_lng`] ?? body?.[`${key}Lng`]
+  );
+
+  if (lat == null || lng == null) return null;
+  if (lat < -90 || lat > 90) return null;
+  if (lng < -180 || lng > 180) return null;
+
   return { lat, lng };
 }
 
@@ -8461,9 +19262,16 @@ function normalizeStops(body) {
   return out.slice(0, 6);
 }
 
-async function routeFromTextsWithStopsDetailed({ fromText, toText, stopsTexts, token }) {
-  const from = await geocode(fromText, token);
-  const to = await geocode(toText, token);
+async function routeFromTextsWithStopsDetailed({
+  fromText,
+  toText,
+  fromPoint = null,
+  toPoint = null,
+  stopsTexts,
+  token
+}) {
+  const from = fromPoint || await geocode(fromText, token);
+  const to = toPoint || await geocode(toText, token);
 
   const stops = Array.isArray(stopsTexts) ? stopsTexts : [];
   const stopCoords = [];
@@ -8496,7 +19304,13 @@ async function routeFromTextsWithStopsDetailed({ fromText, toText, stopsTexts, t
     };
   });
 
-  return { route, legs: legsOut, waypointNames };
+  return {
+    route,
+    legs: legsOut,
+    waypointNames,
+    fromSource: fromPoint ? "coordinates" : "text",
+    toSource: toPoint ? "coordinates" : "text"
+  };
 }
 
 /* ===================== PRICING ===================== */
@@ -8595,6 +19409,600 @@ async function _saveTenantPricingProfile(
     pricing_profile: normalized,
   }));
   return normalized;
+}
+
+function _fixedFareNormalizeUpperToken(value, maxLen = 24) {
+  const text = sanitizeTenantString(value, maxLen).toUpperCase();
+  if (!text) return "";
+  const compact = text.replace(/[^A-Z0-9]/g, "");
+  return compact || "";
+}
+
+function _fixedFareNormalizeText(value, maxLen = 120) {
+  const text = sanitizeTenantString(value, maxLen).trim();
+  if (!text) return "";
+  return text.replace(/\s+/g, " ");
+}
+
+function _fixedFareNormalizeZoneValue(zoneType, value) {
+  const raw = _fixedFareNormalizeText(value, 120);
+  if (!raw) return "";
+  if (zoneType === "postcode") {
+    return raw.toUpperCase().replace(/\s+/g, "");
+  }
+  if (zoneType === "country") {
+    return raw.toUpperCase();
+  }
+  if (zoneType === "city") {
+    return raw.toLowerCase();
+  }
+  return raw;
+}
+
+function _fixedFareIntOr(rawValue, fallback, min = 0, max = 9999) {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return fallback;
+  const asInt = Math.trunc(n);
+  return Math.max(min, Math.min(max, asInt));
+}
+
+function _fixedFareNumOr(rawValue, fallback, min = 0, max = Number.POSITIVE_INFINITY) {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function _fixedFareReturnRequested(payload = {}) {
+  const boolRaw = payload?.return_enabled ?? payload?.returnEnabled ?? payload?.return;
+  const boolText = String(boolRaw ?? "").trim().toLowerCase();
+  const enabled =
+    boolRaw === true ||
+    boolText === "1" ||
+    boolText === "true" ||
+    boolText === "yes" ||
+    boolText === "ja" ||
+    boolText === "on";
+  return (
+    enabled ||
+    !!safeStr(payload?.return_date ?? payload?.returnDate, 32) ||
+    !!safeStr(payload?.return_time ?? payload?.returnTime, 32) ||
+    !!safeStr(payload?.return_pickup_iso ?? payload?.returnPickupIso, 64)
+  );
+}
+
+function _normalizeAirportFixedFareRule(raw, idx = 0) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const enabled = raw.enabled !== false;
+  const rule_id =
+    _fixedFareNormalizeText(raw.rule_id ?? raw.ruleId, 96) ||
+    `rule_${idx + 1}`;
+  const priority = _fixedFareIntOr(raw.priority, 0, 0, 1_000_000);
+  const airport_iata = _fixedFareNormalizeUpperToken(raw.airport_iata ?? raw.airportIata, 8);
+  if (!airport_iata || airport_iata.length < 3 || airport_iata.length > 8) return null;
+
+  const directionRaw = _fixedFareNormalizeText(raw.direction, 24).toLowerCase();
+  const direction =
+    directionRaw === "to_airport" || directionRaw === "from_airport" || directionRaw === "both"
+      ? directionRaw
+      : "";
+  if (!direction) return null;
+
+  const tier = normalizeTier(raw.tier ?? "comfort");
+  const pax_min = _fixedFareIntOr(raw.pax_min ?? raw.paxMin, 1, 1, 99);
+  const pax_max = _fixedFareIntOr(raw.pax_max ?? raw.paxMax, pax_min, pax_min, 99);
+  const bags_max = _fixedFareIntOr(raw.bags_max ?? raw.bagsMax, 99, 0, 99);
+  const zoneTypeRaw = _fixedFareNormalizeText(raw.zone_type ?? raw.zoneType ?? "none", 24).toLowerCase();
+  const zone_type =
+    zoneTypeRaw === "postcode" || zoneTypeRaw === "city" || zoneTypeRaw === "country" || zoneTypeRaw === "none"
+      ? zoneTypeRaw
+      : "none";
+  const zone_value = _fixedFareNormalizeZoneValue(zone_type, raw.zone_value ?? raw.zoneValue ?? "");
+  if (zone_type !== "none" && !zone_value) return null;
+
+  const price_incl_vat = _fixedFareNumOr(raw.price_incl_vat ?? raw.priceInclVat, Number.NaN, 0.01, 1_000_000);
+  if (!Number.isFinite(price_incl_vat) || price_incl_vat <= 0) return null;
+  const currency = _fixedFareNormalizeUpperToken(raw.currency ?? "EUR", 8) || "EUR";
+  if (currency !== "EUR") return null;
+
+  const active_from = _fixedFareNormalizeText(raw.active_from ?? raw.activeFrom ?? "", 64) || null;
+  const active_until = _fixedFareNormalizeText(raw.active_until ?? raw.activeUntil ?? "", 64) || null;
+  const active_from_ms = active_from ? Date.parse(active_from) : null;
+  const active_until_ms = active_until ? Date.parse(active_until) : null;
+  if (active_from && !Number.isFinite(active_from_ms)) return null;
+  if (active_until && !Number.isFinite(active_until_ms)) return null;
+
+  return {
+    rule_id,
+    enabled,
+    priority,
+    airport_iata,
+    direction,
+    tier,
+    pax_min,
+    pax_max,
+    bags_max,
+    zone_type,
+    zone_value,
+    price_incl_vat,
+    currency,
+    active_from,
+    active_until,
+    active_from_ms: Number.isFinite(active_from_ms) ? active_from_ms : null,
+    active_until_ms: Number.isFinite(active_until_ms) ? active_until_ms : null,
+  };
+}
+
+function _normalizeAirportFixedFaresDocument(raw) {
+  const source =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw.airport_fixed_fares && typeof raw.airport_fixed_fares === "object"
+        ? raw.airport_fixed_fares
+        : raw
+      : {};
+  const version = _fixedFareIntOr(source.version, 1, 1, 10_000);
+  const updated_at =
+    _fixedFareNormalizeText(source.updated_at ?? source.updatedAt ?? "", 80) ||
+    new Date().toISOString();
+  const rulesInput = Array.isArray(source.rules) ? source.rules : [];
+  const rules = [];
+  for (let i = 0; i < rulesInput.length; i++) {
+    const normalized = _normalizeAirportFixedFareRule(rulesInput[i], i);
+    if (!normalized) continue;
+    rules.push(normalized);
+  }
+  return { version, updated_at, rules };
+}
+
+function _validateAirportFixedFaresForAdmin(doc) {
+  const details = [];
+  const pushErr = (ruleIndex, field, error) => {
+    details.push({
+      ...(Number.isInteger(ruleIndex) ? { rule_index: ruleIndex } : {}),
+      field,
+      error,
+    });
+  };
+
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+    return {
+      ok: false,
+      details: [{ field: "airport_fixed_fares", error: "must be an object" }],
+    };
+  }
+  if (doc.rules != null && !Array.isArray(doc.rules)) {
+    return {
+      ok: false,
+      details: [{ field: "rules", error: "must be an array" }],
+    };
+  }
+
+  const rules = Array.isArray(doc.rules) ? doc.rules : [];
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
+      pushErr(i, "rule", "must be an object");
+      continue;
+    }
+
+    const ruleId = _fixedFareNormalizeText(rule.rule_id ?? rule.ruleId, 96);
+    if (!ruleId) pushErr(i, "rule_id", "is required");
+
+    if (rule.enabled != null && typeof rule.enabled !== "boolean") {
+      pushErr(i, "enabled", "must be a boolean");
+    }
+
+    if (rule.priority != null) {
+      const priority = Number(rule.priority);
+      if (!Number.isFinite(priority) || !Number.isInteger(priority)) {
+        pushErr(i, "priority", "must be an integer");
+      }
+    }
+
+    const airportIataRaw = sanitizeTenantString(
+      rule.airport_iata ?? rule.airportIata,
+      12,
+    ).trim();
+    const airportIataUpper = airportIataRaw.toUpperCase();
+    if (!airportIataRaw) {
+      pushErr(i, "airport_iata", "is required");
+    } else if (!/^[A-Z0-9]{3,8}$/.test(airportIataUpper)) {
+      pushErr(i, "airport_iata", "must be 3-8 chars and contain only A-Z0-9");
+    }
+
+    const direction = _fixedFareNormalizeText(rule.direction, 24).toLowerCase();
+    if (!["to_airport", "from_airport", "both"].includes(direction)) {
+      pushErr(i, "direction", "must be to_airport, from_airport or both");
+    }
+
+    const tierRaw = sanitizeTenantString(rule.tier, 24).trim().toLowerCase();
+    if (!tierRaw) {
+      pushErr(i, "tier", "is required");
+    } else if (!["comfort", "private", "premium"].includes(tierRaw)) {
+      pushErr(i, "tier", "must map to comfort/private/premium");
+    }
+
+    const priceInclVat = Number(rule.price_incl_vat ?? rule.priceInclVat);
+    if (!Number.isFinite(priceInclVat) || priceInclVat <= 0) {
+      pushErr(i, "price_incl_vat", "must be a finite number > 0");
+    }
+
+    const currencyRaw = _fixedFareNormalizeText(rule.currency, 8);
+    const currency = _fixedFareNormalizeUpperToken(rule.currency, 8);
+    if (!currencyRaw) {
+      pushErr(i, "currency", "is required");
+    } else if (currency !== "EUR") {
+      pushErr(i, "currency", "must be EUR");
+    }
+
+    const paxMin = Number(rule.pax_min ?? rule.paxMin);
+    const paxMax = Number(rule.pax_max ?? rule.paxMax);
+    if (!Number.isFinite(paxMin) || !Number.isInteger(paxMin)) {
+      pushErr(i, "pax_min", "must be an integer");
+    }
+    if (!Number.isFinite(paxMax) || !Number.isInteger(paxMax)) {
+      pushErr(i, "pax_max", "must be an integer");
+    }
+    if (
+      Number.isFinite(paxMin) &&
+      Number.isFinite(paxMax) &&
+      Number.isInteger(paxMin) &&
+      Number.isInteger(paxMax)
+    ) {
+      if (paxMin < 1) pushErr(i, "pax_min", "must be >= 1");
+      if (paxMax < paxMin) pushErr(i, "pax_max", "must be >= pax_min");
+    }
+
+    const bagsMax = Number(rule.bags_max ?? rule.bagsMax);
+    if (!Number.isFinite(bagsMax) || !Number.isInteger(bagsMax)) {
+      pushErr(i, "bags_max", "must be an integer");
+    } else if (bagsMax < 0) {
+      pushErr(i, "bags_max", "must be >= 0");
+    }
+
+    const zoneType = _fixedFareNormalizeText(
+      rule.zone_type ?? rule.zoneType ?? "none",
+      24,
+    ).toLowerCase();
+    if (!["none", "postcode", "city", "country"].includes(zoneType)) {
+      pushErr(i, "zone_type", "must be none, postcode, city or country");
+    }
+    const zoneValue = _fixedFareNormalizeZoneValue(
+      ["none", "postcode", "city", "country"].includes(zoneType) ? zoneType : "none",
+      rule.zone_value ?? rule.zoneValue ?? "",
+    );
+    if (zoneType !== "none" && !zoneValue) {
+      pushErr(i, "zone_value", "is required when zone_type is not none");
+    }
+
+    const activeFrom = _fixedFareNormalizeText(
+      rule.active_from ?? rule.activeFrom ?? "",
+      64,
+    );
+    const activeUntil = _fixedFareNormalizeText(
+      rule.active_until ?? rule.activeUntil ?? "",
+      64,
+    );
+    const activeFromMs = activeFrom ? Date.parse(activeFrom) : null;
+    const activeUntilMs = activeUntil ? Date.parse(activeUntil) : null;
+    if (activeFrom && !Number.isFinite(activeFromMs)) {
+      pushErr(i, "active_from", "must be a parseable datetime");
+    }
+    if (activeUntil && !Number.isFinite(activeUntilMs)) {
+      pushErr(i, "active_until", "must be a parseable datetime");
+    }
+    if (
+      Number.isFinite(activeFromMs) &&
+      Number.isFinite(activeUntilMs) &&
+      activeFromMs > activeUntilMs
+    ) {
+      pushErr(i, "active_until", "must be >= active_from");
+    }
+  }
+
+  return { ok: details.length === 0, details };
+}
+
+async function _saveScopedAirportFixedFares(env, doc, scope) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const key = buildScopedAirportFixedFaresKey(scope);
+  if (!key) throw new Error("missing_tenant_scope");
+  const normalized = _normalizeAirportFixedFaresDocument(doc);
+  const updatedAt = new Date().toISOString();
+  const out = {
+    version: normalized.version || 1,
+    updated_at: updatedAt,
+    rules: Array.isArray(normalized.rules) ? normalized.rules : [],
+  };
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      updated_at: updatedAt,
+      airport_fixed_fares: out,
+    }),
+  );
+  return { key, airport_fixed_fares: out };
+}
+
+async function _loadScopedAirportFixedFares(env, scope) {
+  const key = buildScopedAirportFixedFaresKey(scope);
+  if (!key) {
+    return { key: "", document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "missing_scope" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "missing_booking_kv" };
+  }
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!raw || typeof raw !== "object") {
+      return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "not_found" };
+    }
+    return { key, document: _normalizeAirportFixedFaresDocument(raw), load_error: null };
+  } catch (_) {
+    return { key, document: _normalizeAirportFixedFaresDocument({ rules: [] }), load_error: "kv_read_failed" };
+  }
+}
+
+function _isAirportFixedFareEligiblePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const transfer =
+    payload.airport_transfer && typeof payload.airport_transfer === "object"
+      ? payload.airport_transfer
+      : {};
+  const direction = _fixedFareNormalizeText(
+    payload.airport_direction ?? payload.airportDirection ?? transfer.airport_direction ?? transfer.airportDirection,
+    24,
+  ).toLowerCase();
+  const airportIata = _fixedFareNormalizeUpperToken(
+    payload.airport_iata ?? payload.airportIata ?? transfer.airport_iata ?? transfer.airportIata,
+    8,
+  );
+  const airportId = _fixedFareNormalizeText(
+    payload.airport_id ?? payload.airportId ?? transfer.airport_id ?? transfer.airportId,
+    64,
+  );
+  const service = normalizeService(payload.service ?? "");
+  const bookingType = _fixedFareNormalizeText(payload.booking_type ?? payload.bookingType, 64).toLowerCase();
+  const bookingSource = _fixedFareNormalizeText(payload.booking_source ?? payload.bookingSource, 64).toLowerCase();
+  const hasAirportMeta = !!direction && (airportIata.length >= 3 || !!airportId);
+  const hasAirportIntent =
+    service === "airport" ||
+    bookingType === "airport_transfer" ||
+    bookingSource === "airport_module";
+  return hasAirportMeta && hasAirportIntent;
+}
+
+function _hasExplicitAirportFixedFareScope(payload, resolvedScope = null) {
+  if (!payload || typeof payload !== "object") return false;
+  const payloadTenant = sanitizeTenantString(payload?.tenant_id ?? payload?.tenantId, 80);
+  const payloadCompany = sanitizeTenantString(payload?.company_id ?? payload?.companyId, 80);
+  if (!payloadTenant || !payloadCompany) return false;
+
+  const resolvedTenant = sanitizeTenantString(
+    resolvedScope?.tenant_id ?? resolvedScope?.tenantId,
+    80,
+  );
+  const resolvedCompany = sanitizeTenantString(
+    resolvedScope?.company_id ?? resolvedScope?.companyId,
+    80,
+  );
+  if (resolvedTenant && payloadTenant !== resolvedTenant) return false;
+  if (resolvedCompany && payloadCompany !== resolvedCompany) return false;
+  return true;
+}
+
+function _matchAirportFixedFareRule(rule, normalizedCtx) {
+  if (!rule || !normalizedCtx) return { matched: false, reason: "invalid_input" };
+  if (rule.enabled !== true) return { matched: false, reason: "disabled" };
+  if (rule.airport_iata !== normalizedCtx.airport_iata) return { matched: false, reason: "airport_iata_mismatch" };
+  if (!(rule.direction === "both" || rule.direction === normalizedCtx.direction)) {
+    return { matched: false, reason: "direction_mismatch" };
+  }
+  if (rule.tier !== normalizedCtx.tier) return { matched: false, reason: "tier_mismatch" };
+  if (normalizedCtx.pax < rule.pax_min || normalizedCtx.pax > rule.pax_max) {
+    return { matched: false, reason: "pax_mismatch" };
+  }
+  if (normalizedCtx.bags > rule.bags_max) return { matched: false, reason: "bags_mismatch" };
+
+  const nowMs = normalizedCtx.now_ms;
+  if (Number.isFinite(rule.active_from_ms) && Number.isFinite(nowMs) && nowMs < rule.active_from_ms) {
+    return { matched: false, reason: "inactive_not_started" };
+  }
+  if (Number.isFinite(rule.active_until_ms) && Number.isFinite(nowMs) && nowMs > rule.active_until_ms) {
+    return { matched: false, reason: "inactive_expired" };
+  }
+
+  if (rule.zone_type !== "none") {
+    const bucket = normalizedCtx.zone_values?.[rule.zone_type];
+    if (!(bucket instanceof Set) || bucket.size === 0) {
+      return { matched: false, reason: "zone_context_missing" };
+    }
+    if (!bucket.has(rule.zone_value)) {
+      return { matched: false, reason: "zone_mismatch" };
+    }
+  }
+
+  return { matched: true, reason: "match" };
+}
+
+function _selectBestAirportFixedFareRule(matches) {
+  if (!Array.isArray(matches) || matches.length === 0) return null;
+  const zoneRank = { none: 0, country: 1, city: 2, postcode: 3 };
+  const sorted = [...matches].sort((a, b) => {
+    const pa = _fixedFareIntOr(a?.rule?.priority, 0, 0, 1_000_000);
+    const pb = _fixedFareIntOr(b?.rule?.priority, 0, 0, 1_000_000);
+    if (pb !== pa) return pb - pa;
+
+    const za = zoneRank[a?.rule?.zone_type] ?? 0;
+    const zb = zoneRank[b?.rule?.zone_type] ?? 0;
+    if (zb !== za) return zb - za;
+
+    const bandA = Math.max(0, _fixedFareIntOr(a?.rule?.pax_max, 99) - _fixedFareIntOr(a?.rule?.pax_min, 1));
+    const bandB = Math.max(0, _fixedFareIntOr(b?.rule?.pax_max, 99) - _fixedFareIntOr(b?.rule?.pax_min, 1));
+    if (bandA !== bandB) return bandA - bandB;
+
+    const bagsA = _fixedFareIntOr(a?.rule?.bags_max, 99);
+    const bagsB = _fixedFareIntOr(b?.rule?.bags_max, 99);
+    if (bagsA !== bagsB) return bagsA - bagsB;
+
+    const idA = _fixedFareNormalizeText(a?.rule?.rule_id, 120);
+    const idB = _fixedFareNormalizeText(b?.rule?.rule_id, 120);
+    return idA.localeCompare(idB);
+  });
+  return sorted[0] || null;
+}
+
+function _splitInclVatFromPricingProfile(priceIncl, pricingProfile, fallbackVatRate = 0.06) {
+  const profile = _normalizeTenantPricingProfile(pricingProfile);
+  const inclNum = Number(priceIncl);
+  if (!Number.isFinite(inclNum) || inclNum <= 0) {
+    return { price_ex_vat: to2(0), price_vat: to2(0), price_incl_vat: to2(0), vat_rate: 0, vat_mode: profile.vat_mode || "excl" };
+  }
+  const rate = clampNumber(profile?.vat_rate, clampNumber(fallbackVatRate, 0.06, 0, 1), 0, 1);
+  const exRaw = inclNum / (1 + rate);
+  const vatRaw = inclNum - exRaw;
+  return {
+    price_ex_vat: to2(exRaw),
+    price_vat: to2(vatRaw),
+    price_incl_vat: to2(inclNum),
+    vat_rate: rate,
+    vat_mode: profile.vat_mode || "excl",
+  };
+}
+
+async function resolveAirportFixedFare(env, scope, payload, options = {}) {
+  const fallback = {
+    matched: false,
+    pricing_source: "route_calc",
+    fixed_fare_applied: false,
+    fixed_fare_rule_id: null,
+    pricing: null,
+  };
+  try {
+    if (!_isAirportFixedFareEligiblePayload(payload)) return fallback;
+    const returnRequested = options?.returnRequested === true || _fixedFareReturnRequested(payload);
+    if (returnRequested) return fallback;
+
+    const transfer =
+      payload?.airport_transfer && typeof payload.airport_transfer === "object"
+        ? payload.airport_transfer
+        : {};
+    const airport_iata = _fixedFareNormalizeUpperToken(
+      payload?.airport_iata ??
+        payload?.airportIata ??
+        transfer?.airport_iata ??
+        transfer?.airportIata,
+      8,
+    );
+    const direction = _fixedFareNormalizeText(
+      payload?.airport_direction ??
+        payload?.airportDirection ??
+        transfer?.airport_direction ??
+        transfer?.airportDirection,
+      24,
+    ).toLowerCase();
+    const tier = normalizeTier(payload?.tier ?? "comfort");
+    const pax = _fixedFareIntOr(payload?.pax, 1, 1, 99);
+    const bags = _fixedFareIntOr(payload?.bags, 0, 0, 99);
+    const nowMs = Date.parse(options?.nowIso || new Date().toISOString());
+    if (!airport_iata || !direction) return fallback;
+
+    const explicitCountry = [
+      payload?.country,
+      payload?.country_code,
+      payload?.countryCode,
+      payload?.airport_country,
+      transfer?.airport_country,
+      payload?.pickup_country,
+      payload?.pickupCountry,
+      payload?.destination_country,
+      payload?.destinationCountry,
+      payload?.from_country,
+      payload?.to_country,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("country", value))
+      .filter((value) => !!value);
+    const explicitCity = [
+      payload?.city,
+      payload?.pickup_city,
+      payload?.pickupCity,
+      payload?.destination_city,
+      payload?.destinationCity,
+      payload?.from_city,
+      payload?.to_city,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("city", value))
+      .filter((value) => !!value);
+    const explicitPostcode = [
+      payload?.postcode,
+      payload?.postal_code,
+      payload?.postalCode,
+      payload?.pickup_postcode,
+      payload?.pickupPostcode,
+      payload?.destination_postcode,
+      payload?.destinationPostcode,
+      payload?.from_postcode,
+      payload?.to_postcode,
+    ]
+      .map((value) => _fixedFareNormalizeZoneValue("postcode", value))
+      .filter((value) => !!value);
+
+    const normalizedCtx = {
+      airport_iata,
+      direction,
+      tier,
+      pax,
+      bags,
+      now_ms: Number.isFinite(nowMs) ? nowMs : Date.now(),
+      zone_values: {
+        country: new Set(explicitCountry),
+        city: new Set(explicitCity),
+        postcode: new Set(explicitPostcode),
+      },
+    };
+
+    const loaded = await _loadScopedAirportFixedFares(env, scope);
+    const rules = Array.isArray(loaded?.document?.rules) ? loaded.document.rules : [];
+    if (!rules.length) return fallback;
+    const matches = [];
+    for (const rule of rules) {
+      const match = _matchAirportFixedFareRule(rule, normalizedCtx);
+      if (match.matched) matches.push({ rule, match });
+    }
+    const winner = _selectBestAirportFixedFareRule(matches);
+    if (!winner?.rule) return fallback;
+    const split = _splitInclVatFromPricingProfile(
+      winner.rule.price_incl_vat,
+      options?.pricingProfile,
+      options?.fallbackVatRate ?? 0.06,
+    );
+    return {
+      matched: true,
+      pricing_source: "airport_fixed_fare",
+      fixed_fare_applied: true,
+      fixed_fare_rule_id: winner.rule.rule_id,
+      pricing: {
+        price_ex_vat: split.price_ex_vat,
+        price_vat: split.price_vat,
+        price_incl_vat: split.price_incl_vat,
+        note: "Vast luchthaventarief toegepast.",
+        breakdown: {
+          kind: "airport_fixed_fare",
+          fixed_fare_rule_id: winner.rule.rule_id,
+          fixed_fare_priority: winner.rule.priority,
+          airport_iata: winner.rule.airport_iata,
+          direction: winner.rule.direction,
+          tier: winner.rule.tier,
+          zone_type: winner.rule.zone_type,
+          zone_value: winner.rule.zone_value || "",
+          currency: winner.rule.currency,
+          vat_rate: split.vat_rate,
+        },
+      },
+    };
+  } catch (_) {
+    return fallback;
+  }
 }
 
 function tierFeeEx(tier) {
@@ -9398,6 +20806,23 @@ function _flattenBookingForRidesList(bookingId, rec) {
     rec?.paymentSource ??
     _pick(rec, ["booking", "payment_source"], null) ??
     _pick(rec, ["booking", "paymentSource"], null);
+  const assignedDriverId =
+    _pick(rec, ["assigned_driver", "driver_id"], null) ??
+    _pick(rec, ["assigned_driver", "driverId"], null) ??
+    _pick(rec, ["assigned_driver", "id"], null) ??
+    _pick(rec, ["assignedDriver", "driver_id"], null) ??
+    _pick(rec, ["assignedDriver", "driverId"], null) ??
+    _pick(rec, ["assignedDriver", "id"], null) ??
+    _pick(rec, ["driver_id"], null) ??
+    _pick(rec, ["driverId"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "driver_id"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "driverId"], null) ??
+    _pick(rec, ["booking", "assigned_driver", "id"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "driver_id"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "driverId"], null) ??
+    _pick(rec, ["booking", "assignedDriver", "id"], null) ??
+    _pick(rec, ["booking", "driver_id"], null) ??
+    _pick(rec, ["booking", "driverId"], null);
 
   return {
     booking_id: bookingId,
@@ -9410,6 +20835,9 @@ function _flattenBookingForRidesList(bookingId, rec) {
     assigned_vehicle_id:
       _pick(rec, ["assigned_vehicle_id"], null) ??
       _pick(rec, ["booking", "assigned_vehicle_id"], null),
+    ...(assignedDriverId
+      ? { assigned_driver_id: assignedDriverId, assignedDriverId: assignedDriverId }
+      : {}),
     customer_name: customerName,
     customer_phone: customerPhone,
     customer_email: customerEmail,
@@ -10301,10 +21729,57 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   if (!raw || typeof raw !== "object") return null;
   const vehicleId = String(raw.vehicle_id || raw.id || "").trim();
   if (!vehicleId) return null;
-  const isActive = raw.is_active == null ? true : !!raw.is_active;
+  const isActive = _coerceBoolean(raw.is_active ?? raw.isActive, true);
   const tier = _normTierForVehicleMatch(raw.tier || raw.service_class || raw.class || "*");
   const passengerCapacity = _toPositiveInt(raw.passenger_capacity ?? raw.pax_capacity ?? raw.pax ?? 0, 0);
   const luggageCapacity = _toPositiveInt(raw.luggage_capacity ?? raw.bags_capacity ?? raw.bags ?? 0, 0);
+  const vehicleName = sanitizeTenantString(
+    raw.vehicle_name ?? raw.vehicleName ?? raw.name,
+    160,
+  );
+  const brandModel = sanitizeTenantString(
+    raw.brand_model ?? raw.brandModel,
+    160,
+  );
+  const licensePlate = sanitizeTenantString(
+    raw.license_plate ?? raw.licensePlate,
+    64,
+  );
+  const exploitationLicenseNumber = sanitizeTenantString(
+    raw.exploitation_license_number ?? raw.exploitationLicenseNumber,
+    120,
+  );
+  const vehicleRegistrationNumber = sanitizeTenantString(
+    raw.vehicle_registration_number ?? raw.vehicleRegistrationNumber,
+    120,
+  );
+  const color = sanitizeTenantString(raw.color, 80);
+  const primaryPhotoRef = _normalizeVehiclePhotoRef(
+    raw.primary_photo_ref ?? raw.primaryPhotoRef ?? raw.photo_ref ?? raw.photoRef,
+  );
+  const galleryPhotoRefs = _normalizeVehiclePhotoRefList(
+    raw.gallery_photo_refs ?? raw.galleryPhotoRefs ?? [],
+  );
+  const publicPhotoUrl = _normalizeSafeRemoteMediaRef(
+    raw.public_photo_url ??
+      raw.publicPhotoUrl ??
+      raw.vehicle_photo_url ??
+      raw.vehiclePhotoUrl ??
+      raw.photo_url ??
+      raw.photoUrl ??
+      raw.media?.photo_url ??
+      raw.media?.photoUrl,
+  );
+  const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
+    raw.vehicle_photo_url ??
+      raw.vehiclePhotoUrl ??
+      raw.public_photo_url ??
+      raw.publicPhotoUrl ??
+      raw.photo_url ??
+      raw.photoUrl ??
+      raw.media?.photo_url ??
+      raw.media?.photoUrl,
+  );
   const driverRaw = raw.assigned_driver || raw.driver || null;
   let assignedDriver = null;
   if (driverRaw && typeof driverRaw === "object") {
@@ -10324,11 +21799,75 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   const companyId = _scopeText(raw.company_id ?? raw.companyId) || normalizedScope.company_id || tenantId;
   return {
     vehicle_id: vehicleId,
+    vehicleId: vehicleId,
     is_active: isActive,
+    isActive: isActive,
+    ...(vehicleName
+      ? {
+          vehicle_name: vehicleName,
+          vehicleName: vehicleName,
+        }
+      : {}),
+    ...(brandModel
+      ? {
+          brand_model: brandModel,
+          brandModel: brandModel,
+        }
+      : {}),
+    ...(licensePlate
+      ? {
+          license_plate: licensePlate,
+          licensePlate: licensePlate,
+        }
+      : {}),
+    ...(exploitationLicenseNumber
+      ? {
+          exploitation_license_number: exploitationLicenseNumber,
+          exploitationLicenseNumber: exploitationLicenseNumber,
+        }
+      : {}),
+    ...(vehicleRegistrationNumber
+      ? {
+          vehicle_registration_number: vehicleRegistrationNumber,
+          vehicleRegistrationNumber: vehicleRegistrationNumber,
+        }
+      : {}),
+    ...(color
+      ? {
+          color,
+        }
+      : {}),
     tier,
+    tierId: tier,
     passenger_capacity: passengerCapacity,
+    passengerCapacity: passengerCapacity,
     luggage_capacity: luggageCapacity,
+    luggageCapacity: luggageCapacity,
     assigned_driver: assignedDriver,
+    ...(primaryPhotoRef
+      ? {
+          primary_photo_ref: primaryPhotoRef,
+          primaryPhotoRef: primaryPhotoRef,
+        }
+      : {}),
+    ...(galleryPhotoRefs.length > 0
+      ? {
+          gallery_photo_refs: galleryPhotoRefs,
+          galleryPhotoRefs: galleryPhotoRefs,
+        }
+      : {}),
+    ...(publicPhotoUrl
+      ? {
+          public_photo_url: publicPhotoUrl,
+          publicPhotoUrl: publicPhotoUrl,
+        }
+      : {}),
+    ...(vehiclePhotoUrl
+      ? {
+          vehicle_photo_url: vehiclePhotoUrl,
+          vehiclePhotoUrl: vehiclePhotoUrl,
+        }
+      : {}),
     tenant_id: tenantId,
     company_id: companyId,
     tenantId: tenantId,
@@ -10846,27 +22385,40 @@ async function listBookingsAuthoritative(
   const nowMs = Date.now();
   const actionableGraceMs = 6 * 60 * 60 * 1000; // keep slightly-past rides visible for operational safety
   const cutoffMs = nowMs - actionableGraceMs;
-  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
   const out = [];
-  for (const k of listed?.keys || []) {
-    const name = String(k?.name || "");
-    if (!name.startsWith("booking:")) continue;
-    const bookingId = name.slice("booking:".length);
-    if (!bookingId) continue;
-    const rec = await env.BOOKING_KV.get(name, { type: "json" });
-    if (!rec || typeof rec !== "object") continue;
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
-    const row = _flattenBookingForRidesList(bookingId, rec);
-    if (!includeHistory && (row.status === "COMPLETED" || row.status === "CANCELLED")) continue;
-    if (!includeHistory) {
-      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-      // For "available rides", require a valid pickup datetime.
-      // Historical/debug records with missing/invalid pickup should stay out of operational list.
-      if (!Number.isFinite(pickupTs)) continue;
-      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const k of listed?.keys || []) {
+      const name = String(k?.name || "");
+      if (!name.startsWith("booking:")) continue;
+      const bookingId = name.slice("booking:".length);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(name, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+      const row = _flattenBookingForRidesList(bookingId, rec);
+      if (
+        !includeHistory &&
+        (row.status === "COMPLETED" || row.status === "CANCELLED")
+      ) continue;
+      if (!includeHistory) {
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+        // For "available rides", require a valid pickup datetime.
+        // Historical/debug records with missing/invalid pickup should stay out of operational list.
+        if (!Number.isFinite(pickupTs)) continue;
+        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+      }
+      out.push(row);
     }
-    out.push(row);
-  }
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
 
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
@@ -10979,6 +22531,102 @@ async function getBookingAuthoritative(bookingId, env, tenantScope = null, prelo
     status: _normLifecycleStatus(rec?.status || rec?.stage || null),
     record: rec,
   };
+}
+
+async function _driverSessionCanAccessBookingInvoice(request, rec, env) {
+  try {
+    const session = await _loadPublicDriverSessionFromRequest(request, env);
+    if (!session) return { allowed: false };
+    const recordScope = resolveBookingTenantScopeFromRecord(rec);
+    if (!recordScope?.tenant_id || !recordScope?.company_id) {
+      return { allowed: false };
+    }
+    if (
+      safeStr(session.tenant_id, 120) !== safeStr(recordScope.tenant_id, 120) ||
+      safeStr(session.company_id, 120) !== safeStr(recordScope.company_id, 120)
+    ) {
+      return { allowed: false };
+    }
+    const allowed = await driverOwnsBookingForMutation({
+      rec,
+      actorDriverId: safeStr(session.driver_id, 96),
+      actorVehicleId: safeStr(session.assigned_vehicle_id, 128),
+      tenantScope: recordScope,
+      env,
+    });
+    return { allowed: !!allowed };
+  } catch (_) {
+    return { allowed: false };
+  }
+}
+
+async function handleBookingInvoicePdfGet(request, url, env, bookingId) {
+  let loaded = null;
+  try {
+    loaded = await loadBookingRecord(env, bookingId);
+  } catch (_) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const rec = loaded?.rec;
+  if (!rec || typeof rec !== "object") {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const adminAuthorized = hasValidAdminToken(request, url, env);
+  let allowed = !!adminAuthorized;
+  // Customer contact proof (email/phone knowledge) is intentionally insufficient
+  // for private financial artifacts. Customer access will be re-enabled via a
+  // dedicated customer session/recovery token flow.
+  if (!allowed) {
+    const driverAccess = await _driverSessionCanAccessBookingInvoice(request, rec, env);
+    allowed = !!driverAccess?.allowed;
+  }
+  if (!allowed) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  const metadata = _invoicePdfMetadataFromRecord(rec);
+  if (!metadata.exists) {
+    return json({
+      ok: false,
+      error: "invoice_pdf_not_available",
+      message: "Invoice PDF artifact has not been persisted for this booking.",
+    }, 404);
+  }
+  if (!env?.PUBLIC_MEDIA || typeof env.PUBLIC_MEDIA.get !== "function") {
+    return json({ ok: false, error: "invoice_storage_unavailable" }, 500);
+  }
+  try {
+    const object = await env.PUBLIC_MEDIA.get(metadata.key);
+    if (!object) {
+      return json({ ok: false, error: "invoice_pdf_not_found" }, 404);
+    }
+    const buffer = await object.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (!bytes.length) {
+      return json({ ok: false, error: "invoice_pdf_empty" }, 404);
+    }
+    const invoiceNumber = safeStr(findExistingInvoiceNumber(rec), 120) || safeStr(bookingId, 120) || "invoice";
+    const safeInvoicePart = _safeArtifactPathSegment(invoiceNumber, "invoice");
+    const contentType = safeStr(
+      metadata.content_type || object?.httpMetadata?.contentType,
+      120,
+    ) || "application/pdf";
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `inline; filename="factuur-${safeInvoicePart}.pdf"`,
+        "Cache-Control": "private, no-store, max-age=0",
+        Pragma: "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Length": String(bytes.length),
+        ...corsHeaders(),
+      },
+    });
+  } catch (err) {
+    const reason = safeStr(err?.message || err).slice(0, 160) || "invoice_pdf_read_failed";
+    console.log(`[INVOICE_ARTIFACT][READ_ERROR] bookingId=${safeStr(bookingId)} reason=${reason}`);
+    return json({ ok: false, error: "invoice_pdf_read_failed" }, 500);
+  }
 }
 
 async function updateBookingStatusAuthoritative(bookingId, status, env, tenantScope = null) {
@@ -11504,7 +23152,8 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       rec?.booking?.customer_invoice_sent_at ||
       rec?.booking?.customerInvoiceSentAt,
     );
-    if (businessInvoiceContext && existingSentAt) {
+    const existingArtifact = _invoicePdfMetadataFromRecord(rec);
+    if (businessInvoiceContext && existingSentAt && existingArtifact.exists) {
       console.log(
         `[EMAIL][RECEIPT_CUSTOMER_MANUAL][ALREADY_SENT] bookingId=${safeStr(bookingId)} sentAt=${safeStr(existingSentAt)} source=${safeStr(source)}`,
       );
@@ -11584,12 +23233,18 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
       priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
     };
+    const needsArtifactBackfillWithoutResend = businessInvoiceContext && !!existingSentAt && !existingArtifact.exists;
     const invoiceResult = await generateAndSendInvoice({
       env,
       booking: invoiceInput,
+      bookingRecordInfoOverride: { key, rec },
       emailPolicy: {
-        sendCustomerEmail: true,
-        customerSkipReason: "",
+        sendCustomerEmail: needsArtifactBackfillWithoutResend ? false : true,
+        skipEmailDelivery: needsArtifactBackfillWithoutResend,
+        requireArtifactPersistence: true,
+        customerSkipReason: needsArtifactBackfillWithoutResend
+          ? "artifact_backfill_already_sent"
+          : "",
         context: "manual_flutter_receipt_button",
         allowManualPrivateCustomerSend: true,
         language: language || undefined,
@@ -11599,6 +23254,20 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
 
     if (!invoiceResult?.ok) {
       const reason = safeStr(invoiceResult?.error || "invoice_generation_failed").slice(0, 160) || "invoice_generation_failed";
+      const artifactReason = safeStr(invoiceResult?.reason, 80);
+      const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(rec));
+      console.log(
+        `[INVOICE_ARTIFACT][MANUAL_ROUTE] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=false reason=${artifactReason || reason}`,
+      );
+      if (reason === "invoice_artifact_not_persisted") {
+        return {
+          ok: false,
+          status: "error",
+          error: "invoice_artifact_not_persisted",
+          reason: artifactReason || "unknown",
+          email_sent: invoiceResult?.email_sent === true,
+        };
+      }
       console.log(
         `[EMAIL][RECEIPT_CUSTOMER_MANUAL][ERROR] bookingId=${safeStr(bookingId)} reason=${reason} source=${safeStr(source)}`,
       );
@@ -11609,8 +23278,28 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       };
     }
 
+    const artifactOk = invoiceResult?.invoice_pdf_artifact?.ok === true;
+    const artifactReason = safeStr(
+      invoiceResult?.invoice_pdf_artifact?.reason ||
+      invoiceResult?.invoice_pdf_artifact?.error,
+      80,
+    );
+    const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(rec));
+    console.log(
+      `[INVOICE_ARTIFACT][MANUAL_ROUTE] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} ok=${artifactOk} reason=${artifactReason || "-"}`,
+    );
+    if (!artifactOk) {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: artifactReason || "unknown",
+        email_sent: invoiceResult?.email?.customer?.sent === true,
+      };
+    }
+
     const customerSend = invoiceResult?.email?.customer || {};
-    if (!customerSend?.sent) {
+    if (!needsArtifactBackfillWithoutResend && !customerSend?.sent) {
       const reason = customerSend?.skipped
         ? (safeStr(customerSend?.reason) || "customer_send_skipped")
         : "customer_send_failed";
@@ -11624,33 +23313,74 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
       };
     }
 
-    const sentAt = new Date().toISOString();
+    const sentAt = needsArtifactBackfillWithoutResend
+      ? (safeStr(existingSentAt, 80) || new Date().toISOString())
+      : new Date().toISOString();
     const documentType = safeStr(invoiceResult?.documentType || "receipt");
-    rec.receipt_email_sent_at = sentAt;
-    rec.receipt_email_sent_to = customerEmail;
-    rec.receipt_email_sent_source = source;
-    rec.receipt_email_document_type = documentType;
-    rec.receipt_email_send_context = "manual_flutter_receipt_button";
-    rec.updatedAt = sentAt;
-    if (rec.booking && typeof rec.booking === "object") {
-      rec.booking.receipt_email_sent_at = sentAt;
-      rec.booking.receipt_email_sent_to = customerEmail;
-      rec.booking.receipt_email_sent_source = source;
-      rec.booking.receipt_email_document_type = documentType;
-      rec.booking.receipt_email_send_context = "manual_flutter_receipt_button";
+    const customerEmailSent = !needsArtifactBackfillWithoutResend && customerSend?.sent === true;
+    const latestAfterInvoice = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latestAfterInvoice || typeof latestAfterInvoice !== "object") {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: "metadata_not_readable_after_write",
+        email_sent: customerEmailSent,
+      };
     }
-    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+    // Keep invoice artifact metadata from the latest stored record authoritative.
+    const merged = latestAfterInvoice;
+    if (!needsArtifactBackfillWithoutResend) {
+      merged.receipt_email_sent_at = sentAt;
+      merged.receipt_email_sent_to = customerEmail;
+      merged.receipt_email_sent_source = source;
+      merged.receipt_email_document_type = documentType;
+      merged.receipt_email_send_context = "manual_flutter_receipt_button";
+      merged.updatedAt = sentAt;
+      if (merged.booking && typeof merged.booking === "object") {
+        merged.booking.receipt_email_sent_at = sentAt;
+        merged.booking.receipt_email_sent_to = customerEmail;
+        merged.booking.receipt_email_sent_source = source;
+        merged.booking.receipt_email_document_type = documentType;
+        merged.booking.receipt_email_send_context = "manual_flutter_receipt_button";
+      }
+      await env.BOOKING_KV.put(key, JSON.stringify(merged));
+    }
+
+    const latestReadable = needsArtifactBackfillWithoutResend
+      ? merged
+      : await env.BOOKING_KV.get(key, { type: "json" });
+    const readableArtifact = _invoicePdfMetadataFromRecord(latestReadable);
+    if (!readableArtifact.exists || !safeStr(readableArtifact.key, 1024)) {
+      return {
+        ok: false,
+        status: "error",
+        error: "invoice_artifact_not_persisted",
+        reason: "metadata_not_readable_after_write",
+        email_sent: customerEmailSent,
+      };
+    }
 
     console.log(
       `[EMAIL][RECEIPT_CUSTOMER_MANUAL][OK] bookingId=${safeStr(bookingId)} recipient=${maskEmailForLog(customerEmail)} sentAt=${sentAt} source=${safeStr(source)}`,
     );
-    return {
-      ok: true,
-      status: "sent",
-      booking_id: bookingId,
-      recipient: maskEmailForLog(customerEmail),
-      sent_at: sentAt,
-    };
+    return needsArtifactBackfillWithoutResend
+      ? {
+          ok: true,
+          status: "already_sent",
+          booking_id: bookingId,
+          recipient: maskEmailForLog(customerEmail),
+          sent_at: sentAt,
+          artifact_backfilled: true,
+        }
+      : {
+          ok: true,
+          status: "sent",
+          booking_id: bookingId,
+          recipient: maskEmailForLog(customerEmail),
+          sent_at: sentAt,
+        };
   } catch (err) {
     const message = safeStr(err?.message || err).slice(0, 200) || "manual_receipt_email_failed";
     console.log(
@@ -13053,6 +24783,187 @@ function findExistingInvoiceNumber(source) {
   );
 }
 
+function _safeArtifactPathSegment(value, fallback = "unknown", maxLen = 120) {
+  const raw = sanitizeTenantString(value ?? "", Math.max(24, maxLen)).toLowerCase();
+  const cleaned = raw
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!cleaned) return fallback;
+  return cleaned.slice(0, Math.max(12, maxLen));
+}
+
+function _invoicePdfMetadataFromRecord(rec) {
+  const key = safeStr(
+    rec?.invoice_pdf_key ??
+      rec?.invoicePdfKey ??
+      rec?.booking?.invoice_pdf_key ??
+      rec?.booking?.invoicePdfKey,
+    1024,
+  );
+  const generatedAt = safeStr(
+    rec?.invoice_pdf_generated_at ??
+      rec?.invoicePdfGeneratedAt ??
+      rec?.booking?.invoice_pdf_generated_at ??
+      rec?.booking?.invoicePdfGeneratedAt,
+    80,
+  );
+  const contentType = safeStr(
+    rec?.invoice_pdf_content_type ??
+      rec?.invoicePdfContentType ??
+      rec?.booking?.invoice_pdf_content_type ??
+      rec?.booking?.invoicePdfContentType,
+    120,
+  ) || "application/pdf";
+  const rawSize =
+    rec?.invoice_pdf_size_bytes ??
+    rec?.invoicePdfSizeBytes ??
+    rec?.booking?.invoice_pdf_size_bytes ??
+    rec?.booking?.invoicePdfSizeBytes;
+  const sizeBytes = Number(rawSize);
+  const sha256 = safeStr(
+    rec?.invoice_pdf_sha256 ??
+      rec?.invoicePdfSha256 ??
+      rec?.booking?.invoice_pdf_sha256 ??
+      rec?.booking?.invoicePdfSha256,
+    128,
+  ).toLowerCase();
+  return {
+    key,
+    generated_at: generatedAt || null,
+    content_type: contentType || "application/pdf",
+    size_bytes: Number.isFinite(sizeBytes) && sizeBytes > 0 ? Math.trunc(sizeBytes) : null,
+    sha256: sha256 || null,
+    exists: !!key,
+  };
+}
+
+async function _sha256HexFromBytes(bytes) {
+  const normalized = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const digest = await crypto.subtle.digest("SHA-256", normalized);
+  const out = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of out) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
+  invoiceNumber,
+  pdfBytes,
+} = {}) {
+  const storage = env?.PUBLIC_MEDIA;
+  if (!storage || typeof storage.put !== "function") {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_public_media_binding");
+    return { ok: false, skipped: true, reason: "missing_public_media_binding" };
+  }
+  const key = safeStr(bookingRecordInfo?.key, 240);
+  if (!key || !env?.BOOKING_KV) {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_record");
+    return { ok: false, skipped: true, reason: "missing_booking_record" };
+  }
+  const bytes = pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes || []);
+  if (!bytes.length) {
+    console.log("[INVOICE_ARTIFACT][SKIP] reason=empty_pdf_bytes");
+    return { ok: false, skipped: true, reason: "empty_pdf_bytes" };
+  }
+  try {
+    const latest = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latest || typeof latest !== "object") {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=record_not_found");
+      return { ok: false, skipped: true, reason: "record_not_found" };
+    }
+    const scope = resolveBookingTenantScopeFromRecord(latest);
+    if (!scope?.tenant_id || !scope?.company_id) {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_scope");
+      return { ok: false, skipped: true, reason: "missing_booking_scope" };
+    }
+    const bookingId = safeStr(
+      bookingRecordInfo?.booking_id ??
+        latest?.booking_id ??
+        latest?.bookingId ??
+        latest?.booking?.booking_id ??
+        latest?.booking?.bookingId,
+      160,
+    );
+    if (!bookingId) {
+      console.log("[INVOICE_ARTIFACT][SKIP] reason=missing_booking_id");
+      return { ok: false, skipped: true, reason: "missing_booking_id" };
+    }
+    const canonicalInvoiceNumber = safeStr(invoiceNumber || findExistingInvoiceNumber(latest), 120) || "unknown";
+    const safeInvoicePart = _safeArtifactPathSegment(canonicalInvoiceNumber, "invoice");
+    const objectKey = [
+      "private-artifacts",
+      "tenant",
+      _safeArtifactPathSegment(scope.tenant_id, "tenant"),
+      "company",
+      _safeArtifactPathSegment(scope.company_id, "company"),
+      "bookings",
+      _safeArtifactPathSegment(bookingId, "booking"),
+      "invoices",
+      `${safeInvoicePart}.pdf`,
+    ].join("/");
+    const generatedAt = new Date().toISOString();
+    const sizeBytes = bytes.length;
+    const sha256 = await _sha256HexFromBytes(bytes);
+    await storage.put(objectKey, bytes, {
+      httpMetadata: {
+        contentType: "application/pdf",
+        cacheControl: "private, no-store, max-age=0",
+      },
+      customMetadata: {
+        artifact_type: "booking_invoice_pdf",
+        tenant_id: _safeArtifactPathSegment(scope.tenant_id, "tenant"),
+        company_id: _safeArtifactPathSegment(scope.company_id, "company"),
+        booking_id: _safeArtifactPathSegment(bookingId, "booking"),
+        invoice_number: safeInvoicePart,
+      },
+    });
+    latest.invoice_pdf_key = objectKey;
+    latest.invoicePdfKey = objectKey;
+    latest.invoice_pdf_generated_at = generatedAt;
+    latest.invoicePdfGeneratedAt = generatedAt;
+    latest.invoice_pdf_content_type = "application/pdf";
+    latest.invoicePdfContentType = "application/pdf";
+    latest.invoice_pdf_size_bytes = sizeBytes;
+    latest.invoicePdfSizeBytes = sizeBytes;
+    latest.invoice_pdf_sha256 = sha256;
+    latest.invoicePdfSha256 = sha256;
+    if (latest.booking && typeof latest.booking === "object") {
+      latest.booking.invoice_pdf_key = objectKey;
+      latest.booking.invoicePdfKey = objectKey;
+      latest.booking.invoice_pdf_generated_at = generatedAt;
+      latest.booking.invoicePdfGeneratedAt = generatedAt;
+      latest.booking.invoice_pdf_content_type = "application/pdf";
+      latest.booking.invoicePdfContentType = "application/pdf";
+      latest.booking.invoice_pdf_size_bytes = sizeBytes;
+      latest.booking.invoicePdfSizeBytes = sizeBytes;
+      latest.booking.invoice_pdf_sha256 = sha256;
+      latest.booking.invoicePdfSha256 = sha256;
+    }
+    latest.updatedAt = generatedAt;
+    await env.BOOKING_KV.put(key, JSON.stringify(latest));
+    const scopeMask = _bookingIntentScopeMask(scope);
+    const artifactHashPrefix = safeStr(sha256, 16).slice(0, 12) || "-";
+    console.log(
+      `[INVOICE_ARTIFACT][PERSISTED] booking=${_bookingIntentMask(bookingId)} tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} size=${sizeBytes} sha256_prefix=${artifactHashPrefix}`,
+    );
+    return {
+      ok: true,
+      key: objectKey,
+      generated_at: generatedAt,
+      content_type: "application/pdf",
+      size_bytes: sizeBytes,
+      sha256,
+    };
+  } catch (err) {
+    const reason = safeStr(err?.message || err).slice(0, 160) || "persist_failed";
+    console.log(`[INVOICE_ARTIFACT][ERROR] reason=${reason}`);
+    return { ok: false, error: reason };
+  }
+}
+
 function resolveInvoiceBookingId(bookingInput) {
   const out = [];
   const seen = new Set();
@@ -13646,7 +25557,12 @@ async function sendInvoiceEmailWithPdf({
   };
 }
 
-async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
+async function generateAndSendInvoice({
+  env,
+  booking,
+  emailPolicy = null,
+  bookingRecordInfoOverride = null,
+}) {
   try {
     const bookingInput = booking && typeof booking === "object" ? booking : {};
     const invoiceTenantId = safeStr(
@@ -13664,7 +25580,20 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       : null;
     const commProfile = await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
-    const bookingRecordInfo = await loadInvoiceBookingRecord(env, bookingInput);
+    const bookingRecordInfo =
+      bookingRecordInfoOverride &&
+      typeof bookingRecordInfoOverride === "object" &&
+      safeStr(bookingRecordInfoOverride?.key)
+        ? {
+            booking_id: safeStr(bookingRecordInfoOverride?.booking_id, 160) || null,
+            key: safeStr(bookingRecordInfoOverride?.key, 240),
+            rec:
+              bookingRecordInfoOverride?.rec &&
+              typeof bookingRecordInfoOverride.rec === "object"
+                ? bookingRecordInfoOverride.rec
+                : null,
+          }
+        : await loadInvoiceBookingRecord(env, bookingInput);
     const existingInvoiceNumber =
       findExistingInvoiceNumber(bookingRecordInfo?.rec) ||
       findExistingInvoiceNumber(bookingInput);
@@ -13787,17 +25716,56 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
     console.log(
       `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfGenerated=${!!(pdfBytes && pdfBytes.length)} pdfProviderConfigured=${pdfProviderConfigured}`,
     );
+    let artifactResult = { ok: false, skipped: true, reason: "pdf_missing" };
+    if (pdfBytes && pdfBytes.length) {
+      artifactResult = await persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
+        invoiceNumber,
+        pdfBytes,
+      });
+    }
+    const artifactReason = safeStr(
+      artifactResult?.reason || artifactResult?.error || "",
+      80,
+    );
+    const requireArtifactPersistence = emailPolicy?.requireArtifactPersistence === true;
+    if (requireArtifactPersistence && !artifactResult?.ok) {
+      return {
+        ok: false,
+        error: "invoice_artifact_not_persisted",
+        reason: artifactReason || "unknown",
+        email_sent: false,
+        invoice_pdf_artifact: {
+          ok: false,
+          reason: artifactReason || "unknown",
+          key: null,
+          generated_at: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      };
+    }
+
+    const skipEmailDelivery = emailPolicy?.skipEmailDelivery === true;
 
     const emailTo = customerEmail;
-    const emailResult = await sendInvoiceEmailWithPdf({
-      env,
-      toEmail: emailTo,
-      invoiceNumber,
-      pdfBytes: pdfBytes || new Uint8Array(0),
-      commProfile,
-      sendCustomerEmail: emailPolicy?.sendCustomerEmail !== false,
-      customerSkipReason: safeStr(emailPolicy?.customerSkipReason || ""),
-    });
+    const emailResult = skipEmailDelivery
+      ? {
+          enabled: false,
+          sent: false,
+          skipped: true,
+          reason: "skip_email_delivery",
+          customer: { sent: false, skipped: true, reason: "skip_email_delivery" },
+          admin_copy: { sent: false, skipped: true, reason: "skip_email_delivery" },
+        }
+      : await sendInvoiceEmailWithPdf({
+          env,
+          toEmail: emailTo,
+          invoiceNumber,
+          pdfBytes: pdfBytes || new Uint8Array(0),
+          commProfile,
+          sendCustomerEmail: emailPolicy?.sendCustomerEmail !== false,
+          customerSkipReason: safeStr(emailPolicy?.customerSkipReason || ""),
+        });
 
     const documentType = (safeStr(data.customerCompany) || safeStr(data.customerVat)) ? "invoice" : "receipt";
     return {
@@ -13809,6 +25777,16 @@ async function generateAndSendInvoice({ env, booking, emailPolicy = null }) {
       html_preview_available: true,
       pdf_generated: !!(pdfBytes && pdfBytes.length),
       pdf_provider_configured: pdfProviderConfigured,
+      invoice_pdf_artifact: {
+        ok: !!artifactResult?.ok,
+        reason: artifactReason || null,
+        key: safeStr(artifactResult?.key, 1024) || null,
+        generated_at: safeStr(artifactResult?.generated_at, 80) || null,
+        content_type: safeStr(artifactResult?.content_type, 120) || null,
+        size_bytes: Number.isFinite(Number(artifactResult?.size_bytes))
+          ? Math.trunc(Number(artifactResult?.size_bytes))
+          : null,
+      },
     };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };

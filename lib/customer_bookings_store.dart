@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/app_config.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
 String _localScopeSegment(String value) {
@@ -21,10 +21,8 @@ String _maskScopeId(String value) {
 }
 
 ({String tenantId, String companyId}) _activeLocalScope() {
-  final resolvedId = resolvedCompanyId.trim();
-  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
-  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
-  return (tenantId: tenantId, companyId: companyId);
+  final scope = resolveEffectiveTenantCompanyScope(allowDriverFallback: true);
+  return (tenantId: scope.tenantId, companyId: scope.companyId);
 }
 
 class StoredCustomerBooking {
@@ -1020,6 +1018,16 @@ class CustomerBookingsStore {
         .toList(growable: false);
   }
 
+  bool _allowLegacyWithoutScopeForScope({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final activeTenant = tenantId.trim();
+    final activeCompany = companyId.trim();
+    if (activeTenant.isEmpty || activeCompany.isEmpty) return false;
+    return activeTenant == activeCompany && activeTenant == kTenantId.trim();
+  }
+
   StoredCustomerBooking _coerceScope(
     StoredCustomerBooking item, {
     required String tenantId,
@@ -1085,7 +1093,19 @@ class CustomerBookingsStore {
 
   Future<List<StoredCustomerBooking>> loadAll() async {
     final scope = _activeLocalScope();
-    final scopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+    return _loadAllForScope(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<List<StoredCustomerBooking>> _loadAllForScope({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final scopeKey = '$normalizedTenantId::$normalizedCompanyId';
     if (_cache != null) {
       if (_cacheScopeKey == scopeKey) {
         return List<StoredCustomerBooking>.from(_cache!);
@@ -1093,24 +1113,29 @@ class CustomerBookingsStore {
       _cache = null;
     }
     try {
-      final tenantId = scope.tenantId.trim();
-      final companyId = scope.companyId.trim();
+      final allowLegacyWithoutScope = _allowLegacyWithoutScopeForScope(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
       _cacheScopeKey = scopeKey;
-      final scopedFile = await _file();
+      final scopedFile = await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
       final scopedItems = await _readFileItems(scopedFile);
       if (scopedItems.isNotEmpty) {
         final filtered =
             _filterForScope(
                   scopedItems,
-                  tenantId: tenantId,
-                  companyId: companyId,
-                  allowLegacyWithoutScope: true,
+                  tenantId: normalizedTenantId,
+                  companyId: normalizedCompanyId,
+                  allowLegacyWithoutScope: allowLegacyWithoutScope,
                 )
                 .map(
                   (item) => _coerceScope(
                     item,
-                    tenantId: tenantId,
-                    companyId: companyId,
+                    tenantId: normalizedTenantId,
+                    companyId: normalizedCompanyId,
                   ),
                 )
                 .toList(growable: false);
@@ -1127,30 +1152,30 @@ class CustomerBookingsStore {
       final migrated =
           _filterForScope(
                 legacyItems,
-                tenantId: tenantId,
-                companyId: companyId,
-                allowLegacyWithoutScope: true,
+                tenantId: normalizedTenantId,
+                companyId: normalizedCompanyId,
+                allowLegacyWithoutScope: false,
               )
               .map(
                 (item) => _coerceScope(
                   item,
-                  tenantId: tenantId,
-                  companyId: companyId,
+                  tenantId: normalizedTenantId,
+                  companyId: normalizedCompanyId,
                 ),
               )
               .toList(growable: false);
 
       if (migrated.isNotEmpty) {
         debugPrint(
-          '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_MIGRATE] tenant=${_maskScopeId(tenantId)} company=${_maskScopeId(companyId)} migrated=${migrated.length}',
+          '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_MIGRATE] tenant=${_maskScopeId(normalizedTenantId)} company=${_maskScopeId(normalizedCompanyId)} migrated=${migrated.length}',
         );
         await _atomicWriteJsonArray(
           file: scopedFile,
           payload: migrated.map((e) => e.toJson()).toList(growable: false),
         );
         await _removeVisibleLegacyItemsForScope(
-          tenantId: tenantId,
-          companyId: companyId,
+          tenantId: normalizedTenantId,
+          companyId: normalizedCompanyId,
         );
       }
       _cache = migrated;
@@ -1164,19 +1189,38 @@ class CustomerBookingsStore {
 
   Future<void> _saveAll(List<StoredCustomerBooking> items) async {
     final scope = _activeLocalScope();
+    await _saveAllForScope(
+      items,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+  }
+
+  Future<void> _saveAllForScope(
+    List<StoredCustomerBooking> items, {
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final normalizedTenantId = tenantId.trim();
+    final normalizedCompanyId = companyId.trim();
+    final scopeKey = '$normalizedTenantId::$normalizedCompanyId';
     final normalized = items
         .map(
           (item) => _coerceScope(
             item,
-            tenantId: scope.tenantId,
-            companyId: scope.companyId,
+            tenantId: normalizedTenantId,
+            companyId: normalizedCompanyId,
           ),
         )
         .toList(growable: false);
+    _cacheScopeKey = scopeKey;
     _cache = List<StoredCustomerBooking>.from(normalized);
     await _enqueueWrite(() async {
       try {
-        final file = await _file();
+        final file = await _scopedFile(
+          tenantId: normalizedTenantId,
+          companyId: normalizedCompanyId,
+        );
         final payload = normalized
             .map((e) => e.toJson())
             .toList(growable: false);
@@ -1277,17 +1321,28 @@ class CustomerBookingsStore {
   }
 
   Future<void> upsert(StoredCustomerBooking booking) async {
-    final list = List<StoredCustomerBooking>.from(await loadAll());
-    final index = _findIndex(list, booking);
     final now = DateTime.now().toIso8601String();
-    final scope = _activeLocalScope();
+    final activeScope = _activeLocalScope();
+    final targetTenantId = booking.tenantId.trim().isNotEmpty
+        ? booking.tenantId
+        : activeScope.tenantId;
+    final targetCompanyId = booking.companyId.trim().isNotEmpty
+        ? booking.companyId
+        : activeScope.companyId;
+    final list = List<StoredCustomerBooking>.from(
+      await _loadAllForScope(
+        tenantId: targetTenantId,
+        companyId: targetCompanyId,
+      ),
+    );
+    final index = _findIndex(list, booking);
     final incoming = booking.copyWith(
       tenantId: booking.tenantId.trim().isNotEmpty
           ? booking.tenantId
-          : scope.tenantId,
+          : targetTenantId,
       companyId: booking.companyId.trim().isNotEmpty
           ? booking.companyId
-          : scope.companyId,
+          : targetCompanyId,
       updatedAt: now,
       createdAt: booking.createdAt.trim().isEmpty ? now : booking.createdAt,
     );
@@ -1375,7 +1430,11 @@ class CustomerBookingsStore {
       list.add(incoming);
     }
     list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    await _saveAll(list);
+    await _saveAllForScope(
+      list,
+      tenantId: targetTenantId,
+      companyId: targetCompanyId,
+    );
   }
 
   Future<void> markPaid({
@@ -1447,6 +1506,121 @@ class CustomerBookingsStore {
     ]);
   }
 
+  String _leafDirName(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    for (int i = parts.length - 1; i >= 0; i--) {
+      final part = parts[i].trim();
+      if (part.isNotEmpty) return part;
+    }
+    return '';
+  }
+
+  int _safeIsoTimestampMs(String iso) {
+    final text = iso.trim();
+    if (text.isEmpty) return 0;
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return 0;
+    return parsed.toUtc().millisecondsSinceEpoch;
+  }
+
+  int _bookingSortTimestampMs(StoredCustomerBooking item) {
+    final updatedMs = _safeIsoTimestampMs(item.updatedAt);
+    final createdMs = _safeIsoTimestampMs(item.createdAt);
+    final pickupMs = _safeIsoTimestampMs(item.pickupIso);
+    return <int>[
+      updatedMs,
+      createdMs,
+      pickupMs,
+    ].reduce((a, b) => a > b ? a : b);
+  }
+
+  Future<List<StoredCustomerBooking>>
+  loadAllAcrossKnownCustomerScopesForDisplayOnly() async {
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+        );
+        return const <StoredCustomerBooking>[];
+      }
+      final matchedFiles = <File>[];
+      await for (final tenantEntry in root.list(followLinks: false)) {
+        if (tenantEntry is! Directory) continue;
+        final tenantLeaf = _leafDirName(tenantEntry.path);
+        if (!tenantLeaf.startsWith('tenant_')) continue;
+        await for (final companyEntry in tenantEntry.list(followLinks: false)) {
+          if (companyEntry is! Directory) continue;
+          final companyLeaf = _leafDirName(companyEntry.path);
+          if (!companyLeaf.startsWith('company_')) continue;
+          final file = File(
+            '${companyEntry.path}${Platform.pathSeparator}$_fileName',
+          );
+          if (await file.exists()) {
+            matchedFiles.add(file);
+          }
+        }
+      }
+      if (matchedFiles.isEmpty) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+        );
+        return const <StoredCustomerBooking>[];
+      }
+      final dedupedByKey = <String, StoredCustomerBooking>{};
+      final aliasToKey = <String, String>{};
+      var loadedCount = 0;
+      var generatedKeyCounter = 0;
+      for (final file in matchedFiles) {
+        final fileItems = await _readFileItems(file);
+        if (fileItems.isEmpty) continue;
+        loadedCount += fileItems.length;
+        for (final item in fileItems) {
+          final aliases = _bookingAliases(item);
+          String? existingKey;
+          for (final alias in aliases) {
+            existingKey = aliasToKey[alias];
+            if (existingKey != null && existingKey.isNotEmpty) break;
+          }
+          final targetKey =
+              existingKey ??
+              (aliases.isNotEmpty
+                  ? aliases.first
+                  : 'fallback_key_${generatedKeyCounter++}');
+          final existing = dedupedByKey[targetKey];
+          if (existing == null) {
+            dedupedByKey[targetKey] = item;
+          } else {
+            final existingTs = _bookingSortTimestampMs(existing);
+            final incomingTs = _bookingSortTimestampMs(item);
+            if (incomingTs > existingTs) {
+              dedupedByKey[targetKey] = item;
+            }
+          }
+          final active = dedupedByKey[targetKey]!;
+          for (final alias in _bookingAliases(active)) {
+            aliasToKey[alias] = targetKey;
+          }
+        }
+      }
+      final result = dedupedByKey.values.toList(growable: false)
+        ..sort(
+          (a, b) =>
+              _bookingSortTimestampMs(b).compareTo(_bookingSortTimestampMs(a)),
+        );
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=${matchedFiles.length} loaded=$loadedCount result=${result.length}',
+      );
+      return result;
+    } catch (_) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][FALLBACK_SCAN] files=0 loaded=0 result=0',
+      );
+      return const <StoredCustomerBooking>[];
+    }
+  }
+
   Future<({bool removed, int removedCount, int remaining})>
   removeByAnyReferenceAliases(Set<String> aliases) async {
     final normalizedAliases = _normalizedReferenceSet(aliases);
@@ -1470,6 +1644,73 @@ class CustomerBookingsStore {
       removedCount: removedCount,
       remaining: list.length,
     );
+  }
+
+  Future<({bool removed, int removedCount, int remaining})>
+  removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+    Set<String> aliases,
+  ) async {
+    final normalizedAliases = _normalizedReferenceSet(aliases);
+    if (normalizedAliases.isEmpty) {
+      return (removed: false, removedCount: 0, remaining: 0);
+    }
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) {
+        return (removed: false, removedCount: 0, remaining: 0);
+      }
+      final matchedFiles = <File>[];
+      await for (final tenantEntry in root.list(followLinks: false)) {
+        if (tenantEntry is! Directory) continue;
+        final tenantLeaf = _leafDirName(tenantEntry.path);
+        if (!tenantLeaf.startsWith('tenant_')) continue;
+        await for (final companyEntry in tenantEntry.list(followLinks: false)) {
+          if (companyEntry is! Directory) continue;
+          final companyLeaf = _leafDirName(companyEntry.path);
+          if (!companyLeaf.startsWith('company_')) continue;
+          final file = File(
+            '${companyEntry.path}${Platform.pathSeparator}$_fileName',
+          );
+          if (await file.exists()) {
+            matchedFiles.add(file);
+          }
+        }
+      }
+      var removedCount = 0;
+      var remaining = 0;
+      for (final file in matchedFiles) {
+        final items = await _readFileItems(file);
+        if (items.isEmpty) continue;
+        final retained = <StoredCustomerBooking>[];
+        for (final item in items) {
+          final itemAliases = _bookingAliases(item);
+          final matches = itemAliases.any(normalizedAliases.contains);
+          if (matches) {
+            removedCount += 1;
+          } else {
+            retained.add(item);
+          }
+        }
+        remaining += retained.length;
+        if (retained.length != items.length) {
+          await _atomicWriteJsonArray(
+            file: file,
+            payload: retained.map((e) => e.toJson()).toList(growable: false),
+          );
+        }
+      }
+      if (removedCount > 0) {
+        _cache = null;
+        _cacheScopeKey = '';
+      }
+      return (
+        removed: removedCount > 0,
+        removedCount: removedCount,
+        remaining: remaining,
+      );
+    } catch (_) {
+      return (removed: false, removedCount: 0, remaining: 0);
+    }
   }
 
   Future<void> clearLocalTestData() async {

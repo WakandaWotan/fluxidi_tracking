@@ -37,6 +37,20 @@ String _normalizeImportedVerificationStatus(String? raw) {
   }
 }
 
+String _normalizePublicCompanyCode(String raw) {
+  return raw
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+}
+
+bool _isValidPublicCompanyCode(String code) {
+  if (code.isEmpty) return false;
+  return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+}
+
 /// Fallback tenant id when no local company profile exists (aligned with Worker `tenant_id`).
 const String kFallbackCompanyId = kTenantId;
 
@@ -278,6 +292,10 @@ class ActiveCompanySession {
     required this.role,
     required this.createdAt,
     required this.lastUsedAt,
+    this.companySessionToken,
+    this.companySessionExpiresAtUtc,
+    this.companyCode,
+    this.linkMethod,
   });
 
   final String companyId;
@@ -286,21 +304,54 @@ class ActiveCompanySession {
   final String role;
   final String createdAt;
   final String lastUsedAt;
+  final String? companySessionToken;
+  final String? companySessionExpiresAtUtc;
+  final String? companyCode;
+  final String? linkMethod;
+
+  DateTime? get sessionExpiresAtUtc {
+    final raw = (companySessionExpiresAtUtc ?? '').trim();
+    if (raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    return parsed?.toUtc();
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'companyId': companyId,
     'role': role,
     'createdAt': createdAt,
     'lastUsedAt': lastUsedAt,
+    if ((companySessionToken ?? '').trim().isNotEmpty)
+      'companySessionToken': companySessionToken,
+    if ((companySessionExpiresAtUtc ?? '').trim().isNotEmpty)
+      'companySessionExpiresAtUtc': companySessionExpiresAtUtc,
+    if ((companyCode ?? '').trim().isNotEmpty) 'companyCode': companyCode,
+    if ((linkMethod ?? '').trim().isNotEmpty) 'linkMethod': linkMethod,
   };
 
   factory ActiveCompanySession.fromJson(Map<String, dynamic> json) {
     String read(String key) => (json[key] ?? '').toString().trim();
+    String? readOptional(String key) {
+      final value = (json[key] ?? '').toString().trim();
+      return value.isEmpty ? null : value;
+    }
+
     return ActiveCompanySession(
       companyId: read('companyId'),
       role: read('role').isNotEmpty ? read('role') : 'companyAdmin',
       createdAt: read('createdAt'),
       lastUsedAt: read('lastUsedAt'),
+      companySessionToken:
+          readOptional('companySessionToken') ??
+          readOptional('company_session_token'),
+      companySessionExpiresAtUtc:
+          readOptional('companySessionExpiresAtUtc') ??
+          readOptional('company_session_expires_at_utc') ??
+          readOptional('companySessionExpiresAt') ??
+          readOptional('company_session_expires_at') ??
+          readOptional('expires_at'),
+      companyCode: readOptional('companyCode') ?? readOptional('company_code'),
+      linkMethod: readOptional('linkMethod') ?? readOptional('link_method'),
     );
   }
 
@@ -309,12 +360,21 @@ class ActiveCompanySession {
     String? role,
     String? createdAt,
     String? lastUsedAt,
+    String? companySessionToken,
+    String? companySessionExpiresAtUtc,
+    String? companyCode,
+    String? linkMethod,
   }) {
     return ActiveCompanySession(
       companyId: companyId ?? this.companyId,
       role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
       lastUsedAt: lastUsedAt ?? this.lastUsedAt,
+      companySessionToken: companySessionToken ?? this.companySessionToken,
+      companySessionExpiresAtUtc:
+          companySessionExpiresAtUtc ?? this.companySessionExpiresAtUtc,
+      companyCode: companyCode ?? this.companyCode,
+      linkMethod: linkMethod ?? this.linkMethod,
     );
   }
 }
@@ -329,6 +389,19 @@ class CompanySessionStore {
 
   CompanyProfile? _profileMemory;
   ActiveCompanySession? _sessionMemory;
+  bool _sessionInvalidForSecurity = false;
+
+  bool _isSessionStillValid(ActiveCompanySession session) {
+    final linkMethod = (session.linkMethod ?? '').trim().toLowerCase();
+    final token = (session.companySessionToken ?? '').trim();
+    final usesTokenSession =
+        linkMethod == 'public_company_pairing' || token.isNotEmpty;
+    if (!usesTokenSession) return true;
+    if (token.isEmpty) return false;
+    final expires = session.sessionExpiresAtUtc;
+    if (expires == null) return true;
+    return DateTime.now().toUtc().isBefore(expires);
+  }
 
   String _safeScopeSegment(String value) {
     final trimmed = value.trim();
@@ -490,7 +563,17 @@ class CompanySessionStore {
 
       final legacyFile = await _legacyProfileFile();
       final legacy = await _readProfileFromFile(legacyFile);
-      if (legacy == null) return null;
+      if (legacy == null) {
+        final discovered = await _discoverLatestScopedProfile();
+        if (discovered != null) {
+          _profileMemory = discovered;
+          debugPrint(
+            '[COMPANY_SESSION][DISCOVER] target=profile tenant=${discovered.tenantId} company=${discovered.companyId}',
+          );
+          return discovered;
+        }
+        return null;
+      }
 
       final scopedTarget = await _profileFileForScope(
         tenantId: legacy.tenantId,
@@ -510,6 +593,40 @@ class CompanySessionStore {
     }
   }
 
+  Future<CompanyProfile?> _discoverLatestScopedProfile() async {
+    try {
+      final root = await _stateRootDir();
+      if (!await root.exists()) return null;
+      CompanyProfile? latestProfile;
+      DateTime? latestModifiedAt;
+      await for (final tenantNode in root.list(followLinks: false)) {
+        if (tenantNode is! Directory) continue;
+        await for (final companyNode in tenantNode.list(followLinks: false)) {
+          if (companyNode is! Directory) continue;
+          final profileFile = File(
+            '${companyNode.path}${Platform.pathSeparator}$_profileFileName',
+          );
+          final profile = await _readProfileFromFile(profileFile);
+          if (profile == null) continue;
+          DateTime modifiedAt;
+          try {
+            modifiedAt = await profileFile.lastModified();
+          } catch (_) {
+            modifiedAt = DateTime.fromMillisecondsSinceEpoch(0);
+          }
+          if (latestModifiedAt == null ||
+              modifiedAt.isAfter(latestModifiedAt)) {
+            latestModifiedAt = modifiedAt;
+            latestProfile = profile;
+          }
+        }
+      }
+      return latestProfile;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<ActiveCompanySession?> loadSession() async {
     try {
       if (_sessionMemory != null) return _sessionMemory;
@@ -517,6 +634,13 @@ class CompanySessionStore {
       if (scopedFile != null) {
         final scoped = await _readSessionFromFile(scopedFile);
         if (scoped != null) {
+          if (!_isSessionStillValid(scoped)) {
+            _sessionInvalidForSecurity = true;
+            try {
+              if (await scopedFile.exists()) await scopedFile.delete();
+            } catch (_) {}
+            return null;
+          }
           _sessionMemory = scoped;
           return scoped;
         }
@@ -525,6 +649,13 @@ class CompanySessionStore {
       final legacyFile = await _legacySessionFile();
       final legacy = await _readSessionFromFile(legacyFile);
       if (legacy == null) return null;
+      if (!_isSessionStillValid(legacy)) {
+        _sessionInvalidForSecurity = true;
+        try {
+          if (await legacyFile.exists()) await legacyFile.delete();
+        } catch (_) {}
+        return null;
+      }
 
       final scopedTarget = await _sessionFileForScope(
         tenantId: legacy.companyId,
@@ -549,6 +680,7 @@ class CompanySessionStore {
       companyProfileNotifier.value != null &&
       activeCompanySessionNotifier.value != null &&
       companyProfileNotifier.value!.isActive &&
+      _isSessionStillValid(activeCompanySessionNotifier.value!) &&
       companyProfileNotifier.value!.companyId ==
           activeCompanySessionNotifier.value!.companyId;
 
@@ -558,22 +690,38 @@ class CompanySessionStore {
 
   /// Call after tenant state load — reconciles disk + sets notifiers; does not overwrite pricing fields.
   Future<void> bootstrap() async {
+    debugPrint('[COMPANY_PAIRING][BOOTSTRAP] started=true');
     _profileMemory = null;
     _sessionMemory = null;
+    _sessionInvalidForSecurity = false;
     CompanyProfile? p = await loadProfile();
     ActiveCompanySession? s = await loadSession();
 
     if (p == null || !p.isActive || p.companyId.isEmpty) {
+      debugPrint('[COMPANY_PAIRING][SESSION_MISSING] reason=profile_missing');
       await clearLocalCompanyState();
       return;
     }
     companyProfileNotifier.value = p;
     if (s == null || s.companyId != p.companyId) {
+      if (_sessionInvalidForSecurity) {
+        activeCompanySessionNotifier.value = null;
+        debugPrint(
+          '[COMPANY_PAIRING][SESSION_EXPIRED] company=${p.companyId} source=token_session',
+        );
+        return;
+      }
       await _writeSessionForProfile(p);
+      debugPrint(
+        '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only',
+      );
       return;
     }
     activeCompanySessionNotifier.value = s;
     await _touchSessionLastUsed();
+    debugPrint(
+      '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_session',
+    );
   }
 
   Future<void> _writeSessionForProfile(CompanyProfile p) async {
@@ -586,6 +734,10 @@ class CompanySessionStore {
           ? prev.createdAt
           : now,
       lastUsedAt: now,
+      companySessionToken: prev?.companySessionToken,
+      companySessionExpiresAtUtc: prev?.companySessionExpiresAtUtc,
+      companyCode: prev?.companyCode,
+      linkMethod: prev?.linkMethod,
     );
     try {
       final file = await _sessionFileForScope(
@@ -620,6 +772,37 @@ class CompanySessionStore {
     } catch (_) {}
   }
 
+  Future<void> updateActiveSessionCompanyCode(
+    String companyCode, {
+    String source = 'session',
+  }) async {
+    final current = activeCompanySessionNotifier.value;
+    if (current == null) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=false source=$source');
+      return;
+    }
+    final normalized = _normalizePublicCompanyCode(companyCode);
+    if (!_isValidPublicCompanyCode(normalized)) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=false source=$source');
+      return;
+    }
+    if ((current.companyCode ?? '').trim() == normalized) {
+      debugPrint('[COMPANY_CODE][HYDRATE] found=true source=$source');
+      return;
+    }
+    final next = current.copyWith(companyCode: normalized);
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: current.companyId,
+        companyId: current.companyId,
+      );
+      await file.writeAsString(jsonEncode(next.toJson()));
+      _sessionMemory = next;
+      activeCompanySessionNotifier.value = next;
+      debugPrint('[COMPANY_CODE][HYDRATE] found=true source=$source');
+    } catch (_) {}
+  }
+
   static String slugifyCompanyName(String raw) {
     var s = raw.toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_');
     s = s.replaceAll(RegExp(r'[^a-z0-9_]+'), '');
@@ -647,6 +830,18 @@ class CompanySessionStore {
     return 'fluxidi_${slug}_${_randomSuffix()}';
   }
 
+  static String _normalizeHumanCompanyId(String raw) {
+    var text = raw.trim().toUpperCase();
+    if (text.isEmpty) return '';
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'[^A-Z0-9-]'), '');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    text = text.replaceAll(RegExp(r'^-+|-+$'), '');
+    if (text.length < 4 || text.length > 24) return '';
+    if (!RegExp(r'[A-Z0-9]').hasMatch(text)) return '';
+    return text;
+  }
+
   /// Persists profile + session; mirrors key fields into [businessSettingsNotifier] for existing UI.
   Future<void> saveNewProfileFromOnboarding({
     required String companyName,
@@ -656,9 +851,15 @@ class CompanySessionStore {
     String vatNumber = '',
     String city = '',
     String countryCode = 'BE',
+    String? companyIdOverride,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
-    final id = generateCompanyId(companyName);
+    final normalizedOverride = _normalizeHumanCompanyId(
+      companyIdOverride ?? '',
+    );
+    final id = normalizedOverride.isNotEmpty
+        ? normalizedOverride
+        : generateCompanyId(companyName);
     final em = email.trim();
     final profile = CompanyProfile(
       companyId: id,
@@ -687,6 +888,205 @@ class CompanySessionStore {
     await _writeSessionForProfile(profile);
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
+  }
+
+  /// Persists a backend-backed company registration session for first device setup.
+  Future<void> savePublicCompanyRegistrationSession({
+    required String tenantId,
+    required String companyId,
+    required String companyCode,
+    required String companyName,
+    required String countryCode,
+    required String companySessionToken,
+    String ownerName = '',
+    String email = '',
+    String phone = '',
+    String vatNumber = '',
+    String addressLine = '',
+    String postalCode = '',
+    String city = '',
+    DateTime? issuedAt,
+    DateTime? expiresAt,
+    int? expiresInSeconds,
+  }) async {
+    final resolvedCompanyId = companyId.trim();
+    final resolvedTenantId = tenantId.trim();
+    final token = companySessionToken.trim();
+    if (resolvedCompanyId.isEmpty || resolvedTenantId.isEmpty || token.isEmpty) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final issued = (issuedAt ?? now).toUtc();
+    final nowIso = now.toIso8601String();
+    final issuedIso = issued.toIso8601String();
+    final normalizedCountry = countryCode.trim().toUpperCase();
+    final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
+    final normalizedCode = _normalizePublicCompanyCode(companyCode);
+    final String? safeCode = _isValidPublicCompanyCode(normalizedCode)
+        ? normalizedCode
+        : null;
+    final safeName = companyName.trim().isEmpty
+        ? (safeCode ?? resolvedCompanyId)
+        : companyName.trim();
+    final safeEmail = email.trim();
+    final profile = CompanyProfile(
+      companyId: resolvedCompanyId,
+      companyName: safeName,
+      ownerName: ownerName.trim(),
+      email: safeEmail,
+      phone: phone.trim(),
+      vatNumber: vatNumber.trim(),
+      addressLine: addressLine.trim(),
+      postalCode: postalCode.trim(),
+      city: city.trim(),
+      countryCode: safeCountry,
+      companyEmail: safeEmail,
+      supportEmail: safeEmail,
+      billingEmail: safeEmail,
+      bookingEmail: safeEmail,
+      notificationEmail: safeEmail,
+      createdAt: issuedIso,
+      updatedAt: nowIso,
+      isActive: true,
+      verificationStatus: CompanyVerificationStatus.pendingVerification,
+    );
+    await persistProfile(profile);
+    final prev = await loadSession();
+    final resolvedExpiresAtUtc = () {
+      if (expiresAt != null) return expiresAt.toUtc();
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        return now.add(Duration(seconds: expiresInSeconds)).toUtc();
+      }
+      return null;
+    }();
+    final session = ActiveCompanySession(
+      companyId: profile.companyId,
+      role: 'companyAdmin',
+      createdAt: prev != null && prev.companyId == profile.companyId
+          ? prev.createdAt
+          : nowIso,
+      lastUsedAt: nowIso,
+      companySessionToken: token,
+      companySessionExpiresAtUtc: resolvedExpiresAtUtc?.toIso8601String(),
+      companyCode: safeCode,
+      linkMethod: 'public_company_register',
+    );
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: profile.tenantId,
+        companyId: profile.companyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _sessionMemory = session;
+      activeCompanySessionNotifier.value = session;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
+      );
+    } catch (_) {}
+    companyProfileNotifier.value = profile;
+    applyProfileToBusinessNotifier(profile);
+  }
+
+  /// Persists a verified backend pairing into local company profile + session.
+  /// This does not use admin endpoints and stores only safe public pairing fields.
+  Future<void> saveVerifiedCompanyPairingSession({
+    required String tenantId,
+    required String companyId,
+    String? companyCode,
+    required String companyName,
+    required String countryCode,
+    DateTime? issuedAt,
+    DateTime? expiresAt,
+    String? companySessionToken,
+    int? expiresInSeconds,
+    DateTime? expiresAtUtc,
+    String? linkMethod,
+  }) async {
+    final resolvedCompanyId = companyId.trim();
+    if (resolvedCompanyId.isEmpty) return;
+    final resolvedTenantId = tenantId.trim();
+    if (resolvedTenantId.isEmpty) return;
+    final now = DateTime.now().toUtc();
+    final issued = (issuedAt ?? now).toUtc();
+    final nowIso = now.toIso8601String();
+    final issuedIso = issued.toIso8601String();
+    final normalizedCountry = countryCode.trim().toUpperCase();
+    final safeCountry = normalizedCountry.isEmpty ? 'BE' : normalizedCountry;
+    final normalizedCode = _normalizePublicCompanyCode(companyCode ?? '');
+    final String? safeCode = _isValidPublicCompanyCode(normalizedCode)
+        ? normalizedCode
+        : null;
+    final safeName = companyName.trim().isEmpty
+        ? (safeCode ?? resolvedCompanyId)
+        : companyName.trim();
+    final profile = CompanyProfile(
+      companyId: resolvedCompanyId,
+      companyName: safeName,
+      ownerName: '',
+      email: '',
+      phone: '',
+      vatNumber: '',
+      addressLine: '',
+      postalCode: '',
+      city: '',
+      countryCode: safeCountry,
+      companyEmail: '',
+      supportEmail: '',
+      billingEmail: '',
+      bookingEmail: '',
+      notificationEmail: '',
+      createdAt: issuedIso,
+      updatedAt: nowIso,
+      isActive: true,
+      verificationStatus: CompanyVerificationStatus.pendingVerification,
+    );
+    await persistProfile(profile);
+    final prev = await loadSession();
+    final resolvedExpiresAtUtc = () {
+      if (expiresAtUtc != null) return expiresAtUtc.toUtc();
+      if (expiresAt != null) return expiresAt.toUtc();
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        return now.add(Duration(seconds: expiresInSeconds)).toUtc();
+      }
+      return null;
+    }();
+    final normalizedToken = (companySessionToken ?? '').trim();
+    final normalizedLinkMethod = (linkMethod ?? '').trim();
+    final session = ActiveCompanySession(
+      companyId: profile.companyId,
+      role: 'companyAdmin',
+      createdAt: prev != null && prev.companyId == profile.companyId
+          ? prev.createdAt
+          : nowIso,
+      lastUsedAt: nowIso,
+      companySessionToken: normalizedToken.isEmpty ? null : normalizedToken,
+      companySessionExpiresAtUtc: resolvedExpiresAtUtc?.toIso8601String(),
+      companyCode: safeCode,
+      linkMethod: normalizedLinkMethod.isEmpty
+          ? (normalizedToken.isEmpty
+                ? 'company_pairing_code'
+                : 'public_company_pairing')
+          : normalizedLinkMethod,
+    );
+    try {
+      final file = await _sessionFileForScope(
+        tenantId: profile.tenantId,
+        companyId: profile.companyId,
+      );
+      await file.writeAsString(jsonEncode(session.toJson()));
+      _sessionMemory = session;
+      activeCompanySessionNotifier.value = session;
+      debugPrint(
+        '[COMPANY_SESSION][SAVE] target=session tenant=${profile.tenantId} company=${profile.companyId} path=${file.path}',
+      );
+    } catch (_) {}
+    companyProfileNotifier.value = profile;
+    applyProfileToBusinessNotifier(profile);
+    debugPrint(
+      '[COMPANY_PAIRING][SAVE] tenant=$resolvedTenantId company=$resolvedCompanyId',
+    );
+    // Reserved for future session-expiry checks at bootstrap level.
+    final _ = expiresAt;
   }
 
   Future<void> persistProfile(CompanyProfile profile) async {

@@ -10,6 +10,8 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 enum _SetupStatus { complete, attention, incomplete, comingSoon }
@@ -428,6 +430,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
 
     return BackendBusinessProfile(
+      companyCode: pick(local.companyCode, server.companyCode),
+      publicCompanyCode: pick(
+        local.publicCompanyCode,
+        server.publicCompanyCode,
+      ),
+      publicCompanySlug: pick(
+        local.publicCompanySlug,
+        server.publicCompanySlug,
+      ),
+      publicDisplayCode: pick(
+        local.publicDisplayCode,
+        server.publicDisplayCode,
+      ),
       companyName: pick(local.companyName, server.companyName),
       legalName: pick(local.legalName, server.legalName),
       vatNumber: pick(local.vatNumber, server.vatNumber),
@@ -510,6 +525,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       if (!mounted) return;
       final rawBiz = results[0] as BackendBusinessProfile;
       final rawTax = results[1] as BackendTaxProfile;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        rawBiz,
+        source: 'business_profile_get',
+      );
       // Merge server response over the locally cached profile so empty server
       // fields do not wipe non-empty user-saved values.
       final cached = localBackendBusinessProfileNotifier.value;
@@ -1164,6 +1183,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        saved,
+        source: 'business_profile_post',
+      );
       // Merge so empty backend echo does not erase locally entered values.
       final merged = _mergeBackendBusinessProfile(
         local: formProfile,
@@ -1241,6 +1264,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        saved,
+        source: 'business_profile_media_post',
+      );
       final merged = _mergeBackendBusinessProfile(
         local: formProfile,
         server: saved,
@@ -2028,6 +2055,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        savedBusiness,
+        source: 'business_profile_publish_pre_post',
+      );
       final mergedBusiness = _mergeBackendBusinessProfile(
         local: formProfile,
         server: savedBusiness,
@@ -2079,6 +2110,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         companyId: scope.companyId,
       );
       if (!mounted) return;
+      await _hydratePublicCompanyCodeFromBackendProfile(
+        savedPublishedBusiness,
+        source: 'business_profile_publish_post',
+      );
       final mergedPublishedBusiness = _mergeBackendBusinessProfile(
         local: publishedBusiness,
         server: savedPublishedBusiness,
@@ -2772,6 +2807,83 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return kTenantId;
   }
 
+  String _normalizePublicCompanyCode(String raw) {
+    return raw
+        .trim()
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+  }
+
+  bool _isValidPublicCompanyCode(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return false;
+    if (RegExp(r'[\s_]').hasMatch(raw)) return false;
+    final v = _normalizePublicCompanyCode(value);
+    if (v.length < 4 || v.length > 24) return false;
+    if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(v)) return false;
+    if (!RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(v)) return false;
+    return true;
+  }
+
+  Future<void> _hydratePublicCompanyCodeFromBackendProfile(
+    BackendBusinessProfile profile, {
+    required String source,
+  }) async {
+    final profileMap = profile.toJson();
+    for (final key in const <String>[
+      'public_company_code',
+      'publicCompanyCode',
+      'company_code',
+      'companyCode',
+    ]) {
+      final normalized = _normalizePublicCompanyCode(
+        (profileMap[key] ?? '').toString(),
+      );
+      if (!_isValidPublicCompanyCode(normalized)) continue;
+      await CompanySessionStore.instance.updateActiveSessionCompanyCode(
+        normalized,
+        source: source,
+      );
+      return;
+    }
+  }
+
+  String? _activePublicCompanyCode({
+    ActiveCompanySession? session,
+    CompanyProfile? profile,
+  }) {
+    final fromSession = _normalizePublicCompanyCode(
+      session?.companyCode ??
+          activeCompanySessionNotifier.value?.companyCode ??
+          '',
+    );
+    if (_isValidPublicCompanyCode(fromSession)) return fromSession;
+
+    final profileMap = (profile ?? companyProfileNotifier.value)?.toJson();
+    if (profileMap is Map<String, dynamic>) {
+      String fromProfileKeys() {
+        for (final key in const <String>[
+          'companyCode',
+          'publicCompanyCode',
+          'company_code',
+          'public_company_code',
+        ]) {
+          final normalized = _normalizePublicCompanyCode(
+            (profileMap[key] ?? '').toString(),
+          );
+          if (_isValidPublicCompanyCode(normalized)) return normalized;
+        }
+        return '';
+      }
+
+      final fromProfile = fromProfileKeys();
+      if (_isValidPublicCompanyCode(fromProfile)) return fromProfile;
+    }
+    return null;
+  }
+
   ({String tenantId, String companyId}) _activeSettingsScope() {
     final activeCompanyId = _effectivePublicCompanyId().trim();
     final companyId = activeCompanyId.isEmpty ? kTenantId : activeCompanyId;
@@ -2785,21 +2897,24 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  String _preparedPublicBookingUrl(String companyId) {
-    final safeCompanyId = companyId.trim().isEmpty
-        ? kTenantId
-        : companyId.trim();
+  String _preparedPublicBookingUrl(String companyCode) {
+    final safeCompanyCode = _normalizePublicCompanyCode(companyCode);
     final base = kPublicBookingBaseUrl.trim().isEmpty
-        ? 'https://fluxidi.com/book'
+        ? 'https://fluxidi.com'
         : kPublicBookingBaseUrl.trim();
-    final encodedCompanyId = Uri.encodeQueryComponent(safeCompanyId);
+    final encodedCompanyCode = Uri.encodeQueryComponent(safeCompanyCode);
     try {
       final uri = Uri.parse(base);
+      final normalizedPath = uri.path.trim().isEmpty || uri.path == '/'
+          ? '/book'
+          : (uri.path.endsWith('/book') ? uri.path : '${uri.path}/book');
       final nextQuery = Map<String, String>.from(uri.queryParameters);
-      nextQuery['company_id'] = safeCompanyId;
-      return uri.replace(queryParameters: nextQuery).toString();
+      nextQuery['company_code'] = safeCompanyCode;
+      return uri
+          .replace(path: normalizedPath, queryParameters: nextQuery)
+          .toString();
     } catch (_) {
-      return '$base?company_id=$encodedCompanyId';
+      return '$base/book?company_code=$encodedCompanyCode';
     }
   }
 
@@ -3009,13 +3124,32 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   _SetupStatus _publicLinkStatus() {
-    final activeCompanyId =
-        companyProfileNotifier.value?.companyId.trim() ?? '';
-    final usingFallbackId = activeCompanyId.isEmpty;
-    if (usingFallbackId) return _SetupStatus.incomplete;
-    final prepared = _preparedPublicBookingUrl(_effectivePublicCompanyId());
-    if (_nonEmpty(prepared)) return _SetupStatus.attention;
-    return _SetupStatus.comingSoon;
+    final publicCompanyCode = _activePublicCompanyCode();
+    if (publicCompanyCode == null) return _SetupStatus.incomplete;
+    final prepared = _preparedPublicBookingUrl(publicCompanyCode);
+    if (_nonEmpty(prepared)) return _SetupStatus.complete;
+    return _SetupStatus.attention;
+  }
+
+  String _publicLinkSetupSubtitle() {
+    switch (_publicLinkStatus()) {
+      case _SetupStatus.complete:
+        return _t(
+          nl: 'Klaar om te delen via link en QR',
+          en: 'Ready to share via link and QR',
+          fr: 'Prêt à partager via lien et QR',
+          es: 'Listo para compartir por enlace y QR',
+        );
+      case _SetupStatus.attention:
+      case _SetupStatus.incomplete:
+      case _SetupStatus.comingSoon:
+        return _t(
+          nl: 'Publieke code of link ontbreekt',
+          en: 'Public code or link is missing',
+          fr: 'Code public ou lien manquant',
+          es: 'Falta el código público o el enlace',
+        );
+    }
   }
 
   List<_SetupItem> _setupItems() {
@@ -3107,12 +3241,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Lien de réservation public',
           es: 'Enlace público de reserva',
         ),
-        subtitle: _t(
-          nl: 'Voorbereid, nog niet live',
-          en: 'Prepared, not live yet',
-          fr: 'Préparé, pas encore en ligne',
-          es: 'Preparado, aún no en vivo',
-        ),
+        subtitle: _publicLinkSetupSubtitle(),
         icon: Icons.link_outlined,
         status: _publicLinkStatus(),
       ),
@@ -3540,186 +3669,362 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 },
               ),
             ),
-            _collapsibleSettingsCard(
-              id: 'public_booking_link',
-              icon: Icons.link_outlined,
-              title: _t(
-                nl: 'Publieke boekingslink',
-                en: 'Public booking link',
-                fr: 'Lien de réservation public',
-                es: 'Enlace público de reserva',
-              ),
-              subtitle: _t(
-                nl: 'Web/QR-link voorbereiding',
-                en: 'Web/QR link preparation',
-                fr: 'Préparation lien web/QR',
-                es: 'Preparación de enlace web/QR',
-              ),
-              status: _publicLinkStatus(),
-              child: ValueListenableBuilder<CompanyProfile?>(
-                valueListenable: companyProfileNotifier,
-                builder: (context, _, __) {
-                  final activeCompanyId =
-                      companyProfileNotifier.value?.companyId.trim() ?? '';
-                  final effectiveCompanyId = _effectivePublicCompanyId();
-                  final publicBookingUrl = _preparedPublicBookingUrl(
-                    effectiveCompanyId,
-                  );
-                  final usingFallbackId = activeCompanyId.isEmpty;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+            ValueListenableBuilder<ActiveCompanySession?>(
+              valueListenable: activeCompanySessionNotifier,
+              builder: (context, activeSession, __) {
+                return _collapsibleSettingsCard(
+                  id: 'public_booking_link',
+                  icon: Icons.link_outlined,
+                  title: _t(
+                    nl: 'Publieke boekingslink',
+                    en: 'Public booking link',
+                    fr: 'Lien de réservation public',
+                    es: 'Enlace público de reserva',
+                  ),
+                  subtitle: _t(
+                    nl: 'Web/QR-link voorbereiding',
+                    en: 'Web/QR link preparation',
+                    fr: 'Préparation lien web/QR',
+                    es: 'Preparación de enlace web/QR',
+                  ),
+                  status: _publicLinkStatus(),
+                  child: ValueListenableBuilder<CompanyProfile?>(
+                    valueListenable: companyProfileNotifier,
+                    builder: (context, profile, _) {
+                      final publicCompanyCode = _activePublicCompanyCode(
+                        session: activeSession,
+                        profile: profile,
+                      );
+                      final hasPublicCompanyCode = publicCompanyCode != null;
+                      final effectivePublicCompanyCode = hasPublicCompanyCode
+                          ? publicCompanyCode
+                          : '';
+                      final publicBookingUrl = hasPublicCompanyCode
+                          ? _preparedPublicBookingUrl(
+                              effectivePublicCompanyCode,
+                            )
+                          : '';
+                      return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _t(
-                                    nl: 'Voorbereide publieke link',
-                                    en: 'Prepared public link',
-                                    fr: 'Lien public préparé',
-                                    es: 'Enlace público preparado',
+                          if (!hasPublicCompanyCode) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.orangeAccent.withOpacity(0.45),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _t(
+                                      nl: 'Verifieer uw bedrijf eerst om een publieke boekingslink te gebruiken.',
+                                      en: 'Verify your company first to use a public booking link.',
+                                      fr: 'Vérifiez d’abord votre entreprise pour utiliser un lien de réservation public.',
+                                      es: 'Verifica primero tu empresa para usar un enlace público de reserva.',
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontSize: 11.5,
+                                    ),
                                   ),
-                                  style: const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    _t(
+                                      nl: 'Geen publieke Fluxidi-code gevonden.',
+                                      en: 'No public Fluxidi code found.',
+                                      fr: 'Aucun code Fluxidi public trouvé.',
+                                      es: 'No se encontró ningún código público de Fluxidi.',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.orangeAccent.withOpacity(
+                                        0.82,
+                                      ),
+                                      fontSize: 10.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ] else ...[
+                            Text(
+                              _t(
+                                nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
+                                en: 'Share this link or QR code with customers so they can book directly.',
+                                fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
+                                es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.78),
+                                fontSize: 12.5,
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0B0B0B),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(
+                                    0xFFD4AF4A,
+                                  ).withOpacity(0.45),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _t(
+                                      nl: 'Publieke bedrijfscode',
+                                      en: 'Public company code',
+                                      fr: 'Code entreprise public',
+                                      es: 'Código público de empresa',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.72),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: SelectableText(
+                                          effectivePublicCompanyCode,
+                                          style: const TextStyle(
+                                            color: Color(0xFFF0C85D),
+                                            fontFamily: 'monospace',
+                                            fontSize: 13.2,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      TextButton.icon(
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: effectivePublicCompanyCode,
+                                            ),
+                                          );
+                                          if (!context.mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                _t(
+                                                  nl: 'Publieke bedrijfscode gekopieerd',
+                                                  en: 'Public company code copied',
+                                                  fr: 'Code entreprise public copié',
+                                                  es: 'Código público de empresa copiado',
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(
+                                          Icons.copy_outlined,
+                                          size: 16,
+                                        ),
+                                        label: Text(
+                                          _t(
+                                            nl: 'Kopieer code',
+                                            en: 'Copy code',
+                                            fr: 'Copier le code',
+                                            es: 'Copiar código',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0B0B0B),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.16),
+                                ),
+                              ),
+                              child: SelectableText(
+                                publicBookingUrl,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontFamily: 'monospace',
+                                  fontSize: 12.2,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: QrImageView(
+                                  data: publicBookingUrl,
+                                  version: QrVersions.auto,
+                                  size: 180,
+                                  backgroundColor: Colors.white,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await Clipboard.setData(
+                                      ClipboardData(text: publicBookingUrl),
+                                    );
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          _t(
+                                            nl: 'Publieke boekingslink gekopieerd',
+                                            en: 'Public booking link copied',
+                                            fr: 'Lien de réservation public copié',
+                                            es: 'Enlace público de reserva copiado',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.copy_outlined,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Kopiëren',
+                                      en: 'Copy',
+                                      fr: 'Copier',
+                                      es: 'Copiar',
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                SelectableText(
-                                  publicBookingUrl,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontFamily: 'monospace',
-                                    fontSize: 12,
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await Share.share(publicBookingUrl);
+                                  },
+                                  icon: const Icon(
+                                    Icons.share_outlined,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Delen',
+                                      en: 'Share',
+                                      fr: 'Partager',
+                                      es: 'Compartir',
+                                    ),
+                                  ),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    try {
+                                      final uri = Uri.parse(publicBookingUrl);
+                                      final launched = await launchUrl(
+                                        uri,
+                                        mode: LaunchMode.externalApplication,
+                                      );
+                                      if (!launched && context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              _t(
+                                                nl: 'Publieke boekingslink kon niet geopend worden.',
+                                                en: 'Could not open public booking link.',
+                                                fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                                es: 'No se pudo abrir el enlace público de reserva.',
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    } catch (_) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Publieke boekingslink kon niet geopend worden.',
+                                              en: 'Could not open public booking link.',
+                                              fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                              es: 'No se pudo abrir el enlace público de reserva.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(
+                                    Icons.open_in_new_outlined,
+                                    size: 16,
+                                  ),
+                                  label: Text(
+                                    _t(
+                                      nl: 'Open link',
+                                      en: 'Open link',
+                                      fr: 'Ouvrir le lien',
+                                      es: 'Abrir enlace',
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                          IconButton(
-                            tooltip: _t(
-                              nl: 'Publieke link kopiëren',
-                              en: 'Copy public link',
-                              fr: 'Copier le lien public',
-                              es: 'Copiar enlace público',
+                            const SizedBox(height: 10),
+                            Text(
+                              _t(
+                                nl: 'De publieke boekingspagina wordt verder gekoppeld aan deze Fluxidi-code.',
+                                en: 'The public booking page will be further connected to this Fluxidi code.',
+                                fr: 'La page de réservation publique sera davantage liée à ce code Fluxidi.',
+                                es: 'La página pública de reserva se vinculará más a este código Fluxidi.',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.66),
+                                fontSize: 12,
+                                height: 1.3,
+                              ),
                             ),
-                            onPressed: () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: publicBookingUrl),
-                              );
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    _t(
-                                      nl: 'Publieke boekingslink gekopieerd',
-                                      en: 'Public booking link copied',
-                                      fr: 'Lien de réservation public copié',
-                                      es: 'Enlace público de reserva copiado',
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.copy, color: Colors.white54),
-                          ),
+                          ],
                         ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _t(
-                          nl: 'Deze link is voorbereid voor websiteboekingen, QR-codes en sociale media. De publieke boekingspagina wordt in een volgende stap geactiveerd.',
-                          en: 'This link is prepared for website bookings, QR codes and social media. The public booking page will be activated in a next step.',
-                          fr: 'Ce lien est préparé pour les réservations via site web, QR codes et réseaux sociaux. La page de réservation publique sera activée lors d’une prochaine étape.',
-                          es: 'Este enlace está preparado para reservas desde la web, códigos QR y redes sociales. La página pública de reserva se activará en un siguiente paso.',
-                        ),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 12,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.qr_code_2_outlined,
-                            size: 16,
-                            color: Colors.white54,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _t(
-                              nl: 'QR-code volgt',
-                              en: 'QR code coming next',
-                              fr: 'QR code à venir',
-                              es: 'Código QR próximamente',
-                            ),
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.language_outlined,
-                            size: 16,
-                            color: Colors.white54,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _t(
-                              nl: 'Websiteknop/embed volgt',
-                              en: 'Website button/embed coming next',
-                              fr: 'Bouton/intégration site web à venir',
-                              es: 'Botón/integración web próximamente',
-                            ),
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (usingFallbackId) ...[
-                        const SizedBox(height: 10),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: Colors.orangeAccent.withOpacity(0.45),
-                            ),
-                          ),
-                          child: Text(
-                            _t(
-                              nl: 'Actieve bedrijfs-ID ontbreekt. De voorbereide link gebruikt momenteel een fallback-ID.',
-                              en: 'Active company ID is missing. The prepared link currently uses a fallback ID.',
-                              fr: 'L’ID entreprise active est manquant. Le lien préparé utilise actuellement un ID de secours.',
-                              es: 'Falta el ID activo de empresa. El enlace preparado usa actualmente un ID de respaldo.',
-                            ),
-                            style: const TextStyle(
-                              color: Colors.orangeAccent,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  );
-                },
-              ),
+                      );
+                    },
+                  ),
+                );
+              },
             ),
             _googleCalendarCard(),
             _collapsibleSettingsCard(

@@ -3,10 +3,12 @@ import 'dart:ui' show ImageFilter;
 import 'dart:convert';
 import 'dart:io' show Directory, File, FileMode, Platform;
 import 'dart:math' as math;
+import 'dart:ui' as ui show ImageByteFormat;
 
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
+    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
 import 'package:flutter_email_sender/flutter_email_sender.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -24,7 +26,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
+import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 export 'package:fluxidi_tracking/payment_return.dart'
     show
@@ -49,6 +53,8 @@ import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:fluxidi_tracking/fluxidi_responsive.dart';
+import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'airport/airport_page.dart';
 import 'events/events_page.dart';
 
@@ -58,6 +64,8 @@ import 'widgets/route_marquee.dart';
 final bool kIsWindows = !kIsWeb && Platform.isWindows;
 
 CustomerProfile? _cachedCustomerProfile;
+bool _startInCompanyAdminHome = false;
+bool _startInDriverHome = false;
 
 Future<void> _refreshCachedCustomerProfile() async {
   _cachedCustomerProfile = await CustomerProfileStore.instance.load();
@@ -237,6 +245,255 @@ Map<String, String> _adminHeaders() {
   return <String, String>{'Authorization': 'Bearer $t', 'x-admin-token': t};
 }
 
+String _maskScopeForLog(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return '—';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _firstBootstrapText(List<dynamic> values) {
+  for (final value in values) {
+    final text = (value ?? '').toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+Future<void> _applyCompanyProfileFromBootstrapPayload(
+  Map<String, dynamic> bootstrap,
+) async {
+  final current = companyProfileNotifier.value;
+  if (current == null) return;
+  final companyMap = bootstrap['company'] is Map
+      ? Map<String, dynamic>.from(bootstrap['company'] as Map)
+      : <String, dynamic>{};
+  final businessMap = bootstrap['business_profile'] is Map
+      ? Map<String, dynamic>.from(bootstrap['business_profile'] as Map)
+      : <String, dynamic>{};
+  final companyName = _firstBootstrapText(<dynamic>[
+    companyMap['display_name'],
+    businessMap['companyName'],
+    businessMap['company_name'],
+    businessMap['legalName'],
+    businessMap['legal_name'],
+    current.companyName,
+  ]);
+  final countryCode = _firstBootstrapText(<dynamic>[
+    companyMap['country'],
+    businessMap['country'],
+    current.countryCode,
+  ]);
+  final updated = current.copyWith(
+    companyName: companyName,
+    phone: _firstBootstrapText(<dynamic>[businessMap['phone'], current.phone]),
+    vatNumber: _firstBootstrapText(<dynamic>[
+      businessMap['vatNumber'],
+      businessMap['vat_number'],
+      current.vatNumber,
+    ]),
+    addressLine: _firstBootstrapText(<dynamic>[
+      businessMap['address'],
+      current.addressLine,
+    ]),
+    postalCode: _firstBootstrapText(<dynamic>[
+      businessMap['postcode'],
+      current.postalCode,
+    ]),
+    city: _firstBootstrapText(<dynamic>[businessMap['city'], current.city]),
+    countryCode: countryCode.isEmpty ? current.countryCode : countryCode,
+    companyEmail: _firstBootstrapText(<dynamic>[
+      businessMap['companyEmail'],
+      businessMap['company_email'],
+      businessMap['email'],
+      current.companyEmail,
+    ]),
+    supportEmail: _firstBootstrapText(<dynamic>[
+      businessMap['supportEmail'],
+      businessMap['support_email'],
+      businessMap['email'],
+      current.supportEmail,
+    ]),
+    billingEmail: _firstBootstrapText(<dynamic>[
+      businessMap['billingEmail'],
+      businessMap['billing_email'],
+      businessMap['invoiceEmail'],
+      businessMap['invoice_email'],
+      current.billingEmail,
+    ]),
+    bookingEmail: _firstBootstrapText(<dynamic>[
+      businessMap['bookingEmail'],
+      businessMap['booking_email'],
+      current.bookingEmail,
+    ]),
+    notificationEmail: _firstBootstrapText(<dynamic>[
+      businessMap['notificationEmail'],
+      businessMap['notification_email'],
+      businessMap['replyToEmail'],
+      businessMap['reply_to_email'],
+      current.notificationEmail,
+    ]),
+    updatedAt: DateTime.now().toUtc().toIso8601String(),
+    isActive: true,
+  );
+  await CompanySessionStore.instance.persistProfile(updated);
+  CompanySessionStore.instance.applyProfileToBusinessNotifier(updated);
+}
+
+String _normalizePublicFluxidiCompanyCode(String raw) {
+  return raw
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+}
+
+bool _isValidPublicFluxidiCompanyCode(String code) {
+  if (code.isEmpty) return false;
+  return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+}
+
+String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> bootstrap) {
+  final businessProfileNode = bootstrap['business_profile'];
+  if (businessProfileNode is Map) {
+    final businessMap = Map<String, dynamic>.from(businessProfileNode);
+    final fromBusinessProfile = _normalizePublicFluxidiCompanyCode(
+      (businessMap['public_company_code'] ??
+              businessMap['publicCompanyCode'] ??
+              businessMap['company_code'] ??
+              businessMap['companyCode'] ??
+              '')
+          .toString(),
+    );
+    if (_isValidPublicFluxidiCompanyCode(fromBusinessProfile)) {
+      return fromBusinessProfile;
+    }
+  }
+
+  final companyNode = bootstrap['company'];
+  if (companyNode is Map) {
+    final companyMap = Map<String, dynamic>.from(companyNode);
+    final fromCompany = _normalizePublicFluxidiCompanyCode(
+      (companyMap['public_company_code'] ??
+              companyMap['publicCompanyCode'] ??
+              companyMap['company_code'] ??
+              companyMap['companyCode'] ??
+              '')
+          .toString(),
+    );
+    if (_isValidPublicFluxidiCompanyCode(fromCompany)) return fromCompany;
+  }
+
+  final fromTopLevel = _normalizePublicFluxidiCompanyCode(
+    (bootstrap['public_company_code'] ??
+            bootstrap['publicCompanyCode'] ??
+            bootstrap['company_code'] ??
+            bootstrap['companyCode'] ??
+            '')
+        .toString(),
+  );
+  if (_isValidPublicFluxidiCompanyCode(fromTopLevel)) return fromTopLevel;
+  return null;
+}
+
+Future<bool> _hydrateCompanyBootstrapFromActiveSession({
+  required String reason,
+  bool clearOnUnauthorized = false,
+}) async {
+  final session = activeCompanySessionNotifier.value;
+  final token = (session?.companySessionToken ?? '').trim();
+  if (token.isEmpty) return false;
+  debugPrint(
+    '[COMPANY_BOOTSTRAP][REQ] source=$reason company=${_maskScopeForLog(session?.companyId ?? "")}',
+  );
+  final bootstrap = await fetchCompanyBootstrapWithToken(
+    companySessionToken: token,
+  );
+  if (bootstrap == null) {
+    final status = lastCompanyBootstrapHttpStatusCode;
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=${status ?? "unknown"}',
+    );
+    if (status == 401 && clearOnUnauthorized) {
+      await CompanySessionStore.instance.clearLocalCompanyState();
+    }
+    return false;
+  }
+  final hydrated = await hydrateCompanyStateFromBootstrap(bootstrap);
+  if (!hydrated) {
+    debugPrint(
+      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=hydrate_failed',
+    );
+    return false;
+  }
+  final hydratedCompanyCode = _publicCompanyCodeFromBootstrapPayload(bootstrap);
+  debugPrint(
+    '[COMPANY_CODE][HYDRATE] found=${hydratedCompanyCode != null} source=bootstrap',
+  );
+  if (hydratedCompanyCode != null) {
+    await CompanySessionStore.instance.updateActiveSessionCompanyCode(
+      hydratedCompanyCode,
+      source: 'bootstrap',
+    );
+  }
+  await _applyCompanyProfileFromBootstrapPayload(bootstrap);
+  debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
+  return true;
+}
+
+String _activeCompanyScopeIdForSync() {
+  final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (fromProfile.isNotEmpty) return fromProfile;
+  final fromSession =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (fromSession.isNotEmpty) return fromSession;
+  final fallback = resolvedCompanyId.trim();
+  if (fallback.isNotEmpty) return fallback;
+  return kTenantId;
+}
+
+bool _hasRicherLocalCompanyInventoryForBackfill() {
+  if (vehiclesNotifier.value.length > 1 || driversNotifier.value.length > 1) {
+    return true;
+  }
+  for (final vehicle in vehiclesNotifier.value) {
+    if (vehicle.brandModel.trim().isNotEmpty ||
+        vehicle.licensePlate.trim().isNotEmpty ||
+        vehicle.exploitationLicenseNumber.trim().isNotEmpty ||
+        vehicle.vehicleRegistrationNumber.trim().isNotEmpty ||
+        vehicle.primaryPhotoRef.trim().isNotEmpty ||
+        vehicle.galleryPhotoRefs.isNotEmpty ||
+        (vehicle.publicPhotoUrl ?? '').trim().isNotEmpty ||
+        (vehicle.driverId ?? '').trim().isNotEmpty) {
+      return true;
+    }
+  }
+  for (final driver in driversNotifier.value) {
+    if (driver.taxiDriverCardNumber.trim().isNotEmpty ||
+        driver.taxiDriverCardExpiry.trim().isNotEmpty ||
+        (driver.publicPortraitUrl ?? '').trim().isNotEmpty ||
+        (driver.publicDisplayName ?? '').trim().isNotEmpty ||
+        driver.publicProfileEnabled ||
+        driver.publicPhotoEnabled) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void _triggerCompanyInventoryBackfillRestore({required String reason}) {
+  if (!_hasRicherLocalCompanyInventoryForBackfill()) return;
+  final scopeId = _activeCompanyScopeIdForSync();
+  unawaited(
+    syncLocalCompanyInventoryToBackend(
+      reason: reason,
+      tenantId: scopeId,
+      companyId: scopeId,
+    ),
+  );
+}
+
 // Pending Mollie payment tracking lives in lib/payment_return.dart and is
 // re-exported above so existing references in this file (and other modules)
 // keep working unchanged.
@@ -246,7 +503,29 @@ Future<void> main() async {
   await loadLocalTenantState();
   await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
+  if (CompanySessionStore.instance.hasValidCompanyContext) {
+    await _hydrateCompanyBootstrapFromActiveSession(
+      reason: 'startup_restore',
+      clearOnUnauthorized: true,
+    );
+    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+  }
+  if (CompanySessionStore.instance.hasValidCompanyContext) {
+    setAppRole(AppRole.companyAdmin);
+    _startInCompanyAdminHome = true;
+    _startInDriverHome = false;
+    debugPrint('[COMPANY_PAIRING][AUTO_ROUTE] target=business_home');
+  } else {
+    debugPrint(
+      '[COMPANY_PAIRING][AUTO_ROUTE_SKIP] reason=no_valid_company_context',
+    );
+  }
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+  if (!_startInCompanyAdminHome && activeDriverSessionNotifier.value != null) {
+    setAppRole(AppRole.driver);
+    _startInDriverHome = true;
+    debugPrint('[DRIVER_PAIRING][AUTO_ROUTE] target=driver_home');
+  }
   await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
   // If not provided, the app will fall back to Worker-side routing where possible.
@@ -368,10 +647,17 @@ Set<String> _activeDriverLinkedVehicleIds() {
   return ids;
 }
 
+String _activeDriverSessionVehicleIdForScope() {
+  final sessionVehicleId =
+      activeDriverSessionNotifier.value?.assignedVehicleId?.trim() ?? '';
+  return sessionVehicleId;
+}
+
 bool _bookingBelongsToActiveDriver(Map<String, dynamic> booking) {
   final activeDriverId = _resolvedActiveDriverIdForScope().trim();
   if (activeDriverId.isEmpty) return false;
   final linkedVehicleIds = _activeDriverLinkedVehicleIds();
+  final activeSessionVehicleId = _activeDriverSessionVehicleIdForScope();
   final assignedDriverId = _bookingScopeFirstText(booking, const [
     ['assigned_driver', 'driver_id'],
     ['assigned_driver', 'driverId'],
@@ -414,10 +700,14 @@ bool _bookingBelongsToActiveDriver(Map<String, dynamic> booking) {
     ['record', 'booking', 'vehicle_id'],
     ['record', 'booking', 'vehicleId'],
   ]);
-  if (assignedVehicleId != null &&
-      assignedVehicleId.isNotEmpty &&
-      linkedVehicleIds.contains(assignedVehicleId)) {
-    return true;
+  if (assignedVehicleId != null && assignedVehicleId.isNotEmpty) {
+    if (activeSessionVehicleId.isNotEmpty &&
+        assignedVehicleId == activeSessionVehicleId) {
+      return true;
+    }
+    if (linkedVehicleIds.contains(assignedVehicleId)) {
+      return true;
+    }
   }
   return false;
 }
@@ -484,6 +774,7 @@ Map<String, dynamic> _driverMutationActorFields({String? actorVehicleId}) {
 }
 
 bool _outboundTenantFallbackLogged = false;
+String _lastDriverScopeLogKey = '';
 
 /// Tenant id for outbound ride/trip Worker payloads.
 ///
@@ -505,9 +796,46 @@ String get kOutboundTenantId {
 }
 
 Map<String, String> _activeBookingScopeQuery() {
+  final activeDriverSession = activeDriverSessionNotifier.value;
+  final driverTenantId = (activeDriverSession?.tenantId ?? '').trim();
+  final driverCompanyId = (activeDriverSession?.companyId ?? '').trim();
+  final hasValidCompanyContext =
+      CompanySessionStore.instance.hasValidCompanyContext;
+  final canUseVerifiedDriverScope =
+      !hasValidCompanyContext &&
+      driverTenantId.isNotEmpty &&
+      driverCompanyId.isNotEmpty &&
+      ((activeDriverSession?.isVerifiedPairingSession ?? false) ||
+          appRoleNotifier.value == AppRole.driver);
+  if (canUseVerifiedDriverScope) {
+    final logKey = 'active::$driverTenantId::$driverCompanyId';
+    if (_lastDriverScopeLogKey != logKey) {
+      _lastDriverScopeLogKey = logKey;
+      debugPrint(
+        '[DRIVER_SCOPE][ACTIVE] tenant=$driverTenantId company=$driverCompanyId',
+      );
+    }
+    return <String, String>{
+      'tenant_id': driverTenantId,
+      'company_id': driverCompanyId,
+      'tenantId': driverTenantId,
+      'companyId': driverCompanyId,
+    };
+  }
+
   final tenantId = kOutboundTenantId.trim();
   final companyIdRaw = resolvedCompanyId.trim();
   final companyId = companyIdRaw.isNotEmpty ? companyIdRaw : tenantId;
+  final fallbackReason = hasValidCompanyContext
+      ? 'company_context'
+      : 'default_scope';
+  final logKey = 'fallback::$fallbackReason::$tenantId::$companyId';
+  if (_lastDriverScopeLogKey != logKey) {
+    _lastDriverScopeLogKey = logKey;
+    debugPrint(
+      '[DRIVER_SCOPE][FALLBACK] reason=$fallbackReason tenant=$tenantId company=$companyId',
+    );
+  }
   return <String, String>{
     'tenant_id': tenantId,
     'company_id': companyId,
@@ -609,6 +937,339 @@ Future<Map<String, String>> _customerOwnershipProof({
   };
 }
 
+dynamic _customerBootstrapValueAtPath(
+  Map<String, dynamic> source,
+  String path,
+) {
+  dynamic current = source;
+  for (final segment in path.split('.')) {
+    if (current is Map && current.containsKey(segment)) {
+      current = current[segment];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+String _customerBootstrapText(Map<String, dynamic> source, List<String> paths) {
+  for (final path in paths) {
+    final value = _customerBootstrapValueAtPath(source, path);
+    final text = (value ?? '').toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+  }
+  return '';
+}
+
+double? _customerBootstrapDouble(
+  Map<String, dynamic> source,
+  List<String> paths,
+) {
+  for (final path in paths) {
+    final value = _customerBootstrapValueAtPath(source, path);
+    if (value is num) return value.toDouble();
+    final text = (value ?? '').toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') continue;
+    final parsed = double.tryParse(text.replaceAll(',', '.'));
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+StoredCustomerBooking? _storedBookingFromCustomerBootstrap(
+  Map<String, dynamic> item,
+  CustomerSession session,
+) {
+  final bookingId = _customerBootstrapText(item, const [
+    'booking_id',
+    'bookingId',
+    'id',
+    'public_booking_id',
+    'publicBookingId',
+  ]);
+  if (bookingId.isEmpty) return null;
+  final nowIso = DateTime.now().toIso8601String();
+  final tenantId = _customerBootstrapText(item, const [
+    'tenant_id',
+    'tenantId',
+  ]);
+  final companyId = _customerBootstrapText(item, const [
+    'company_id',
+    'companyId',
+  ]);
+  return StoredCustomerBooking(
+    bookingId: bookingId,
+    tenantId: tenantId.isNotEmpty
+        ? tenantId
+        : (session.defaultTenantId ?? '').trim(),
+    companyId: companyId.isNotEmpty
+        ? companyId
+        : (session.defaultCompanyId ?? '').trim(),
+    publicBookingId: _customerBootstrapText(item, const [
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'public_reference',
+      'publicReference',
+      'public_booking_id',
+      'publicBookingId',
+    ]),
+    planningReference: _customerBootstrapText(item, const [
+      'planning_reference',
+      'planningReference',
+    ]),
+    bookingReference: _customerBootstrapText(item, const [
+      'booking_reference',
+      'bookingReference',
+    ]),
+    publicReference: _customerBootstrapText(item, const [
+      'public_reference',
+      'publicReference',
+    ]),
+    receiptReference: _customerBootstrapText(item, const [
+      'receipt_reference',
+      'receiptReference',
+    ]),
+    paymentBookingId: _customerBootstrapText(item, const [
+      'payment_booking_id',
+      'paymentBookingId',
+    ]),
+    customerName: _customerBootstrapText(item, const [
+      'customer_name',
+      'customerName',
+    ]),
+    customerPhone: _customerBootstrapText(item, const [
+      'customer_phone',
+      'customerPhone',
+    ]),
+    customerEmail: _customerBootstrapText(item, const [
+      'customer_email',
+      'customerEmail',
+    ]),
+    from: _customerBootstrapText(item, const [
+      'from',
+      'pickup_address',
+      'pickupAddress',
+    ]),
+    to: _customerBootstrapText(item, const [
+      'to',
+      'dropoff_address',
+      'dropoffAddress',
+    ]),
+    pickupIso: _customerBootstrapText(item, const ['pickup_iso', 'pickupIso']),
+    price: _customerBootstrapDouble(item, const [
+      'price',
+      'quoted_price',
+      'quotedPrice',
+    ]),
+    currency: _customerBootstrapText(item, const [
+      'currency',
+      'quote.currency',
+    ]),
+    paymentStatus: _customerBootstrapText(item, const [
+      'payment_status',
+      'paymentStatus',
+    ]),
+    status: _customerBootstrapText(item, const [
+      'status',
+      'stage',
+      'booking_status',
+      'bookingStatus',
+    ]),
+    service: _customerBootstrapText(item, const [
+      'service_type',
+      'serviceType',
+      'service',
+    ]),
+    tier: _customerBootstrapText(item, const [
+      'tier',
+      'vehicle_tier',
+      'vehicleTier',
+    ]),
+    pax: _customerBootstrapText(item, const [
+      'passenger_count',
+      'passengerCount',
+      'pax',
+    ]),
+    bags: _customerBootstrapText(item, const [
+      'luggage_count',
+      'luggageCount',
+      'bags',
+    ]),
+    createdAt:
+        _customerBootstrapText(item, const [
+          'created_at',
+          'createdAt',
+        ]).isNotEmpty
+        ? _customerBootstrapText(item, const ['created_at', 'createdAt'])
+        : nowIso,
+    updatedAt:
+        _customerBootstrapText(item, const [
+          'updated_at',
+          'updatedAt',
+        ]).isNotEmpty
+        ? _customerBootstrapText(item, const ['updated_at', 'updatedAt'])
+        : nowIso,
+    companyName: _customerBootstrapText(item, const [
+      'company_name',
+      'companyName',
+    ]),
+    vatNumber: _customerBootstrapText(item, const ['vat_number', 'vatNumber']),
+    invoiceEmail: _customerBootstrapText(item, const [
+      'invoice_email',
+      'invoiceEmail',
+    ]),
+    invoiceAddress: _customerBootstrapText(item, const [
+      'invoice_address',
+      'invoiceAddress',
+    ]),
+    quote: _customerBootstrapValueAtPath(item, 'quote') is Map
+        ? Map<String, dynamic>.from(
+            _customerBootstrapValueAtPath(item, 'quote') as Map,
+          )
+        : const <String, dynamic>{},
+  );
+}
+
+Future<int> _bootstrapCustomerSessionAndMergeBookings({
+  required String reason,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) return 0;
+    debugPrint('[CUSTOMER_BOOTSTRAP][REQ] reason=$reason');
+    final response = await fetchPublicCustomerSessionBootstrap(
+      customerSessionToken: session.customerSessionToken,
+    );
+    if (response == null) {
+      final status = lastCustomerBootstrapHttpStatusCode;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+        debugPrint('[CUSTOMER_BOOTSTRAP][SESSION_EXPIRED]');
+      } else {
+        debugPrint(
+          '[CUSTOMER_BOOTSTRAP][FAIL] reason=$reason status=${status ?? 0}',
+        );
+      }
+      return 0;
+    }
+    final dynamic bookingsRaw =
+        response['bookings'] ??
+        _customerBootstrapValueAtPath(response, 'data.bookings') ??
+        const <dynamic>[];
+    final bookings = bookingsRaw is List ? bookingsRaw : const <dynamic>[];
+    debugPrint('[CUSTOMER_BOOTSTRAP][OK] count=${bookings.length}');
+    var merged = 0;
+    for (final entry in bookings) {
+      if (entry is! Map) continue;
+      final stored = _storedBookingFromCustomerBootstrap(
+        Map<String, dynamic>.from(entry),
+        session,
+      );
+      if (stored == null) continue;
+      await CustomerBookingsStore.instance.upsert(stored);
+      merged += 1;
+    }
+    debugPrint('[CUSTOMER_BOOTSTRAP][MERGE] count=$merged');
+    return merged;
+  } catch (err) {
+    debugPrint('[CUSTOMER_BOOTSTRAP][FAIL] reason=$reason error=$err');
+    return 0;
+  }
+}
+
+Future<CustomerProfile?> _syncCustomerProfileFromBackendBestEffort({
+  required String reason,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=no_valid_session',
+      );
+      return null;
+    }
+    final remote = await fetchPublicCustomerProfile(
+      customerSessionToken: session.customerSessionToken,
+    );
+    if (remote == null) {
+      final status = lastCustomerProfileHttpStatusCode ?? 0;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+      }
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=fetch_failed status=$status',
+      );
+      return null;
+    }
+    final merged = await CustomerProfileStore.instance
+        .mergeBackendProfileForSession(
+          remote,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
+    _setCachedCustomerProfile(merged);
+    debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=true reason=$reason');
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=error error=$err',
+    );
+    return null;
+  }
+}
+
+Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
+  required String reason,
+  required CustomerProfile localProfile,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=no_valid_session',
+      );
+      return null;
+    }
+    final remote = await upsertPublicCustomerProfile(
+      customerSessionToken: session.customerSessionToken,
+      payload: <String, dynamic>{
+        'name': localProfile.name,
+        'phone': localProfile.phone,
+        'email': localProfile.email,
+        'preferred_postcode': localProfile.preferredPostcode,
+        'company_name': localProfile.companyName,
+        'vat_number': localProfile.vatNumber,
+      },
+    );
+    if (remote == null) {
+      final status = lastCustomerProfileHttpStatusCode ?? 0;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+      }
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=post_failed status=$status',
+      );
+      return null;
+    }
+    final merged = await CustomerProfileStore.instance
+        .mergeBackendProfileForSession(
+          remote,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
+    _setCachedCustomerProfile(merged);
+    debugPrint('[CUSTOMER_PROFILE_SYNC][PUSH] ok=true reason=$reason');
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=error error=$err',
+    );
+    return null;
+  }
+}
+
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
@@ -616,9 +1277,21 @@ const String kAdminToken = String.fromEnvironment(
   'ADMIN_TOKEN',
   defaultValue: '',
 );
+const bool _fluxidiDevPairingBypass = bool.fromEnvironment(
+  'FLUXIDI_DEV_PAIRING_BYPASS',
+);
+const String _fluxidiDevTenantId = String.fromEnvironment(
+  'FLUXIDI_DEV_TENANT_ID',
+);
+const String _fluxidiDevCompanyId = String.fromEnvironment(
+  'FLUXIDI_DEV_COMPANY_ID',
+);
+bool get _effectiveFluxidiDevPairingBypass =>
+    _fluxidiDevPairingBypass && !kReleaseMode;
 
 /// Endpoints (adjust if your Worker uses different paths)
 const String kListBookingsPath = '/bookings';
+const String kDriverBookingsPath = '/driver/bookings';
 const String kGetBookingPath =
     '/track/booking'; // returns booking + quote/pricing
 const String kTrackingBookingPath =
@@ -1992,6 +2665,12 @@ class FluxidiDriverApp extends StatelessWidget {
       ),
     );
 
+    final Widget startupTarget = _startInCompanyAdminHome
+        ? const BusinessHomePage()
+        : (_startInDriverHome ? const DriverHomePage() : const RoleEntryPage());
+    final bool shouldGateStartupSession =
+        _startInCompanyAdminHome || _startInDriverHome;
+
     return ValueListenableBuilder(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => MaterialApp(
@@ -2001,7 +2680,10 @@ class FluxidiDriverApp extends StatelessWidget {
         builder: (context, child) {
           return FluxidiFrame(child: child ?? const SizedBox.shrink());
         },
-        home: const RoleEntryPage(),
+        home: FluxidiAppLockGatePage(
+          target: startupTarget,
+          shouldGate: shouldGateStartupSession,
+        ),
       ),
     );
   }
@@ -2012,6 +2694,50 @@ class RoleEntryPage extends StatelessWidget {
 
   static const String _startBackgroundAsset =
       'assets/fluxidi/fluxidi_start_background.png';
+
+  String _normalizeHumanCompanyId(String raw) {
+    var text = raw.trim().toUpperCase();
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    return text;
+  }
+
+  String? _validateHumanCompanyId(String raw) {
+    final value = _normalizeHumanCompanyId(raw);
+    if (value.isEmpty) {
+      return _t(
+        nl: 'Vul een bedrijfs-ID in.',
+        en: 'Enter a company ID.',
+        fr: 'Saisissez un ID d’entreprise.',
+        es: 'Introduce un ID de empresa.',
+      );
+    }
+    if (value.length < 4 || value.length > 24) {
+      return _t(
+        nl: 'Bedrijfs-ID moet tussen 4 en 24 tekens zijn.',
+        en: 'Company ID must be between 4 and 24 characters.',
+        fr: 'L’ID d’entreprise doit contenir entre 4 et 24 caractères.',
+        es: 'El ID de empresa debe tener entre 4 y 24 caracteres.',
+      );
+    }
+    if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(value)) {
+      return _t(
+        nl: 'Gebruik alleen A-Z, 0-9 en koppelteken (-).',
+        en: 'Use only A-Z, 0-9 and hyphen (-).',
+        fr: 'Utilisez uniquement A-Z, 0-9 et le tiret (-).',
+        es: 'Usa solo A-Z, 0-9 y guion (-).',
+      );
+    }
+    if (!RegExp(r'[A-Z0-9]').hasMatch(value)) {
+      return _t(
+        nl: 'Bedrijfs-ID moet letters of cijfers bevatten.',
+        en: 'Company ID must contain letters or digits.',
+        fr: 'L’ID d’entreprise doit contenir des lettres ou des chiffres.',
+        es: 'El ID de empresa debe contener letras o dígitos.',
+      );
+    }
+    return null;
+  }
 
   String _t({
     required String nl,
@@ -2182,7 +2908,50 @@ class RoleEntryPage extends StatelessWidget {
 
   Future<void> _goCustomer(BuildContext context) async {
     setAppRole(AppRole.customer);
+    final validSession = await CustomerSessionStore.instance.loadValidSession();
+    if (validSession != null) {
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_role_entry',
+      );
+      await _syncCustomerProfileFromBackendBestEffort(
+        reason: 'customer_role_entry',
+      );
+      if (!context.mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+      );
+      return;
+    }
     final existingProfile = await CustomerProfileStore.instance.load();
+    if (!context.mounted) return;
+    final entryIntent = await _promptCustomerEntryIntent(
+      context,
+      hasExistingLocalProfile: existingProfile != null,
+    );
+    if (!context.mounted || entryIntent == null) return;
+    if (entryIntent == _customerEntryPhoneLoginIntent) {
+      final sessionResult = await Navigator.of(context).push<CustomerSession?>(
+        MaterialPageRoute(builder: (_) => const CustomerPhoneRecoveryPage()),
+      );
+      if (!context.mounted || sessionResult == null) return;
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_phone_login',
+      );
+      await _syncCustomerProfileFromBackendBestEffort(
+        reason: 'customer_phone_login',
+      );
+      if (!context.mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+      );
+      return;
+    }
+    if (entryIntent == _customerEntryNewIntent) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const CustomerOnboardingPage()),
+      );
+      return;
+    }
     if (!context.mounted) return;
     if (existingProfile != null) {
       Navigator.of(context).pushReplacement(
@@ -2195,29 +2964,1564 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
+  static const String _customerEntryPhoneLoginIntent =
+      '__customer_phone_login__';
+  static const String _customerEntryNewIntent = '__customer_new__';
+  static const String _customerEntryContinueIntent = '__customer_continue__';
+  static const String _companyPairingOnboardingIntent =
+      '__open_company_onboarding__';
+  static const String _companyRecoveryIntent = '__open_company_recovery__';
+
+  Future<String?> _promptCustomerEntryIntent(
+    BuildContext context, {
+    required bool hasExistingLocalProfile,
+  }) {
+    return FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Klant starten',
+              en: 'Start as customer',
+              fr: 'Démarrer en client',
+              es: 'Iniciar como cliente',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasExistingLocalProfile) ...[
+                OutlinedButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_customerEntryContinueIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withOpacity(0.35)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Doorgaan',
+                      en: 'Continue',
+                      fr: 'Continuer',
+                      es: 'Continuar',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              FilledButton(
+                onPressed: () => Navigator.of(
+                  dialogContext,
+                ).pop(_customerEntryPhoneLoginIntent),
+                child: Text(
+                  _t(
+                    nl: 'Inloggen met gsm',
+                    en: 'Login with phone',
+                    fr: 'Connexion avec gsm',
+                    es: 'Iniciar con móvil',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(_customerEntryNewIntent),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                ),
+                child: Text(
+                  _t(
+                    nl: 'Nieuwe klant',
+                    en: 'New customer',
+                    fr: 'Nouveau client',
+                    es: 'Cliente nuevo',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<String?> _promptExistingCompanyId(BuildContext context) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bedrijf koppelen',
+                  en: 'Link company',
+                  fr: 'Lier l’entreprise',
+                  es: 'Vincular empresa',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul de bedrijfscode in die je van Fluxidi of je beheerder kreeg.',
+                      en: 'Enter the company code you received from Fluxidi or your administrator.',
+                      fr: 'Saisissez le code entreprise reçu de Fluxidi ou de votre administrateur.',
+                      es: 'Introduce el código de empresa que recibiste de Fluxidi o de tu administrador.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: controller,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Bedrijfscode',
+                        en: 'Company code',
+                        fr: 'Code entreprise',
+                        es: 'Código de empresa',
+                      ),
+                      labelStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.32),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: const BorderRadius.all(
+                          Radius.circular(12),
+                        ),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow,
+                          width: 1.1,
+                        ),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      final normalized = _normalizeHumanCompanyId(value);
+                      if (normalized != value) {
+                        controller.value = TextEditingValue(
+                          text: normalized,
+                          selection: TextSelection.collapsed(
+                            offset: normalized.length,
+                          ),
+                        );
+                      }
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final normalized = _normalizeHumanCompanyId(
+                      controller.text,
+                    );
+                    final validationError = _validateHumanCompanyId(normalized);
+                    if (validationError != null) {
+                      setDialogState(() => errorText = validationError);
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(normalized);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Volgende',
+                      en: 'Next',
+                      fr: 'Suivant',
+                      es: 'Siguiente',
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(_companyRecoveryIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik heb mijn toestel niet meer',
+                      en: 'Recover company account',
+                      fr: 'Je n’ai plus mon appareil',
+                      es: 'Ya no tengo mi dispositivo',
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_companyPairingOnboardingIntent),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                      en: 'I want to enter my company details',
+                      fr: 'Je veux saisir les données de mon entreprise',
+                      es: 'Quiero introducir los datos de mi empresa',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<bool?> _confirmResolvedCompanyPreview(
+    BuildContext context, {
+    required String companyCode,
+    required String displayName,
+    required String country,
+    required String maskedPhone,
+  }) {
+    return FluxidiResponsiveDialog.show<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Bedrijf gevonden',
+              en: 'Company found',
+              fr: 'Entreprise trouvée',
+              es: 'Empresa encontrada',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          scrollable: true,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (displayName.isNotEmpty)
+                Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              if (companyCode.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  companyCode,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.84),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+              if (country.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _t(
+                    nl: 'Land: $country',
+                    en: 'Country: $country',
+                    fr: 'Pays : $country',
+                    es: 'País: $country',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.78),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              if (maskedPhone.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _t(
+                    nl: 'Contact: $maskedPhone',
+                    en: 'Contact: $maskedPhone',
+                    fr: 'Contact : $maskedPhone',
+                    es: 'Contacto: $maskedPhone',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.78),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Andere code gebruiken',
+                  en: 'Use another code',
+                  fr: 'Utiliser un autre code',
+                  es: 'Usar otro código',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Dit is mijn bedrijf',
+                  en: 'This is my company',
+                  fr: 'C’est mon entreprise',
+                  es: 'Esta es mi empresa',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _safePairingText(dynamic value) => (value ?? '').toString().trim();
+
+  bool _looksLikeEmail(String value) {
+    final email = value.trim().toLowerCase();
+    if (email.isEmpty) return false;
+    return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email);
+  }
+
+  Future<Map<String, String>?> _promptCompanyRecoveryStart(
+    BuildContext context,
+  ) async {
+    final companyController = TextEditingController();
+    final emailController = TextEditingController();
+    String? companyError;
+    String? emailError;
+    final result = await FluxidiResponsiveDialog.show<Map<String, String>?>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bedrijf herstellen',
+                  en: 'Recover company account',
+                  fr: 'Récupérer le compte entreprise',
+                  es: 'Recuperar cuenta de empresa',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul je Fluxidi-code en geregistreerde e-mail in.',
+                      en: 'Enter your Fluxidi code and registered email.',
+                      fr: 'Saisissez votre code Fluxidi et e-mail enregistré.',
+                      es: 'Introduce tu código Fluxidi y correo registrado.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: companyController,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Fluxidi-code',
+                        en: 'Fluxidi code',
+                        fr: 'Code Fluxidi',
+                        es: 'Código Fluxidi',
+                      ),
+                      errorText: companyError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (companyError != null) {
+                        setDialogState(() => companyError = null);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Geregistreerde e-mail',
+                        en: 'Registered email',
+                        fr: 'E-mail enregistré',
+                        es: 'Correo registrado',
+                      ),
+                      errorText: emailError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (emailError != null) {
+                        setDialogState(() => emailError = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final code = _normalizeHumanCompanyId(
+                      companyController.text,
+                    );
+                    final codeError = _validateHumanCompanyId(code);
+                    final email = emailController.text.trim().toLowerCase();
+                    final validEmail = _looksLikeEmail(email);
+                    if (codeError != null || !validEmail) {
+                      setDialogState(() {
+                        companyError = codeError;
+                        emailError = validEmail
+                            ? null
+                            : _t(
+                                nl: 'Vul een geldig e-mailadres in.',
+                                en: 'Enter a valid email address.',
+                                fr: 'Saisissez une adresse e-mail valide.',
+                                es: 'Introduce un correo electrónico válido.',
+                              );
+                      });
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(<String, String>{
+                      'companyCode': code,
+                      'email': email,
+                    });
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Start herstel',
+                      en: 'Start recovery',
+                      fr: 'Démarrer la récupération',
+                      es: 'Iniciar recuperación',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    companyController.dispose();
+    emailController.dispose();
+    return result;
+  }
+
+  Future<String?> _promptCompanyRecoveryOtp(
+    BuildContext context, {
+    String? maskedEmail,
+    String? debugOtp,
+  }) async {
+    final otpController = TextEditingController(text: debugOtp ?? '');
+    String? errorText;
+    final result = await FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Bevestig herstelcode',
+                  en: 'Confirm recovery code',
+                  fr: 'Confirmer le code de récupération',
+                  es: 'Confirmar código de recuperación',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul de code in die naar je e-mail is gestuurd.',
+                      en: 'Enter the code sent to your email.',
+                      fr: 'Saisissez le code envoyé à votre e-mail.',
+                      es: 'Introduce el código enviado a tu correo.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  if ((maskedEmail ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      (maskedEmail ?? '').trim(),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Herstelcode',
+                        en: 'Recovery code',
+                        fr: 'Code de récupération',
+                        es: 'Código de recuperación',
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final otp = otpController.text.trim();
+                    if (!RegExp(r'^\d{4,8}$').hasMatch(otp)) {
+                      setDialogState(
+                        () => errorText = _t(
+                          nl: 'Vul een geldige herstelcode in.',
+                          en: 'Enter a valid recovery code.',
+                          fr: 'Saisissez un code de récupération valide.',
+                          es: 'Introduce un código de recuperación válido.',
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(otp);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Bevestigen',
+                      en: 'Verify',
+                      fr: 'Vérifier',
+                      es: 'Verificar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    otpController.dispose();
+    return result;
+  }
+
+  Future<void> _runCompanyRecoveryFlow(BuildContext context) async {
+    final startInput = await _promptCompanyRecoveryStart(context);
+    if (!context.mounted || startInput == null) return;
+    final companyCode = _safePairingText(startInput['companyCode']);
+    final email = _safePairingText(startInput['email']).toLowerCase();
+    if (companyCode.isEmpty || !_looksLikeEmail(email)) return;
+    Map<String, dynamic> started;
+    try {
+      started = await startPublicCompanyRecovery(
+        payload: <String, dynamic>{
+          'company_code': companyCode,
+          'email': email,
+          'device_label': 'Nieuw toestel',
+          'device_type': 'mobile',
+        },
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel starten lukt niet. Probeer opnieuw.',
+              en: 'Could not start recovery. Please try again.',
+              fr: 'Impossible de démarrer la récupération. Réessayez.',
+              es: 'No se pudo iniciar la recuperación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final challengeId = _safePairingText(
+      started['challenge_id'] ?? started['challengeId'],
+    );
+    if (challengeId.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstelcode kon niet worden gestart. Probeer opnieuw.',
+              en: 'Recovery could not be started. Please retry.',
+              fr: 'La récupération n’a pas pu démarrer. Réessayez.',
+              es: 'No se pudo iniciar la recuperación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final otp = await _promptCompanyRecoveryOtp(
+      context,
+      maskedEmail: _safePairingText(
+        started['masked_email'] ?? started['maskedEmail'],
+      ),
+      debugOtp: _safePairingText(
+        started['recovery_code'] ?? started['recoveryCode'],
+      ),
+    );
+    if (!context.mounted || otp == null) return;
+    Map<String, dynamic> verified;
+    try {
+      verified = await verifyPublicCompanyRecovery(
+        payload: <String, dynamic>{
+          'challenge_id': challengeId,
+          'company_code': companyCode,
+          'email': email,
+          'otp': otp,
+          'device_label': 'Nieuw toestel',
+          'device_type': 'mobile',
+        },
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel mislukt. Controleer code en e-mail en probeer opnieuw.',
+              en: 'Recovery failed. Check code and email and try again.',
+              fr: 'La récupération a échoué. Vérifiez le code et l’e-mail puis réessayez.',
+              es: 'La recuperación falló. Verifica el código y el correo e inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final opened = await _openVerifiedCompanySession(context, verified, true);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Herstel mislukt. Probeer opnieuw.',
+              en: 'Recovery failed. Please try again.',
+              fr: 'La récupération a échoué. Réessayez.',
+              es: 'La recuperación falló. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _resolveCompanyCode(String companyCode) async {
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/public/company/resolve?code=${Uri.encodeQueryComponent(companyCode)}',
+    );
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      if (response.statusCode == 200 && body['ok'] == true) {
+        return <String, dynamic>{
+          'ok': true,
+          'company_code': _safePairingText(body['company_code']),
+          'display_name': _safePairingText(body['display_name']),
+          'country': _safePairingText(body['country']),
+          'masked_phone': _safePairingText(body['masked_phone']),
+        };
+      }
+      final error = _safePairingText(body['error']).toLowerCase();
+      if (response.statusCode == 404 || error == 'company_not_found') {
+        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
+      }
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    } catch (_) {
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    }
+  }
+
+  Future<String?> _promptCompanyPairingCode(BuildContext context) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Verificatiecode invoeren',
+                  en: 'Enter verification code',
+                  fr: 'Saisir le code de vérification',
+                  es: 'Introducir código de verificación',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul de 6-cijferige code in die je van je beheerder kreeg.',
+                      en: 'Enter the 6-digit code you received from your administrator.',
+                      fr: 'Saisissez le code à 6 chiffres reçu de votre administrateur.',
+                      es: 'Introduce el código de 6 dígitos que recibiste de tu administrador.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Verificatiecode',
+                        en: 'Verification code',
+                        fr: 'Code de vérification',
+                        es: 'Código de verificación',
+                      ),
+                      labelStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                      errorText: errorText,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final pairingCode = controller.text.trim();
+                    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
+                      setDialogState(
+                        () => errorText = _t(
+                          nl: 'Vul een geldige 6-cijferige verificatiecode in.',
+                          en: 'Enter a valid 6-digit verification code.',
+                          fr: 'Saisissez un code de vérification valide à 6 chiffres.',
+                          es: 'Introduce un código de verificación válido de 6 dígitos.',
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(pairingCode);
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Toestel koppelen',
+                      en: 'Link device',
+                      fr: 'Lier l’appareil',
+                      es: 'Vincular dispositivo',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<String?> _promptCompanyActivationCode(BuildContext context) async {
+    final controller = TextEditingController();
+    String? errorText;
+    final result = await FluxidiResponsiveDialog.show<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Activatiecode invoeren',
+                  en: 'Enter activation code',
+                  fr: "Saisir le code d'activation",
+                  es: 'Introducir código de activación',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Vul je activatiecode in. Voorbeeld: FLX-4821-123456',
+                        en: 'Enter your activation code. Example: FLX-4821-123456',
+                        fr: "Saisissez votre code d'activation. Exemple : FLX-4821-123456",
+                        es: 'Introduce tu código de activación. Ejemplo: FLX-4821-123456',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.78),
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: controller,
+                      textCapitalization: TextCapitalization.characters,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Activatiecode',
+                          en: 'Activation code',
+                          fr: "Code d'activation",
+                          es: 'Código de activación',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        errorText: errorText,
+                        filled: true,
+                        fillColor: const Color(0xFF1A1A1A),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: kFluxidiYellow.withOpacity(0.38),
+                          ),
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setDialogState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () {
+                        final activationCode = controller.text.trim();
+                        if (activationCode.isEmpty) {
+                          setDialogState(
+                            () => errorText = _t(
+                              nl: 'Vul je activatiecode in.',
+                              en: 'Enter your activation code.',
+                              fr: "Saisissez votre code d'activation.",
+                              es: 'Introduce tu código de activación.',
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.of(dialogContext).pop(activationCode);
+                      },
+                      child: Text(
+                        _t(
+                          nl: 'Toestel koppelen',
+                          en: 'Link device',
+                          fr: 'Lier l’appareil',
+                          es: 'Vincular dispositivo',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyRecoveryIntent),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Ik heb mijn toestel niet meer',
+                          en: 'Recover company account',
+                          fr: 'Je n’ai plus mon appareil',
+                          es: 'Ya no tengo mi dispositivo',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyPairingOnboardingIntent),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Ik wil mijn bedrijfsgegevens invullen',
+                          en: 'I want to enter my company details',
+                          fr: 'Je veux saisir les données de mon entreprise',
+                          es: 'Quiero introducir los datos de mi empresa',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
+  ({String companyCode, String pairingCode})? _parseCompanyActivationCode(
+    String input,
+  ) {
+    final raw = input.trim();
+    if (raw.isEmpty) return null;
+    final normalized = raw
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (normalized.isEmpty) return null;
+    final parts = normalized
+        .split('-')
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length < 2) return null;
+    final pairingCode = parts.last.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) return null;
+    final companyCodeCandidate = parts
+        .sublist(0, parts.length - 1)
+        .join('-')
+        .trim();
+    if (companyCodeCandidate.isEmpty) return null;
+    final normalizedCompanyCode = _normalizeHumanCompanyId(
+      companyCodeCandidate,
+    );
+    final companyValidationError = _validateHumanCompanyId(
+      normalizedCompanyCode,
+    );
+    if (companyValidationError != null) return null;
+    return (companyCode: normalizedCompanyCode, pairingCode: pairingCode);
+  }
+
+  Future<void> _showCompanyPairingSuccessDialog(BuildContext context) {
+    return FluxidiResponsiveDialog.show<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Toestel gekoppeld',
+              en: 'Device linked',
+              fr: 'Appareil lié',
+              es: 'Dispositivo vinculado',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          scrollable: true,
+          content: Text(
+            _t(
+              nl: 'Je toestel is veilig gekoppeld aan je bedrijf.',
+              en: 'Your device has been securely linked to your company.',
+              fr: 'Votre appareil est lié en toute sécurité à votre entreprise.',
+              es: 'Tu dispositivo se vinculó de forma segura a tu empresa.',
+            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.8)),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(
+                  nl: 'Verder naar dashboard',
+                  en: 'Continue to dashboard',
+                  fr: 'Continuer vers le tableau de bord',
+                  es: 'Continuar al panel',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool?> _showCompanyPairingTestModeDialog(BuildContext context) {
+    return FluxidiResponsiveDialog.show<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Testmodus',
+              en: 'Test mode',
+              fr: 'Mode test',
+              es: 'Modo de prueba',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          scrollable: true,
+          content: Text(
+            _t(
+              nl: 'Dit toestel wordt gekoppeld zonder verificatiecode. Gebruik dit alleen voor ontwikkeling en testen.',
+              en: 'This device will be linked without a verification code. Use this only for development and testing.',
+              fr: 'Cet appareil sera lié sans code de vérification. Utilisez ceci uniquement pour le développement et les tests.',
+              es: 'Este dispositivo se vinculará sin código de verificación. Úsalo solo para desarrollo y pruebas.',
+            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.8)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Koppelen in testmodus',
+                  en: 'Link in test mode',
+                  fr: 'Lier en mode test',
+                  es: 'Vincular en modo de prueba',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _verifyCompanyPairingCode({
+    required String companyCode,
+    required String pairingCode,
+  }) async {
+    final uri = Uri.parse('$kBookingBaseUrl/public/company/link/verify');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, dynamic>{
+              'company_code': companyCode,
+              'pairing_code': pairingCode,
+              'device_label': 'Bedrijf tablet',
+              'device_type': 'tablet',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = _safePairingText(body['role']);
+      if (response.statusCode == 200 && ok && role == 'companyAdmin') {
+        return <String, dynamic>{'ok': true, 'payload': body};
+      }
+      final error = _safePairingText(body['error']).toLowerCase();
+      if (error == 'company_not_found') {
+        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
+      }
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    } catch (_) {
+      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+    }
+  }
+
+  Future<bool> _openVerifiedCompanySession(
+    BuildContext context,
+    Map<String, dynamic> payload, [
+    bool enforcePinGateOnEntry = false,
+  ]) async {
+    if (payload['ok'] != true) return false;
+    if (_safePairingText(payload['role']) != 'companyAdmin') return false;
+    final tenantId = _safePairingText(payload['tenant_id']);
+    final companyId = _safePairingText(payload['company_id']);
+    final companyCode = _safePairingText(payload['company_code']);
+    if (tenantId.isEmpty || companyId.isEmpty || companyCode.isEmpty) {
+      return false;
+    }
+    final companyMap = payload['company'] is Map
+        ? Map<String, dynamic>.from(payload['company'] as Map)
+        : <String, dynamic>{};
+    final companyName = _safePairingText(companyMap['display_name']);
+    final countryCode = _safePairingText(companyMap['country']);
+    final issuedAt = DateTime.tryParse(_safePairingText(payload['issued_at']));
+    final expiresAt = DateTime.tryParse(
+      _safePairingText(payload['expires_at']),
+    );
+    final companySessionToken = _safePairingText(
+      payload['company_session_token'] ?? payload['companySessionToken'],
+    );
+    final expiresInSeconds = int.tryParse(
+      _safePairingText(payload['expires_in'] ?? payload['expiresIn']),
+    );
+    final linkMethod = _safePairingText(
+      payload['link_method'] ?? payload['linkMethod'],
+    );
+    await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      companyName: companyName,
+      countryCode: countryCode,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+      companySessionToken: companySessionToken,
+      expiresInSeconds: expiresInSeconds,
+      linkMethod: linkMethod,
+    );
+    if (companySessionToken.isNotEmpty) {
+      await _hydrateCompanyBootstrapFromActiveSession(
+        reason: 'pairing_success',
+      );
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    }
+    if (!context.mounted) return false;
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
+    setAppRole(AppRole.companyAdmin);
+    final Widget nextPage = enforcePinGateOnEntry
+        ? const FluxidiAppLockGatePage(
+            target: BusinessHomePage(),
+            shouldGate: true,
+          )
+        : const BusinessHomePage();
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute<void>(builder: (_) => nextPage));
+    return true;
+  }
+
+  Future<bool> _openDevBypassCompanySession(
+    BuildContext context, {
+    required String resolvedCompanyCode,
+    required String resolvedDisplayName,
+    required String resolvedCountry,
+  }) async {
+    final companyCode = resolvedCompanyCode.trim();
+    if (companyCode.isEmpty) return false;
+    final tenantId = _fluxidiDevTenantId.trim().isNotEmpty
+        ? _fluxidiDevTenantId.trim()
+        : companyCode;
+    final companyId = _fluxidiDevCompanyId.trim().isNotEmpty
+        ? _fluxidiDevCompanyId.trim()
+        : companyCode;
+    final companyName = resolvedDisplayName.trim().isEmpty
+        ? companyCode
+        : resolvedDisplayName.trim();
+    final country = resolvedCountry.trim().toUpperCase();
+    debugPrint(
+      '[COMPANY_PAIRING][DEV_BYPASS] tenant=$tenantId company=$companyId code=$companyCode',
+    );
+    await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      companyName: companyName,
+      countryCode: country,
+      issuedAt: DateTime.now().toUtc(),
+      linkMethod: 'dev_pairing_bypass',
+    );
+    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    if (!context.mounted) return false;
+    if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
+    setAppRole(AppRole.companyAdmin);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+    );
+    return true;
+  }
+
+  String _companyPairingErrorText(String code) {
+    if (code == 'company_not_found') {
+      return _t(
+        nl: 'We vinden geen bedrijf met deze code. Controleer de code en probeer opnieuw.',
+        en: 'We could not find a company with this code. Check the code and try again.',
+        fr: 'Aucune entreprise trouvée avec ce code. Vérifiez le code et réessayez.',
+        es: 'No encontramos una empresa con este código. Verifica el código e inténtalo de nuevo.',
+      );
+    }
+    if (code == 'verification_failed') {
+      return _t(
+        nl: 'De verificatiecode klopt niet of is verlopen. Vraag een nieuwe code aan je beheerder.',
+        en: 'The verification code is incorrect or expired. Ask your administrator for a new code.',
+        fr: 'Le code de vérification est incorrect ou expiré. Demandez un nouveau code à votre administrateur.',
+        es: 'El código de verificación es incorrecto o ha caducado. Solicita un nuevo código a tu administrador.',
+      );
+    }
+    return _t(
+      nl: 'Koppelen lukt niet. Controleer de gegevens en probeer opnieuw.',
+      en: 'Linking failed. Check your details and try again.',
+      fr: 'La liaison a échoué. Vérifiez les données et réessayez.',
+      es: 'No se pudo vincular. Revisa los datos e inténtalo de nuevo.',
+    );
+  }
+
+  void _openBusinessOnboarding(
+    BuildContext context, {
+    String? initialCompanyId,
+    bool lockCompanyId = false,
+  }) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => CompanyOnboardingPage(
+          initialCompanyId: initialCompanyId,
+          lockCompanyId: lockCompanyId,
+          onCompleted: (ctx) {
+            setAppRole(AppRole.companyAdmin);
+            Navigator.of(ctx).pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _goBusiness(BuildContext context) async {
     await CompanySessionStore.instance.bootstrap();
+    if (CompanySessionStore.instance.hasValidCompanyContext) {
+      await _hydrateCompanyBootstrapFromActiveSession(
+        reason: 'role_entry',
+        clearOnUnauthorized: true,
+      );
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    }
     if (!context.mounted) return;
     if (CompanySessionStore.instance.hasValidCompanyContext) {
       setAppRole(AppRole.companyAdmin);
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const BusinessHomePage()),
       );
-    } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => CompanyOnboardingPage(
-            onCompleted: (ctx) {
-              setAppRole(AppRole.companyAdmin);
-              Navigator.of(ctx).pushReplacement(
-                MaterialPageRoute<void>(
-                  builder: (_) => const BusinessHomePage(),
-                ),
-              );
-            },
+      return;
+    }
+    while (true) {
+      final activationCode = await _promptCompanyActivationCode(context);
+      if (!context.mounted || activationCode == null) return;
+      if (activationCode == _companyPairingOnboardingIntent) {
+        _openBusinessOnboarding(context);
+        return;
+      }
+      if (activationCode == _companyRecoveryIntent) {
+        await _runCompanyRecoveryFlow(context);
+        return;
+      }
+      final parsed = _parseCompanyActivationCode(activationCode);
+      if (parsed == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+                en: 'Invalid activation code. Use for example FLX-4821-123456.',
+                fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+                es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
+              ),
+            ),
           ),
-        ),
+        );
+        continue;
+      }
+      if (_effectiveFluxidiDevPairingBypass) {
+        final bypassConfirmed = await _showCompanyPairingTestModeDialog(
+          context,
+        );
+        if (!context.mounted || bypassConfirmed != true) return;
+        final opened = await _openDevBypassCompanySession(
+          context,
+          resolvedCompanyCode: parsed.companyCode,
+          resolvedDisplayName: parsed.companyCode,
+          resolvedCountry: '',
+        );
+        if (!context.mounted) return;
+        if (!opened) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_companyPairingErrorText('verification_failed')),
+            ),
+          );
+        }
+        return;
+      }
+      final verified = await _verifyCompanyPairingCode(
+        companyCode: parsed.companyCode,
+        pairingCode: parsed.pairingCode,
       );
+      if (!context.mounted) return;
+      if (verified['ok'] != true) {
+        final errorCode = _safePairingText(verified['error']).toLowerCase();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_companyPairingErrorText(errorCode))),
+        );
+        return;
+      }
+      final payload = verified['payload'] is Map
+          ? Map<String, dynamic>.from(verified['payload'] as Map)
+          : <String, dynamic>{};
+      await _showCompanyPairingSuccessDialog(context);
+      if (!context.mounted) return;
+      final opened = await _openVerifiedCompanySession(context, payload);
+      if (!context.mounted) return;
+      if (!opened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_companyPairingErrorText('verification_failed')),
+          ),
+        );
+      }
+      return;
     }
   }
 
@@ -2249,12 +4553,53 @@ class RoleEntryPage extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
-                top: 96.0,
-                bottom: -96.0,
+                top: (() {
+                  final media = MediaQuery.of(context);
+                  final W = media.size.width;
+                  final H = media.size.height;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
+                  final bgTop = isTabletLandscape ? 72.0 : 96.0;
+                  return bgTop;
+                })(),
+                bottom: (() {
+                  final media = MediaQuery.of(context);
+                  final W = media.size.width;
+                  final H = media.size.height;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
+                  final bgBottom = isTabletLandscape ? -72.0 : -96.0;
+                  return bgBottom;
+                })(),
                 child: Image.asset(
                   _startBackgroundAsset,
                   fit: BoxFit.cover,
-                  alignment: const Alignment(0, 0.75),
+                  alignment: (() {
+                    final media = MediaQuery.of(context);
+                    final W = media.size.width;
+                    final H = media.size.height;
+                    final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                    final isTabletLike =
+                        screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop;
+                    final isLandscape = W > H;
+                    final isTabletLandscape =
+                        isTabletLike && isLandscape && H >= 700;
+                    final bgAlignment = isTabletLandscape
+                        ? const Alignment(0.0, 0.82)
+                        : const Alignment(0.0, 0.75);
+                    return bgAlignment;
+                  })(),
                   errorBuilder: (_, __, ___) => const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -2291,8 +4636,22 @@ class RoleEntryPage extends StatelessWidget {
               ),
               LayoutBuilder(
                 builder: (context, constraints) {
+                  double clampDouble(double v, double min, double max) =>
+                      v < min ? min : (v > max ? max : v);
+
+                  final W = constraints.maxWidth;
+                  final H = constraints.maxHeight;
                   final veryCompact = constraints.maxHeight < 680;
                   final narrow = constraints.maxWidth < 390;
+                  final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                  final isTabletLike =
+                      screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop;
+                  final isLandscape = W > H;
+                  final isTabletPortrait =
+                      isTabletLike && !isLandscape && H >= 900;
+                  final isTabletLandscape =
+                      isTabletLike && isLandscape && H >= 700;
                   final contentHorizontalPadding = narrow ? 14.0 : 18.0;
                   final logoTop = veryCompact ? -26.0 : -32.0;
                   final languageTop = veryCompact ? 4.0 : 6.0;
@@ -2307,11 +4666,44 @@ class RoleEntryPage extends StatelessWidget {
                       constraints.maxWidth * (narrow ? 0.62 : 0.55),
                     ),
                   );
-                  final contentTop = veryCompact ? 112.0 : 136.0;
+                  final logoLeft = isTabletLandscape
+                      ? -clampDouble(logoWidth * 0.16, 64.0, 96.0)
+                      : 0.0;
+                  const contentMaxWidth = 470.0;
+                  final languageRight = isTabletLandscape
+                      ? -clampDouble(
+                          ((W - contentMaxWidth) / 2.0) - 36.0,
+                          0.0,
+                          520.0,
+                        )
+                      : 0.0;
+                  final basePhoneContentTop = veryCompact ? 112.0 : 136.0;
+                  final contentTop = isTabletLandscape
+                      ? clampDouble(H * 0.40, 330.0, 365.0)
+                      : isTabletPortrait
+                      ? clampDouble(H * 0.15, 176.0, 232.0)
+                      : basePhoneContentTop;
 
-                  final roleCardHeight = veryCompact ? 92.0 : 98.0;
-                  final cardGap = veryCompact ? 5.0 : 6.0;
-                  final sectionGap = veryCompact ? 7.0 : 8.0;
+                  final roleCardHeight = isTabletLandscape
+                      ? 88.0
+                      : isTabletPortrait
+                      ? 98.0
+                      : (veryCompact ? 92.0 : 98.0);
+                  final cardGap = isTabletLandscape
+                      ? 4.0
+                      : isTabletPortrait
+                      ? 6.0
+                      : (veryCompact ? 5.0 : 6.0);
+                  final sectionGap = isTabletLandscape
+                      ? 6.0
+                      : isTabletPortrait
+                      ? 8.0
+                      : (veryCompact ? 7.0 : 8.0);
+                  final scrollBottomPadding = isTabletLandscape
+                      ? 92.0
+                      : isTabletPortrait
+                      ? 148.0
+                      : (veryCompact ? 118.0 : 136.0);
                   final roleCardWidth = math.min(
                     392.0,
                     constraints.maxWidth * (narrow ? 0.85 : 0.8),
@@ -2329,9 +4721,10 @@ class RoleEntryPage extends StatelessWidget {
                           horizontal: contentHorizontalPadding,
                         ),
                         child: Stack(
+                          clipBehavior: Clip.none,
                           children: [
                             Positioned(
-                              left: 0,
+                              left: logoLeft,
                               top: logoTop,
                               child: SizedBox(
                                 width: logoWidth,
@@ -2357,7 +4750,7 @@ class RoleEntryPage extends StatelessWidget {
                               ),
                             ),
                             Positioned(
-                              right: 0,
+                              right: languageRight,
                               top: languageTop,
                               child: _languageSelectorPill(),
                             ),
@@ -2365,7 +4758,7 @@ class RoleEntryPage extends StatelessWidget {
                               top: contentTop,
                               child: SingleChildScrollView(
                                 padding: EdgeInsets.only(
-                                  bottom: veryCompact ? 118 : 136,
+                                  bottom: scrollBottomPadding,
                                 ),
                                 child: Column(
                                   children: [
@@ -2577,8 +4970,37 @@ class ChauffeurLoginPage extends StatefulWidget {
   State<ChauffeurLoginPage> createState() => _ChauffeurLoginPageState();
 }
 
+class _BackendDriverLoginResult {
+  const _BackendDriverLoginResult({
+    required this.tenantId,
+    required this.companyId,
+    required this.driverId,
+    required this.driverName,
+    required this.companyDisplayName,
+    required this.assignedVehicleId,
+    required this.driverPhotoUrl,
+    required this.companyLogoUrl,
+    required this.vehiclePhotoUrl,
+    required this.driverSessionToken,
+    required this.expiresInSeconds,
+  });
+
+  final String tenantId;
+  final String companyId;
+  final String driverId;
+  final String driverName;
+  final String companyDisplayName;
+  final String assignedVehicleId;
+  final String driverPhotoUrl;
+  final String companyLogoUrl;
+  final String vehiclePhotoUrl;
+  final String driverSessionToken;
+  final int? expiresInSeconds;
+}
+
 class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   final _formKey = GlobalKey<FormState>();
+  final _companyCtrl = TextEditingController();
   final _idCtrl = TextEditingController();
   bool _busy = false;
   String? _lookupError;
@@ -2593,6 +5015,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   @override
   void initState() {
     super.initState();
+    _companyCtrl.addListener(() {
+      if (_lookupError != null) setState(() => _lookupError = null);
+    });
     _idCtrl.addListener(() {
       if (_lookupError != null) setState(() => _lookupError = null);
     });
@@ -2600,6 +5025,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
 
   @override
   void dispose() {
+    _companyCtrl.dispose();
     _idCtrl.dispose();
     super.dispose();
   }
@@ -2609,47 +5035,719 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    final activeCompanyId =
-        companyProfileNotifier.value?.companyId.trim().isNotEmpty == true
-        ? companyProfileNotifier.value!.companyId.trim()
-        : (activeCompanySessionNotifier.value?.companyId.trim().isNotEmpty ==
-                  true
-              ? activeCompanySessionNotifier.value!.companyId.trim()
-              : '');
-    final drivers = activeCompanyId.isNotEmpty
-        ? driversNotifier.value
-              .where(
-                (driver) => (driver.companyId?.trim() ?? '') == activeCompanyId,
-              )
-              .toList(growable: false)
-        // Temporary compatibility: if no active company is resolved yet,
-        // keep legacy/dev login behavior until company session is mandatory.
-        : driversNotifier.value;
-    final match = DriverSessionStore.instance.findDriverByEnteredId(
-      drivers,
-      _idCtrl.text,
+    final enteredCompanyCode = _normalizeCompanyCode(_companyCtrl.text);
+    final enteredDriverCode = _idCtrl.text.trim();
+    final backendLogin = await _loginDriverWithBackend(
+      companyCode: enteredCompanyCode,
+      driverCode: enteredDriverCode,
     );
-    if (match == null) {
-      debugPrint('[DRIVER_LOGIN][FAIL] reason=not_found');
+    if (backendLogin != null) {
+      await DriverSessionStore.instance.saveBackendDriverLoginSession(
+        tenantId: backendLogin.tenantId,
+        companyId: backendLogin.companyId,
+        driverId: backendLogin.driverId,
+        driverName: backendLogin.driverName,
+        companyDisplayName: backendLogin.companyDisplayName,
+        assignedVehicleId: backendLogin.assignedVehicleId,
+        driverPhotoUrl: backendLogin.driverPhotoUrl,
+        companyLogoUrl: backendLogin.companyLogoUrl,
+        vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
+        driverSessionToken: backendLogin.driverSessionToken,
+        expiresInSeconds: backendLogin.expiresInSeconds,
+      );
+      debugPrint(
+        '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(backendLogin.tenantId)} company=${_maskLoginCode(backendLogin.companyId)} driver=${_maskLoginCode(backendLogin.driverId)}',
+      );
+      debugPrint(
+        '[DRIVER_LOGIN][OK] source=backend driver=${_maskLoginCode(backendLogin.driverId)}',
+      );
+      if (!mounted) return;
+      setState(() => _busy = false);
+      setAppRole(AppRole.driver);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DriverHomePage()),
+      );
+      return;
+    }
+    debugPrint('[DRIVER_LOGIN][FALLBACK_LOCAL] reason=backend_failed');
+    final companyScope = _findCompanyScopeForDriverLogin(
+      enteredCompanyCode: _companyCtrl.text,
+      drivers: driversNotifier.value,
+    );
+    debugPrint(
+      '[DRIVER_LOGIN][COMPANY_LOOKUP] entered=${_maskLoginCode(_companyCtrl.text)} active_company=${companyScope.activeCompanyMasked} match=${companyScope.reason}',
+    );
+    if (companyScope.companyId == null) {
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=company_not_found');
       if (mounted) {
         setState(() {
           _busy = false;
           _lookupError = _t(
-            nl: 'Geen actieve chauffeur gevonden met deze ID.',
-            en: 'No active driver found with this ID.',
-            fr: 'Aucun chauffeur actif trouvé avec cet ID.',
-            es: 'No se encontró ningún conductor activo con este ID.',
+            nl: 'Bedrijf niet gevonden. Controleer de bedrijfscode.',
+            en: 'Company not found. Check the company ID.',
+            fr: 'Entreprise introuvable. Vérifiez le code entreprise.',
+            es: 'Empresa no encontrada. Comprueba el código de empresa.',
           );
         });
       }
       return;
     }
+    final activeCompanyId = companyScope.companyId!;
+    final lookup = _findLocalDriverForLogin(
+      entered: _idCtrl.text,
+      activeCompanyId: activeCompanyId,
+      drivers: driversNotifier.value,
+    );
+    debugPrint(
+      '[DRIVER_LOGIN][LOOKUP] entered=${_maskLoginCode(_idCtrl.text)} drivers_total=${driversNotifier.value.length} active_company=${activeCompanyId.isEmpty ? "none" : _maskLoginCode(activeCompanyId)} candidates=${lookup.visibleCandidates} match=${lookup.match == null ? "none" : lookup.reason}',
+    );
+    if (lookup.match == null) {
+      debugPrint('[DRIVER_LOGIN][FAIL] reason=driver_not_found');
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _lookupError = _t(
+            nl: 'Geen actieve chauffeur gevonden met deze chauffeurcode.',
+            en: 'No active driver found with this driver code.',
+            fr: 'Aucun chauffeur actif trouvé avec ce code.',
+            es: 'No se encontró ningún conductor activo con este código.',
+          );
+        });
+      }
+      return;
+    }
+    final selectedDriver = lookup.match!;
+    var normalizedMatch = _driverWithNormalizedLoginCode(
+      selectedDriver,
+      enteredCode: _idCtrl.text,
+    );
+    final shouldMigrateLegacyToScope =
+        lookup.reason == 'legacy_employee_code' ||
+        lookup.reason == 'legacy_internal_id';
+    if (shouldMigrateLegacyToScope && activeCompanyId.isNotEmpty) {
+      normalizedMatch = normalizedMatch.copyWith(companyId: activeCompanyId);
+    }
+    if (_driverChangedForLoginMigration(selectedDriver, normalizedMatch)) {
+      updateDriver(selectedDriver.id, normalizedMatch);
+      debugPrint(
+        '[DRIVER_LOGIN][MIGRATE] driver=${_maskLoginCode(selectedDriver.id)} company=${_maskLoginCode(activeCompanyId)} code=${_maskLoginCode(normalizedMatch.employeeNumber)} reason=${lookup.reason}',
+      );
+    }
     final prev = await DriverSessionStore.instance.load();
     await DriverSessionStore.instance.saveFromDriverProfile(
-      match,
+      normalizedMatch,
       previous: prev,
     );
-    DriverSessionStore.instance.logOk(match.id);
+    DriverSessionStore.instance.logOk(normalizedMatch.id);
+    debugPrint(
+      '[DRIVER_LOGIN][OK] driverId=${_maskLoginCode(normalizedMatch.id)}',
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    setAppRole(AppRole.driver);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+    );
+  }
+
+  Future<_BackendDriverLoginResult?> _loginDriverWithBackend({
+    required String companyCode,
+    required String driverCode,
+  }) async {
+    final normalizedCompanyCode = _normalizeCompanyCode(companyCode);
+    final normalizedDriverCode = driverCode.trim();
+    if (normalizedCompanyCode.isEmpty || normalizedDriverCode.isEmpty) {
+      return null;
+    }
+    debugPrint(
+      '[DRIVER_LOGIN][BACKEND_REQ] company=${_maskLoginCode(normalizedCompanyCode)}',
+    );
+    final uri = Uri.parse('${appConfig.bookingBaseUrl}/public/driver/login');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'company_code': normalizedCompanyCode,
+              'driver_code': normalizedDriverCode,
+              'companyCode': normalizedCompanyCode,
+              'driverCode': normalizedDriverCode,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = (body['role'] ?? '').toString().trim().toLowerCase();
+      final tenantId = (body['tenant_id'] ?? '').toString().trim();
+      final companyId = (body['company_id'] ?? '').toString().trim();
+      final driverId = (body['driver_id'] ?? '').toString().trim();
+      final driverName = (body['driver_name'] ?? '').toString().trim();
+      final companyDisplayName = (body['company_display_name'] ?? '')
+          .toString()
+          .trim();
+      final assignedVehicleId =
+          (body['assigned_vehicle_id'] ??
+                  body['assignedVehicleId'] ??
+                  body['vehicle_id'] ??
+                  body['vehicleId'] ??
+                  '')
+              .toString()
+              .trim();
+      final driverPhotoUrl =
+          (body['driver_photo_url'] ??
+                  body['driverPhotoUrl'] ??
+                  body['public_portrait_url'] ??
+                  body['publicPortraitUrl'] ??
+                  body['profile_photo_url'] ??
+                  body['profilePhotoUrl'] ??
+                  '')
+              .toString()
+              .trim();
+      final companyLogoUrl =
+          (body['company_logo_url'] ??
+                  body['companyLogoUrl'] ??
+                  body['logo_url'] ??
+                  body['logoUrl'] ??
+                  '')
+              .toString()
+              .trim();
+      final vehiclePhotoUrl =
+          (body['vehicle_photo_url'] ??
+                  body['vehiclePhotoUrl'] ??
+                  body['public_photo_url'] ??
+                  body['publicPhotoUrl'] ??
+                  body['photo_url'] ??
+                  body['photoUrl'] ??
+                  '')
+              .toString()
+              .trim();
+      final driverSessionToken =
+          (body['driver_session_token'] ?? body['driverSessionToken'] ?? '')
+              .toString()
+              .trim();
+      final expiresInRaw = (body['expires_in'] ?? body['expiresIn'] ?? '')
+          .toString()
+          .trim();
+      final expiresInSeconds = int.tryParse(expiresInRaw);
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          ok &&
+          role == 'driver' &&
+          tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          driverId.isNotEmpty) {
+        debugPrint(
+          '[DRIVER_LOGIN][BACKEND_OK] driver=${_maskLoginCode(driverId)}',
+        );
+        return _BackendDriverLoginResult(
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          driverName: driverName,
+          companyDisplayName: companyDisplayName,
+          assignedVehicleId: assignedVehicleId,
+          driverPhotoUrl: driverPhotoUrl,
+          companyLogoUrl: companyLogoUrl,
+          vehiclePhotoUrl: vehiclePhotoUrl,
+          driverSessionToken: driverSessionToken,
+          expiresInSeconds: expiresInSeconds,
+        );
+      }
+      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode}');
+      return null;
+    } catch (_) {
+      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=exception');
+      return null;
+    }
+  }
+
+  ({String? companyId, String reason, String activeCompanyMasked})
+  _findCompanyScopeForDriverLogin({
+    required String enteredCompanyCode,
+    required List<DriverProfile> drivers,
+  }) {
+    final normalized = _normalizeCompanyCode(enteredCompanyCode);
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    final activeCompany = fromProfile.isNotEmpty
+        ? fromProfile
+        : (fromSession.isNotEmpty ? fromSession : '');
+
+    if (normalized.isEmpty) {
+      return (
+        companyId: null,
+        reason: 'empty_input',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    bool matches(String candidate) =>
+        candidate.trim().isNotEmpty &&
+        _sameCode(_normalizeCompanyCode(candidate), normalized);
+
+    if (matches(fromProfile)) {
+      return (
+        companyId: fromProfile,
+        reason: 'active_profile_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+    if (matches(fromSession)) {
+      return (
+        companyId: fromSession,
+        reason: 'active_session_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    final knownDriverCompanies = drivers
+        .map((d) => d.companyId?.trim() ?? '')
+        .where((c) => c.isNotEmpty)
+        .toSet();
+    for (final company in knownDriverCompanies) {
+      if (!matches(company)) continue;
+      return (
+        companyId: company,
+        reason: 'driver_scope_match',
+        activeCompanyMasked: _maskLoginCode(activeCompany),
+      );
+    }
+
+    return (
+      companyId: null,
+      reason: 'company_not_found',
+      activeCompanyMasked: _maskLoginCode(activeCompany),
+    );
+  }
+
+  String _normalizeCompanyCode(String raw) {
+    var value = raw.trim().toUpperCase();
+    value = value.replaceAll(RegExp(r'\s+'), '-');
+    value = value.replaceAll(RegExp(r'-+'), '-');
+    return value;
+  }
+
+  String _normalizeLoginCode(String raw) => raw.trim().toLowerCase();
+
+  String _maskLoginCode(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return 'empty';
+    if (t.length <= 2) return '*' * t.length;
+    return '${t[0]}***${t[t.length - 1]}(len=${t.length})';
+  }
+
+  bool _sameCode(String a, String b) {
+    final na = _normalizeLoginCode(a);
+    final nb = _normalizeLoginCode(b);
+    if (na.isEmpty || nb.isEmpty) return false;
+    return na == nb;
+  }
+
+  bool _driverBelongsToActiveCompany(
+    DriverProfile driver,
+    String activeCompanyId,
+  ) {
+    final company = driver.companyId?.trim() ?? '';
+    if (activeCompanyId.isEmpty) return company.isEmpty;
+    return company.isNotEmpty && company == activeCompanyId;
+  }
+
+  bool _driverIsLegacyCompanyless(DriverProfile driver) =>
+      (driver.companyId?.trim() ?? '').isEmpty;
+
+  ({DriverProfile? match, String reason, int visibleCandidates})
+  _findLocalDriverForLogin({
+    required String entered,
+    required String activeCompanyId,
+    required List<DriverProfile> drivers,
+  }) {
+    final normalized = _normalizeLoginCode(entered);
+    if (normalized.isEmpty) {
+      return (match: null, reason: 'empty_input', visibleCandidates: 0);
+    }
+    if (drivers.isEmpty) {
+      return (match: null, reason: 'no_drivers_loaded', visibleCandidates: 0);
+    }
+
+    final eligible = drivers
+        .where((driver) {
+          if (!driver.isActive) return false;
+          final company = driver.companyId?.trim() ?? '';
+          if (company.isEmpty) return true;
+          if (activeCompanyId.isEmpty) return false;
+          return company == activeCompanyId;
+        })
+        .toList(growable: false);
+    if (eligible.isEmpty) {
+      return (match: null, reason: 'scope_mismatch', visibleCandidates: 0);
+    }
+
+    for (final driver in eligible) {
+      if (_driverBelongsToActiveCompany(driver, activeCompanyId) &&
+          _sameCode(driver.employeeNumber, normalized)) {
+        return (
+          match: driver,
+          reason: 'scoped_employee_code',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverIsLegacyCompanyless(driver) &&
+          _sameCode(driver.employeeNumber, normalized)) {
+        return (
+          match: driver,
+          reason: 'legacy_employee_code',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverBelongsToActiveCompany(driver, activeCompanyId) &&
+          _sameCode(driver.id, normalized)) {
+        return (
+          match: driver,
+          reason: 'scoped_internal_id',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    for (final driver in eligible) {
+      if (_driverIsLegacyCompanyless(driver) &&
+          _sameCode(driver.id, normalized)) {
+        return (
+          match: driver,
+          reason: 'legacy_internal_id',
+          visibleCandidates: eligible.length,
+        );
+      }
+    }
+    return (
+      match: null,
+      reason: 'no_code_match',
+      visibleCandidates: eligible.length,
+    );
+  }
+
+  bool _driverChangedForLoginMigration(
+    DriverProfile before,
+    DriverProfile after,
+  ) {
+    return before.employeeNumber.trim() != after.employeeNumber.trim() ||
+        (before.companyId?.trim() ?? '') != (after.companyId?.trim() ?? '');
+  }
+
+  DriverProfile _driverWithNormalizedLoginCode(
+    DriverProfile driver, {
+    String enteredCode = '',
+  }) {
+    final code = driver.employeeNumber.trim();
+    if (code.isNotEmpty) return driver;
+    final fallbackId = driver.id.trim();
+    final fallbackInput = enteredCode.trim();
+    final resolved = fallbackId.isNotEmpty ? fallbackId : fallbackInput;
+    if (resolved.isEmpty) return driver;
+    return driver.copyWith(employeeNumber: resolved);
+  }
+
+  String _driverPairingInvalidText() {
+    return _t(
+      nl: 'Chauffeurcode ongeldig of verlopen',
+      en: 'Driver code is invalid or expired',
+      fr: 'Le code chauffeur est invalide ou expiré',
+      es: 'El código de conductor no es válido o ha caducado',
+    );
+  }
+
+  Future<Map<String, dynamic>> _verifyDriverPairingCode({
+    required String companyCode,
+    required String pairingCode,
+  }) async {
+    final uri = Uri.parse('$kBookingBaseUrl/public/company/driver-link/verify');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, dynamic>{
+              'company_code': companyCode,
+              'pairing_code': pairingCode,
+              'device_label': 'Tablet chauffeur',
+              'device_type': 'tablet',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final body = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final ok = body['ok'] == true;
+      final role = (body['role'] ?? '').toString().trim().toLowerCase();
+      if (response.statusCode == 200 && ok && role == 'driver') {
+        return <String, dynamic>{'ok': true, 'payload': body};
+      }
+      return <String, dynamic>{'ok': false};
+    } catch (_) {
+      return <String, dynamic>{'ok': false};
+    }
+  }
+
+  Future<Map<String, String>?> _showDriverPairingSheet(BuildContext context) {
+    final companyCtrl = TextEditingController();
+    final codeCtrl = TextEditingController();
+    return showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        String? errorText;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                0,
+                12,
+                MediaQuery.of(context).viewInsets.bottom + 12,
+              ),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B0B0B),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: const Color(0xFFE5B641),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFE5B641).withOpacity(0.16),
+                      blurRadius: 16,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Chauffeurcode',
+                        en: 'Driver code',
+                        fr: 'Code chauffeur',
+                        es: 'Código de conductor',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: companyCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Bedrijfs-ID',
+                          en: 'Company ID',
+                          fr: 'ID d’entreprise',
+                          es: 'ID de empresa',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF151515),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setSheetState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: codeCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Chauffeurcode',
+                          en: 'Driver code',
+                          fr: 'Code chauffeur',
+                          es: 'Código de conductor',
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF151515),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (errorText != null) {
+                          setSheetState(() => errorText = null);
+                        }
+                      },
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(
+                          color: Color(0xFFFF8A8A),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          child: Text(
+                            _t(
+                              nl: 'Annuleren',
+                              en: 'Cancel',
+                              fr: 'Annuler',
+                              es: 'Cancelar',
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () {
+                            final companyCode = _normalizeCompanyCode(
+                              companyCtrl.text,
+                            );
+                            final pairingCode = codeCtrl.text.trim();
+                            if (companyCode.isEmpty || pairingCode.isEmpty) {
+                              setSheetState(
+                                () => errorText = _driverPairingInvalidText(),
+                              );
+                              return;
+                            }
+                            Navigator.of(sheetContext).pop(<String, String>{
+                              'company_code': companyCode,
+                              'pairing_code': pairingCode,
+                            });
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFE5B641),
+                            foregroundColor: Colors.black,
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Code koppelen',
+                              en: 'Link code',
+                              fr: 'Lier le code',
+                              es: 'Vincular código',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      companyCtrl.dispose();
+      codeCtrl.dispose();
+    });
+  }
+
+  Future<void> _submitPairingCodeFlow() async {
+    if (_busy) return;
+    final formData = await _showDriverPairingSheet(context);
+    if (!mounted || formData == null) return;
+    setState(() {
+      _busy = true;
+      _lookupError = null;
+    });
+    final response = await _verifyDriverPairingCode(
+      companyCode: formData['company_code'] ?? '',
+      pairingCode: formData['pairing_code'] ?? '',
+    );
+    if (!mounted) return;
+    if (response['ok'] != true) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final payload = response['payload'] is Map
+        ? Map<String, dynamic>.from(response['payload'] as Map)
+        : <String, dynamic>{};
+    final tenantId = (payload['tenant_id'] ?? '').toString().trim();
+    final companyId = (payload['company_id'] ?? '').toString().trim();
+    final companyCode = (payload['company_code'] ?? '').toString().trim();
+    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
+    final ok = payload['ok'] == true;
+    final driverMap = payload['driver'] is Map
+        ? Map<String, dynamic>.from(payload['driver'] as Map)
+        : <String, dynamic>{};
+    final driverId = (driverMap['driver_id'] ?? '').toString().trim();
+    final driverName = (driverMap['driver_name'] ?? '').toString().trim();
+    final employeeNumber = (driverMap['employee_number'] ?? '')
+        .toString()
+        .trim();
+    final assignedVehicleId =
+        (driverMap['assigned_vehicle_id'] ??
+                driverMap['assignedVehicleId'] ??
+                '')
+            .toString()
+            .trim();
+    if (!ok ||
+        role != 'driver' ||
+        tenantId.isEmpty ||
+        companyId.isEmpty ||
+        companyCode.isEmpty ||
+        driverId.isEmpty ||
+        employeeNumber.isEmpty) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final issuedAt = DateTime.tryParse(
+      (payload['issued_at'] ?? '').toString().trim(),
+    );
+    final expiresAt = DateTime.tryParse(
+      (payload['expires_at'] ?? '').toString().trim(),
+    );
+    await DriverSessionStore.instance.saveVerifiedDriverPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companyCode,
+      driverId: driverId,
+      driverName: driverName,
+      employeeNumber: employeeNumber,
+      assignedVehicleId: assignedVehicleId,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+    );
     if (!mounted) return;
     setState(() => _busy = false);
     setAppRole(AppRole.driver);
@@ -2711,10 +5809,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                       children: [
                         Text(
                           _t(
-                            nl: 'Vul je chauffeur-ID in om je ritten te openen.',
-                            en: 'Enter your driver ID to open your rides.',
-                            fr: 'Saisissez votre ID chauffeur pour ouvrir vos courses.',
-                            es: 'Introduce tu ID de conductor para abrir tus viajes.',
+                            nl: 'Vul de bedrijfscode en je chauffeurcode in. Werkt ook op een nieuw toestel zodra de chauffeur door het bedrijf is aangemaakt.',
+                            en: 'Enter the company ID and your driver code. This also works on a new device once the driver has been created by the company.',
+                            fr: 'Entrez le code entreprise et votre code chauffeur. Cela fonctionne aussi sur un nouvel appareil dès que le chauffeur est créé par l’entreprise.',
+                            es: 'Introduce el código de empresa y tu código de conductor. Esto también funciona en un dispositivo nuevo cuando la empresa ya creó al conductor.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.85),
@@ -2723,19 +5821,17 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
-                          controller: _idCtrl,
+                          controller: _companyCtrl,
                           enabled: !_busy,
                           style: const TextStyle(color: Colors.white),
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) {
-                            if (!_busy) unawaited(_submit());
-                          },
+                          textCapitalization: TextCapitalization.characters,
+                          textInputAction: TextInputAction.next,
                           decoration: InputDecoration(
                             labelText: _t(
-                              nl: 'Chauffeur-ID',
-                              en: 'Driver ID',
-                              fr: 'ID chauffeur',
-                              es: 'ID de conductor',
+                              nl: 'Bedrijfscode',
+                              en: 'Company ID',
+                              fr: 'Code entreprise',
+                              es: 'Código de empresa',
                             ),
                             labelStyle: TextStyle(
                               color: Colors.white.withOpacity(0.8),
@@ -2754,10 +5850,52 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           validator: (v) {
                             if ((v ?? '').trim().isEmpty) {
                               return _t(
-                                nl: 'Vul je chauffeur-ID in.',
-                                en: 'Enter your driver ID.',
-                                fr: 'Saisissez votre ID chauffeur.',
-                                es: 'Introduce tu ID de conductor.',
+                                nl: 'Vul je bedrijfscode in.',
+                                en: 'Enter your company ID.',
+                                fr: 'Saisissez votre code entreprise.',
+                                es: 'Introduce tu código de empresa.',
+                              );
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _idCtrl,
+                          enabled: !_busy,
+                          style: const TextStyle(color: Colors.white),
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) {
+                            if (!_busy) unawaited(_submit());
+                          },
+                          decoration: InputDecoration(
+                            labelText: _t(
+                              nl: 'Chauffeurcode',
+                              en: 'Driver code',
+                              fr: 'Code chauffeur',
+                              es: 'Código de conductor',
+                            ),
+                            labelStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF141B2F),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 14,
+                            ),
+                          ),
+                          validator: (v) {
+                            if ((v ?? '').trim().isEmpty) {
+                              return _t(
+                                nl: 'Vul je chauffeurcode in.',
+                                en: 'Enter your driver code.',
+                                fr: 'Saisissez votre code chauffeur.',
+                                es: 'Introduce tu código de conductor.',
                               );
                             }
                             return null;
@@ -2799,15 +5937,43 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                                 )
                               : Text(
                                   _t(
-                                    nl: 'Inloggen',
-                                    en: 'Log in',
-                                    fr: 'Se connecter',
-                                    es: 'Iniciar sesión',
+                                    nl: 'Inloggen als chauffeur',
+                                    en: 'Log in as driver',
+                                    fr: 'Se connecter comme chauffeur',
+                                    es: 'Iniciar sesión como conductor',
                                   ),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton(
+                          onPressed: _busy
+                              ? null
+                              : () {
+                                  unawaited(_submitPairingCodeFlow());
+                                },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFE5B641),
+                            side: const BorderSide(
+                              color: Color(0xFFE5B641),
+                              width: 1.2,
+                            ),
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            _t(
+                              nl: 'Ik heb een chauffeurcode',
+                              en: 'I have a driver code',
+                              fr: 'J’ai un code chauffeur',
+                              es: 'Tengo un código de conductor',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
                       ],
                     ),
@@ -2866,14 +6032,23 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+    final session = await CustomerSessionStore.instance.loadValidSession();
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
+      sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
+    final synced = await _syncCustomerProfileToBackendBestEffort(
+      reason: 'customer_onboarding_save',
+      localProfile: saved,
+    );
+    if (synced != null) {
+      _setCachedCustomerProfile(synced);
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     await _goToCustomerHome();
@@ -3379,19 +6554,31 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
 
   Future<void> _loadProfile() async {
     final profile = await CustomerProfileStore.instance.load();
-    if (!mounted || profile == null) return;
-    _nameCtrl.text = profile.name;
-    _postcodeCtrl.text = profile.preferredPostcode;
-    _phoneCtrl.text = profile.phone;
-    _emailCtrl.text = profile.email;
-    _companyNameCtrl.text = profile.companyName;
-    _vatNumberCtrl.text = profile.vatNumber;
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final sessionPhone = normalizeCustomerSessionPhoneE164(
+      session?.phoneE164 ?? '',
+    );
+    final profilePhone = (profile?.phone ?? '').trim();
+    final phoneForForm = profilePhone.isNotEmpty ? profilePhone : sessionPhone;
+    debugPrint(
+      '[CUSTOMER_PROFILE][PHONE_READY_FOR_FORM] source=${profilePhone.isNotEmpty ? "profile" : (sessionPhone.isNotEmpty ? "session" : "empty")} ready=${phoneForForm.isNotEmpty}',
+    );
+    if (!mounted) return;
+    if (profile != null) {
+      _nameCtrl.text = profile.name;
+      _postcodeCtrl.text = profile.preferredPostcode;
+      _emailCtrl.text = profile.email;
+      _companyNameCtrl.text = profile.companyName;
+      _vatNumberCtrl.text = profile.vatNumber;
+    }
+    _phoneCtrl.text = phoneForForm;
   }
 
   Future<void> _save() async {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+    final session = await CustomerSessionStore.instance.loadValidSession();
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       preferredPostcode: _postcodeCtrl.text,
@@ -3399,8 +6586,16 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
+      sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
+    final synced = await _syncCustomerProfileToBackendBestEffort(
+      reason: 'customer_profile_edit_save',
+      localProfile: saved,
+    );
+    if (synced != null) {
+      _setCachedCustomerProfile(synced);
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3998,6 +7193,533 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  String _normalizePublicBookingCompanyCode(String raw) {
+    return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _isValidPublicBookingCompanyCode(String value) {
+    final code = _normalizePublicBookingCompanyCode(value);
+    if (code.isEmpty) return false;
+    return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+  }
+
+  bool _isGeneratedSequentialPublicCompanyCode(String value) {
+    final code = _normalizePublicBookingCompanyCode(value);
+    return RegExp(r'^FLX-[0-9]{5,12}$').hasMatch(code);
+  }
+
+  String? _resolvePublicBookingCompanyCodeForDashboard() {
+    String? readFirstValidFromMap(Map<String, dynamic>? map) {
+      if (map == null) return null;
+      for (final key in const <String>[
+        'public_company_code',
+        'publicCompanyCode',
+        'company_code',
+        'companyCode',
+      ]) {
+        final normalized = _normalizePublicBookingCompanyCode(
+          (map[key] ?? '').toString(),
+        );
+        if (_isValidPublicBookingCompanyCode(normalized)) return normalized;
+      }
+      return null;
+    }
+
+    final backendMap = localBackendBusinessProfileNotifier.value?.toJson();
+    final profileMap = companyProfileNotifier.value?.toJson();
+    final sessionCode = _normalizePublicBookingCompanyCode(
+      activeCompanySessionNotifier.value?.companyCode ?? '',
+    );
+
+    final candidates = <String>[];
+    if (backendMap is Map<String, dynamic>) {
+      final backendCode = readFirstValidFromMap(backendMap);
+      if (backendCode != null) candidates.add(backendCode);
+    }
+    if (profileMap is Map<String, dynamic>) {
+      final profileCode = readFirstValidFromMap(profileMap);
+      if (profileCode != null) candidates.add(profileCode);
+    }
+    if (_isValidPublicBookingCompanyCode(sessionCode)) {
+      candidates.add(sessionCode);
+    }
+
+    for (final code in candidates) {
+      if (_isGeneratedSequentialPublicCompanyCode(code)) return code;
+    }
+    return candidates.isNotEmpty ? candidates.first : null;
+  }
+
+  String _preparedPublicBookingUrlForDashboard(String companyCode) {
+    final safeCompanyCode = _normalizePublicBookingCompanyCode(companyCode);
+    final base = kPublicBookingBaseUrl.trim().isEmpty
+        ? 'https://fluxidi.com'
+        : kPublicBookingBaseUrl.trim();
+    final encodedCompanyCode = Uri.encodeQueryComponent(safeCompanyCode);
+    try {
+      final uri = Uri.parse(base);
+      final normalizedPath = uri.path.trim().isEmpty || uri.path == '/'
+          ? '/book'
+          : (uri.path.endsWith('/book') ? uri.path : '${uri.path}/book');
+      final nextQuery = Map<String, String>.from(uri.queryParameters);
+      nextQuery['company_code'] = safeCompanyCode;
+      return uri
+          .replace(path: normalizedPath, queryParameters: nextQuery)
+          .toString();
+    } catch (_) {
+      return '$base/book?company_code=$encodedCompanyCode';
+    }
+  }
+
+  Future<void> _sharePublicBookingQrCardImage({
+    required BuildContext context,
+    required GlobalKey repaintBoundaryKey,
+    required String publicCompanyCode,
+    required String publicBookingUrl,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+    final shareMessage = _t(
+      nl: 'Boek je rit eenvoudig via deze QR-code of link.',
+      en: 'Book your ride easily using this QR code or link.',
+      fr: 'Réservez facilement votre trajet via ce code QR ou ce lien.',
+      es: 'Reserva tu viaje fácilmente con este código QR o enlace.',
+    );
+    final errorMessage = _t(
+      nl: 'QR-afbeelding delen mislukt. Probeer opnieuw.',
+      en: 'Failed to share QR image. Please try again.',
+      fr: 'Le partage de l’image QR a échoué. Réessayez.',
+      es: 'No se pudo compartir la imagen QR. Inténtalo de nuevo.',
+    );
+
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      final renderObject = repaintBoundaryKey.currentContext
+          ?.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) {
+        messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
+        return;
+      }
+      final image = await renderObject.toImage(
+        pixelRatio: math.max(2.0, math.min(devicePixelRatio * 2, 3.0)),
+      );
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
+        return;
+      }
+      final bytes = Uint8List.fromList(byteData.buffer.asUint8List());
+      final tempDir = await getTemporaryDirectory();
+      final fileCode = publicCompanyCode
+          .replaceAll(RegExp(r'[^A-Z0-9-]'), '')
+          .replaceAll('-', '');
+      final filePath =
+          '${tempDir.path}${Platform.pathSeparator}fluxidi_booking_qr_$fileCode.png';
+      final file = File(filePath);
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(
+        <XFile>[XFile(file.path, mimeType: 'image/png')],
+        text: shareMessage,
+        subject: 'Fluxidi QR',
+      );
+    } catch (_) {
+      messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
+    }
+  }
+
+  Future<void> _showPublicBookingShareQuickAccess(BuildContext context) async {
+    final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
+    if (publicCompanyCode == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Publieke bedrijfscode ontbreekt. Verifieer je bedrijf eerst via Bedrijfsinstellingen.',
+              en: 'Public company code is missing. Verify your company first via Business Settings.',
+              fr: 'Le code entreprise public est manquant. Vérifiez d’abord votre entreprise via les Paramètres entreprise.',
+              es: 'Falta el código público de empresa. Verifica primero tu empresa en Ajustes de empresa.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final publicBookingUrl = _preparedPublicBookingUrlForDashboard(
+      publicCompanyCode,
+    );
+    final qrCardBoundaryKey = GlobalKey();
+    final profileName = (companyProfileNotifier.value?.companyName ?? '')
+        .trim();
+    final qrCardTitle = profileName.isNotEmpty ? profileName : 'Fluxidi';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final maxQrSize = math.min(
+          180.0,
+          MediaQuery.of(sheetContext).size.width - 96,
+        );
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F0F0F),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.38)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.35),
+                    blurRadius: 22,
+                    spreadRadius: 0.5,
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Publieke boekingslink',
+                        en: 'Public booking link',
+                        fr: 'Lien de réservation public',
+                        es: 'Enlace público de reserva',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _t(
+                        nl: 'Deel deze link of QR-code met klanten zodat zij rechtstreeks kunnen boeken.',
+                        en: 'Share this link or QR code with customers so they can book directly.',
+                        fr: 'Partagez ce lien ou ce code QR avec les clients afin qu’ils puissent réserver directement.',
+                        es: 'Comparte este enlace o código QR con los clientes para que puedan reservar directamente.',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.72),
+                        fontSize: 12.5,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0B0B0B),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: const Color(0xFFD4AF4A).withOpacity(0.45),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(
+                              nl: 'Publieke bedrijfscode',
+                              en: 'Public company code',
+                              fr: 'Code entreprise public',
+                              es: 'Código público de empresa',
+                            ),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.72),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          SelectableText(
+                            publicCompanyCode,
+                            style: const TextStyle(
+                              color: Color(0xFFF0C85D),
+                              fontFamily: 'monospace',
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0B0B0B),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.16),
+                        ),
+                      ),
+                      child: SelectableText(
+                        publicBookingUrl,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontFamily: 'monospace',
+                          fontSize: 12.2,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: RepaintBoundary(
+                        key: qrCardBoundaryKey,
+                        child: Container(
+                          width: math.min(
+                            320.0,
+                            MediaQuery.of(sheetContext).size.width - 56,
+                          ),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFD4AF4A).withOpacity(0.55),
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                qrCardTitle,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF101010),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _t(
+                                  nl: 'Scan om een rit te boeken',
+                                  en: 'Scan to book a ride',
+                                  fr: 'Scannez pour réserver une course',
+                                  es: 'Escanea para reservar un viaje',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF262626),
+                                  fontSize: 11.2,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              QrImageView(
+                                data: publicBookingUrl,
+                                version: QrVersions.auto,
+                                size: maxQrSize,
+                                backgroundColor: Colors.white,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                publicCompanyCode,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF101010),
+                                  fontFamily: 'monospace',
+                                  fontSize: 12.4,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _t(
+                                  nl: 'Aangedreven door Fluxidi',
+                                  en: 'Powered by Fluxidi',
+                                  fr: 'Propulsé par Fluxidi',
+                                  es: 'Con tecnología de Fluxidi',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: const Color(
+                                    0xFF2A2A2A,
+                                  ).withOpacity(0.78),
+                                  fontSize: 10.0,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.22,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: publicCompanyCode),
+                            );
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  _t(
+                                    nl: 'Publieke bedrijfscode gekopieerd',
+                                    en: 'Public company code copied',
+                                    fr: 'Code entreprise public copié',
+                                    es: 'Código público de empresa copiado',
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.copy_outlined, size: 16),
+                          label: Text(
+                            _t(
+                              nl: 'Kopieer code',
+                              en: 'Copy code',
+                              fr: 'Copier le code',
+                              es: 'Copiar código',
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: publicBookingUrl),
+                            );
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  _t(
+                                    nl: 'Publieke boekingslink gekopieerd',
+                                    en: 'Public booking link copied',
+                                    fr: 'Lien de réservation public copié',
+                                    es: 'Enlace público de reserva copiado',
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.copy_outlined, size: 16),
+                          label: Text(
+                            _t(
+                              nl: 'Kopieer link',
+                              en: 'Copy link',
+                              fr: 'Copier le lien',
+                              es: 'Copiar enlace',
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _sharePublicBookingQrCardImage(
+                            context: context,
+                            repaintBoundaryKey: qrCardBoundaryKey,
+                            publicCompanyCode: publicCompanyCode,
+                            publicBookingUrl: publicBookingUrl,
+                          ),
+                          icon: const Icon(Icons.qr_code_2_rounded, size: 16),
+                          label: Text(
+                            _t(
+                              nl: 'Deel QR',
+                              en: 'Share QR',
+                              fr: 'Partager QR',
+                              es: 'Compartir QR',
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await Share.share(publicBookingUrl);
+                          },
+                          icon: const Icon(Icons.share_outlined, size: 16),
+                          label: Text(
+                            _t(
+                              nl: 'Delen',
+                              en: 'Share',
+                              fr: 'Partager',
+                              es: 'Compartir',
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            try {
+                              final uri = Uri.parse(publicBookingUrl);
+                              final launched = await launchUrl(
+                                uri,
+                                mode: LaunchMode.externalApplication,
+                              );
+                              if (!launched && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      _t(
+                                        nl: 'Publieke boekingslink kon niet geopend worden.',
+                                        en: 'Could not open public booking link.',
+                                        fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                        es: 'No se pudo abrir el enlace público de reserva.',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                            } catch (_) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _t(
+                                      nl: 'Publieke boekingslink kon niet geopend worden.',
+                                      en: 'Could not open public booking link.',
+                                      fr: 'Impossible d’ouvrir le lien de réservation public.',
+                                      es: 'No se pudo abrir el enlace público de reserva.',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(
+                            Icons.open_in_new_outlined,
+                            size: 16,
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Open link',
+                              en: 'Open link',
+                              fr: 'Ouvrir le lien',
+                              es: 'Abrir enlace',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _switchCompany(BuildContext context) async {
     await CompanySessionStore.instance.clearLocalCompanyState();
     if (!context.mounted) return;
@@ -4005,6 +7727,473 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
       (route) => false,
     );
+  }
+
+  String _normalizeActivationCompanyCode(String raw) {
+    var text = raw.trim().toUpperCase();
+    if (text.isEmpty) return '';
+    text = text.replaceAll(RegExp(r'\s+'), '-');
+    text = text.replaceAll(RegExp(r'[^A-Z0-9-]'), '');
+    text = text.replaceAll(RegExp(r'-+'), '-');
+    text = text.replaceAll(RegExp(r'^-+|-+$'), '');
+    return text;
+  }
+
+  bool _isValidActivationCompanyCode(String value) {
+    final code = _normalizeActivationCompanyCode(value);
+    if (code.length < 4 || code.length > 24) return false;
+    if (!RegExp(r'^[A-Z0-9-]+$').hasMatch(code)) return false;
+    if (!RegExp(r'[A-Z0-9]').hasMatch(code)) return false;
+    final parts = code.split('-').where((p) => p.trim().isNotEmpty).toList();
+    if (parts.length != 2) return false;
+    if (!RegExp(r'^[A-Z0-9]{2,10}$').hasMatch(parts[0])) return false;
+    if (!RegExp(r'^[A-Z0-9]{2,12}$').hasMatch(parts[1])) return false;
+    return true;
+  }
+
+  ({String tenantId, String companyId})?
+  _activeCompanyScopeForPairingCodeCreate() {
+    final sessionCompany =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompany.isNotEmpty) {
+      return (tenantId: sessionCompany, companyId: sessionCompany);
+    }
+    final profileCompany = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (profileCompany.isNotEmpty) {
+      return (tenantId: profileCompany, companyId: profileCompany);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return null;
+  }
+
+  String? _activeCompanyCodeForPairingCodeCreate() {
+    final canonicalCode = _resolvePublicBookingCompanyCodeForDashboard();
+    final normalized = _normalizeActivationCompanyCode(canonicalCode ?? '');
+    if (_isValidActivationCompanyCode(normalized)) return normalized;
+    return null;
+  }
+
+  String? _publicCompanyCodeFromBootstrapPayload(Map<String, dynamic> payload) {
+    String readTopLevel() {
+      return _normalizeActivationCompanyCode(
+        (payload['public_company_code'] ??
+                payload['publicCompanyCode'] ??
+                payload['company_code'] ??
+                payload['companyCode'] ??
+                '')
+            .toString(),
+      );
+    }
+
+    String readCompanyNode() {
+      final companyNode = payload['company'];
+      if (companyNode is! Map) return '';
+      final map = Map<String, dynamic>.from(companyNode);
+      return _normalizeActivationCompanyCode(
+        (map['public_company_code'] ??
+                map['publicCompanyCode'] ??
+                map['company_code'] ??
+                map['companyCode'] ??
+                map['code'] ??
+                '')
+            .toString(),
+      );
+    }
+
+    String readBusinessProfileNode() {
+      final node = payload['business_profile'];
+      if (node is! Map) return '';
+      final map = Map<String, dynamic>.from(node);
+      return _normalizeActivationCompanyCode(
+        (map['public_company_code'] ??
+                map['publicCompanyCode'] ??
+                map['company_code'] ??
+                map['companyCode'] ??
+                '')
+            .toString(),
+      );
+    }
+
+    final fromBusinessProfile = readBusinessProfileNode();
+    if (_isValidActivationCompanyCode(fromBusinessProfile)) {
+      return fromBusinessProfile;
+    }
+    final fromCompany = readCompanyNode();
+    if (_isValidActivationCompanyCode(fromCompany)) return fromCompany;
+    final top = readTopLevel();
+    if (_isValidActivationCompanyCode(top)) return top;
+    return null;
+  }
+
+  Future<({String? companyCode, String source})>
+  _resolvePublicCompanyCodeForPairingCodeCreate() async {
+    final fromSession = _activeCompanyCodeForPairingCodeCreate();
+    if (fromSession != null) {
+      return (companyCode: fromSession, source: 'canonical');
+    }
+
+    final session = activeCompanySessionNotifier.value;
+    final token = (session?.companySessionToken ?? '').trim();
+    if (token.isEmpty) {
+      return (companyCode: null, source: 'none');
+    }
+
+    try {
+      final bootstrap = await fetchCompanyBootstrapWithToken(
+        companySessionToken: token,
+      );
+      if (bootstrap is Map<String, dynamic>) {
+        final fromBootstrap = _publicCompanyCodeFromBootstrapPayload(bootstrap);
+        if (fromBootstrap != null) {
+          if (session != null) {
+            activeCompanySessionNotifier.value = session.copyWith(
+              companyCode: fromBootstrap,
+            );
+          }
+          return (companyCode: fromBootstrap, source: 'bootstrap');
+        }
+      }
+    } catch (_) {}
+    return (companyCode: null, source: 'none');
+  }
+
+  Future<void> _showNewDeviceActivationCodeDialog(BuildContext context) async {
+    final adminToken = kAdminToken.trim();
+    if (adminToken.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Toestelkoppeling is nu niet beschikbaar.',
+              en: 'Device pairing is currently unavailable.',
+              fr: 'Le jumelage d’appareil est actuellement indisponible.',
+              es: 'La vinculación de dispositivo no está disponible actualmente.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final scope = _activeCompanyScopeForPairingCodeCreate();
+    final codeResolution =
+        await _resolvePublicCompanyCodeForPairingCodeCreate();
+    final companyCode = codeResolution.companyCode;
+    debugPrint(
+      '[PAIR_CODE_CREATE][SCOPE] has_scope=${scope != null} has_public_code=${companyCode != null} source=${codeResolution.source}',
+    );
+    if (scope == null || companyCode == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Verifieer dit bedrijf eerst voordat u nieuwe toestellen kunt koppelen.',
+              en: 'Verify this company first before pairing new devices.',
+              fr: 'Vérifiez d’abord cette entreprise avant d’associer de nouveaux appareils.',
+              es: 'Verifica primero esta empresa antes de vincular nuevos dispositivos.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.3,
+                color: kFluxidiYellow.withOpacity(0.95),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Activatiecode aanmaken...',
+                  en: 'Generating activation code...',
+                  fr: 'Génération du code d’activation...',
+                  es: 'Generando código de activación...',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    Map<String, dynamic> payload = const <String, dynamic>{};
+    int statusCode = -1;
+    try {
+      final endpoint =
+          Uri.parse('$kBookingBaseUrl/admin/company/link-code/create').replace(
+            queryParameters: <String, String>{
+              'tenant_id': scope.tenantId,
+              'company_id': scope.companyId,
+            },
+          );
+      debugPrint(
+        '[PAIR_CODE_CREATE][REQ] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)} code=$companyCode',
+      );
+      final response = await http
+          .post(
+            endpoint,
+            headers: _adminHeaders(),
+            body: jsonEncode(<String, dynamic>{
+              'tenant_id': scope.tenantId,
+              'company_id': scope.companyId,
+              'company_code': companyCode,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      statusCode = response.statusCode;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        payload = Map<String, dynamic>.from(decoded);
+      }
+      debugPrint(
+        '[PAIR_CODE_CREATE][RES] status=$statusCode ok=${payload['ok'] == true}',
+      );
+    } catch (_) {}
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    final ok = statusCode >= 200 && statusCode < 300 && payload['ok'] == true;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Activatiecode kon niet worden aangemaakt. Probeer opnieuw.',
+              en: 'Could not generate activation code. Please try again.',
+              fr: 'Impossible de générer le code d’activation. Réessayez.',
+              es: 'No se pudo generar el código de activación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final returnedCompanyCode = _normalizeActivationCompanyCode(
+      (payload['company_code'] ?? companyCode).toString(),
+    );
+    final pairingCode = (payload['pairing_code'] ?? '').toString().trim();
+    if (!_isValidActivationCompanyCode(returnedCompanyCode) ||
+        !RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Activatiecode kon niet worden aangemaakt. Probeer opnieuw.',
+              en: 'Could not generate activation code. Please try again.',
+              fr: 'Impossible de générer le code d’activation. Réessayez.',
+              es: 'No se pudo generar el código de activación. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final activationCode = '$returnedCompanyCode-$pairingCode';
+    final expiresAt = (payload['expires_at'] ?? '').toString().trim();
+    final expiresInSeconds = int.tryParse(
+      (payload['expires_in_seconds'] ?? '').toString().trim(),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+        ),
+        title: Text(
+          _t(
+            nl: 'Nieuw toestel koppelen',
+            en: 'Pair new device',
+            fr: 'Associer un nouvel appareil',
+            es: 'Vincular nuevo dispositivo',
+          ),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(
+                nl: 'Open Fluxidi op het nieuwe toestel en voer deze activatiecode in.',
+                en: 'Open Fluxidi on the new device and enter this activation code.',
+                fr: 'Ouvrez Fluxidi sur le nouvel appareil et saisissez ce code d’activation.',
+                es: 'Abre Fluxidi en el nuevo dispositivo e introduce este código de activación.',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.82),
+                fontSize: 12.5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A1A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
+              ),
+              child: SelectableText(
+                activationCode,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  letterSpacing: 0.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            if (expiresAt.isNotEmpty || expiresInSeconds != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                expiresAt.isNotEmpty
+                    ? _t(
+                        nl: 'Vervalt op: $expiresAt',
+                        en: 'Expires at: $expiresAt',
+                        fr: 'Expire le : $expiresAt',
+                        es: 'Caduca el: $expiresAt',
+                      )
+                    : _t(
+                        nl: 'Geldig voor ongeveer ${expiresInSeconds ?? 0} seconden.',
+                        en: 'Valid for about ${expiresInSeconds ?? 0} seconds.',
+                        fr: 'Valable pendant environ ${expiresInSeconds ?? 0} secondes.',
+                        es: 'Válido durante aproximadamente ${expiresInSeconds ?? 0} segundos.',
+                      ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 11.8,
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: activationCode));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _t(
+                      nl: 'Activatiecode gekopieerd.',
+                      en: 'Activation code copied.',
+                      fr: 'Code d’activation copié.',
+                      es: 'Código de activación copiado.',
+                    ),
+                  ),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+            ),
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: Text(
+              _t(nl: 'Kopiëren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _verifyCompanyFromBusinessHome(BuildContext context) async {
+    const roleEntry = RoleEntryPage();
+    final activationCode = await roleEntry._promptCompanyActivationCode(
+      context,
+    );
+    if (!context.mounted || activationCode == null) return;
+    if (activationCode == RoleEntryPage._companyPairingOnboardingIntent) return;
+    final parsed = roleEntry._parseCompanyActivationCode(activationCode);
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+              en: 'Invalid activation code. Use for example FLX-4821-123456.',
+              fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+              es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final verified = await roleEntry._verifyCompanyPairingCode(
+      companyCode: parsed.companyCode,
+      pairingCode: parsed.pairingCode,
+    );
+    if (!context.mounted) return;
+    if (verified['ok'] != true) {
+      final errorCode = roleEntry
+          ._safePairingText(verified['error'])
+          .toLowerCase();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(roleEntry._companyPairingErrorText(errorCode))),
+      );
+      return;
+    }
+
+    final payload = verified['payload'] is Map
+        ? Map<String, dynamic>.from(verified['payload'] as Map)
+        : <String, dynamic>{};
+    await roleEntry._showCompanyPairingSuccessDialog(context);
+    if (!context.mounted) return;
+    final opened = await roleEntry._openVerifiedCompanySession(
+      context,
+      payload,
+    );
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            roleEntry._companyPairingErrorText('verification_failed'),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
@@ -4036,9 +8225,38 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
-    final companyName = profile?.companyName.trim().isNotEmpty == true
-        ? profile!.companyName.trim()
-        : 'Fluxidi';
+    final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
+    final hasPublicCompanyCode = publicCompanyCode != null;
+    String firstNonEmpty(List<String?> values) {
+      for (final value in values) {
+        final text = (value ?? '').trim();
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+
+    final profileJson = profile?.toJson();
+    final profilePublicDisplayName = profileJson is Map<String, dynamic>
+        ? firstNonEmpty(<String?>[
+            profileJson['publicDisplayName']?.toString(),
+            profileJson['public_display_name']?.toString(),
+          ])
+        : '';
+    final profileLegalName = profileJson is Map<String, dynamic>
+        ? firstNonEmpty(<String?>[
+            profileJson['legalName']?.toString(),
+            profileJson['legal_name']?.toString(),
+          ])
+        : '';
+    final companyIdentityName = firstNonEmpty(<String?>[
+      profile?.companyName,
+      profilePublicDisplayName,
+      profileLegalName,
+      publicCompanyCode,
+      profile?.companyId,
+      _t(nl: 'Bedrijf', en: 'Business', fr: 'Entreprise', es: 'Empresa'),
+    ]);
+    final companyName = companyIdentityName;
     final screenW = MediaQuery.of(context).size.width;
     const customerReferenceLogoWidth = 178.0;
     final businessLogoWidth = math.max(
@@ -4081,6 +8299,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               _openCompanyDetails(context);
               return;
             }
+            if (value == 'verify_company') {
+              unawaited(_verifyCompanyFromBusinessHome(context));
+              return;
+            }
+            if (value == 'pair_new_device') {
+              unawaited(_showNewDeviceActivationCodeDialog(context));
+              return;
+            }
             if (value == 'switch') {
               _switchCompany(context);
             }
@@ -4092,13 +8318,65 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _statusPill(profile, compact: true),
+                    if (hasPublicCompanyCode)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF12331F),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFF4ADE80).withOpacity(0.45),
+                          ),
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Geverifieerd',
+                            en: 'Verified',
+                            fr: 'Vérifiée',
+                            es: 'Verificada',
+                          ),
+                          style: const TextStyle(
+                            color: Color(0xFFB8F5C8),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 10.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      )
+                    else
+                      _statusPill(profile, compact: true),
                     const SizedBox(height: 8),
                     Text(
-                      '${_t(nl: 'Bedrijfs-ID', en: 'Company ID', fr: 'ID entreprise', es: 'ID empresa')}: ${profile.companyId}',
+                      companyIdentityName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11.5,
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (publicCompanyCode != null) ...[
+                      Text(
+                        '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11.5,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    Text(
+                      '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 10.5,
                         fontFamily: 'monospace',
                       ),
                     ),
@@ -4112,7 +8390,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         fontSize: 11.5,
                       ),
                     ),
-                    if (profile.showsPendingVerificationNotice) ...[
+                    if (!hasPublicCompanyCode &&
+                        profile.showsPendingVerificationNotice) ...[
                       const SizedBox(height: 6),
                       Text(
                         profile.verificationPendingNotice(
@@ -4140,6 +8419,30 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
               ),
             ),
+            if (!hasPublicCompanyCode)
+              PopupMenuItem<String>(
+                value: 'verify_company',
+                child: Text(
+                  _t(
+                    nl: 'Bedrijf verifiëren',
+                    en: 'Verify company',
+                    fr: 'Vérifier l’entreprise',
+                    es: 'Verificar empresa',
+                  ),
+                ),
+              ),
+            if (hasPublicCompanyCode)
+              PopupMenuItem<String>(
+                value: 'pair_new_device',
+                child: Text(
+                  _t(
+                    nl: 'Nieuw toestel koppelen',
+                    en: 'Pair new device',
+                    fr: 'Associer un nouvel appareil',
+                    es: 'Vincular nuevo dispositivo',
+                  ),
+                ),
+              ),
             PopupMenuItem<String>(
               value: 'switch',
               child: Text(
@@ -4513,457 +8816,629 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
             child: ValueListenableBuilder<CompanyProfile?>(
               valueListenable: companyProfileNotifier,
-              builder: (context, profile, _) => ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                children: [
-                  _topBar(context, profile),
-                  const SizedBox(height: 12),
-                  _panel(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _t(
-                            nl: 'Goedemorgen! 👋',
-                            en: 'Good morning! 👋',
-                            fr: 'Bonjour ! 👋',
-                            es: '¡Buenos días! 👋',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 19,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _t(
-                            nl: 'Bedrijfsoverzicht',
-                            en: 'Business overview',
-                            fr: 'Aperçu de l’entreprise',
-                            es: 'Resumen de empresa',
-                          ),
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.74),
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                    ),
+              builder: (context, profile, _) {
+                double clampDouble(double v, double min, double max) =>
+                    v < min ? min : (v > max ? max : v);
+                final size = MediaQuery.sizeOf(context);
+                final W = size.width;
+                final H = size.height;
+                final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                final isTabletPortrait =
+                    (screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop) &&
+                    W < H &&
+                    H >= 900;
+                final isTabletLandscape =
+                    (screenClass == FluxidiScreenClass.tablet ||
+                        screenClass == FluxidiScreenClass.desktop) &&
+                    W > H &&
+                    H >= 700;
+                final usesTabletHeader = isTabletPortrait || isTabletLandscape;
+                final businessHeaderHeight = isTabletLandscape
+                    ? clampDouble(H * 0.26, 280.0, 330.0)
+                    : isTabletPortrait
+                    ? clampDouble(H * 0.23, 300.0, 360.0)
+                    : null;
+                final businessHeaderAsset = isTabletLandscape
+                    ? 'assets/fluxidi/zakelijke_tablet_header_foto_landscape.png'
+                    : 'assets/fluxidi/zakelijke_tablet_header_foto.png';
+                final businessQuickActionCardHeight = isTabletPortrait
+                    ? clampDouble(H * 0.092, 118.0, 132.0)
+                    : 132.0;
+                final businessQuickActionSpacing = isTabletPortrait
+                    ? 14.0
+                    : 12.0;
+                final businessBackButtonGap = isTabletPortrait ? 10.0 : 14.0;
+                final businessListBottomPadding = isTabletPortrait
+                    ? 12.0
+                    : 20.0;
+
+                return ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    12,
+                    16,
+                    businessListBottomPadding,
                   ),
-                  const SizedBox(height: 10),
-                  _primaryCta(context),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final stacked = constraints.maxWidth < 430;
-                      if (stacked) {
-                        return Column(
+                  children: [
+                    if (usesTabletHeader)
+                      Container(
+                        height: businessHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: kFluxidiYellow.withOpacity(0.22),
+                          ),
+                        ),
+                        child: Stack(
+                          fit: StackFit.expand,
                           children: [
-                            _metricCard(
-                              icon: Icons.calendar_month_outlined,
-                              title: _t(
-                                nl: 'Open boekingen',
-                                en: 'Open bookings',
-                                fr: 'Réservations ouvertes',
-                                es: 'Reservas abiertas',
+                            Image.asset(
+                              businessHeaderAsset,
+                              fit: BoxFit.cover,
+                              alignment: isTabletLandscape
+                                  ? Alignment.centerRight
+                                  : Alignment.center,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Gepland',
-                                en: 'Planned',
-                                fr: 'Planifiées',
-                                es: 'Planificadas',
-                              ),
-                              value: _metricCountText(_openBookingsCount),
-                              accentColor: const Color(0xFF60A5FA),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.directions_car_outlined,
-                              title: _t(
-                                nl: 'Voltooide ritten',
-                                en: 'Completed rides',
-                                fr: 'Courses terminées',
-                                es: 'Viajes completados',
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.12),
+                                      Colors.black.withOpacity(0.22),
+                                      Colors.black.withOpacity(0.58),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Afgerond',
-                                en: 'Completed',
-                                fr: 'Terminées',
-                                es: 'Completados',
-                              ),
-                              value: _metricCountText(_completedRidesCount),
-                              accentColor: const Color(0xFF4ADE80),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.payments_outlined,
-                              title: _t(
-                                nl: 'Nog te betalen',
-                                en: 'To be paid',
-                                fr: 'À payer',
-                                es: 'Por pagar',
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  12,
+                                  12,
+                                  14,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ValueListenableBuilder<
+                                      ActiveCompanySession?
+                                    >(
+                                      valueListenable:
+                                          activeCompanySessionNotifier,
+                                      builder: (context, _, __) =>
+                                          _topBar(context, profile),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      _t(
+                                        nl: 'Goedemorgen! 👋',
+                                        en: 'Good morning! 👋',
+                                        fr: 'Bonjour ! 👋',
+                                        es: '¡Buenos días! 👋',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 19,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      _t(
+                                        nl: 'Bedrijfsoverzicht',
+                                        en: 'Business overview',
+                                        fr: 'Aperçu de l’entreprise',
+                                        es: 'Resumen de empresa',
+                                      ),
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.78),
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              subtitle: _t(
-                                nl: 'Afgerond maar onbetaald',
-                                en: 'Completed but unpaid',
-                                fr: 'Terminées mais impayées',
-                                es: 'Completados sin pagar',
-                              ),
-                              value: _metricCountText(
-                                _unpaidCompletedRidesCount,
-                              ),
-                              accentColor: const Color(0xFFF97373),
                             ),
-                            const SizedBox(height: 8),
-                            _metricCard(
-                              icon: Icons.euro_rounded,
-                              title: _t(
-                                nl: 'Maandomzet',
-                                en: 'Monthly income',
-                                fr: 'Revenus mensuels',
-                                es: 'Ingresos mensuales',
+                          ],
+                        ),
+                      )
+                    else ...[
+                      ValueListenableBuilder<ActiveCompanySession?>(
+                        valueListenable: activeCompanySessionNotifier,
+                        builder: (context, _, __) => _topBar(context, profile),
+                      ),
+                      const SizedBox(height: 12),
+                      _panel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Goedemorgen! 👋',
+                                en: 'Good morning! 👋',
+                                fr: 'Bonjour ! 👋',
+                                es: '¡Buenos días! 👋',
                               ),
-                              subtitle: _t(
-                                nl: 'Betaald',
-                                en: 'Paid',
-                                fr: 'Payées',
-                                es: 'Pagado',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 19,
                               ),
-                              value: _metricIncomeText(),
-                              accentColor: const Color(0xFFE5B641),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _t(
+                                nl: 'Bedrijfsoverzicht',
+                                en: 'Business overview',
+                                fr: 'Aperçu de l’entreprise',
+                                es: 'Resumen de empresa',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.74),
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    _primaryCta(context),
+                    const SizedBox(height: 10),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final stacked = constraints.maxWidth < 430;
+                        if (stacked) {
+                          return Column(
+                            children: [
+                              _metricCard(
+                                icon: Icons.calendar_month_outlined,
+                                title: _t(
+                                  nl: 'Open boekingen',
+                                  en: 'Open bookings',
+                                  fr: 'Réservations ouvertes',
+                                  es: 'Reservas abiertas',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Gepland',
+                                  en: 'Planned',
+                                  fr: 'Planifiées',
+                                  es: 'Planificadas',
+                                ),
+                                value: _metricCountText(_openBookingsCount),
+                                accentColor: const Color(0xFF60A5FA),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.directions_car_outlined,
+                                title: _t(
+                                  nl: 'Voltooide ritten',
+                                  en: 'Completed rides',
+                                  fr: 'Courses terminées',
+                                  es: 'Viajes completados',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond',
+                                  en: 'Completed',
+                                  fr: 'Terminées',
+                                  es: 'Completados',
+                                ),
+                                value: _metricCountText(_completedRidesCount),
+                                accentColor: const Color(0xFF4ADE80),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.payments_outlined,
+                                title: _t(
+                                  nl: 'Nog te betalen',
+                                  en: 'To be paid',
+                                  fr: 'À payer',
+                                  es: 'Por pagar',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond maar onbetaald',
+                                  en: 'Completed but unpaid',
+                                  fr: 'Terminées mais impayées',
+                                  es: 'Completados sin pagar',
+                                ),
+                                value: _metricCountText(
+                                  _unpaidCompletedRidesCount,
+                                ),
+                                accentColor: const Color(0xFFF97373),
+                              ),
+                              const SizedBox(height: 8),
+                              _metricCard(
+                                icon: Icons.euro_rounded,
+                                title: _t(
+                                  nl: 'Maandomzet',
+                                  en: 'Monthly income',
+                                  fr: 'Revenus mensuels',
+                                  es: 'Ingresos mensuales',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Betaald',
+                                  en: 'Paid',
+                                  fr: 'Payées',
+                                  es: 'Pagado',
+                                ),
+                                value: _metricIncomeText(),
+                                accentColor: const Color(0xFFE5B641),
+                              ),
+                            ],
+                          );
+                        }
+                        final columns = constraints.maxWidth < 760 ? 2 : 4;
+                        final spacing = 8.0;
+                        final cardWidth =
+                            (constraints.maxWidth - ((columns - 1) * spacing)) /
+                            columns;
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: spacing,
+                          children: [
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.calendar_month_outlined,
+                                title: _t(
+                                  nl: 'Open boekingen',
+                                  en: 'Open bookings',
+                                  fr: 'Réservations ouvertes',
+                                  es: 'Reservas abiertas',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Gepland',
+                                  en: 'Planned',
+                                  fr: 'Planifiées',
+                                  es: 'Planificadas',
+                                ),
+                                value: _metricCountText(_openBookingsCount),
+                                accentColor: const Color(0xFF60A5FA),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.directions_car_outlined,
+                                title: _t(
+                                  nl: 'Voltooide ritten',
+                                  en: 'Completed rides',
+                                  fr: 'Courses terminées',
+                                  es: 'Viajes completados',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond',
+                                  en: 'Completed',
+                                  fr: 'Terminées',
+                                  es: 'Completados',
+                                ),
+                                value: _metricCountText(_completedRidesCount),
+                                accentColor: const Color(0xFF4ADE80),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.payments_outlined,
+                                title: _t(
+                                  nl: 'Nog te betalen',
+                                  en: 'To be paid',
+                                  fr: 'À payer',
+                                  es: 'Por pagar',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Afgerond maar onbetaald',
+                                  en: 'Completed but unpaid',
+                                  fr: 'Terminées mais impayées',
+                                  es: 'Completados sin pagar',
+                                ),
+                                value: _metricCountText(
+                                  _unpaidCompletedRidesCount,
+                                ),
+                                accentColor: const Color(0xFFF97373),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              child: _metricCard(
+                                icon: Icons.euro_rounded,
+                                title: _t(
+                                  nl: 'Maandomzet',
+                                  en: 'Monthly income',
+                                  fr: 'Revenus mensuels',
+                                  es: 'Ingresos mensuales',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Betaald',
+                                  en: 'Paid',
+                                  fr: 'Payées',
+                                  es: 'Pagado',
+                                ),
+                                value: _metricIncomeText(),
+                                accentColor: const Color(0xFFE5B641),
+                              ),
                             ),
                           ],
                         );
-                      }
-                      final columns = constraints.maxWidth < 760 ? 2 : 4;
-                      final spacing = 8.0;
-                      final cardWidth =
-                          (constraints.maxWidth - ((columns - 1) * spacing)) /
-                          columns;
-                      return Wrap(
-                        spacing: spacing,
-                        runSpacing: spacing,
-                        children: [
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.calendar_month_outlined,
-                              title: _t(
-                                nl: 'Open boekingen',
-                                en: 'Open bookings',
-                                fr: 'Réservations ouvertes',
-                                es: 'Reservas abiertas',
-                              ),
-                              subtitle: _t(
-                                nl: 'Gepland',
-                                en: 'Planned',
-                                fr: 'Planifiées',
-                                es: 'Planificadas',
-                              ),
-                              value: _metricCountText(_openBookingsCount),
-                              accentColor: const Color(0xFF60A5FA),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.directions_car_outlined,
-                              title: _t(
-                                nl: 'Voltooide ritten',
-                                en: 'Completed rides',
-                                fr: 'Courses terminées',
-                                es: 'Viajes completados',
-                              ),
-                              subtitle: _t(
-                                nl: 'Afgerond',
-                                en: 'Completed',
-                                fr: 'Terminées',
-                                es: 'Completados',
-                              ),
-                              value: _metricCountText(_completedRidesCount),
-                              accentColor: const Color(0xFF4ADE80),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.payments_outlined,
-                              title: _t(
-                                nl: 'Nog te betalen',
-                                en: 'To be paid',
-                                fr: 'À payer',
-                                es: 'Por pagar',
-                              ),
-                              subtitle: _t(
-                                nl: 'Afgerond maar onbetaald',
-                                en: 'Completed but unpaid',
-                                fr: 'Terminées mais impayées',
-                                es: 'Completados sin pagar',
-                              ),
-                              value: _metricCountText(
-                                _unpaidCompletedRidesCount,
-                              ),
-                              accentColor: const Color(0xFFF97373),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            child: _metricCard(
-                              icon: Icons.euro_rounded,
-                              title: _t(
-                                nl: 'Maandomzet',
-                                en: 'Monthly income',
-                                fr: 'Revenus mensuels',
-                                es: 'Ingresos mensuales',
-                              ),
-                              subtitle: _t(
-                                nl: 'Betaald',
-                                en: 'Paid',
-                                fr: 'Payées',
-                                es: 'Pagado',
-                              ),
-                              value: _metricIncomeText(),
-                              accentColor: const Color(0xFFE5B641),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    _t(
-                      nl: 'Snelle acties',
-                      en: 'Quick actions',
-                      fr: 'Actions rapides',
-                      es: 'Acciones rápidas',
+                      },
                     ),
-                    style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.95),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(height: 14),
+                    Text(
+                      _t(
+                        nl: 'Snelle acties',
+                        en: 'Quick actions',
+                        fr: 'Actions rapides',
+                        es: 'Acciones rápidas',
+                      ),
+                      style: TextStyle(
+                        color: kFluxidiYellow.withOpacity(0.95),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final cardWidth = (constraints.maxWidth - 12) / 2;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.business_center_outlined,
-                              title: _t(
-                                nl: 'Instellingen',
-                                en: 'Settings',
-                                fr: 'Réglages',
-                                es: 'Ajustes',
-                              ),
-                              subtitle: _t(
-                                nl: 'Profiel & branding',
-                                en: 'Profile & branding',
-                                fr: 'Profil & branding',
-                                es: 'Perfil y marca',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const BusinessSettingsPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.credit_card_outlined,
-                              title: _t(
-                                nl: 'Abonnement',
-                                en: 'Plan',
-                                fr: 'Abonnement',
-                                es: 'Plan',
-                              ),
-                              subtitle: _t(
-                                nl: 'Facturatie',
-                                en: 'Billing',
-                                fr: 'Facturation',
-                                es: 'Facturación',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const CompanySubscriptionBillingPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.directions_car_filled_outlined,
-                              title: _t(
-                                nl: 'Voertuigen',
-                                en: 'Vehicles',
-                                fr: 'Véhicules',
-                                es: 'Vehículos',
-                              ),
-                              subtitle: _t(
-                                nl: 'Wagenpark',
-                                en: 'Fleet',
-                                fr: 'Flotte',
-                                es: 'Flota',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const VehicleManagementPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.fact_check_outlined,
-                              title: _t(
-                                nl: 'Chiron',
-                                en: 'Chiron',
-                                fr: 'Chiron',
-                                es: 'Chiron',
-                              ),
-                              subtitle: 'Compliance',
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const ChironComplianceDashboardPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.local_taxi_outlined,
-                              title: _t(
-                                nl: 'Chauffeurs',
-                                en: 'Drivers',
-                                fr: 'Chauffeurs',
-                                es: 'Conductores',
-                              ),
-                              subtitle: _t(
-                                nl: 'Team',
-                                en: 'Team',
-                                fr: 'Équipe',
-                                es: 'Equipo',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const CompanyDriverManagementPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.speed_rounded,
-                              title: _t(
-                                nl: 'Chauffeur weergave',
-                                en: 'Driver view',
-                                fr: 'Vue chauffeur',
-                                es: 'Vista de conductor',
-                              ),
-                              subtitle: _t(
-                                nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
-                                en: 'Open the existing driver cockpit without signing out.',
-                                fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
-                                es: 'Abre la cabina de conductor existente sin cerrar sesión.',
-                              ),
-                              onTap: () => _openDriverCockpitView(context),
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.radar_rounded,
-                              title: _t(
-                                nl: 'Vraagradar',
-                                en: 'Demand radar',
-                                fr: 'Radar demande',
-                                es: 'Radar demanda',
-                              ),
-                              subtitle: _t(
-                                nl: 'Klantvraag',
-                                en: 'Customer demand',
-                                fr: 'Demande clients',
-                                es: 'Demanda clientes',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) =>
-                                        const BusinessRegionalDemandPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: cardWidth,
-                            height: 132,
-                            child: _quickActionCard(
-                              icon: Icons.auto_awesome_outlined,
-                              title: _t(
-                                nl: 'AI Dispatch',
-                                en: 'AI Dispatch',
-                                fr: 'Dispatch IA',
-                                es: 'Despacho IA',
-                              ),
-                              subtitle: _t(
-                                nl: 'Binnenkort',
-                                en: 'Coming soon',
-                                fr: 'Bientôt',
-                                es: 'Próximamente',
-                              ),
-                              isFuture: true,
-                              futureBadge: _t(
-                                nl: 'Binnenkort',
-                                en: 'Soon',
-                                fr: 'Bientôt',
-                                es: 'Pronto',
+                    const SizedBox(height: 10),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cardWidth =
+                            (constraints.maxWidth -
+                                businessQuickActionSpacing) /
+                            2;
+                        return Wrap(
+                          spacing: businessQuickActionSpacing,
+                          runSpacing: businessQuickActionSpacing,
+                          children: [
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.business_center_outlined,
+                                title: _t(
+                                  nl: 'Instellingen',
+                                  en: 'Settings',
+                                  fr: 'Réglages',
+                                  es: 'Ajustes',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Profiel & branding',
+                                  en: 'Profile & branding',
+                                  fr: 'Profil & branding',
+                                  es: 'Perfil y marca',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const BusinessSettingsPage(),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  const FluxidiBackToStartButton(),
-                ],
-              ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.credit_card_outlined,
+                                title: _t(
+                                  nl: 'Abonnement',
+                                  en: 'Plan',
+                                  fr: 'Abonnement',
+                                  es: 'Plan',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Facturatie',
+                                  en: 'Billing',
+                                  fr: 'Facturation',
+                                  es: 'Facturación',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const CompanySubscriptionBillingPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.directions_car_filled_outlined,
+                                title: _t(
+                                  nl: 'Voertuigen',
+                                  en: 'Vehicles',
+                                  fr: 'Véhicules',
+                                  es: 'Vehículos',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Wagenpark',
+                                  en: 'Fleet',
+                                  fr: 'Flotte',
+                                  es: 'Flota',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const VehicleManagementPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.fact_check_outlined,
+                                title: _t(
+                                  nl: 'Chiron',
+                                  en: 'Chiron',
+                                  fr: 'Chiron',
+                                  es: 'Chiron',
+                                ),
+                                subtitle: 'Compliance',
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const ChironComplianceDashboardPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.local_taxi_outlined,
+                                title: _t(
+                                  nl: 'Chauffeurs',
+                                  en: 'Drivers',
+                                  fr: 'Chauffeurs',
+                                  es: 'Conductores',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Team',
+                                  en: 'Team',
+                                  fr: 'Équipe',
+                                  es: 'Equipo',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const CompanyDriverManagementPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.speed_rounded,
+                                title: _t(
+                                  nl: 'Chauffeur weergave',
+                                  en: 'Driver view',
+                                  fr: 'Vue chauffeur',
+                                  es: 'Vista de conductor',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Ga naar de bestaande chauffeurcockpit zonder uit te loggen.',
+                                  en: 'Open the existing driver cockpit without signing out.',
+                                  fr: 'Ouvrir le cockpit chauffeur existant sans se déconnecter.',
+                                  es: 'Abre la cabina de conductor existente sin cerrar sesión.',
+                                ),
+                                onTap: () => _openDriverCockpitView(context),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.radar_rounded,
+                                title: _t(
+                                  nl: 'Vraagradar',
+                                  en: 'Demand radar',
+                                  fr: 'Radar demande',
+                                  es: 'Radar demanda',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Klantvraag',
+                                  en: 'Customer demand',
+                                  fr: 'Demande clients',
+                                  es: 'Demanda clientes',
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const BusinessRegionalDemandPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.qr_code_2_outlined,
+                                title: _t(
+                                  nl: 'Deel boekingslink',
+                                  en: 'Share booking link',
+                                  fr: 'Partager le lien de réservation',
+                                  es: 'Compartir enlace de reserva',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Link + QR',
+                                  en: 'Link + QR',
+                                  fr: 'Lien + QR',
+                                  es: 'Enlace + QR',
+                                ),
+                                onTap: () =>
+                                    _showPublicBookingShareQuickAccess(context),
+                              ),
+                            ),
+                            SizedBox(
+                              width: cardWidth,
+                              height: businessQuickActionCardHeight,
+                              child: _quickActionCard(
+                                icon: Icons.auto_awesome_outlined,
+                                title: _t(
+                                  nl: 'AI Dispatch',
+                                  en: 'AI Dispatch',
+                                  fr: 'Dispatch IA',
+                                  es: 'Despacho IA',
+                                ),
+                                subtitle: _t(
+                                  nl: 'Binnenkort',
+                                  en: 'Coming soon',
+                                  fr: 'Bientôt',
+                                  es: 'Próximamente',
+                                ),
+                                isFuture: true,
+                                futureBadge: _t(
+                                  nl: 'Binnenkort',
+                                  en: 'Soon',
+                                  fr: 'Bientôt',
+                                  es: 'Pronto',
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    SizedBox(height: businessBackButtonGap),
+                    const FluxidiBackToStartButton(),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -6434,7 +10909,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
     DriverProfile existing,
   ) async {
     final nameCtrl = TextEditingController(text: existing.fullName);
-    final idCtrl = TextEditingController(text: existing.employeeNumber);
+    final idCtrl = TextEditingController(
+      text: existing.employeeNumber.trim().isEmpty
+          ? existing.id
+          : existing.employeeNumber,
+    );
     final phoneCtrl = TextEditingController(text: existing.phone);
     final taxiCardNumberCtrl = TextEditingController(
       text: existing.taxiDriverCardNumber,
@@ -6852,12 +11331,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   _driverField(
                     idCtrl,
                     _t(
-                      nl: 'Chauffeur-ID',
-                      en: 'Driver ID',
-                      fr: 'ID chauffeur',
-                      es: 'ID conductor',
+                      nl: 'Chauffeurcode',
+                      en: 'Driver code',
+                      fr: 'Code chauffeur',
+                      es: 'Código de conductor',
                     ),
-                    enabled: false,
                   ),
                   _driverField(
                     phoneCtrl,
@@ -6917,6 +11395,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           onPressed: () {
                             final updated = existing.copyWith(
                               fullName: nameCtrl.text.trim(),
+                              employeeNumber: idCtrl.text.trim().isEmpty
+                                  ? existing.id.trim()
+                                  : idCtrl.text.trim(),
                               phone: phoneCtrl.text.trim(),
                               taxiDriverCardNumber: taxiCardNumberCtrl.text
                                   .trim(),
@@ -7000,6 +11481,198 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
+  String _displayCompanyLoginCode(DriverProfile driver) {
+    final scoped = driver.companyId?.trim() ?? '';
+    if (scoped.isNotEmpty) return scoped;
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) return fromSession;
+    final resolved = resolvedCompanyId.trim();
+    return resolved;
+  }
+
+  String _maskDriverForLog(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return 'unknown';
+    if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+    return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+  }
+
+  ({String tenantId, String companyId}) _activeCompanyScopeForDriverDelete(
+    DriverProfile driver,
+  ) {
+    final scoped = driver.companyId?.trim() ?? '';
+    if (scoped.isNotEmpty) {
+      return (tenantId: scoped, companyId: scoped);
+    }
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) {
+      return (tenantId: fromProfile, companyId: fromProfile);
+    }
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) {
+      return (tenantId: fromSession, companyId: fromSession);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return (tenantId: kTenantId, companyId: kTenantId);
+  }
+
+  Future<void> _deleteDriverFromBackendAndLocal(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final driverId = driver.id.trim();
+    final scope = _activeCompanyScopeForDriverDelete(driver);
+    final maskedDriver = _maskDriverForLog(driverId);
+    final maskedCompany = _maskScopeForLog(scope.companyId);
+    debugPrint(
+      '[DRIVER_DELETE][REQ] driver=$maskedDriver company=$maskedCompany',
+    );
+
+    final endpoint =
+        Uri.parse(
+          '$kBookingBaseUrl/admin/company/drivers/index/delete',
+        ).replace(
+          queryParameters: <String, String>{
+            'tenant_id': scope.tenantId,
+            'company_id': scope.companyId,
+          },
+        );
+    final headers = <String, String>{
+      ..._adminHeaders(),
+      'Content-Type': 'application/json',
+    };
+    final payload = <String, dynamic>{
+      'tenant_id': scope.tenantId,
+      'company_id': scope.companyId,
+      'driver_id': driverId,
+    };
+
+    try {
+      final response = await http
+          .post(endpoint, headers: headers, body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        bool deleted = false;
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            deleted = decoded['deleted'] == true;
+          }
+        } catch (_) {}
+        removeDriverLocallyAfterBackendDelete(
+          driverId,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        debugPrint('[DRIVER_DELETE][OK] driver=$maskedDriver deleted=$deleted');
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Chauffeur verwijderd.',
+                en: 'Driver removed.',
+                fr: 'Chauffeur supprimé.',
+                es: 'Conductor eliminado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      String reason = 'request_failed';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          final text = (decoded['reason'] ?? decoded['error'] ?? '')
+              .toString()
+              .trim();
+          if (text.isNotEmpty) reason = text;
+        }
+      } catch (_) {}
+      debugPrint(
+        '[DRIVER_DELETE][ERROR] status=${response.statusCode} reason=$reason driver=$maskedDriver',
+      );
+    } catch (_) {
+      debugPrint(
+        '[DRIVER_DELETE][ERROR] status=network reason=exception driver=$maskedDriver',
+      );
+    }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Chauffeur kon niet verwijderd worden.',
+            en: 'Driver could not be removed.',
+            fr: 'Impossible de supprimer le chauffeur.',
+            es: 'No se pudo eliminar el conductor.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteDriver(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t(
+            nl: 'Chauffeur verwijderen?',
+            en: 'Remove driver?',
+            fr: 'Supprimer le chauffeur ?',
+            es: '¿Eliminar conductor?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Deze chauffeur wordt uit de actieve bedrijfslijst verwijderd. Ritgeschiedenis blijft bewaard.',
+            en: 'This driver will be removed from the active company list. Ride history will be kept.',
+            fr: 'Ce chauffeur sera supprimé de la liste active de l’entreprise. L’historique des courses sera conservé.',
+            es: 'Este conductor se eliminará de la lista activa de la empresa. El historial de viajes se conservará.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              _t(
+                nl: 'Verwijderen',
+                en: 'Remove',
+                fr: 'Supprimer',
+                es: 'Eliminar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!context.mounted) return;
+    await _deleteDriverFromBackendAndLocal(context, driver);
+  }
+
   String _driverCardInitials(DriverProfile driver) {
     final raw = _displayDriverName(driver.fullName).trim();
     if (raw.isEmpty) return 'D';
@@ -7024,8 +11697,32 @@ class CompanyDriverManagementPage extends StatelessWidget {
     }
   }
 
+  String? _driverCardNetworkPhotoUrl(DriverProfile driver) {
+    bool isHttpUrl(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
+    }
+
+    final profilePhotoPath = driver.profilePhotoPath?.trim() ?? '';
+    if (isHttpUrl(profilePhotoPath)) return profilePhotoPath;
+    final publicPortraitUrl = driver.publicPortraitUrl?.trim() ?? '';
+    if (isHttpUrl(publicPortraitUrl)) return publicPortraitUrl;
+    return null;
+  }
+
   Widget _driverCardAvatar(DriverProfile driver) {
     final photoPath = _driverCardPhotoPath(driver);
+    final networkUrl = _driverCardNetworkPhotoUrl(driver);
+    Widget initialsFallback() => Center(
+      child: Text(
+        _driverCardInitials(driver),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: 13,
+        ),
+      ),
+    );
     return Container(
       width: 52,
       height: 52,
@@ -7035,31 +11732,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
         border: Border.all(color: _gold.withOpacity(0.5)),
       ),
       child: ClipOval(
-        child: photoPath == null
-            ? Center(
-                child: Text(
-                  _driverCardInitials(driver),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
-                ),
-              )
-            : Image.file(
+        child: photoPath != null
+            ? Image.file(
                 File(photoPath),
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(
-                  child: Text(
-                    _driverCardInitials(driver),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ),
+                errorBuilder: (_, __, ___) => initialsFallback(),
+              )
+            : (networkUrl != null
+                  ? Image.network(
+                      networkUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => initialsFallback(),
+                    )
+                  : initialsFallback()),
       ),
     );
   }
@@ -7110,7 +11795,62 @@ class CompanyDriverManagementPage extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+      bool hasBackendSyncState(DriverDocument d) {
+        return d.storageState.trim().isNotEmpty ||
+            d.backendFileName.trim().isNotEmpty ||
+            d.backendContentType.trim().isNotEmpty ||
+            d.backendSizeBytes > 0 ||
+            d.backendSyncedAt.trim().isNotEmpty ||
+            d.backendPendingUpload ||
+            d.backendPendingDelete ||
+            d.backendSyncError.trim().isNotEmpty;
+      }
+
+      final companySessionToken =
+          (activeCompanySessionNotifier.value?.companySessionToken ?? '')
+              .trim();
+      final tenantId = doc.tenantId.trim();
+      final companyId = doc.companyId.trim();
+      final driverId = doc.driverId.trim();
+      final documentId = doc.documentId.trim();
+      final hasBackendDeleteScope =
+          companySessionToken.isNotEmpty &&
+          tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          driverId.isNotEmpty &&
+          documentId.isNotEmpty;
+      if (!hasBackendDeleteScope) {
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_BACKEND_SKIP] reason=missing_token_or_scope',
+        );
+        if (hasBackendSyncState(doc)) {
+          debugPrint(
+            '[DRIVER_DOCS][UI_DELETE_BACKEND_PENDING] reason=missing_scope_with_backend_state',
+          );
+          return;
+        }
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_LOCAL_ONLY] reason=no_backend_state',
+        );
+        await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+        return;
+      }
+      debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_START] requested=true');
+      final removed = await DriverDocumentsStore.instance
+          .deleteDocumentInBackendThenLocal(
+            bookingBaseUrl: kBookingBaseUrl,
+            companySessionToken: companySessionToken,
+            tenantId: tenantId,
+            companyId: companyId,
+            driverId: driverId,
+            documentId: documentId,
+          );
+      if (!removed) {
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_BACKEND_PENDING] reason=backend_delete_failed',
+        );
+      }
+      debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_DONE] ok=$removed');
     }
   }
 
@@ -7129,6 +11869,82 @@ class CompanyDriverManagementPage extends StatelessWidget {
     DriverProfile driver,
     DriverDocument doc,
   ) {
+    bool isBackendSynced(DriverDocument d) =>
+        d.storageState.trim().toLowerCase() == 'stored' ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    bool hasBackendMetadata(DriverDocument d) =>
+        d.backendFileName.trim().isNotEmpty ||
+        d.backendContentType.trim().isNotEmpty ||
+        d.backendSizeBytes > 0 ||
+        d.storageState.trim().isNotEmpty ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    String storageLabel(DriverDocument d) {
+      if (d.backendPendingDelete) {
+        return _t(
+          nl: 'Verwijderen in wachtrij',
+          en: 'Delete pending',
+          fr: 'Suppression en attente',
+          es: 'Eliminacion pendiente',
+        );
+      }
+      if (d.backendPendingUpload) {
+        return _t(
+          nl: 'Synchronisatie in wachtrij',
+          en: 'Sync pending',
+          fr: 'Synchronisation en attente',
+          es: 'Sincronizacion pendiente',
+        );
+      }
+      if (d.backendSyncError.trim().isNotEmpty) {
+        return _t(
+          nl: 'Synchronisatie opnieuw proberen',
+          en: 'Sync needs retry',
+          fr: 'Nouvelle tentative de synchro requise',
+          es: 'Sincronizacion requiere reintento',
+        );
+      }
+      if (isBackendSynced(d)) {
+        return _t(
+          nl: 'In cloud opgeslagen',
+          en: 'Cloud saved',
+          fr: 'Enregistré dans le cloud',
+          es: 'Guardado en la nube',
+        );
+      }
+      if (d.filePath.trim().isNotEmpty) {
+        return _t(
+          nl: 'Op dit toestel opgeslagen',
+          en: 'Saved on this device',
+          fr: 'Enregistré sur cet appareil',
+          es: 'Guardado en este dispositivo',
+        );
+      }
+      if (hasBackendMetadata(d)) {
+        return _t(
+          nl: 'Cloud copy beschikbaar',
+          en: 'Cloud copy available',
+          fr: 'Copie cloud disponible',
+          es: 'Copia en la nube disponible',
+        );
+      }
+      return _t(
+        nl: 'Alleen lokale metadata',
+        en: 'Local metadata only',
+        fr: 'Métadonnées locales uniquement',
+        es: 'Solo metadatos locales',
+      );
+    }
+
+    bool canOpenLocal(DriverDocument d) {
+      final path = d.filePath.trim();
+      if (path.isEmpty || kIsWeb) return false;
+      try {
+        return File(path).existsSync();
+      } catch (_) {
+        return false;
+      }
+    }
+
     final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
     final statusLabel = driverDocumentStatusLabel(doc.status, _lang);
     final expiredVisual =
@@ -7188,13 +12004,15 @@ class CompanyDriverManagementPage extends StatelessWidget {
             ),
           if (doc.filePath.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(
-              '${_t(nl: 'Bestand', en: 'File', fr: 'Fichier', es: 'Archivo')}: ${doc.filePath}',
-              style: const TextStyle(fontSize: 10, color: Colors.white38),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            driverDocAttachmentPreview(doc.filePath, _lang),
           ],
+          const SizedBox(height: 4),
+          Text(
+            storageLabel(doc),
+            style: const TextStyle(fontSize: 11, color: Colors.white60),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           if (doc.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
@@ -7224,7 +12042,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                onPressed: doc.filePath.trim().isEmpty
+                onPressed: !canOpenLocal(doc)
                     ? null
                     : () =>
                           openDriverDocumentFile(context, doc.filePath, _lang),
@@ -7628,17 +12446,58 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                       ),
                                     ),
                                   ),
+                                  IconButton(
+                                    onPressed: () =>
+                                        _confirmDeleteDriver(context, d),
+                                    tooltip: _t(
+                                      nl: 'Chauffeur verwijderen',
+                                      en: 'Remove driver',
+                                      fr: 'Supprimer le chauffeur',
+                                      es: 'Eliminar conductor',
+                                    ),
+                                    icon: Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                      color: Colors.redAccent.withOpacity(0.92),
+                                    ),
+                                    splashRadius: 20,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 36,
+                                      minHeight: 36,
+                                    ),
+                                    padding: const EdgeInsets.all(6),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2A1518),
+                                      side: BorderSide(
+                                        color: Colors.redAccent.withOpacity(
+                                          0.35,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 8),
                               _line(
                                 _t(
-                                  nl: 'Chauffeur-ID',
-                                  en: 'Driver ID',
-                                  fr: 'ID chauffeur',
-                                  es: 'ID conductor',
+                                  nl: 'Bedrijfscode',
+                                  en: 'Company ID',
+                                  fr: 'Code entreprise',
+                                  es: 'Código de empresa',
                                 ),
-                                d.employeeNumber,
+                                _displayCompanyLoginCode(d),
+                                icon: Icons.business_outlined,
+                              ),
+                              _line(
+                                _t(
+                                  nl: 'Chauffeurcode',
+                                  en: 'Driver code',
+                                  fr: 'Code chauffeur',
+                                  es: 'Código de conductor',
+                                ),
+                                d.employeeNumber.trim().isEmpty
+                                    ? d.id
+                                    : d.employeeNumber,
                                 icon: Icons.badge_outlined,
                               ),
                               _line(
@@ -9335,10 +14194,16 @@ class CustomerHomePage extends StatelessWidget {
     }
   }
 
-  Widget _customerHomeHero(BuildContext context) {
+  Widget _customerHomeHero(
+    BuildContext context, {
+    required String heroAsset,
+    required double heroHeight,
+    required Alignment heroImageAlignment,
+    required double heroImageScale,
+  }) {
     final customerName = _customerDisplayName();
     return Container(
-      height: 312,
+      height: heroHeight,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: kFluxidiYellow.withOpacity(0.26)),
@@ -9348,16 +14213,16 @@ class CustomerHomePage extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           Transform.scale(
-            scale: 1.12,
-            alignment: const Alignment(0.55, 0.10),
+            scale: heroImageScale,
+            alignment: heroImageAlignment,
             child: Image.asset(
-              'assets/fluxidi/fluxidi_customer_home_hero.png',
+              heroAsset,
               fit: BoxFit.cover,
-              alignment: const Alignment(0.55, 0.10),
+              alignment: heroImageAlignment,
               errorBuilder: (_, __, ___) => Image.asset(
                 'assets/fluxidi/fluxidi_hero_taxi.png',
                 fit: BoxFit.cover,
-                alignment: const Alignment(0.55, 0.10),
+                alignment: heroImageAlignment,
               ),
             ),
           ),
@@ -9442,110 +14307,6 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
-  Widget _customerPrimaryCta(BuildContext context) {
-    const ctaIconContainerSize = 58.0;
-    const ctaIconGlyphSize = 31.0;
-    return GestureDetector(
-      onTap: () => _openCalculator(context, scheduledIntent: false),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.46)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF101010), Color(0xFF07080C)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: kFluxidiYellow.withOpacity(0.11),
-              blurRadius: 16,
-              spreadRadius: 0.9,
-            ),
-            BoxShadow(
-              color: Colors.black.withOpacity(0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: ctaIconContainerSize,
-              height: ctaIconContainerSize,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    kFluxidiYellow.withOpacity(0.3),
-                    const Color(0xFF15120A),
-                  ],
-                ),
-                shape: BoxShape.circle,
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.5)),
-                boxShadow: [
-                  BoxShadow(
-                    color: kFluxidiYellow.withOpacity(0.09),
-                    blurRadius: 9,
-                    spreadRadius: 0.3,
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.local_taxi_outlined,
-                color: Color(0xFFE5B641),
-                size: ctaIconGlyphSize,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _t(
-                      nl: 'Bereken & boek je rit',
-                      en: 'Calculate & book your ride',
-                      fr: 'Calculez & réservez votre trajet',
-                      es: 'Calcula y reserva tu viaje',
-                    ),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15.6,
-                    ),
-                    maxLines: 1,
-                    softWrap: false,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 31,
-              height: 31,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF15120A).withOpacity(0.7),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.34)),
-              ),
-              child: Icon(
-                Icons.arrow_forward_rounded,
-                color: kFluxidiYellow.withOpacity(0.98),
-                size: 19,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _customerQuickActionCard({
     required BuildContext context,
     required IconData icon,
@@ -9615,7 +14376,10 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
-  Widget _customerQuickActionGrid(BuildContext context) {
+  Widget _customerQuickActionGrid(
+    BuildContext context, {
+    required double mainAxisExtent,
+  }) {
     final actions = <({IconData icon, String label, VoidCallback onTap})>[
       (
         icon: Icons.receipt_long_outlined,
@@ -9675,9 +14439,11 @@ class CustomerHomePage extends StatelessWidget {
           fr: 'Trajets aéroport',
           es: 'Traslados aeropuerto',
         ),
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const AirportPage())),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AirportPage(bookingBaseUrl: kBookingBaseUrl),
+          ),
+        ),
       ),
       (
         icon: Icons.hotel_rounded,
@@ -9702,7 +14468,7 @@ class CustomerHomePage extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 9,
             mainAxisSpacing: 9,
-            mainAxisExtent: 112,
+            mainAxisExtent: mainAxisExtent,
           ),
           itemBuilder: (_, i) => _customerQuickActionCard(
             context: context,
@@ -9859,7 +14625,7 @@ class CustomerHomePage extends StatelessWidget {
     const navIconSize = 25.0;
     final items = <String>[
       _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
-      _t(nl: 'Boek rit', en: 'Book ride', fr: 'Réserver', es: 'Reservar'),
+      _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis'),
       _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
       _t(
         nl: 'Meldingen',
@@ -9871,7 +14637,7 @@ class CustomerHomePage extends StatelessWidget {
     ];
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0E1524),
+        color: const Color(0xFF050505),
         border: Border(
           top: BorderSide(color: kFluxidiYellow.withOpacity(0.2), width: 0.8),
         ),
@@ -9883,7 +14649,9 @@ class CustomerHomePage extends StatelessWidget {
           onTap: (i) {
             if (i == 0) return;
             if (i == 1) {
-              _openCalculator(context, scheduledIntent: false);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
+              );
               return;
             }
             if (i == 2) {
@@ -9948,61 +14716,109 @@ class CustomerHomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        bottomNavigationBar: _customerBottomNav(context),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Column(
-              children: [
-                _customerHomeHero(context),
-                const SizedBox(height: 14),
-                _customerPrimaryCta(context),
-                const SizedBox(height: 14),
-                _customerQuickActionGrid(context),
-                const SizedBox(height: 12),
-                _customerWideCard(
-                  context: context,
-                  icon: Icons.celebration_outlined,
-                  title: _t(
-                    nl: 'Evenementen',
-                    en: 'Events',
-                    fr: 'Événements',
-                    es: 'Eventos',
-                  ),
-                  subtitle: '',
-                  visualAsset: 'assets/fluxidi/fluxidi_event_crowd_night.jpg',
-                  visualHeight: 130,
-                  visualAlignment: Alignment.centerRight,
-                  onTap: () => Navigator.of(
+      builder: (context, _, __) {
+        double clampDouble(double v, double min, double max) =>
+            v < min ? min : (v > max ? max : v);
+        final media = MediaQuery.of(context);
+        final W = media.size.width;
+        final H = media.size.height;
+        final screenClass = FluxidiBreakpoints.classifyWidth(W);
+        final isTabletPortrait =
+            (screenClass == FluxidiScreenClass.tablet ||
+                screenClass == FluxidiScreenClass.desktop) &&
+            W < H &&
+            H >= 900;
+        final isTabletLandscape =
+            (screenClass == FluxidiScreenClass.tablet ||
+                screenClass == FluxidiScreenClass.desktop) &&
+            W > H &&
+            H >= 700;
+        final heroAsset = isTabletLandscape
+            ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_customer_home_hero.png';
+        final eventsAsset = isTabletLandscape
+            ? 'assets/fluxidi/evenementen_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_event_crowd_night.jpg';
+        final businessAsset = isTabletLandscape
+            ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.png'
+            : 'assets/fluxidi/fluxidi_business_briefcase_night.jpg';
+        final customerHeroHeight = isTabletPortrait
+            ? clampDouble(H * 0.28, 360.0, 410.0)
+            : 312.0;
+        final customerHeroImageAlignment = isTabletPortrait
+            ? const Alignment(0.42, 0.00)
+            : const Alignment(0.55, 0.10);
+        final customerHeroImageScale = isTabletPortrait ? 1.02 : 1.12;
+        final customerQuickGridMainAxisExtent = isTabletPortrait
+            ? clampDouble(H * 0.10, 126.0, 144.0)
+            : 112.0;
+        final customerWideCardHeight = isTabletLandscape
+            ? clampDouble(H * 0.24, 200.0, 230.0)
+            : isTabletPortrait
+            ? clampDouble(H * 0.155, 205.0, 225.0)
+            : 130.0;
+        return Scaffold(
+          backgroundColor: const Color(0xFF050505),
+          bottomNavigationBar: _customerBottomNav(context),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                children: [
+                  _customerHomeHero(
                     context,
-                  ).push(MaterialPageRoute(builder: (_) => const EventsPage())),
-                ),
-                const SizedBox(height: 10),
-                _customerWideCard(
-                  context: context,
-                  icon: Icons.business_center_outlined,
-                  title: _t(
-                    nl: 'Zakelijk',
-                    en: 'Business',
-                    fr: 'Pro',
-                    es: 'Empresas',
+                    heroAsset: heroAsset,
+                    heroHeight: customerHeroHeight,
+                    heroImageAlignment: customerHeroImageAlignment,
+                    heroImageScale: customerHeroImageScale,
                   ),
-                  subtitle: '',
-                  visualAsset:
-                      'assets/fluxidi/fluxidi_business_briefcase_night.jpg',
-                  visualHeight: 130,
-                  visualAlignment: const Alignment(0.65, 0.0),
-                  onTap: () => _comingSoon(context),
-                ),
-                const SizedBox(height: 12),
-                const FluxidiBackToStartButton(),
-              ],
+                  const SizedBox(height: 14),
+                  _customerQuickActionGrid(
+                    context,
+                    mainAxisExtent: customerQuickGridMainAxisExtent,
+                  ),
+                  const SizedBox(height: 12),
+                  _customerWideCard(
+                    context: context,
+                    icon: Icons.celebration_outlined,
+                    title: _t(
+                      nl: 'Evenementen',
+                      en: 'Events',
+                      fr: 'Événements',
+                      es: 'Eventos',
+                    ),
+                    subtitle: '',
+                    visualAsset: eventsAsset,
+                    visualHeight: customerWideCardHeight,
+                    visualAlignment: Alignment.centerRight,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const EventsPage()),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _customerWideCard(
+                    context: context,
+                    icon: Icons.business_center_outlined,
+                    title: _t(
+                      nl: 'Zakelijk',
+                      en: 'Business',
+                      fr: 'Pro',
+                      es: 'Empresas',
+                    ),
+                    subtitle: '',
+                    visualAsset: businessAsset,
+                    visualHeight: customerWideCardHeight,
+                    visualAlignment: const Alignment(0.65, 0.0),
+                    onTap: () => _comingSoon(context),
+                  ),
+                  const SizedBox(height: 12),
+                  const FluxidiBackToStartButton(),
+                ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -10039,7 +14855,77 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       _error = null;
     });
     try {
-      final items = await CustomerBookingStore.instance.loadAll();
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_saved_bookings',
+      );
+      var items = await CustomerBookingStore.instance.loadAll();
+      if (items.isEmpty) {
+        final fallbackItems = await CustomerBookingsStore.instance
+            .loadAllAcrossKnownCustomerScopesForDisplayOnly();
+        if (fallbackItems.isNotEmpty) {
+          String firstNonEmpty(List<String> values) {
+            for (final value in values) {
+              final trimmed = value.trim();
+              if (trimmed.isNotEmpty) return trimmed;
+            }
+            return '';
+          }
+
+          items = fallbackItems
+              .map((item) {
+                final publicReference = firstNonEmpty(<String>[
+                  item.publicBookingId,
+                  item.receiptReference,
+                  item.planningReference,
+                  item.bookingReference,
+                  item.publicReference,
+                ]);
+                final raw = <String, dynamic>{
+                  'booking_id': item.bookingId,
+                  'tenant_id': item.tenantId,
+                  'tenantId': item.tenantId,
+                  'company_id': item.companyId,
+                  'companyId': item.companyId,
+                  'public_booking_id': item.publicBookingId,
+                  'public_booking_reference': item.publicBookingId,
+                  'publicBookingReference': item.publicBookingId,
+                  'planning_reference': item.planningReference,
+                  'planningReference': item.planningReference,
+                  'booking_reference': item.bookingReference,
+                  'bookingReference': item.bookingReference,
+                  'public_reference': item.publicReference,
+                  'publicReference': item.publicReference,
+                  'receipt_reference': item.receiptReference,
+                  'receiptReference': item.receiptReference,
+                  'payment_booking_id': item.paymentBookingId,
+                  'payment_status': item.paymentStatus,
+                  'status': item.status,
+                  'price': item.price,
+                  'currency': item.currency,
+                  'quote': item.quote,
+                  'updated_at': item.updatedAt,
+                };
+                return CustomerSavedBooking(
+                  bookingId: item.bookingId,
+                  tenantId: item.tenantId,
+                  companyId: item.companyId,
+                  customerId: '',
+                  createdAt: item.createdAt,
+                  pickupIso: item.pickupIso,
+                  from: item.from,
+                  to: item.to,
+                  price: item.price,
+                  currency: item.currency,
+                  paymentStatus: item.paymentStatus,
+                  bookingStatus: item.status,
+                  publicReference: publicReference,
+                  rawSnapshot: raw,
+                );
+              })
+              .where((entry) => entry.bookingId.trim().isNotEmpty)
+              .toList(growable: false);
+        }
+      }
       final visible = items
           .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
           .toList(growable: false);
@@ -10070,6 +14956,40 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       publicReference: booking.publicReference,
       source: booking.rawSnapshot,
     );
+  }
+
+  Map<String, String> _savedBookingScopeQuery(CustomerSavedBooking booking) {
+    final tenantFromBooking = booking.tenantId.trim();
+    final companyFromBooking = booking.companyId.trim();
+    if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
+      return <String, String>{
+        'tenant_id': tenantFromBooking,
+        'company_id': companyFromBooking,
+        'tenantId': tenantFromBooking,
+        'companyId': companyFromBooking,
+      };
+    }
+    final tenantFromRaw =
+        (booking.rawSnapshot['tenant_id'] ??
+                booking.rawSnapshot['tenantId'] ??
+                '')
+            .toString()
+            .trim();
+    final companyFromRaw =
+        (booking.rawSnapshot['company_id'] ??
+                booking.rawSnapshot['companyId'] ??
+                '')
+            .toString()
+            .trim();
+    if (tenantFromRaw.isNotEmpty && companyFromRaw.isNotEmpty) {
+      return <String, String>{
+        'tenant_id': tenantFromRaw,
+        'company_id': companyFromRaw,
+        'tenantId': tenantFromRaw,
+        'companyId': companyFromRaw,
+      };
+    }
+    return _activeBookingScopeQuery();
   }
 
   String _formatPickup(String iso) {
@@ -10171,6 +15091,12 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final reference = booking.publicReference.trim().isNotEmpty
         ? booking.publicReference.trim()
         : booking.bookingId.trim();
+    final hasIdentity =
+        reference.isNotEmpty || booking.bookingStatus.trim().isNotEmpty;
+    final hasFrom = booking.from.trim().isNotEmpty;
+    final hasTo = booking.to.trim().isNotEmpty;
+    final hasPrice = booking.price != null;
+    final showPartialLoading = hasIdentity && (!hasFrom || !hasTo || !hasPrice);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -10219,14 +15145,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     ),
                   ),
                   const Spacer(),
-                  Text(
-                    _formatPrice(booking),
-                    style: TextStyle(
-                      color: kFluxidiYellow.withOpacity(0.98),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                  if (!showPartialLoading || hasPrice)
+                    Text(
+                      _formatPrice(booking),
+                      style: TextStyle(
+                        color: kFluxidiYellow.withOpacity(0.98),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -10238,63 +15165,81 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Column(
-                    children: [
-                      Icon(
-                        Icons.radio_button_checked,
-                        size: 11.5,
-                        color: kFluxidiYellow.withOpacity(0.94),
-                      ),
-                      Container(
-                        width: 1.8,
-                        height: 30,
-                        margin: const EdgeInsets.symmetric(vertical: 3),
-                        color: kFluxidiYellow.withOpacity(0.35),
-                      ),
-                      const Icon(
-                        Icons.location_on,
-                        size: 13.5,
-                        color: Color(0xFF34D29A),
-                      ),
-                    ],
+              if (showPartialLoading) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _t(
+                    nl: 'Boekingsgegevens laden...',
+                    en: 'Loading booking details...',
+                    fr: 'Chargement des détails de réservation...',
+                    es: 'Cargando detalles de la reserva...',
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.66),
+                    fontSize: 11.4,
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
                       children: [
-                        Text(
-                          booking.from.isEmpty ? '-' : booking.from,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.8,
-                            fontWeight: FontWeight.w600,
-                            height: 1.24,
-                          ),
+                        Icon(
+                          Icons.radio_button_checked,
+                          size: 11.5,
+                          color: kFluxidiYellow.withOpacity(0.94),
                         ),
-                        const SizedBox(height: 15),
-                        Text(
-                          booking.to.isEmpty ? '-' : booking.to,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 12.8,
-                            fontWeight: FontWeight.w600,
-                            height: 1.24,
-                          ),
+                        Container(
+                          width: 1.8,
+                          height: 30,
+                          margin: const EdgeInsets.symmetric(vertical: 3),
+                          color: kFluxidiYellow.withOpacity(0.35),
+                        ),
+                        const Icon(
+                          Icons.location_on,
+                          size: 13.5,
+                          color: Color(0xFF34D29A),
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            booking.from,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                              height: 1.24,
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            booking.to,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                              height: 1.24,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -10357,11 +15302,16 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         aliases: aliases,
         source: booking.rawSnapshot,
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(id)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scope = _savedBookingScopeQuery(booking);
+      final uri =
+          Uri.parse(
+            '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+          ).replace(
+            queryParameters: <String, String>{
+              ...scope,
+              if (proof.isNotEmpty) ...proof,
+            },
+          );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -10408,6 +15358,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
 
     final fallback = StoredCustomerBooking(
       bookingId: id,
+      tenantId: booking.tenantId,
+      companyId: booking.companyId,
       publicBookingId: booking.publicReference.trim().isNotEmpty
           ? booking.publicReference.trim()
           : id,
@@ -10505,7 +15457,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     );
     if (confirmed != true) return;
     try {
-      await CustomerBookingStore.instance.clearLocalTestData();
+      final aliases = <String>{};
+      for (final booking in _bookings) {
+        aliases.addAll(_aliasesForSavedBooking(booking));
+      }
+      await CustomerBookingsStore.instance
+          .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+            aliases,
+          );
       if (!mounted) return;
       setState(() {
         _bookings = const <CustomerSavedBooking>[];
@@ -10987,12 +15946,19 @@ _removeLocalCustomerBookingEverywhere({
   debugPrint(
     '[CUSTOMER_BOOKING][DELETE_REQ] booking=${_safeRefPreview(bookingForLog)} aliases=${sortedAliases.join(',')}',
   );
-  final result = await CustomerBookingStore.instance
-      .removeLocalBookingByAnyReference(aliases);
+  final result = await CustomerBookingsStore.instance
+      .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
+        aliases,
+      );
   debugPrint(
-    '[CUSTOMER_BOOKING][DELETE_RESULT] removed=${result.removed} storeA=${result.storeA} storeB=${result.storeB} remaining=${result.remaining}',
+    '[CUSTOMER_BOOKING][DELETE_RESULT] removed=${result.removed} storeA=${result.removed} storeB=${result.removed} remaining=${result.remaining}',
   );
-  return result;
+  return (
+    removed: result.removed,
+    storeA: result.removed,
+    storeB: result.removed,
+    remaining: result.remaining,
+  );
 }
 
 class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
@@ -12283,6 +17249,10 @@ class CustomerBookingView {
 
   factory CustomerBookingView.fromStored(StoredCustomerBooking stored) {
     final booking = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'from': stored.from,
       'to': stored.to,
       'pickup_iso': stored.pickupIso,
@@ -12315,10 +17285,18 @@ class CustomerBookingView {
     );
     booking.addAll(businessPayload);
     final record = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'status': stored.status,
       'payment_status': stored.paymentStatus,
       'booking': booking,
       'payload': <String, dynamic>{
+        'tenant_id': stored.tenantId,
+        'tenantId': stored.tenantId,
+        'company_id': stored.companyId,
+        'companyId': stored.companyId,
         'from': stored.from,
         'to': stored.to,
         'pickup_iso': stored.pickupIso,
@@ -12331,6 +17309,10 @@ class CustomerBookingView {
       ...businessPayload,
     };
     final source = <String, dynamic>{
+      'tenant_id': stored.tenantId,
+      'tenantId': stored.tenantId,
+      'company_id': stored.companyId,
+      'companyId': stored.companyId,
       'record': record,
       'booking': booking,
       'quote': stored.quote,
@@ -13241,11 +18223,59 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         fallbackPhone: _view.customerPhone,
         source: _view.source,
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(widget.bookingId)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scopeSource = <String, dynamic>{
+        ..._view.source,
+        'record': _view.record,
+        'booking': _view.booking,
+      };
+      final tenantFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+        'tenant_id',
+        'tenantId',
+        'record.tenant_id',
+        'record.tenantId',
+        'record.booking.tenant_id',
+        'record.booking.tenantId',
+        'record.payload.tenant_id',
+        'record.payload.tenantId',
+        'booking.tenant_id',
+        'booking.tenantId',
+        'payload.tenant_id',
+        'payload.tenantId',
+        'data.tenant_id',
+        'data.tenantId',
+        'data.record.tenant_id',
+        'data.record.tenantId',
+      ]);
+      final companyFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
+        'company_id',
+        'companyId',
+        'record.company_id',
+        'record.companyId',
+        'record.booking.company_id',
+        'record.booking.companyId',
+        'record.payload.company_id',
+        'record.payload.companyId',
+        'booking.company_id',
+        'booking.companyId',
+        'payload.company_id',
+        'payload.companyId',
+        'data.company_id',
+        'data.companyId',
+        'data.record.company_id',
+        'data.record.companyId',
+      ]);
+      final refreshScope =
+          tenantFromStored.isNotEmpty && companyFromStored.isNotEmpty
+          ? <String, String>{
+              'tenant_id': tenantFromStored,
+              'company_id': companyFromStored,
+              'tenantId': tenantFromStored,
+              'companyId': companyFromStored,
+            }
+          : _activeBookingScopeQuery();
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
+      ).replace(queryParameters: <String, String>{...refreshScope, ...proof});
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -13656,6 +18686,162 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return h;
   }
 
+  dynamic _cancelScopeValueAtPath(Map<String, dynamic> source, String path) {
+    dynamic current = source;
+    for (final segment in path.split('.')) {
+      if (current is Map && current.containsKey(segment)) {
+        current = current[segment];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  String _cancelScopeFirstNonEmpty(
+    Map<String, dynamic> source,
+    List<String> paths,
+  ) {
+    for (final path in paths) {
+      final raw = _cancelScopeValueAtPath(source, path);
+      final text = raw?.toString().trim() ?? '';
+      if (text.isNotEmpty &&
+          text.toLowerCase() != 'null' &&
+          text.toLowerCase() != 'undefined') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  Map<String, String> _selectedCancelScopeQuery() {
+    final storedScopeSource = <String, dynamic>{
+      'record': _view.record,
+      'booking': _view.booking,
+    };
+    final tenantFromStoredBooking =
+        _cancelScopeFirstNonEmpty(storedScopeSource, const [
+          'tenant_id',
+          'tenantId',
+          'record.tenant_id',
+          'record.tenantId',
+          'record.booking.tenant_id',
+          'record.booking.tenantId',
+          'booking.tenant_id',
+          'booking.tenantId',
+        ]);
+    final companyFromStoredBooking =
+        _cancelScopeFirstNonEmpty(storedScopeSource, const [
+          'company_id',
+          'companyId',
+          'record.company_id',
+          'record.companyId',
+          'record.booking.company_id',
+          'record.booking.companyId',
+          'booking.company_id',
+          'booking.companyId',
+        ]);
+    if (tenantFromStoredBooking.isNotEmpty &&
+        companyFromStoredBooking.isNotEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=booking_scope',
+      );
+      return <String, String>{
+        'tenant_id': tenantFromStoredBooking,
+        'company_id': companyFromStoredBooking,
+        'tenantId': tenantFromStoredBooking,
+        'companyId': companyFromStoredBooking,
+      };
+    }
+    final scopeSource = <String, dynamic>{
+      ..._view.source,
+      'record': _view.record,
+      'booking': _view.booking,
+    };
+    final tenantFromBooking = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'tenant_id',
+      'tenantId',
+      'tenant',
+      'record.tenant_id',
+      'record.tenantId',
+      'record.tenant',
+      'record.booking.tenant_id',
+      'record.booking.tenantId',
+      'record.booking.tenant',
+      'record.payload.tenant_id',
+      'record.payload.tenantId',
+      'record.payload.tenant',
+      'booking.tenant_id',
+      'booking.tenantId',
+      'booking.tenant',
+      'payload.tenant_id',
+      'payload.tenantId',
+      'payload.tenant',
+      'data.tenant_id',
+      'data.tenantId',
+      'data.tenant',
+      'data.record.tenant_id',
+      'data.record.tenantId',
+      'data.record.tenant',
+      'data.record.booking.tenant_id',
+      'data.record.booking.tenantId',
+      'data.record.booking.tenant',
+      'data.record.payload.tenant_id',
+      'data.record.payload.tenantId',
+      'data.record.payload.tenant',
+    ]);
+    final companyFromBooking = _cancelScopeFirstNonEmpty(scopeSource, const [
+      'company_id',
+      'companyId',
+      'company',
+      'record.company_id',
+      'record.companyId',
+      'record.company',
+      'record.booking.company_id',
+      'record.booking.companyId',
+      'record.booking.company',
+      'record.payload.company_id',
+      'record.payload.companyId',
+      'record.payload.company',
+      'booking.company_id',
+      'booking.companyId',
+      'booking.company',
+      'payload.company_id',
+      'payload.companyId',
+      'payload.company',
+      'data.company_id',
+      'data.companyId',
+      'data.company',
+      'data.record.company_id',
+      'data.record.companyId',
+      'data.record.company',
+      'data.record.booking.company_id',
+      'data.record.booking.companyId',
+      'data.record.booking.company',
+      'data.record.payload.company_id',
+      'data.record.payload.companyId',
+      'data.record.payload.company',
+    ]);
+    if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_scope',
+      );
+      return <String, String>{
+        'tenant_id': tenantFromBooking,
+        'company_id': companyFromBooking,
+        'tenantId': tenantFromBooking,
+        'companyId': companyFromBooking,
+      };
+    }
+    final fallbackScope = _activeBookingScopeQuery();
+    final fallbackTenant = (fallbackScope['tenant_id'] ?? '').trim();
+    final fallbackCompany = (fallbackScope['company_id'] ?? '').trim();
+    debugPrint(
+      '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$fallbackTenant company=$fallbackCompany source=active_scope_fallback',
+    );
+    return fallbackScope;
+  }
+
   bool get _canCancelBooking {
     return !_isCustomerBookingTerminalStatus(_view.lifecycleStatus);
   }
@@ -13679,13 +18865,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   Future<bool> _verifyCancellationServerState({
     required String bookingId,
     required Map<String, String> proof,
+    required Map<String, String> cancelScope,
   }) async {
     try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
+      final scopedQuery = <String, String>{...cancelScope, ...proof};
+      final uri = Uri.parse(
+        '$kBookingBaseUrl$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
+      ).replace(queryParameters: scopedQuery);
       final res = await http
           .get(uri, headers: _cancelHeaders())
           .timeout(const Duration(seconds: 12));
@@ -13763,7 +18949,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _cancelling = true;
       _refreshError = null;
     });
-    final scope = _activeBookingScopeQuery();
+    final scope = _selectedCancelScopeQuery();
     final aliases = _customerBookingDeleteAliases(
       bookingId: bookingId,
       publicBookingReference: _view.publicBookingReference,
@@ -13794,11 +18980,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       if (proof['customer_phone'] != null)
         'customer_phone': proof['customer_phone'],
     };
-    final uri = _withActiveBookingScope(
-      kBookingBaseUrl,
-      '$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
-      extraQuery: proof.isEmpty ? null : proof,
-    );
+    final scopedQuery = <String, String>{...scope, ...proof};
+    final uri = Uri.parse(
+      '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
+    ).replace(queryParameters: scopedQuery);
     debugPrint(
       '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)}',
     );
@@ -13861,6 +19046,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         final cancelled = await _verifyCancellationServerState(
           bookingId: bookingId,
           proof: proof,
+          cancelScope: scope,
         );
         if (cancelled) {
           final localResult = await _removeLocalCustomerBookingEverywhere(
@@ -20885,7 +26071,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final activeDriverId = _resolvedActiveDriverIdForScope();
     if (!allowed) {
       debugPrint(
-        '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=$activeDriverId allowed=false',
+        '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=$activeDriverId active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
       );
       _toast(_driverOwnershipBlockedMessage());
       return false;
@@ -20918,7 +26104,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ]) ??
             '';
         debugPrint(
-          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=$allowed',
+          '[DRIVER_SCOPE][FILTER] booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=$allowed',
         );
         return allowed;
       })
@@ -20953,48 +26139,67 @@ class _DriverHomePageState extends State<DriverHomePage>
     BoxFit fit = BoxFit.contain,
     Widget? fallback,
   }) {
+    String? safeRemoteImageUrl(String? value) {
+      final text = (value ?? '').trim();
+      if (text.isEmpty) return null;
+      if (text.startsWith('https://') || text.startsWith('http://')) {
+        return text;
+      }
+      return null;
+    }
+
+    bool isHttpImageRef(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
+    }
+
+    Widget resolvedFallback() {
+      return fallback ??
+          Image.asset(
+            kFluxidiLogoAsset,
+            height: height,
+            fit: fit,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+          );
+    }
+
     return ValueListenableBuilder<BusinessSettingsState>(
       valueListenable: businessSettingsNotifier,
       builder: (context, s, _) {
-        final ref = s.logoAssetPath.trim().isNotEmpty
-            ? s.logoAssetPath.trim()
-            : kFluxidiLogoAsset;
+        final localRef = s.logoAssetPath.trim();
+        final sessionLogoRef = safeRemoteImageUrl(
+          activeDriverSessionNotifier.value?.companyLogoUrl,
+        );
+        final ref = localRef.isNotEmpty
+            ? localRef
+            : (sessionLogoRef ?? kFluxidiLogoAsset);
         if (_isAssetRef(ref)) {
           return Image.asset(
             ref,
             height: height,
             fit: fit,
             filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) =>
-                fallback ??
-                Text(
-                  kCompanyName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                  ),
-                ),
+            errorBuilder: (_, __, ___) => resolvedFallback(),
           );
         }
-        if (kIsWeb) {
+        if (isHttpImageRef(ref)) {
           return Image.network(
             ref,
             height: height,
             fit: fit,
             filterQuality: FilterQuality.high,
-            errorBuilder: (_, __, ___) =>
-                fallback ??
-                const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+            errorBuilder: (_, __, ___) => resolvedFallback(),
           );
         }
+        if (kIsWeb) return resolvedFallback();
         return Image.file(
           File(ref),
           height: height,
           fit: fit,
           filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) =>
-              fallback ??
-              const Icon(Icons.local_taxi, size: 72, color: Colors.white70),
+          errorBuilder: (_, __, ___) => resolvedFallback(),
         );
       },
     );
@@ -21330,16 +26535,60 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     try {
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final primaryUri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        kListBookingsPath,
-        extraQuery: <String, String>{'limit': '50', 't': '$ts'},
-      );
+      final activeDriverSession = activeDriverSessionNotifier.value;
+      final driverTokenMode =
+          appRoleNotifier.value == AppRole.driver &&
+          (activeDriverSession?.linkMethod ?? '').trim().toLowerCase() ==
+              'public_driver_login';
+      final driverSessionToken = (activeDriverSession?.driverSessionToken ?? '')
+          .trim();
+      Uri primaryUri;
+      Map<String, String> requestHeaders;
+      final useDriverToken = driverTokenMode && driverSessionToken.isNotEmpty;
+      if (useDriverToken) {
+        primaryUri = Uri.parse(
+          '$kBookingBaseUrl$kDriverBookingsPath',
+        ).replace(queryParameters: <String, String>{'limit': '50', 't': '$ts'});
+        requestHeaders = <String, String>{
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $driverSessionToken',
+        };
+        debugPrint('[RIDES][REFRESH][MODE] source=driver_token');
+      } else {
+        primaryUri = _withActiveBookingScope(
+          kBookingBaseUrl,
+          kListBookingsPath,
+          extraQuery: <String, String>{'limit': '50', 't': '$ts'},
+        );
+        requestHeaders = _headers(admin: true);
+        if (driverTokenMode) {
+          debugPrint(
+            '[RIDES][REFRESH][MODE] source=admin_fallback reason=no_driver_token',
+          );
+        }
+      }
       debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
-      final res = await http.get(primaryUri, headers: _headers(admin: true));
+      final res = await http.get(primaryUri, headers: requestHeaders);
       debugPrint(
         '[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}',
       );
+
+      if (useDriverToken && res.statusCode == 401) {
+        debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
+        _stopBookingPolling(reason: 'driver_token_auth_expired');
+        if (!mounted) return;
+        setState(() {
+          _bookingsError = _tr(
+            nl: 'Je chauffeurssessie is verlopen. Log opnieuw in.',
+            en: 'Your driver session expired. Please log in again.',
+            fr: 'Votre session chauffeur a expire. Reconnectez-vous.',
+            es: 'Tu sesion de conductor ha caducado. Inicia sesion de nuevo.',
+          );
+          _loadingBookings = false;
+        });
+        _markBookingsUiDirty();
+        return;
+      }
 
       if (res.statusCode != 200) {
         throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -26292,10 +31541,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildNextRideRoutePreview(BookingItem booking) {
+  Widget _buildNextRideRoutePreview(BookingItem booking, {double? height}) {
     final future = _nextRidePreviewFuture(booking);
     return Container(
-      height: 136,
+      height: height ?? 136,
       width: double.infinity,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -26993,14 +32242,23 @@ class _DriverHomePageState extends State<DriverHomePage>
                           : 1.0;
                       return Transform.scale(
                         scale: compactNavHeader
-                            ? (pulse * 1.28)
-                            : (pulse * 1.6),
-                        child: _tenantLogo(
-                          height: compactNavHeader ? 68 : 92,
-                          fallback: const Icon(
-                            Icons.local_taxi,
-                            size: 32,
-                            color: Colors.white70,
+                            ? (pulse * 1.06)
+                            : (pulse * 1.18),
+                        child: ClipRect(
+                          child: SizedBox(
+                            width: compactNavHeader ? 132 : 164,
+                            height: compactNavHeader ? 46 : 58,
+                            child: Center(
+                              child: _tenantLogo(
+                                height: compactNavHeader ? 38 : 50,
+                                fit: BoxFit.contain,
+                                fallback: const Icon(
+                                  Icons.local_taxi,
+                                  size: 32,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       );
@@ -27621,6 +32879,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  String? _dashboardAvatarNetworkUrl() {
+    final session = activeDriverSessionNotifier.value;
+    final candidate = (session?.driverPhotoUrl ?? '').trim();
+    if (candidate.isEmpty) return null;
+    if (candidate.startsWith('https://') || candidate.startsWith('http://')) {
+      return candidate;
+    }
+    return null;
+  }
+
   String _dashboardGreeting() {
     final name = _dashboardDriverName();
     if (name.toLowerCase() == 'chauffeur') {
@@ -28097,6 +33365,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     const headerTopPull = -8.0;
     const logoVisualLift = -14.0;
     final avatarPhotoPath = _dashboardAvatarPhotoPath();
+    final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -28117,17 +33386,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                   child: SizedBox(
                     width: logoWidth,
                     height: logoHeight,
-                    child: Image.asset(
-                      kFluxidiLogoAsset,
-                      width: logoWidth,
+                    child: _tenantLogo(
                       height: logoHeight,
                       fit: BoxFit.contain,
-                      alignment: Alignment.topLeft,
-                      filterQuality: FilterQuality.high,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.local_taxi_rounded,
-                        color: Color(0xFFFFD36A),
-                        size: 64,
+                      fallback: Image.asset(
+                        kFluxidiLogoAsset,
+                        height: logoHeight,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.topLeft,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
                     ),
                   ),
@@ -28190,7 +33457,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                             child: ClipOval(
                               child: SizedBox.expand(
                                 child: avatarPhotoPath == null
-                                    ? Center(child: _dashboardAvatarFallback())
+                                    ? (avatarPhotoUrl == null
+                                          ? Center(
+                                              child: _dashboardAvatarFallback(),
+                                            )
+                                          : Image.network(
+                                              avatarPhotoUrl,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => Center(
+                                                child:
+                                                    _dashboardAvatarFallback(),
+                                              ),
+                                            ))
                                     : Image.file(
                                         File(avatarPhotoPath),
                                         fit: BoxFit.cover,
@@ -28230,9 +33508,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildDriverSummaryCards({required BookingItem? nextRide}) {
+  Widget _buildDriverSummaryCards({
+    required BookingItem? nextRide,
+    bool compactLandscape = false,
+    double? compactMinHeight,
+  }) {
     const summaryIconContainerSize = 52.0;
     const summaryIconGlyphSize = 30.0;
+    const compactIconContainerSize = 36.0;
+    const compactIconGlyphSize = 20.0;
     Widget card({
       required IconData icon,
       required String label,
@@ -28244,53 +33528,105 @@ class _DriverHomePageState extends State<DriverHomePage>
         onTap: onTap,
         borderRadius: BorderRadius.circular(13),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          constraints: compactLandscape && compactMinHeight != null
+              ? BoxConstraints(minHeight: compactMinHeight)
+              : null,
+          padding: compactLandscape
+              ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
+              : const EdgeInsets.fromLTRB(8, 8, 8, 8),
           decoration: BoxDecoration(
             color: const Color(0xFF111214),
             borderRadius: BorderRadius.circular(13),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: summaryIconContainerSize,
-                height: summaryIconContainerSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accentColor.withOpacity(0.16),
-                  border: Border.all(color: accentColor.withOpacity(0.55)),
+          child: compactLandscape
+              ? Row(
+                  children: [
+                    Container(
+                      width: compactIconContainerSize,
+                      height: compactIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: accentColor.withOpacity(0.16),
+                        border: Border.all(
+                          color: accentColor.withOpacity(0.55),
+                        ),
+                      ),
+                      child: Icon(
+                        icon,
+                        size: compactIconGlyphSize,
+                        color: accentColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.78),
+                          fontSize: 11.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: summaryIconContainerSize,
+                      height: summaryIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: accentColor.withOpacity(0.16),
+                        border: Border.all(
+                          color: accentColor.withOpacity(0.55),
+                        ),
+                      ),
+                      child: Icon(
+                        icon,
+                        size: summaryIconGlyphSize,
+                        color: accentColor,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.66),
+                        fontSize: 10.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
-                child: Icon(
-                  icon,
-                  size: summaryIconGlyphSize,
-                  color: accentColor,
-                ),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.66),
-                  fontSize: 10.2,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
         ),
       );
     }
@@ -28343,7 +33679,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildNextRideHeroCard({required BookingItem? nextRide}) {
+  Widget _buildNextRideHeroCard({
+    required BookingItem? nextRide,
+    double? routePreviewHeight,
+  }) {
     if (nextRide == null) {
       return Container(
         width: double.infinity,
@@ -28634,7 +33973,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ],
           ),
           const SizedBox(height: 8),
-          _buildNextRideRoutePreview(nextRide),
+          _buildNextRideRoutePreview(nextRide, height: routePreviewHeight),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -28668,7 +34007,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildDriverQuickActionsGrid() {
+  Widget _buildDriverQuickActionsGrid({
+    bool isTabletPortrait = false,
+    double? tabletPortraitCardMinHeight,
+    bool isTabletLandscape = false,
+    int? forcedColumns,
+    double? landscapeCardMinHeight,
+    double? landscapeSpacing,
+    bool compactLandscape = false,
+    bool useImageBackgrounds = false,
+    double? tabletPortraitSpacing,
+  }) {
     const quickActionIconContainerSize = 56.0;
     const quickActionIconGlyphSize = 31.0;
     Widget quickAction({
@@ -28677,15 +34026,25 @@ class _DriverHomePageState extends State<DriverHomePage>
       String subtitle = '',
       required VoidCallback onTap,
       bool active = false,
+      String? backgroundAsset,
     }) {
+      final hasImageBackground =
+          useImageBackgrounds && (backgroundAsset ?? '').trim().isNotEmpty;
       return InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 68),
-          padding: const EdgeInsets.all(10),
+          constraints: BoxConstraints(
+            minHeight: isTabletPortrait
+                ? (tabletPortraitCardMinHeight ?? 120.0)
+                : isTabletLandscape
+                ? (landscapeCardMinHeight ?? 98.0)
+                : 68.0,
+          ),
           decoration: BoxDecoration(
-            color: const Color(0xFF111111).withOpacity(0.96),
+            color: hasImageBackground
+                ? const Color(0xFF0A0A0A).withOpacity(0.88)
+                : const Color(0xFF111111).withOpacity(0.96),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: active
@@ -28693,57 +34052,93 @@ class _DriverHomePageState extends State<DriverHomePage>
                   : Colors.white.withOpacity(0.12),
             ),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          child: Stack(
             children: [
-              Container(
-                width: quickActionIconContainerSize,
-                height: quickActionIconContainerSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: active
-                      ? const Color(0xFF21180A)
-                      : const Color(0xFF17130B),
-                  border: Border.all(
-                    color: active
-                        ? const Color(0x88FFD36A)
-                        : const Color(0x55FFD36A),
+              if (hasImageBackground)
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.asset(
+                      backgroundAsset!,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.centerRight,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
                   ),
                 ),
-                child: Icon(
-                  icon,
-                  color: const Color(0xFFFFD36A),
-                  size: quickActionIconGlyphSize,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 10.4,
+              if (hasImageBackground)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.16),
+                          Colors.black.withOpacity(0.26),
+                          Colors.black.withOpacity(0.56),
+                        ],
                       ),
                     ),
-                    if (subtitle.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.67),
-                          fontSize: 11.5,
+                  ),
+                ),
+              Padding(
+                padding: EdgeInsets.all(compactLandscape ? 8 : 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: quickActionIconContainerSize,
+                      height: quickActionIconContainerSize,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: active
+                            ? const Color(0xFF21180A)
+                            : const Color(0xFF17130B),
+                        border: Border.all(
+                          color: active
+                              ? const Color(0x88FFD36A)
+                              : const Color(0x55FFD36A),
                         ),
                       ),
-                    ],
+                      child: Icon(
+                        icon,
+                        color: const Color(0xFFFFD36A),
+                        size: quickActionIconGlyphSize,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 10.4,
+                            ),
+                          ),
+                          if (subtitle.trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.67),
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -28755,10 +34150,25 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     return LayoutBuilder(
       builder: (context, c) {
-        final gap = 8.0;
-        const minTileWidth = 162.0;
-        int columns = (c.maxWidth / minTileWidth).floor();
-        columns = columns.clamp(2, 4);
+        final gap = isTabletPortrait
+            ? (tabletPortraitSpacing ?? 11.0)
+            : isTabletLandscape
+            ? (landscapeSpacing ?? 8.0)
+            : 8.0;
+        int columns;
+        if (isTabletPortrait) {
+          columns = 2;
+        } else if (isTabletLandscape) {
+          columns = forcedColumns ?? 3;
+          final preferredWidth = (c.maxWidth - (gap * (columns - 1))) / columns;
+          if (preferredWidth < 105.0) {
+            columns = 2;
+          }
+        } else {
+          const minTileWidth = 162.0;
+          columns = (c.maxWidth / minTileWidth).floor();
+          columns = columns.clamp(2, 4);
+        }
         final width = (c.maxWidth - (gap * (columns - 1))) / columns;
         return Wrap(
           spacing: gap,
@@ -28775,6 +34185,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Viaje directo',
                 ),
                 onTap: _openDirectRideEntry,
+                backgroundAsset: 'assets/fluxidi/driver_action_street_ride.png',
               ),
             ),
             SizedBox(
@@ -28788,6 +34199,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Calcular tarifa',
                 ),
                 onTap: _openCalculatorFromDashboard,
+                backgroundAsset:
+                    'assets/fluxidi/driver_action_fare_calculator.png',
               ),
             ),
             SizedBox(
@@ -28801,6 +34214,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Mis viajes',
                 ),
                 onTap: _openBookingsHubFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_my_rides.png',
               ),
             ),
             SizedBox(
@@ -28814,6 +34228,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Historial',
                 ),
                 onTap: _openTripHistoryFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_history.png',
               ),
             ),
             SizedBox(
@@ -28827,6 +34242,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   es: 'Recibos',
                 ),
                 onTap: _openTripHistoryFromDashboard,
+                backgroundAsset: 'assets/fluxidi/driver_action_receipts.png',
               ),
             ),
             SizedBox(
@@ -28846,6 +34262,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   );
                 },
+                backgroundAsset: 'assets/fluxidi/driver_action_documents.png',
               ),
             ),
           ],
@@ -28861,6 +34278,43 @@ class _DriverHomePageState extends State<DriverHomePage>
     final statusKind = _dashboardDriverStatus();
     final statusLabel = _dashboardStatusLabel();
     final statusReady = statusKind == _DriverDashboardStatus.ready;
+    double clampDouble(double v, double min, double max) =>
+        v < min ? min : (v > max ? max : v);
+    final size = MediaQuery.sizeOf(context);
+    final W = size.width;
+    final H = size.height;
+    final screenClass = FluxidiBreakpoints.classifyWidth(W);
+    final isTabletPortrait =
+        (screenClass == FluxidiScreenClass.tablet ||
+            screenClass == FluxidiScreenClass.desktop) &&
+        W < H &&
+        H >= 900;
+    final isTabletLandscape =
+        (screenClass == FluxidiScreenClass.tablet ||
+            screenClass == FluxidiScreenClass.desktop) &&
+        W > H &&
+        H >= 700;
+    final driverHeaderHeight = isTabletPortrait
+        ? clampDouble(H * 0.24, 300.0, 360.0)
+        : 0.0;
+    final driverLandscapeHeaderHeight = isTabletLandscape
+        ? clampDouble(H * 0.19, 140.0, 185.0)
+        : 0.0;
+    final driverQuickActionCardMinHeight = isTabletPortrait
+        ? clampDouble(H * 0.12, 110.0, 140.0)
+        : 68.0;
+    final driverQuickActionGap = isTabletPortrait ? 11.0 : 8.0;
+    final driverLandscapeQuickActionCardMinHeight = isTabletLandscape
+        ? clampDouble(H * 0.175, 132.0, 162.0)
+        : 98.0;
+    final driverLandscapeQuickActionGap = isTabletLandscape ? 8.0 : 8.0;
+    final driverLandscapeSummaryCardMinHeight = isTabletLandscape
+        ? clampDouble(H * 0.09, 70.0, 86.0)
+        : 70.0;
+    final driverLandscapeRoutePreviewHeight = isTabletLandscape
+        ? clampDouble(H * 0.24, 170.0, 220.0)
+        : 136.0;
+    final driverScrollBottomPadding = isTabletLandscape ? 18.0 : 10.0;
     Widget sectionTitle(String text) {
       return Text(
         text,
@@ -28907,6 +34361,98 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
 
+    Widget driverIdentityBlock() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _tr(
+              nl: 'Chauffeur',
+              en: 'Driver',
+              fr: 'Chauffeur',
+              es: 'Conductor',
+            ),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 13.2,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.30,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  driverName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _handleDriverStatusAction,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101113),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: statusReady
+                          ? const Color(0x664CD964)
+                          : const Color(0x66FFD36A),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: statusReady
+                              ? const Color(0xFF2ECC71)
+                              : const Color(0xFFFFD36A),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        statusLabel,
+                        style: TextStyle(
+                          color: statusReady
+                              ? const Color(0xFFBCF6D0)
+                              : const Color(0xFFFFE4A8),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 16,
+                        color: Colors.white54,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
     return ColoredBox(
       color: const Color(0xFF050505),
       child: SafeArea(
@@ -28915,111 +34461,244 @@ class _DriverHomePageState extends State<DriverHomePage>
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  2,
+                  14,
+                  driverScrollBottomPadding,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildDriverDashboardHeader(),
-                    const SizedBox(height: 1),
-                    Text(
-                      _tr(
-                        nl: 'Chauffeur',
-                        en: 'Driver',
-                        fr: 'Chauffeur',
-                        es: 'Conductor',
-                      ),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.72),
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.30,
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            driverName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16.2,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
+                    if (isTabletPortrait) ...[
+                      Container(
+                        height: driverHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0x55FFD36A)),
                         ),
-                        const SizedBox(width: 8),
-                        InkWell(
-                          onTap: _handleDriverStatusAction,
-                          borderRadius: BorderRadius.circular(999),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF101113),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: statusReady
-                                    ? const Color(0x664CD964)
-                                    : const Color(0x66FFD36A),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/fluxidi/driver_header_portrait_tablet.png',
+                              fit: BoxFit.cover,
+                              alignment: Alignment.centerRight,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.16),
+                                      Colors.black.withOpacity(0.26),
+                                      Colors.black.withOpacity(0.56),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  8,
+                                  10,
+                                  10,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildDriverDashboardHeader(),
+                                    const Spacer(),
+                                    driverIdentityBlock(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _buildDriverSummaryCards(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      _buildNextRideHeroCard(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      sectionTitle(
+                        _tr(
+                          nl: 'Snelle acties',
+                          en: 'Quick actions',
+                          fr: 'Actions rapides',
+                          es: 'Acciones rapidas',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDriverQuickActionsGrid(
+                        isTabletPortrait: isTabletPortrait,
+                        tabletPortraitCardMinHeight:
+                            driverQuickActionCardMinHeight,
+                        useImageBackgrounds: isTabletPortrait,
+                        tabletPortraitSpacing: driverQuickActionGap,
+                      ),
+                    ] else if (isTabletLandscape) ...[
+                      Container(
+                        height: driverLandscapeHeaderHeight,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0x55FFD36A)),
+                        ),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/fluxidi/driver_header_landscape_tablet.png',
+                              fit: BoxFit.cover,
+                              alignment: Alignment.center,
+                              errorBuilder: (_, __, ___) => const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Color(0xFF101010),
+                                      Color(0xFF07080C),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withOpacity(0.20),
+                                      Colors.black.withOpacity(0.32),
+                                      Colors.black.withOpacity(0.62),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  6,
+                                  10,
+                                  8,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildDriverDashboardHeader(),
+                                    const SizedBox(height: 2),
+                                    driverIdentityBlock(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 60,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  width: 7,
-                                  height: 7,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: statusReady
-                                        ? const Color(0xFF2ECC71)
-                                        : const Color(0xFFFFD36A),
-                                  ),
+                                _buildDriverSummaryCards(
+                                  nextRide: nextRide,
+                                  compactLandscape: true,
+                                  compactMinHeight:
+                                      driverLandscapeSummaryCardMinHeight,
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  statusLabel,
-                                  style: TextStyle(
-                                    color: statusReady
-                                        ? const Color(0xFFBCF6D0)
-                                        : const Color(0xFFFFE4A8),
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                                const SizedBox(width: 2),
-                                const Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  size: 16,
-                                  color: Colors.white54,
+                                const SizedBox(height: 10),
+                                _buildNextRideHeroCard(
+                                  nextRide: nextRide,
+                                  routePreviewHeight:
+                                      driverLandscapeRoutePreviewHeight,
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    _buildDriverSummaryCards(nextRide: nextRide),
-                    const SizedBox(height: 10),
-                    _buildNextRideHeroCard(nextRide: nextRide),
-                    const SizedBox(height: 10),
-                    sectionTitle(
-                      _tr(
-                        nl: 'Snelle acties',
-                        en: 'Quick actions',
-                        fr: 'Actions rapides',
-                        es: 'Acciones rapidas',
+                          const SizedBox(width: 11),
+                          Expanded(
+                            flex: 40,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                sectionTitle(
+                                  _tr(
+                                    nl: 'Snelle acties',
+                                    en: 'Quick actions',
+                                    fr: 'Actions rapides',
+                                    es: 'Acciones rapidas',
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                _buildDriverQuickActionsGrid(
+                                  isTabletLandscape: true,
+                                  forcedColumns: 2,
+                                  landscapeCardMinHeight:
+                                      driverLandscapeQuickActionCardMinHeight,
+                                  landscapeSpacing:
+                                      driverLandscapeQuickActionGap,
+                                  compactLandscape: true,
+                                  useImageBackgrounds: true,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildDriverQuickActionsGrid(),
+                    ] else ...[
+                      _buildDriverDashboardHeader(),
+                      const SizedBox(height: 1),
+                      driverIdentityBlock(),
+                      const SizedBox(height: 6),
+                      _buildDriverSummaryCards(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      _buildNextRideHeroCard(nextRide: nextRide),
+                      const SizedBox(height: 10),
+                      sectionTitle(
+                        _tr(
+                          nl: 'Snelle acties',
+                          en: 'Quick actions',
+                          fr: 'Actions rapides',
+                          es: 'Acciones rapidas',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDriverQuickActionsGrid(
+                        isTabletPortrait: isTabletPortrait,
+                        tabletPortraitCardMinHeight:
+                            driverQuickActionCardMinHeight,
+                        useImageBackgrounds: isTabletPortrait,
+                        tabletPortraitSpacing: driverQuickActionGap,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -29380,25 +35059,64 @@ class _DriverHomePageState extends State<DriverHomePage>
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 10,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.26),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withOpacity(0.14)),
-                    ),
-                    child: IconButton(
-                      tooltip: 'Menu',
-                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                      icon: const Icon(Icons.menu_rounded, size: 22),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.26),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.14),
+                          ),
+                        ),
+                        child: IconButton(
+                          tooltip: 'Menu',
+                          onPressed: () =>
+                              _scaffoldKey.currentState?.openDrawer(),
+                          icon: const Icon(Icons.menu_rounded, size: 22),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  IgnorePointer(
+                    child: Container(
+                      width: isLandscape ? 146 : 124,
+                      height: isLandscape ? 48 : 44,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.38),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0x66FFD36A)),
+                      ),
+                      child: Center(
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: _tenantLogo(
+                            height: isLandscape ? 36 : 30,
+                            fit: BoxFit.contain,
+                            fallback: Image.asset(
+                              kFluxidiLogoAsset,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           if (_cameraMode == _CameraMode.follow && _nextNavInstruction != null)
@@ -33537,6 +39255,105 @@ class _ReceiptPdfBundle {
 }
 
 class _ReceiptPdfActionRunner {
+  static String _resolveBookingIdForInvoicePdf(_TripHistoryItem item) {
+    final direct = (item.bookingId ?? '').trim();
+    if (direct.isNotEmpty) return direct;
+    return (_firstPathText(item, const [
+              ['booking_id'],
+              ['bookingId'],
+              ['id'],
+              ['booking', 'booking_id'],
+              ['booking', 'bookingId'],
+              ['booking', 'id'],
+              ['record', 'booking_id'],
+              ['record', 'bookingId'],
+              ['record', 'booking', 'booking_id'],
+              ['record', 'booking', 'bookingId'],
+              ['payload', 'booking_id'],
+              ['payload', 'bookingId'],
+              ['payload', 'booking', 'booking_id'],
+              ['payload', 'booking', 'bookingId'],
+            ]) ??
+            '')
+        .trim();
+  }
+
+  static Uri? _buildBackendInvoicePdfUri(_TripHistoryItem item) {
+    final bookingId = _resolveBookingIdForInvoicePdf(item);
+    if (bookingId.isEmpty) return null;
+    return Uri.parse(
+      '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/invoice/pdf',
+    );
+  }
+
+  static Map<String, String> _backendInvoicePdfHeaders() {
+    final headers = <String, String>{'Accept': 'application/pdf'};
+    final admin = _adminHeaders();
+    if (admin.isNotEmpty) {
+      headers.addAll(admin);
+      return headers;
+    }
+
+    final driverSessionToken =
+        (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+    if (driverSessionToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $driverSessionToken';
+      return headers;
+    }
+
+    final companySessionToken =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (companySessionToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $companySessionToken';
+    }
+
+    return headers;
+  }
+
+  static Future<_ReceiptPdfBundle?> _tryFetchBackendInvoicePdfBundle({
+    required _TripHistoryItem item,
+    required String source,
+  }) async {
+    final uri = _buildBackendInvoicePdfUri(item);
+    if (uri == null) {
+      debugPrint('[PDF][BACKEND_FETCH][MISS] status=no_booking_id');
+      return null;
+    }
+    debugPrint('[PDF][BACKEND_FETCH][START] source=$source');
+    try {
+      final response = await http
+          .get(uri, headers: _backendInvoicePdfHeaders())
+          .timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        debugPrint('[PDF][BACKEND_FETCH][MISS] status=${response.statusCode}');
+        return null;
+      }
+      final bytes = response.bodyBytes;
+      final contentType = (response.headers['content-type'] ?? '')
+          .trim()
+          .toLowerCase();
+      debugPrint('[PDF][BACKEND_FETCH][OK] contentType=$contentType');
+
+      final tempDir = await getTemporaryDirectory();
+      final receiptsDir = Directory(
+        '${tempDir.path}${Platform.pathSeparator}fluxidi_receipts',
+      );
+      if (!await receiptsDir.exists()) {
+        await receiptsDir.create(recursive: true);
+      }
+
+      final fileName = _sanitizeFilePart('${_customerReference(item)}_invoice');
+      final file = File(
+        '${receiptsDir.path}${Platform.pathSeparator}$fileName.pdf',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      return _ReceiptPdfBundle(bytes: bytes, file: file);
+    } catch (err) {
+      debugPrint('[PDF][BACKEND_FETCH][ERROR] $err');
+      return null;
+    }
+  }
+
   static Future<void> previewPdf({
     required BuildContext context,
     required _TripHistoryItem item,
@@ -34092,6 +39909,11 @@ class _ReceiptPdfActionRunner {
     required BuildContext context,
     required _TripHistoryItem item,
   }) async {
+    final backendBundle = await _tryFetchBackendInvoicePdfBundle(
+      item: item,
+      source: 'receipt_pdf_bundle_static_layout',
+    );
+    if (backendBundle != null) return backendBundle;
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,
@@ -35427,7 +41249,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         ]) ??
         '';
     debugPrint(
-      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} allowed=false',
+      '[DRIVER_SCOPE][BLOCK] action=$action booking_id=$bookingId assigned_vehicle_id=$assignedVehicleId active_driver_id=${_resolvedActiveDriverIdForScope()} active_vehicle_id=${_activeDriverSessionVehicleIdForScope()} allowed=false',
     );
     if (context.mounted) {
       ScaffoldMessenger.of(
@@ -37209,6 +43031,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   Future<_ReceiptPdfBundle?> _buildReceiptPdfBundle(
     BuildContext context,
   ) async {
+    final backendBundle =
+        await _ReceiptPdfActionRunner._tryFetchBackendInvoicePdfBundle(
+          item: item,
+          source: 'receipt_pdf_bundle_stateful_layout',
+        );
+    if (backendBundle != null) return backendBundle;
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,

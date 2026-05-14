@@ -78,6 +78,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   bool _isPublicHttpsUrl(String value) =>
       value.trim().toLowerCase().startsWith('https://');
 
+  bool _isNetworkUrl(String value) {
+    final lower = value.trim().toLowerCase();
+    return lower.startsWith('https://') || lower.startsWith('http://');
+  }
+
   String _publicVehicleUploadFailureMessage() {
     return _t(
       nl: 'Upload mislukt. Controleer of dit een JPG, PNG of WEBP-afbeelding is.',
@@ -647,13 +652,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
 
   Widget _photoPreviewBox({
     required String photoRef,
+    String? fallbackPhotoRef,
     required double height,
     required VoidCallback? onTap,
     required String placeholderText,
   }) {
-    final clean = photoRef.trim();
-    final isAsset = _isAssetRef(clean);
-    final hasRef = clean.isNotEmpty;
+    final primary = photoRef.trim();
+    final fallback = (fallbackPhotoRef ?? '').trim();
+    final effectiveRef = primary.isNotEmpty ? primary : fallback;
+    final fallbackNetwork = _isNetworkUrl(fallback);
+    final isAsset = _isAssetRef(effectiveRef);
+    final isNetwork = _isNetworkUrl(effectiveRef);
+    final hasRef = effectiveRef.isNotEmpty;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -669,7 +679,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             ? ClipRRect(
                 borderRadius: BorderRadius.circular(9),
                 child: Image.asset(
-                  clean,
+                  effectiveRef,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) =>
                       _photoPlaceholder(placeholderText),
@@ -678,18 +688,28 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             : (hasRef
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(9),
-                      child: kIsWeb
+                      child: isNetwork
                           ? Image.network(
-                              clean,
+                              effectiveRef,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) =>
                                   _photoPlaceholder(placeholderText),
                             )
                           : Image.file(
-                              File(clean),
+                              File(effectiveRef),
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  _photoPlaceholder(placeholderText),
+                              errorBuilder: (_, __, ___) {
+                                if (fallbackNetwork &&
+                                    fallback != effectiveRef) {
+                                  return Image.network(
+                                    fallback,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        _photoPlaceholder(placeholderText),
+                                  );
+                                }
+                                return _photoPlaceholder(placeholderText);
+                              },
                             ),
                     )
                   : _photoPlaceholder(placeholderText)),
@@ -2196,6 +2216,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             children: [
                               _photoPreviewBox(
                                 photoRef: v.primaryPhotoRef,
+                                fallbackPhotoRef: v.publicPhotoUrl,
                                 height: 176,
                                 onTap: null,
                                 placeholderText: _t(
