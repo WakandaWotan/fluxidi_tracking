@@ -2107,6 +2107,13 @@ function _readCustomerPhoneAuthInputPhone(body) {
   return _looksLikeE164Phone(normalized) ? normalized : "";
 }
 
+function _isAllowedCustomerPhoneAuthSmsRegion(phoneE164) {
+  const normalized = sanitizeTenantString(phoneE164, 40);
+  if (!_looksLikeE164Phone(normalized)) return false;
+  const allowedPrefixes = ["+32", "+31", "+33", "+49", "+34", "+44"];
+  return allowedPrefixes.some((prefix) => normalized.startsWith(prefix));
+}
+
 function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
   const normalizedCode = normalizePublicCompanyCode(companyCode);
   const normalizedEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
@@ -4898,6 +4905,13 @@ async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
   const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
   if (!phoneE164) {
     return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  if (!_isAllowedCustomerPhoneAuthSmsRegion(phoneE164)) {
+    const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][REGION_REJECT] phone=${maskedPhone || "-"}`,
+    );
+    return json({ ok: false, error: "unsupported_phone_region" }, 400);
   }
   const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
   const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
