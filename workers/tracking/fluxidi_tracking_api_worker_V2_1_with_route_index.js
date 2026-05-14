@@ -1748,14 +1748,9 @@ async function handleTripsHistory(req, url, env, origin) {
   const scopedIndexKey = driver_id
     ? scopedTripsDriverIndexKey(scope, driver_id)
     : scopedTripsIndexKey(scope);
-  const legacyIndexKey = driver_id
-    ? `trips_index:${tenant_id}:${driver_id}`
-    : `trips_index:${tenant_id}`;
   const scopedIds = (await kvGetJson(env.FLUXIDI_TRACKING, scopedIndexKey)) ?? [];
-  const legacyIds = (await kvGetJson(env.FLUXIDI_TRACKING, legacyIndexKey)) ?? [];
-  const useLegacyIndex = (!Array.isArray(scopedIds) || scopedIds.length === 0) && Array.isArray(legacyIds);
-  const tripIds = Array.isArray(useLegacyIndex ? legacyIds : scopedIds)
-    ? (useLegacyIndex ? legacyIds : scopedIds)
+  const tripIds = Array.isArray(scopedIds)
+    ? scopedIds
     : [];
   const trips = [];
   const cleaned = [];
@@ -1769,7 +1764,7 @@ async function handleTripsHistory(req, url, env, origin) {
       const legacyTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(safeTripId));
       if (
         legacyTrip &&
-        recordMatchesTenantCompanyScope(legacyTrip, scope, { allowLegacyCompanyless: true })
+        recordMatchesTenantCompanyScope(legacyTrip, scope)
       ) {
         const migratedTrip = applyCanonicalScopeToRecord(
           { ...legacyTrip },
@@ -1780,7 +1775,7 @@ async function handleTripsHistory(req, url, env, origin) {
       }
     }
     if (!trip) continue;
-    if (!recordMatchesTenantCompanyScope(trip, scope, { allowLegacyCompanyless: true })) {
+    if (!recordMatchesTenantCompanyScope(trip, scope)) {
       continue;
     }
     cleaned.push(safeTripId);
@@ -1790,16 +1785,7 @@ async function handleTripsHistory(req, url, env, origin) {
     if (trips.length >= limit) break;
   }
 
-  if (cleaned.length !== tripIds.length && !useLegacyIndex) {
-    await kvPutJson(
-      env.FLUXIDI_TRACKING,
-      scopedIndexKey,
-      cleaned.slice(0, driver_id ? 200 : 500),
-      TTL_TRIP
-    );
-  }
-  if (useLegacyIndex && cleaned.length > 0) {
-    // Legacy tenant-only trip indexes stay read-only to avoid cross-company contamination.
+  if (cleaned.length !== tripIds.length) {
     await kvPutJson(
       env.FLUXIDI_TRACKING,
       scopedIndexKey,

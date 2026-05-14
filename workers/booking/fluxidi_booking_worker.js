@@ -804,8 +804,11 @@ export class BookingReferenceSequenceDO {
   }
 
   async _allocate(body) {
-    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120) || "fluxidi";
-    const companyId = safeStr(body?.company_id || body?.companyId, 120) || tenantId;
+    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120);
+    const companyId = safeStr(body?.company_id || body?.companyId, 120);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
     const yearMonth =
       normalizeBookingReferenceYearMonth(body?.year_month || body?.yearMonth) ||
       bookingReferenceYearMonthFromPickupIso(body?.pickup_iso || body?.pickupIso) ||
@@ -864,8 +867,11 @@ export class DocumentReferenceSequenceDO {
   }
 
   async _allocate(body) {
-    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120) || "fluxidi";
-    const companyId = safeStr(body?.company_id || body?.companyId, 120) || tenantId;
+    const tenantId = safeStr(body?.tenant_id || body?.tenantId, 120);
+    const companyId = safeStr(body?.company_id || body?.companyId, 120);
+    if (!tenantId || !companyId) {
+      return this._json({ ok: false, error: "missing_tenant_scope" }, 400);
+    }
     const sequenceType = documentReferenceTypePart(
       body?.sequence_type || body?.sequenceType || body?.type,
       "",
@@ -16261,7 +16267,7 @@ function _sanitizeBookingSourceContext(input) {
   return out;
 }
 
-function resolveBookingTenantContext({ payload, request, env }) {
+function resolveBookingTenantContext({ payload, request, env, allowLegacyFallback = false }) {
   let tenantId = "";
   let companyId = "";
   let tenantResolutionMode = "";
@@ -16292,15 +16298,24 @@ function resolveBookingTenantContext({ payload, request, env }) {
     if (tenantId) tenantResolutionMode = "payload_context";
   }
   if (!companyId) {
-    companyId = safeStr(payload?.company_id ?? payload?.companyId ?? tenantId, 80);
+    companyId = safeStr(payload?.company_id ?? payload?.companyId, 80);
   }
 
-  // Legacy fallback for existing MVP behavior.
-  if (!tenantId) {
-    tenantId = "fluxidi";
-    tenantResolutionMode = "legacy_fallback";
+  if (!tenantId || !companyId) {
+    if (!allowLegacyFallback) {
+      return {
+        hasScope: false,
+        error: "missing_tenant_scope",
+        tenant_id: "",
+        company_id: "",
+      };
+    }
+    if (!tenantId) {
+      tenantId = "fluxidi";
+      tenantResolutionMode = "legacy_fallback";
+    }
+    if (!companyId) companyId = tenantId;
   }
-  if (!companyId) companyId = tenantId;
 
   const bookingSource = safeStr(
     payload?.booking_source ?? payload?.bookingSource ?? "flutter_app",
@@ -16315,6 +16330,7 @@ function resolveBookingTenantContext({ payload, request, env }) {
   );
 
   return {
+    hasScope: true,
     tenant_id: tenantId,
     company_id: companyId,
     booking_source: bookingSource,
@@ -16679,6 +16695,9 @@ async function handleBooking(payload, env, request) {
       };
     }
     const tenantContext = resolveBookingTenantContext({ payload, request, env });
+    if (!tenantContext?.hasScope) {
+      return { ok: false, error: "missing_tenant_scope" };
+    }
     const fleetScope = normalizeFleetTenantScope(tenantContext);
 
     const pricingProfile = await _loadTenantPricingProfile(env, tenantContext);
@@ -23643,6 +23662,9 @@ async function handleAvailability(body, env, request = null, url = null) {
   const scopedContext = explicitScope?.hasScope ? explicitScope : null;
   const tenantContext =
     scopedContext || resolveBookingTenantContext({ payload: body || {}, request, env });
+  if (!tenantContext?.hasScope) {
+    return { ok: false, error: "missing_tenant_scope", build: BUILD_TAG };
+  }
   const fleetScope = normalizeFleetTenantScope(tenantContext);
   const calendarAuthConfig = await loadGoogleCalendarAuthConfig(env, scopedContext);
   const calendarConfigured = !!calendarAuthConfig?.configured;
@@ -24739,32 +24761,14 @@ async function allocateScopedInvoiceSequence(env, { tenant_id, company_id, picku
 async function nextInvoiceNumber(env, pickupIsoOrDate = null, scope = null) {
   const scopeTenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 120);
   const scopeCompany = safeStr(scope?.company_id ?? scope?.companyId, 120);
-  if (scopeTenant && scopeCompany) {
-    return await allocateScopedInvoiceSequence(env, {
-      tenant_id: scopeTenant,
-      company_id: scopeCompany,
-      pickup_iso: pickupIsoOrDate,
-    });
+  if (!scopeTenant || !scopeCompany) {
+    throw new Error("missing_tenant_scope");
   }
-  console.log("[INVOICE_SEQ][LEGACY_FALLBACK] reason=missing_scope");
-  const kv = env.INVOICE_KV;
-  const parts = invoiceYearMonthPartsFromInput(pickupIsoOrDate);
-  const yyyy = parts.yyyy;
-  const mm = parts.mm;
-  const key = `invoice:${yyyy}-${mm}`;
-
-  if (!kv) {
-    const rnd = String(Math.floor(Math.random() * 9000 + 1000)).padStart(4, "0");
-    return `FLX-${yyyy}-${mm}-${rnd}`;
-  }
-
-  const raw = await kv.get(key);
-  const cur = Number(raw || "0");
-  const next = cur + 1;
-  await kv.put(key, String(next));
-
-  const seq = String(next).padStart(4, "0");
-  return `FLX-${yyyy}-${mm}-${seq}`;
+  return await allocateScopedInvoiceSequence(env, {
+    tenant_id: scopeTenant,
+    company_id: scopeCompany,
+    pickup_iso: pickupIsoOrDate,
+  });
 }
 
 function findExistingInvoiceNumber(source) {

@@ -1361,6 +1361,27 @@ String _maskLocalScopeId(String value) {
   return (tenantId: tenantId, companyId: companyId);
 }
 
+({String tenantId, String companyId})? _strictActiveLocalScopeIds() {
+  final activeCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (activeCompanyId.isNotEmpty) {
+    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  }
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (sessionCompanyId.isNotEmpty) {
+    return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+  }
+  final driverSession = activeDriverSessionNotifier.value;
+  final driverTenantId = (driverSession?.tenantId ?? '').trim();
+  final driverCompanyId = (driverSession?.companyId ?? '').trim();
+  if ((driverSession?.isVerifiedPairingSession ?? false) &&
+      driverTenantId.isNotEmpty &&
+      driverCompanyId.isNotEmpty) {
+    return (tenantId: driverTenantId, companyId: driverCompanyId);
+  }
+  return null;
+}
+
 /// Phase 0b local-only compliance ledger sink (append-only JSONL).
 /// Best-effort by design: write failures must never break ride UX.
 class _ComplianceRideLedgerStore {
@@ -1543,34 +1564,39 @@ class _LocalDirectTripHistoryStore {
 
   static Future<List<Map<String, dynamic>>> readFor({
     required String tenantId,
+    required String companyId,
     required String driverId,
     int limit = 120,
   }) async {
     if (kIsWeb) return const <Map<String, dynamic>>[];
     try {
-      final activeScope = _activeLocalScopeIds();
+      final normalizedTenantId = tenantId.trim();
+      final normalizedCompanyId = companyId.trim();
+      if (normalizedTenantId.isEmpty || normalizedCompanyId.isEmpty) {
+        return const <Map<String, dynamic>>[];
+      }
       final scopedFile = await _scopedFile(
-        tenantId: tenantId.trim().isNotEmpty ? tenantId : activeScope.tenantId,
-        companyId: activeScope.companyId,
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
       );
       if (await scopedFile.exists()) {
         return _readFromFile(
           scopedFile,
-          tenantId: tenantId,
-          companyId: activeScope.companyId,
+          tenantId: normalizedTenantId,
+          companyId: normalizedCompanyId,
           driverId: driverId,
           limit: limit,
-          allowLegacyWithoutScope: true,
+          allowLegacyWithoutScope: false,
         );
       }
       final legacyFile = await _legacyFile();
       return _readFromFile(
         legacyFile,
-        tenantId: tenantId,
-        companyId: activeScope.companyId,
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
         driverId: driverId,
         limit: limit,
-        allowLegacyWithoutScope: true,
+        allowLegacyWithoutScope: false,
       );
     } catch (_) {
       return const <Map<String, dynamic>>[];
@@ -33102,9 +33128,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _completedTodayLoading = true);
 
     try {
-      final companyId = resolvedCompanyId.trim().isNotEmpty
-          ? resolvedCompanyId.trim()
-          : kOutboundTenantId;
+      final strictScope = _strictActiveLocalScopeIds();
+      if (strictScope == null) {
+        debugPrint(
+          '[DRIVER_DASHBOARD][COMPLETED_TODAY][SKIP_SCOPE] reason=missing_tenant_company_scope source=$reason',
+        );
+        if (!mounted) return;
+        setState(() {
+          _completedTodayCount = null;
+          _completedTodayLoading = false;
+        });
+        return;
+      }
       final driverId = kDriverId.trim();
       if (driverId.isEmpty) {
         if (!mounted) return;
@@ -33117,10 +33152,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       final uri = Uri.parse(
         '$kWorkerBaseUrl$kTripsHistoryPath'
-        '?tenant_id=${Uri.encodeQueryComponent(kOutboundTenantId)}'
-        '&company_id=${Uri.encodeQueryComponent(companyId)}'
-        '&tenantId=${Uri.encodeQueryComponent(kOutboundTenantId)}'
-        '&companyId=${Uri.encodeQueryComponent(companyId)}'
+        '?tenant_id=${Uri.encodeQueryComponent(strictScope.tenantId)}'
+        '&company_id=${Uri.encodeQueryComponent(strictScope.companyId)}'
+        '&tenantId=${Uri.encodeQueryComponent(strictScope.tenantId)}'
+        '&companyId=${Uri.encodeQueryComponent(strictScope.companyId)}'
         '&driver_id=${Uri.encodeQueryComponent(driverId)}'
         '&limit=200',
       );
@@ -37403,16 +37438,30 @@ class _DriverHomePageState extends State<DriverHomePage>
       activeDetails['booking'] = nestedBooking;
       bookingDetailsById[activeBookingId] = activeDetails;
     }
+    final strictScope = _strictActiveLocalScopeIds();
+    if (strictScope == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Bedrijfscontext ontbreekt. Ritgeschiedenis kan niet veilig geladen worden.',
+              en: 'Company context is missing. Trip history cannot be loaded safely.',
+              fr: 'Le contexte entreprise est manquant. L’historique des trajets ne peut pas être chargé en toute sécurité.',
+              es: 'Falta el contexto de empresa. El historial de viajes no puede cargarse de forma segura.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     unawaited(
       Navigator.of(context)
           .push(
             MaterialPageRoute(
               builder: (ctx) => _TripHistoryPage(
                 workerBaseUrl: kWorkerBaseUrl,
-                tenantId: kOutboundTenantId,
-                companyId: resolvedCompanyId.trim().isNotEmpty
-                    ? resolvedCompanyId.trim()
-                    : kOutboundTenantId,
+                tenantId: strictScope.tenantId,
+                companyId: strictScope.companyId,
                 driverId: kDriverId,
                 headers: _headers(admin: true),
                 bookingDetailsById: bookingDetailsById,
@@ -38214,6 +38263,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     Future<List<_TripHistoryItem>> readLocalItems() async {
       final localRecords = await _LocalDirectTripHistoryStore.readFor(
         tenantId: widget.tenantId,
+        companyId: widget.companyId,
         driverId: widget.driverId,
         limit: 120,
       );

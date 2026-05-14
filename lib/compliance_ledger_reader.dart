@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -20,11 +19,17 @@ String _maskScope(String value) {
   return '${trimmed.substring(0, 3)}...${trimmed.substring(trimmed.length - 3)}';
 }
 
-({String tenantId, String companyId}) _activeComplianceScope() {
-  final resolvedId = resolvedCompanyId.trim();
-  final tenantId = resolvedId.isNotEmpty ? resolvedId : kTenantId.trim();
-  final companyId = resolvedId.isNotEmpty ? resolvedId : tenantId;
-  return (tenantId: tenantId, companyId: companyId);
+({String tenantId, String companyId})? _activeComplianceScope() {
+  final activeCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (activeCompanyId.isNotEmpty) {
+    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  }
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (sessionCompanyId.isNotEmpty) {
+    return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+  }
+  return null;
 }
 
 class ComplianceLedgerEntry {
@@ -305,13 +310,15 @@ class ComplianceLedgerReader {
     );
   }
 
-  static Future<File> _file() async {
+  static Future<File?> _file() async {
     final scope = _activeComplianceScope();
+    if (scope == null) return null;
     return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
   }
 
-  static Future<File> _localDirectHistoryFile() async {
+  static Future<File?> _localDirectHistoryFile() async {
     final scope = _activeComplianceScope();
+    if (scope == null) return null;
     return _scopedLocalDirectHistoryFile(
       tenantId: scope.tenantId,
       companyId: scope.companyId,
@@ -401,10 +408,17 @@ class ComplianceLedgerReader {
   Future<void> clearLocalTestData() async {
     if (kIsWeb) return;
     final scope = _activeComplianceScope();
+    if (scope == null) {
+      debugPrint(
+        '[LOCAL_SCOPE][CLEANUP] target=compliance skipped=true reason=missing_tenant_company_scope',
+      );
+      return;
+    }
     final tenantId = scope.tenantId.trim();
     final companyId = scope.companyId.trim();
     final ledgerFile = await _file();
     final localDirectFile = await _localDirectHistoryFile();
+    if (ledgerFile == null || localDirectFile == null) return;
     if (!await ledgerFile.exists()) {
       await ledgerFile.create(recursive: true);
     }
@@ -432,9 +446,23 @@ class ComplianceLedgerReader {
     }
 
     final scope = _activeComplianceScope();
+    if (scope == null) {
+      return const ComplianceLedgerReadResult(
+        entries: <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+      );
+    }
     final tenantId = scope.tenantId.trim();
     final companyId = scope.companyId.trim();
     final scopedFile = await _file();
+    if (scopedFile == null) {
+      return const ComplianceLedgerReadResult(
+        entries: <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+      );
+    }
     final legacyFile = await _legacyFile();
     final useScoped = await scopedFile.exists();
     final file = useScoped ? scopedFile : legacyFile;

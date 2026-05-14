@@ -29,11 +29,10 @@ String _normalizeScopeId(String value, {required String fallback}) {
   return fallback;
 }
 
-EffectiveTenantCompanyScope resolveEffectiveTenantCompanyScope({
+EffectiveTenantCompanyScope? _resolveTenantCompanyScopeInternal({
   bool allowDriverFallback = false,
+  required bool allowDefaultFallback,
 }) {
-  final fallback = kTenantId.trim();
-
   final activeCompanySession = activeCompanySessionNotifier.value;
   final activeCompanyId = (activeCompanySession?.companyId ?? '').trim();
   if (activeCompanyId.isNotEmpty) {
@@ -86,6 +85,14 @@ EffectiveTenantCompanyScope resolveEffectiveTenantCompanyScope({
     }
   }
 
+  if (!allowDefaultFallback) {
+    debugPrint(
+      '[SCOPE][EFFECTIVE] source=missing_explicit_scope tenant=- company=- allowDriverFallback=$allowDriverFallback',
+    );
+    return null;
+  }
+
+  final fallback = kTenantId.trim();
   final normalizedFallback = _normalizeScopeId(fallback, fallback: 'fluxidi');
   final scope = EffectiveTenantCompanyScope(
     tenantId: normalizedFallback,
@@ -97,4 +104,23 @@ EffectiveTenantCompanyScope resolveEffectiveTenantCompanyScope({
     '[SCOPE][EFFECTIVE] source=${scope.source} tenant=${_maskScopeValue(scope.tenantId)} company=${_maskScopeValue(scope.companyId)} allowDriverFallback=$allowDriverFallback',
   );
   return scope;
+}
+
+EffectiveTenantCompanyScope resolveEffectiveTenantCompanyScope({
+  bool allowDriverFallback = false,
+}) {
+  final resolved = _resolveTenantCompanyScopeInternal(
+    allowDriverFallback: allowDriverFallback,
+    allowDefaultFallback: true,
+  );
+  return resolved!;
+}
+
+EffectiveTenantCompanyScope? resolveStrictTenantCompanyScope({
+  bool allowDriverFallback = false,
+}) {
+  return _resolveTenantCompanyScopeInternal(
+    allowDriverFallback: allowDriverFallback,
+    allowDefaultFallback: false,
+  );
 }

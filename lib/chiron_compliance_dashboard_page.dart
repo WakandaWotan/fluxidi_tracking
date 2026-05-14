@@ -3051,22 +3051,24 @@ class _LocalComplianceLedgerSectionState
     });
   }
 
-  ({String tenantId, String companyId}) _effectiveTenantCompanyIds() {
+  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
     final activeCompanyId =
         companyProfileNotifier.value?.companyId.trim() ?? '';
-    final resolvedId = resolvedCompanyId.trim();
-    final effectiveTenantId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
-    final effectiveCompanyId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (resolvedId.isNotEmpty ? resolvedId : kTenantId);
-    return (tenantId: effectiveTenantId, companyId: effectiveCompanyId);
+    if (activeCompanyId.isNotEmpty) {
+      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    }
+    final sessionCompanyId =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (sessionCompanyId.isNotEmpty) {
+      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    }
+    return null;
   }
 
   Future<void> _clearLocalTestData() async {
     if (_isClearingLocalTestData) return;
     final effective = _effectiveTenantCompanyIds();
+    if (effective == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3147,6 +3149,7 @@ class _LocalComplianceLedgerSectionState
   Future<void> _clearLocalCustomerBookings() async {
     if (_isClearingLocalCustomerBookings) return;
     final effective = _effectiveTenantCompanyIds();
+    if (effective == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -4670,6 +4673,32 @@ class _LocalComplianceLedgerSectionState
                       fileExists: false,
                       skippedMalformedLines: 0,
                     );
+                final effective = _effectiveTenantCompanyIds();
+                final hasScope = effective != null;
+
+                if (!hasScope) {
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _chironPanel,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _chironBorder),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Bedrijfscontext ontbreekt. Compliancegegevens kunnen niet veilig geladen worden.',
+                        en: 'Company context is missing. Compliance data cannot be loaded safely.',
+                        fr: 'Le contexte entreprise est manquant. Les données de conformité ne peuvent pas être chargées en toute sécurité.',
+                        es: 'Falta el contexto de empresa. Los datos de cumplimiento no pueden cargarse de forma segura.',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  );
+                }
 
                 if (result.entries.isEmpty) {
                   return Container(
