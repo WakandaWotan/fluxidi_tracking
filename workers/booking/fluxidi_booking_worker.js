@@ -3510,29 +3510,38 @@ function _readCustomerPhoneAuthSmsConfig(env) {
     env?.CUSTOMER_PHONE_AUTH_SMS_PROVIDER,
     32,
   ).toLowerCase();
-  const url = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_URL, 800);
-  const authHeader = sanitizeTenantString(
-    env?.CUSTOMER_PHONE_AUTH_SMS_AUTH_HEADER,
-    1200,
+  const defaultUrl = "https://api.smsgatewayapi.com/v1/message/send";
+  const url = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_URL, 800) || defaultUrl;
+  const clientId = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_CLIENT_ID,
+    240,
   );
-  const apiKey = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_API_KEY, 800);
+  const clientSecret = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_CLIENT_SECRET,
+    480,
+  );
   const from = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_FROM, 80);
   return {
     provider,
     url,
-    auth_header: authHeader,
-    api_key: apiKey,
+    client_id: clientId,
+    client_secret: clientSecret,
     from,
     has_url: !!url,
-    has_auth_header: !!authHeader,
-    has_api_key: !!apiKey,
+    has_client_id: !!clientId,
+    has_client_secret: !!clientSecret,
     has_from: !!from,
   };
 }
 
 function _isCustomerPhoneAuthSmsConfigured(env) {
   const cfg = _readCustomerPhoneAuthSmsConfig(env);
-  return !!(cfg.has_url && cfg.has_from && (cfg.has_auth_header || cfg.has_api_key));
+  return !!(
+    cfg.has_url &&
+    cfg.has_from &&
+    cfg.has_client_id &&
+    cfg.has_client_secret
+  );
 }
 
 function _isCustomerPhoneAuthDebugOtpEnabled(env) {
@@ -3558,11 +3567,6 @@ async function _sendCustomerPhoneAuthOtpSms(
     return { ok: false, reason: "sms_not_configured" };
   }
   const cfg = _readCustomerPhoneAuthSmsConfig(env);
-  const smsLocale = sanitizeTenantString(locale, 16).toLowerCase();
-  const challengeRef = sanitizeTenantString(challengeId, 160).replace(
-    /[^a-zA-Z0-9_-]+/g,
-    "",
-  );
   const messageTemplate = sanitizeTenantString(
     env?.CUSTOMER_PHONE_AUTH_SMS_TEMPLATE,
     320,
@@ -3573,25 +3577,20 @@ async function _sendCustomerPhoneAuthOtpSms(
     .replaceAll("{otp}", normalizedOtp)
     .replaceAll("{brand}", "Fluxidi")
     .replaceAll("{ttl_minutes}", "10");
+  const digitsOnlyTo = normalizedPhone.replace(/\D+/g, "");
+  if (!digitsOnlyTo) {
+    return { ok: false, reason: "sms_send_failed" };
+  }
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
+    "X-Client-Id": cfg.client_id,
+    "X-Client-Secret": cfg.client_secret,
   };
-  if (cfg.auth_header) {
-    headers.Authorization = cfg.auth_header;
-  } else {
-    headers.Authorization = `Bearer ${cfg.api_key}`;
-  }
   const payload = {
-    to: normalizedPhone,
-    phone_e164: normalizedPhone,
-    from: cfg.from,
     message,
-    channel: "sms",
-    locale: smsLocale || "nl",
-    challenge_id: challengeRef,
-    challengeId: challengeRef,
-    purpose: "customer_phone_auth",
+    to: digitsOnlyTo,
+    sender: cfg.from,
   };
   try {
     const response = await fetch(cfg.url, {
