@@ -1728,6 +1728,8 @@ const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX = "customer_phone_auth:rate:ver
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX = ":v1";
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
+const CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_PREFIX = "customer_phone_auth:sms_message:";
+const CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_SUFFIX = ":v1";
 const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
 const CUSTOMER_GLOBAL_IDENTITY_KEY_PREFIX = "customer:global:identity:";
 const CUSTOMER_GLOBAL_SCOPE_LINKS_KEY_PREFIX = "customer:global:scope_links:";
@@ -1904,6 +1906,22 @@ function _customerPhoneAuthChallengeKey(challengeId) {
 function _customerPhoneAuthChallengeId() {
   return (crypto?.randomUUID ? crypto.randomUUID() : `cpa_${Date.now()}_${Math.random()}`)
     .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
+function _sanitizeCustomerPhoneAuthSmsProviderMessageId(value) {
+  const normalized = sanitizeTenantString(value, 200);
+  if (!normalized) return "";
+  return normalized.replace(/[^a-zA-Z0-9._:-]+/g, "").slice(0, 160);
+}
+
+function _sanitizeCustomerPhoneAuthSmsProviderSignal(value, maxLength = 160) {
+  return sanitizeTenantString(value, maxLength);
+}
+
+function _customerPhoneAuthSmsMessageKey(messageId) {
+  const safeMessageId = _sanitizeCustomerPhoneAuthSmsProviderMessageId(messageId);
+  if (!safeMessageId) return "";
+  return `${CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_PREFIX}${safeMessageId}${CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_SUFFIX}`;
 }
 
 function _maskRecoveryChallengeId(value) {
@@ -4259,12 +4277,27 @@ async function _sendCustomerPhoneAuthOtpSms(
       );
       return { ok: false, reason: "provider_rejected_or_unconfirmed" };
     }
+    if (providerMessageId) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][SMS_PROVIDER_ACCEPTED] phone=${maskedPhone || "-"} hasMessageId=true senderMode=${cfg.sender_mode}`,
+      );
+      return {
+        ok: true,
+        providerMessageId,
+        transport_state: "provider_accepted_with_id",
+        provider_status: providerStatus,
+        provider_reason: providerReason,
+      };
+    }
     console.log(
-      `[CUSTOMER_PHONE_AUTH][SMS_SEND_OK] phone=${maskedPhone || "-"} hasMessageId=${providerMessageId ? "true" : "false"} senderMode=${cfg.sender_mode}`,
+      `[CUSTOMER_PHONE_AUTH][SMS_PROVIDER_UNCONFIRMED] phone=${maskedPhone || "-"} hasMessageId=false senderMode=${cfg.sender_mode} status=${providerStatus} reason=${providerReason}`,
     );
-    return providerMessageId
-      ? { ok: true, providerMessageId }
-      : { ok: true };
+    return {
+      ok: true,
+      transport_state: "provider_accepted_unconfirmed",
+      provider_status: providerStatus,
+      provider_reason: providerReason,
+    };
   } catch (_) {
     console.log(
       `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_send_failed status=0`,
@@ -5580,22 +5613,23 @@ async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
   const expiresAt = new Date(nowMs + CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS * 1000).toISOString();
   const otp = _generateCompanyRecoveryOtp();
   const otpHash = await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`);
+  const challengeRecord = {
+    version: 1,
+    purpose: "customer_phone_auth",
+    challenge_id: challengeId,
+    phone_hash: phoneHash,
+    phone_e164_masked: maskedPhone,
+    otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+    attempts: 0,
+    max_attempts: CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
+    created_at: nowIso,
+    updated_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+  };
   await env.BOOKING_KV.put(
     challengeKey,
-    JSON.stringify({
-      version: 1,
-      purpose: "customer_phone_auth",
-      challenge_id: challengeId,
-      phone_hash: phoneHash,
-      phone_e164_masked: maskedPhone,
-      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
-      attempts: 0,
-      max_attempts: CUSTOMER_PHONE_AUTH_MAX_ATTEMPTS,
-      created_at: nowIso,
-      updated_at: nowIso,
-      expires_at: expiresAt,
-      consumed_at: null,
-    }),
+    JSON.stringify(challengeRecord),
     { expirationTtl: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS },
   );
   console.log(
@@ -5607,18 +5641,77 @@ async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
     `[CUSTOMER_PHONE_AUTH][SMS_CONFIG] configured=${smsConfigured} debug=${debugOtpEnabled} phone=${maskedPhone || "-"}`,
   );
   let smsSent = false;
+  let sendResult = { ok: false, reason: "sms_not_attempted" };
   if (smsConfigured) {
-    const sendResult = await _sendCustomerPhoneAuthOtpSms(env, {
+    sendResult = await _sendCustomerPhoneAuthOtpSms(env, {
       phoneE164,
       otp,
       locale: sanitizeTenantString(body?.locale ?? body?.language ?? body?.lang, 16),
       challengeId,
     });
     smsSent = sendResult?.ok === true;
+  } else {
+    sendResult = { ok: false, reason: "sms_not_configured" };
+  }
+  const smsTransportState = _sanitizeCustomerPhoneAuthSmsProviderSignal(
+    sendResult?.transport_state ??
+      (smsSent ? "provider_accepted_unconfirmed" : sendResult?.reason ?? "unknown"),
+    80,
+  ) || "unknown";
+  const smsProviderMessageId = _sanitizeCustomerPhoneAuthSmsProviderMessageId(
+    sendResult?.providerMessageId ??
+      sendResult?.provider_message_id,
+  );
+  const smsProviderStatus = _sanitizeCustomerPhoneAuthSmsProviderSignal(
+    sendResult?.provider_status,
+    80,
+  );
+  const smsProviderReason = _sanitizeCustomerPhoneAuthSmsProviderSignal(
+    sendResult?.provider_reason ?? sendResult?.reason,
+    160,
+  );
+  const metadataNowIso = new Date().toISOString();
+  challengeRecord.sms_transport_state = smsTransportState;
+  challengeRecord.sms_provider_message_id = smsProviderMessageId;
+  challengeRecord.sms_provider_status = smsProviderStatus;
+  challengeRecord.sms_provider_reason = smsProviderReason;
+  challengeRecord.sms_delivery_state = "unknown";
+  challengeRecord.sms_delivery_updated_at = metadataNowIso;
+  challengeRecord.updated_at = metadataNowIso;
+  const challengeExpiresAtMs = Date.parse(expiresAt);
+  const challengeRemainingSeconds = Math.max(
+    1,
+    Math.floor((challengeExpiresAtMs - Date.now()) / 1000),
+  );
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify(challengeRecord),
+    { expirationTtl: challengeRemainingSeconds },
+  );
+  if (smsProviderMessageId) {
+    const smsMessageKey = _customerPhoneAuthSmsMessageKey(smsProviderMessageId);
+    if (smsMessageKey) {
+      await env.BOOKING_KV.put(
+        smsMessageKey,
+        JSON.stringify({
+          challenge_id: challengeId,
+          challengeId: challengeId,
+          message_id: smsProviderMessageId,
+          messageId: smsProviderMessageId,
+          created_at: metadataNowIso,
+        }),
+        { expirationTtl: challengeRemainingSeconds + 120 },
+      );
+    }
+  }
+  if (smsConfigured) {
     if (!smsSent && !debugOtpEnabled) {
       return json({ ok: false, error: "sms_send_failed" }, 502);
     }
   } else if (!debugOtpEnabled) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][SMS_NOT_CONFIGURED] phone=${maskedPhone || "-"}`,
+    );
     return json({ ok: false, error: "sms_not_configured" }, 503);
   }
   const response = {
