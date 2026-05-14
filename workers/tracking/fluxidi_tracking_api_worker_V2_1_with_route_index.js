@@ -2668,11 +2668,10 @@ async function handlePing(req, url, env, origin) {
   const speed = safeNum(body["speed"], 0, 200) ?? null;
   const heading = safeNum(body["heading"], 0, 360) ?? null;
 
-  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, session_id);
-  const session = sessionResolved.session;
+  const sessionKey = scopedSessionKey(scope, session_id);
+  const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
   if (!session) throw new Error("Unknown session_id");
   if (!recordMatchesTenantCompanyScope(session, scope)) throw new Error("invalid session scope");
-  const sessionKey = sessionResolved.key;
   const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
     session,
     session_id,
@@ -2713,11 +2712,10 @@ async function handleStop(req, url, env, origin) {
   const session_id = safeStr(body["session_id"], 128);
   if (!session_id) throw new Error("session_id is required");
 
-  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, session_id);
-  const session = sessionResolved.session;
+  const sessionKey = scopedSessionKey(scope, session_id);
+  const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
   if (!session) throw new Error("Unknown session_id");
   if (!recordMatchesTenantCompanyScope(session, scope)) throw new Error("invalid session scope");
-  const sessionKey = sessionResolved.key;
   const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
     session,
     session_id,
