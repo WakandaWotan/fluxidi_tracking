@@ -4001,16 +4001,26 @@ function _readCustomerPhoneAuthSmsConfig(env) {
     480,
   );
   const from = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_FROM, 80);
+  const fromMode = from.toLowerCase();
+  const providerDefaultSender = (
+    fromMode === "__omit__" ||
+    fromMode === "__default__" ||
+    fromMode === "provider_default" ||
+    fromMode === "omit" ||
+    fromMode === "default"
+  );
   return {
     provider,
     url,
     client_id: clientId,
     client_secret: clientSecret,
     from,
+    sender_mode: providerDefaultSender ? "provider_default" : "explicit",
+    use_provider_default_sender: providerDefaultSender,
     has_url: !!url,
     has_client_id: !!clientId,
     has_client_secret: !!clientSecret,
-    has_from: !!from,
+    has_from: providerDefaultSender ? true : !!from,
   };
 }
 
@@ -4022,6 +4032,144 @@ function _isCustomerPhoneAuthSmsConfigured(env) {
     cfg.has_client_id &&
     cfg.has_client_secret
   );
+}
+
+function _customerPhoneAuthSmsExtractMessageId(body, response) {
+  return sanitizeTenantString(
+    body?.id ??
+      body?.message_id ??
+      body?.messageId ??
+      body?.messageid ??
+      body?.sms_id ??
+      body?.smsId ??
+      body?.message?.id ??
+      body?.message?.messageid ??
+      body?.data?.id ??
+      body?.data?.message_id ??
+      body?.data?.messageId ??
+      body?.data?.messageid ??
+      body?.data?.messages?.[0]?.id ??
+      body?.data?.messages?.[0]?.messageid ??
+      body?.messages?.[0]?.id ??
+      body?.messages?.[0]?.message_id ??
+      body?.messages?.[0]?.messageId ??
+      body?.messages?.[0]?.messageid ??
+      body?.sid ??
+      response?.headers?.get?.("x-message-id") ??
+      response?.headers?.get?.("x-messageid"),
+    160,
+  );
+}
+
+function _customerPhoneAuthSmsProviderSignals(body) {
+  const status = sanitizeTenantString(
+    body?.status ??
+      body?.state ??
+      body?.result ??
+      body?.message?.status ??
+      body?.messages?.[0]?.status ??
+      body?.data?.status ??
+      body?.data?.result ??
+      body?.data?.messages?.[0]?.status,
+    80,
+  );
+  const error = sanitizeTenantString(
+    body?.error ??
+      body?.error_code ??
+      body?.errorCode ??
+      body?.error?.code ??
+      body?.error?.message ??
+      body?.errors?.[0]?.code ??
+      body?.errors?.[0]?.message ??
+      body?.messages?.[0]?.error ??
+      body?.data?.error ??
+      body?.data?.errors?.[0]?.code ??
+      body?.data?.errors?.[0]?.message,
+    160,
+  );
+  const message = sanitizeTenantString(
+    body?.message ??
+      body?.description ??
+      body?.errors?.[0]?.message ??
+      body?.messages?.[0]?.reason ??
+      body?.messages?.[0]?.message ??
+      body?.data?.message ??
+      body?.data?.errors?.[0]?.message,
+    160,
+  );
+  const reason = sanitizeTenantString(
+    body?.reason ??
+      body?.reason ??
+      body?.description ??
+      body?.messages?.[0]?.reason ??
+      body?.messages?.[0]?.error ??
+      body?.data?.reason ??
+      error ??
+      message,
+    160,
+  );
+  return { status, reason, error, message };
+}
+
+function _customerPhoneAuthSmsTextContainsAny(value, tokens) {
+  const normalized = sanitizeTenantString(value, 200).toLowerCase();
+  if (!normalized) return false;
+  return tokens.some((token) => normalized.includes(token));
+}
+
+function _customerPhoneAuthSmsIsAcceptedSignal({ status, reason }) {
+  const acceptedTokens = [
+    "accepted",
+    "queued",
+    "sent",
+    "submitted",
+    "delivered",
+    "ok",
+    "success",
+  ];
+  return (
+    _customerPhoneAuthSmsTextContainsAny(status, acceptedTokens) ||
+    _customerPhoneAuthSmsTextContainsAny(reason, acceptedTokens)
+  );
+}
+
+function _customerPhoneAuthSmsIsRejectedSignal({ status, reason }) {
+  const rejectedTokens = [
+    "forbidden",
+    "account forbidden",
+    "blocked",
+    "denied",
+    "rejected",
+    "invalid",
+    "unauthorized",
+    "not allowed",
+  ];
+  return (
+    _customerPhoneAuthSmsTextContainsAny(status, rejectedTokens) ||
+    _customerPhoneAuthSmsTextContainsAny(reason, rejectedTokens)
+  );
+}
+
+function _customerPhoneAuthSmsTopLevelKeys(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "-";
+  try {
+    const keys = Object.keys(body)
+      .map((key) => sanitizeTenantString(key, 40))
+      .filter(Boolean)
+      .slice(0, 16);
+    return keys.length ? keys.join(",") : "-";
+  } catch (_) {
+    return "-";
+  }
+}
+
+function _customerPhoneAuthSmsSafeResponsePreview(responseText) {
+  const raw = sanitizeTenantString(responseText, 240);
+  if (!raw) return "-";
+  return raw
+    .replace(/"message"\s*:\s*"[^"]*"/gi, '"message":"[redacted]"')
+    .replace(/"text"\s*:\s*"[^"]*"/gi, '"text":"[redacted]"')
+    .replace(/"body"\s*:\s*"[^"]*"/gi, '"body":"[redacted]"');
 }
 
 function _isCustomerPhoneAuthDebugOtpEnabled(env) {
@@ -4070,8 +4218,10 @@ async function _sendCustomerPhoneAuthOtpSms(
   const payload = {
     message,
     to: digitsOnlyTo,
-    sender: cfg.from,
   };
+  if (!cfg.use_provider_default_sender) {
+    payload.sender = cfg.from;
+  }
   try {
     const response = await fetch(cfg.url, {
       method: "POST",
@@ -4086,22 +4236,31 @@ async function _sendCustomerPhoneAuthOtpSms(
         return null;
       }
     })();
+    const providerSignals = _customerPhoneAuthSmsProviderSignals(body);
+    const providerStatus = providerSignals.status || "-";
+    const providerReason = providerSignals.reason || "-";
+    const providerError = providerSignals.error || "-";
+    const providerMessage = providerSignals.message || "-";
+    const topLevelKeys = _customerPhoneAuthSmsTopLevelKeys(body);
+    const preview = _customerPhoneAuthSmsSafeResponsePreview(text);
+    const senderOmitted = cfg.use_provider_default_sender ? "true" : "false";
     if (!response.ok) {
       console.log(
-        `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_provider_error status=${response.status}`,
+        `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_provider_error status=${response.status} providerStatus=${providerStatus} providerReason=${providerReason}`,
       );
       return { ok: false, reason: "sms_provider_error" };
     }
-    const providerMessageId = sanitizeTenantString(
-      body?.message_id ??
-        body?.messageId ??
-        body?.id ??
-        body?.sid ??
-        response.headers.get("x-message-id"),
-      160,
-    );
+    const providerMessageId = _customerPhoneAuthSmsExtractMessageId(body, response);
+    const acceptedLike = _customerPhoneAuthSmsIsAcceptedSignal(providerSignals);
+    const rejectedLike = _customerPhoneAuthSmsIsRejectedSignal(providerSignals);
+    if (!providerMessageId && (!acceptedLike || rejectedLike)) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][SMS_PROVIDER_REJECTED] phone=${maskedPhone || "-"} httpStatus=${response.status} senderMode=${cfg.sender_mode} senderOmitted=${senderOmitted} jsonKeys=${topLevelKeys} status=${providerStatus} reason=${providerReason} error=${providerError} message=${providerMessage} preview=${preview} hasMessageId=false`,
+      );
+      return { ok: false, reason: "provider_rejected_or_unconfirmed" };
+    }
     console.log(
-      `[CUSTOMER_PHONE_AUTH][SMS_SEND_OK] phone=${maskedPhone || "-"} hasMessageId=${providerMessageId ? "true" : "false"}`,
+      `[CUSTOMER_PHONE_AUTH][SMS_SEND_OK] phone=${maskedPhone || "-"} hasMessageId=${providerMessageId ? "true" : "false"} senderMode=${cfg.sender_mode}`,
     );
     return providerMessageId
       ? { ok: true, providerMessageId }
