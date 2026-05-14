@@ -66,6 +66,8 @@ final bool kIsWindows = !kIsWeb && Platform.isWindows;
 CustomerProfile? _cachedCustomerProfile;
 bool _startInCompanyAdminHome = false;
 bool _startInDriverHome = false;
+final RouteObserver<PageRoute<dynamic>> kAppRouteObserver =
+    RouteObserver<PageRoute<dynamic>>();
 
 Future<void> _refreshCachedCustomerProfile() async {
   _cachedCustomerProfile = await CustomerProfileStore.instance.load();
@@ -2732,6 +2734,7 @@ class FluxidiDriverApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: kAppTitle,
         theme: theme,
+        navigatorObservers: <NavigatorObserver>[kAppRouteObserver],
         builder: (context, child) {
           return FluxidiFrame(child: child ?? const SizedBox.shrink());
         },
@@ -6996,7 +6999,8 @@ class BusinessHomePage extends StatefulWidget {
   State<BusinessHomePage> createState() => _BusinessHomePageState();
 }
 
-class _BusinessHomePageState extends State<BusinessHomePage> {
+class _BusinessHomePageState extends State<BusinessHomePage>
+    with WidgetsBindingObserver, RouteAware {
   String _t({
     required String nl,
     required String en,
@@ -7009,11 +7013,47 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   int? _unpaidCompletedRidesCount;
   int? _monthlyIncomeCents;
   String _kpiCurrency = 'EUR';
+  bool _kpiRefreshInFlight = false;
+  bool _routeObserverSubscribed = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshDashboardKpis(reason: 'init'));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_routeObserverSubscribed) return;
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic>) {
+      kAppRouteObserver.subscribe(this, route);
+      _routeObserverSubscribed = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_routeObserverSubscribed) {
+      kAppRouteObserver.unsubscribe(this);
+      _routeObserverSubscribed = false;
+    }
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshDashboardKpis(reason: 'app_resume'));
+    }
+  }
+
+  @override
+  void didPopNext() {
+    unawaited(_refreshDashboardKpis(reason: 'route_return'));
   }
 
   int? _asInt(dynamic value) {
@@ -7064,91 +7104,96 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Future<void> _refreshDashboardKpis({required String reason}) async {
-    final month = _activeMonthToken();
-    final headers = _adminHeaders();
-    final bookingsUri = _withActiveBookingScope(
-      kBookingBaseUrl,
-      '/admin/dashboard/bookings-kpis',
-    );
-    final tripKpisUri = _withActiveBookingScope(
-      kWorkerBaseUrl,
-      '/admin/dashboard/trip-kpis',
-      extraQuery: <String, String>{'month': month},
-    );
-
-    int? nextOpenBookings;
-    int? nextCompletedRides;
-    int? nextUnpaidCompleted;
-    int? nextMonthlyIncomeCents;
-    var nextCurrency = 'EUR';
-
+    if (_kpiRefreshInFlight) return;
+    _kpiRefreshInFlight = true;
     try {
-      final responses = await Future.wait([
-        http
-            .get(bookingsUri, headers: headers)
-            .timeout(const Duration(seconds: 12)),
-        http
-            .get(tripKpisUri, headers: headers)
-            .timeout(const Duration(seconds: 12)),
-      ]);
+      final month = _activeMonthToken();
+      final headers = _adminHeaders();
+      final bookingsUri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/admin/dashboard/bookings-kpis',
+      );
+      final tripKpisUri = _withActiveBookingScope(
+        kWorkerBaseUrl,
+        '/admin/dashboard/trip-kpis',
+        extraQuery: <String, String>{'month': month},
+      );
 
-      final bookingsRes = responses[0];
-      if (bookingsRes.statusCode == 200) {
-        final decoded = jsonDecode(bookingsRes.body);
-        if (decoded is Map && decoded['ok'] == true) {
-          nextOpenBookings = _asInt(decoded['open_bookings_count']);
-        } else {
-          debugPrint(
-            '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
-          );
-        }
-      } else {
-        debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
-        );
-      }
+      int? nextOpenBookings;
+      int? nextCompletedRides;
+      int? nextUnpaidCompleted;
+      int? nextMonthlyIncomeCents;
+      var nextCurrency = 'EUR';
 
-      final tripRes = responses[1];
-      if (tripRes.statusCode == 200) {
-        final decoded = jsonDecode(tripRes.body);
-        if (decoded is Map && decoded['ok'] == true) {
-          nextCompletedRides = _asInt(decoded['completed_rides_count']);
-          nextUnpaidCompleted = _asInt(decoded['unpaid_completed_rides_count']);
-          nextCurrency =
-              (decoded['currency']?.toString().trim().isNotEmpty ?? false)
-              ? decoded['currency'].toString().trim().toUpperCase()
-              : 'EUR';
-          final cents = _asInt(decoded['monthly_income_cents']);
-          if (cents != null) {
-            nextMonthlyIncomeCents = cents;
+      try {
+        final responses = await Future.wait([
+          http
+              .get(bookingsUri, headers: headers)
+              .timeout(const Duration(seconds: 12)),
+          http
+              .get(tripKpisUri, headers: headers)
+              .timeout(const Duration(seconds: 12)),
+        ]);
+
+        final bookingsRes = responses[0];
+        if (bookingsRes.statusCode == 200) {
+          final decoded = jsonDecode(bookingsRes.body);
+          if (decoded is Map && decoded['ok'] == true) {
+            nextOpenBookings = _asInt(decoded['open_bookings_count']);
           } else {
-            final eur = _asDouble(decoded['monthly_income_eur']);
-            nextMonthlyIncomeCents = eur == null ? null : (eur * 100).round();
+            debugPrint(
+              '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+            );
           }
         } else {
           debugPrint(
-            '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
           );
         }
-      } else {
+
+        final tripRes = responses[1];
+        if (tripRes.statusCode == 200) {
+          final decoded = jsonDecode(tripRes.body);
+          if (decoded is Map && decoded['ok'] == true) {
+            nextCompletedRides = _asInt(decoded['completed_rides_count']);
+            nextUnpaidCompleted = _asInt(decoded['unpaid_completed_rides_count']);
+            nextCurrency =
+                (decoded['currency']?.toString().trim().isNotEmpty ?? false)
+                ? decoded['currency'].toString().trim().toUpperCase()
+                : 'EUR';
+            final cents = _asInt(decoded['monthly_income_cents']);
+            if (cents != null) {
+              nextMonthlyIncomeCents = cents;
+            } else {
+              final eur = _asDouble(decoded['monthly_income_eur']);
+              nextMonthlyIncomeCents = eur == null ? null : (eur * 100).round();
+            }
+          } else {
+            debugPrint(
+              '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+            );
+          }
+        } else {
+          debugPrint(
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
+          );
+        }
+      } catch (e) {
         debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
+          '[BUSINESS_DASHBOARD][KPI][WARN] reason=fetch_failed trigger=$reason error=$e',
         );
       }
-    } catch (e) {
-      debugPrint(
-        '[BUSINESS_DASHBOARD][KPI][WARN] reason=fetch_failed trigger=$reason error=$e',
-      );
+      if (!mounted) return;
+      setState(() {
+        _openBookingsCount = nextOpenBookings;
+        _completedRidesCount = nextCompletedRides;
+        _unpaidCompletedRidesCount = nextUnpaidCompleted;
+        _monthlyIncomeCents = nextMonthlyIncomeCents;
+        _kpiCurrency = nextCurrency;
+      });
+    } finally {
+      _kpiRefreshInFlight = false;
     }
-
-    if (!mounted) return;
-    setState(() {
-      _openBookingsCount = nextOpenBookings;
-      _completedRidesCount = nextCompletedRides;
-      _unpaidCompletedRidesCount = nextUnpaidCompleted;
-      _monthlyIncomeCents = nextMonthlyIncomeCents;
-      _kpiCurrency = nextCurrency;
-    });
   }
 
   void _openCalculator(BuildContext context) {

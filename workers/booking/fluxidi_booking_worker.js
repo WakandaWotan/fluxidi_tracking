@@ -18617,6 +18617,434 @@ async function bridgeBookingIntoTrackingIndex(env, booking) {
   }
 }
 
+const TRACKING_SYNC_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+function _trackingSyncScopeFromBookingRecord(rec) {
+  const tenantId = sanitizeTenantString(
+    rec?.tenant_id ?? rec?.tenantId ?? rec?.booking?.tenant_id ?? rec?.booking?.tenantId,
+    96,
+  );
+  const companyId = sanitizeTenantString(
+    rec?.company_id ?? rec?.companyId ?? rec?.booking?.company_id ?? rec?.booking?.companyId,
+    96,
+  );
+  if (!tenantId || !companyId) return null;
+  return { tenant_id: tenantId, company_id: companyId, hasScope: true };
+}
+
+function _trackingSyncSafeKeyPart(value, maxLen = 160) {
+  const text = safeStr(value);
+  if (!text) return "";
+  return text.replace(/[:\r\n\t]/g, "_").slice(0, maxLen);
+}
+
+function _trackingSyncScopedTripKey(scope, tripId) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const tripPart = _trackingSyncSafeKeyPart(tripId, 160);
+  if (!tenantPart || !companyPart || !tripPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:trip:${tripPart}`;
+}
+
+function _trackingSyncScopedTripKpisKey(scope) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  if (!tenantPart || !companyPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpis:v1`;
+}
+
+function _trackingSyncScopedTripMonthKpisKey(scope, month) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const monthPart = _trackingSyncSafeKeyPart(month, 16);
+  if (!tenantPart || !companyPart || !monthPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpis:month:${monthPart}:v1`;
+}
+
+function _trackingSyncScopedTripContribKey(scope, tripId) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const tripPart = _trackingSyncSafeKeyPart(tripId, 160);
+  if (!tenantPart || !companyPart || !tripPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpi_contrib:${tripPart}:v1`;
+}
+
+function _trackingSyncMonthFromIso(value) {
+  const text = safeStr(value);
+  if (!text) return null;
+  const ts = Date.parse(text);
+  if (!Number.isFinite(ts)) return null;
+  return new Date(ts).toISOString().slice(0, 7);
+}
+
+function _trackingSyncAmountCents(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
+function _trackingSyncNormalizeTripLifecycleStatus(value) {
+  const raw = safeStr(value, 64);
+  if (!raw) return "unknown";
+  const s = raw.toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (
+    s === "stopped" ||
+    s === "completed" ||
+    s === "complete" ||
+    s === "closed" ||
+    s === "done" ||
+    s === "finished" ||
+    s === "finalized" ||
+    s === "finalised"
+  ) {
+    return "completed";
+  }
+  if (
+    s === "cancelled" ||
+    s === "canceled" ||
+    s === "deleted" ||
+    s === "failed" ||
+    s === "expired" ||
+    s === "declined"
+  ) {
+    return "cancelled";
+  }
+  if (s === "active" || s === "running" || s === "pending" || s === "open") {
+    return "active";
+  }
+  return "unknown";
+}
+
+function _trackingSyncIsCompletedStatus(value) {
+  return _trackingSyncNormalizeTripLifecycleStatus(value) === "completed";
+}
+
+function _trackingSyncIsPaidStatus(value) {
+  return normalizeCompliancePaymentStatus(value) === "paid";
+}
+
+function _trackingSyncDeriveContribution(trip) {
+  const tripId = safeStr(trip?.trip_id ?? trip?.tripId);
+  if (!tripId) return null;
+  const completed = _trackingSyncIsCompletedStatus(
+    trip?.status ?? trip?.lifecycle_status,
+  );
+  const paid = _trackingSyncIsPaidStatus(trip?.payment_status ?? trip?.paymentStatus);
+  const paidAtMonth = _trackingSyncMonthFromIso(trip?.paid_at ?? trip?.paidAt);
+  const paidFallbackMonth =
+    paid && !paidAtMonth
+      ? (_trackingSyncMonthFromIso(
+          trip?.stopped_at ??
+            trip?.stoppedAt ??
+            trip?.ended_at ??
+            trip?.endedAt ??
+            trip?.completed_at ??
+            trip?.completedAt,
+        ) ?? null)
+      : null;
+  const paidMonth = paidAtMonth ?? paidFallbackMonth;
+  const amountCents =
+    _trackingSyncAmountCents(trip?.payment_amount) ??
+    _trackingSyncAmountCents(trip?.paymentAmount) ??
+    _trackingSyncAmountCents(trip?.final_amount) ??
+    _trackingSyncAmountCents(trip?.finalAmount) ??
+    _trackingSyncAmountCents(trip?.final_total) ??
+    _trackingSyncAmountCents(trip?.finalTotal) ??
+    _trackingSyncAmountCents(trip?.total_eur) ??
+    _trackingSyncAmountCents(trip?.totalEur) ??
+    0;
+  const monthlyPaid = completed && paid && !!paidMonth;
+  return {
+    trip_id: tripId,
+    completed_rides_count: completed ? 1 : 0,
+    unpaid_completed_rides_count: completed && !paid ? 1 : 0,
+    paid_month: monthlyPaid ? paidMonth : null,
+    monthly_paid_rides_count: monthlyPaid ? 1 : 0,
+    monthly_income_cents: monthlyPaid ? amountCents : 0,
+  };
+}
+
+function _trackingSyncReadContribShape(value, fallbackTripId = null) {
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const tripId = safeStr(obj.trip_id ?? fallbackTripId) || null;
+  const completed = Number(obj.completed_rides_count) === 1 ? 1 : 0;
+  const unpaid = Number(obj.unpaid_completed_rides_count) === 1 ? 1 : 0;
+  const paidMonth = _trackingSyncSafeKeyPart(obj.paid_month, 16) || null;
+  const monthlyPaidCount = Number(obj.monthly_paid_rides_count) === 1 ? 1 : 0;
+  const monthlyIncomeCents = Number.isFinite(Number(obj.monthly_income_cents))
+    ? Math.round(Number(obj.monthly_income_cents))
+    : 0;
+  return {
+    trip_id: tripId,
+    completed_rides_count: completed,
+    unpaid_completed_rides_count: unpaid,
+    paid_month: paidMonth,
+    monthly_paid_rides_count: monthlyPaidCount,
+    monthly_income_cents: monthlyIncomeCents,
+  };
+}
+
+function _trackingSyncIsPlannedBookingRecord(rec) {
+  const kind = safeStr(
+    rec?.kind ??
+      rec?.trip_kind ??
+      rec?.tripKind ??
+      rec?.trip_type ??
+      rec?.tripType ??
+      rec?.ride_type ??
+      rec?.rideType ??
+      rec?.service ??
+      rec?.booking?.kind ??
+      rec?.booking?.trip_kind ??
+      rec?.booking?.tripKind ??
+      rec?.booking?.trip_type ??
+      rec?.booking?.tripType ??
+      rec?.booking?.ride_type ??
+      rec?.booking?.rideType ??
+      rec?.booking?.service,
+    64,
+  ).toLowerCase();
+  if (kind === "direct" || kind === "direct_trip" || kind === "street_hail") return false;
+  const hasBookingId = !!safeStr(
+    rec?.booking_id ?? rec?.bookingId ?? rec?.booking?.booking_id ?? rec?.booking?.bookingId,
+  );
+  return hasBookingId;
+}
+
+function _trackingSyncResolveTripId(bookingId, rec) {
+  const explicit = safeStr(
+    rec?.trip_id ??
+      rec?.tripId ??
+      rec?.tracking_last?.trip_id ??
+      rec?.tracking_last?.tripId ??
+      rec?.trackingLast?.trip_id ??
+      rec?.trackingLast?.tripId ??
+      rec?.trip?.trip_id ??
+      rec?.trip?.tripId ??
+      rec?.booking?.trip_id ??
+      rec?.booking?.tripId,
+    160,
+  );
+  if (explicit) return explicit;
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId) return "";
+  if (_trackingSyncIsPlannedBookingRecord(rec)) return `planned_${safeBookingId}`;
+  return "";
+}
+
+async function _trackingSyncGetJson(env, key) {
+  if (!key) return null;
+  try {
+    return await env.FLUXIDI_TRACKING.get(key, "json");
+  } catch (_) {
+    try {
+      const raw = await env.FLUXIDI_TRACKING.get(key);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+async function _trackingSyncPutJson(env, key, value) {
+  if (!key) return;
+  await env.FLUXIDI_TRACKING.put(key, JSON.stringify(value), {
+    expirationTtl: TRACKING_SYNC_TTL_SECONDS,
+  });
+}
+
+async function syncScopedTrackingTripKpiBestEffort({
+  env,
+  bookingId,
+  rec,
+  tenantScope = null,
+  source = "booking_payment_update",
+} = {}) {
+  try {
+    if (!env?.FLUXIDI_TRACKING) return;
+    if (!rec || typeof rec !== "object") return;
+    const recordScope = _trackingSyncScopeFromBookingRecord(rec);
+    if (!recordScope?.hasScope) {
+      console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=missing_record_scope");
+      return;
+    }
+    if (tenantScope?.hasScope) {
+      const reqTenant = safeStr(tenantScope.tenant_id, 96);
+      const reqCompany = safeStr(tenantScope.company_id, 96);
+      if (
+        reqTenant &&
+        reqCompany &&
+        (recordScope.tenant_id !== reqTenant || recordScope.company_id !== reqCompany)
+      ) {
+        console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=scope_mismatch");
+        return;
+      }
+    }
+
+    const resolvedBookingId = safeStr(
+      bookingId ??
+        rec?.booking_id ??
+        rec?.bookingId ??
+        rec?.booking?.booking_id ??
+        rec?.booking?.bookingId,
+      160,
+    );
+    const tripId = _trackingSyncResolveTripId(resolvedBookingId, rec);
+    if (!tripId) {
+      console.log("[TRACKING_KPI_SYNC][SKIP] reason=missing_trip_id");
+      return;
+    }
+
+    const tripKey = _trackingSyncScopedTripKey(recordScope, tripId);
+    const trip = await _trackingSyncGetJson(env, tripKey);
+    if (!trip || typeof trip !== "object" || Array.isArray(trip)) {
+      console.log(
+        `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${safeStr(resolvedBookingId)} trip=${safeStr(tripId)}`,
+      );
+      return;
+    }
+
+    const tripTenant = safeStr(trip?.tenant_id ?? trip?.tenantId, 96);
+    const tripCompany = safeStr(trip?.company_id ?? trip?.companyId, 96);
+    if (
+      (tripTenant && tripTenant !== recordScope.tenant_id) ||
+      (tripCompany && tripCompany !== recordScope.company_id)
+    ) {
+      console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=trip_scope_mismatch");
+      return;
+    }
+
+    const normalizedStatus = normalizeCompliancePaymentStatus(
+      rec?.payment_status ?? rec?.paymentStatus,
+    );
+    if (normalizedStatus) {
+      trip.payment_status = normalizedStatus;
+      trip.paymentStatus = normalizedStatus;
+    }
+    const paidAt = safeStr(rec?.paid_at ?? rec?.paidAt, 64);
+    if (paidAt) {
+      trip.paid_at = paidAt;
+      trip.paidAt = paidAt;
+    }
+    const method = safeStr(rec?.payment_method ?? rec?.paymentMethod, 32).toLowerCase();
+    if (method) {
+      trip.payment_method = method;
+      trip.paymentMethod = method;
+    }
+    const paymentSource = safeStr(
+      rec?.payment_source ?? rec?.paymentSource,
+      32,
+    ).toLowerCase();
+    if (paymentSource) {
+      trip.payment_source = paymentSource;
+      trip.paymentSource = paymentSource;
+    }
+    const currency = safeStr(
+      rec?.currency ?? rec?.booking?.currency ?? trip?.currency ?? "EUR",
+      8,
+    ).toUpperCase();
+    if (currency) {
+      trip.currency = currency;
+    }
+    const amountRaw = rec?.payment_amount ?? rec?.paymentAmount;
+    const amountNum = Number(amountRaw);
+    if (Number.isFinite(amountNum)) {
+      trip.payment_amount = amountNum;
+      trip.paymentAmount = amountNum;
+    }
+    trip.tenant_id = recordScope.tenant_id;
+    trip.tenantId = recordScope.tenant_id;
+    trip.company_id = recordScope.company_id;
+    trip.companyId = recordScope.company_id;
+    await _trackingSyncPutJson(env, tripKey, trip);
+
+    const nextRaw = _trackingSyncDeriveContribution(trip);
+    if (!nextRaw?.trip_id) return;
+    const next = _trackingSyncReadContribShape(nextRaw, nextRaw.trip_id);
+    const contribKey = _trackingSyncScopedTripContribKey(recordScope, next.trip_id);
+    const prev = _trackingSyncReadContribShape(
+      await _trackingSyncGetJson(env, contribKey),
+      next.trip_id,
+    );
+
+    const globalKey = _trackingSyncScopedTripKpisKey(recordScope);
+    const globalCurrent = (await _trackingSyncGetJson(env, globalKey)) ?? {};
+    const currentCompleted = Number.isFinite(Number(globalCurrent.completed_rides_count))
+      ? Math.round(Number(globalCurrent.completed_rides_count))
+      : 0;
+    const currentUnpaid = Number.isFinite(Number(globalCurrent.unpaid_completed_rides_count))
+      ? Math.round(Number(globalCurrent.unpaid_completed_rides_count))
+      : 0;
+    const nextCompleted =
+      currentCompleted + (next.completed_rides_count - prev.completed_rides_count);
+    const nextUnpaid =
+      currentUnpaid + (next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count);
+    await _trackingSyncPutJson(env, globalKey, {
+      completed_rides_count: Math.max(0, nextCompleted),
+      unpaid_completed_rides_count: Math.max(0, nextUnpaid),
+      updated_at: new Date().toISOString(),
+    });
+
+    const monthDeltas = {};
+    if (prev.paid_month && prev.monthly_paid_rides_count > 0) {
+      monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
+        monthly_paid_rides_count: 0,
+        monthly_income_cents: 0,
+      };
+      monthDeltas[prev.paid_month].monthly_paid_rides_count -= prev.monthly_paid_rides_count;
+      monthDeltas[prev.paid_month].monthly_income_cents -= prev.monthly_income_cents;
+    }
+    if (next.paid_month && next.monthly_paid_rides_count > 0) {
+      monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
+        monthly_paid_rides_count: 0,
+        monthly_income_cents: 0,
+      };
+      monthDeltas[next.paid_month].monthly_paid_rides_count += next.monthly_paid_rides_count;
+      monthDeltas[next.paid_month].monthly_income_cents += next.monthly_income_cents;
+    }
+
+    for (const [month, delta] of Object.entries(monthDeltas)) {
+      if (
+        !delta ||
+        (!delta.monthly_paid_rides_count && !delta.monthly_income_cents)
+      ) {
+        continue;
+      }
+      const monthKey = _trackingSyncScopedTripMonthKpisKey(recordScope, month);
+      const current = (await _trackingSyncGetJson(env, monthKey)) ?? {};
+      const currentCount = Number.isFinite(Number(current.monthly_paid_rides_count))
+        ? Math.round(Number(current.monthly_paid_rides_count))
+        : 0;
+      const currentIncome = Number.isFinite(Number(current.monthly_income_cents))
+        ? Math.round(Number(current.monthly_income_cents))
+        : 0;
+      await _trackingSyncPutJson(env, monthKey, {
+        month,
+        currency: "EUR",
+        monthly_paid_rides_count: Math.max(
+          0,
+          currentCount + delta.monthly_paid_rides_count,
+        ),
+        monthly_income_cents: Math.max(
+          0,
+          currentIncome + delta.monthly_income_cents,
+        ),
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    await _trackingSyncPutJson(env, contribKey, {
+      ...next,
+      updated_at: new Date().toISOString(),
+      source,
+    });
+  } catch (err) {
+    const reason = safeStr(err?.message || err).slice(0, 180) || "unknown";
+    console.log(`[TRACKING_KPI_SYNC][WARN] reason=${reason}`);
+  }
+}
+
 function brusselsIsoFromDateTime(dateStr, timeStr) {
   try {
     const d = safeStr(dateStr);
@@ -23032,6 +23460,15 @@ async function updateBookingPaymentAuthoritative(
   }
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  if (normalizedStatus === "paid") {
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId,
+      rec,
+      tenantScope,
+      source: "booking_payment_update",
+    });
+  }
   const complianceEvent = buildBookingPaymentUpdateComplianceEvent(rec, bookingId, payment);
   if (complianceEvent) {
     const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
@@ -26247,6 +26684,58 @@ async function payStatus(request, env, requestedScopeOverride = null) {
   } finally {
     // Always persist the latest state (including lock recovery)
     await env.BOOKING_KV.put(keyToUse, JSON.stringify(data), { expirationTtl: 60 * 60 * 24 * 30 });
+  }
+
+  if (String(data?.payment_status || data?.paymentStatus || "").toLowerCase() === "paid") {
+    const syncBookingId =
+      safeStr(
+        linkedBooking?.booking_id ||
+          data?.booking_id ||
+          data?.public_booking_id ||
+          data?.payload?.__booking_id ||
+          data?.payload?.booking_id ||
+          data?.payload?.bookingId ||
+          id,
+      ) || id;
+    const syncRecordBase =
+      linkedBooking?.rec && typeof linkedBooking.rec === "object"
+        ? linkedBooking.rec
+        : {};
+    const syncRecord = {
+      ...syncRecordBase,
+      payment_status: data?.payment_status ?? data?.paymentStatus,
+      paymentStatus: data?.paymentStatus ?? data?.payment_status,
+      paid_at: data?.paid_at ?? data?.paidAt,
+      paidAt: data?.paidAt ?? data?.paid_at,
+      payment_method: data?.payment_method ?? data?.paymentMethod,
+      paymentMethod: data?.paymentMethod ?? data?.payment_method,
+      payment_source: data?.payment_source ?? data?.paymentSource,
+      paymentSource: data?.paymentSource ?? data?.payment_source,
+      currency: data?.currency ?? syncRecordBase?.currency ?? syncRecordBase?.booking?.currency,
+      payment_amount:
+        data?.payment_amount ?? data?.paymentAmount ?? syncRecordBase?.payment_amount ?? syncRecordBase?.paymentAmount,
+      paymentAmount:
+        data?.paymentAmount ?? data?.payment_amount ?? syncRecordBase?.paymentAmount ?? syncRecordBase?.payment_amount,
+      tenant_id:
+        syncRecordBase?.tenant_id ??
+        syncRecordBase?.tenantId ??
+        data?.payload?.tenant_id ??
+        data?.payload?.tenantId ??
+        effectiveScope?.tenant_id,
+      company_id:
+        syncRecordBase?.company_id ??
+        syncRecordBase?.companyId ??
+        data?.payload?.company_id ??
+        data?.payload?.companyId ??
+        effectiveScope?.company_id,
+    };
+    await syncScopedTrackingTripKpiBestEffort({
+      env,
+      bookingId: syncBookingId,
+      rec: syncRecord,
+      tenantScope: effectiveScope,
+      source: "mollie_pay_status_paid",
+    });
   }
 
   return json({ ok: true, data });
