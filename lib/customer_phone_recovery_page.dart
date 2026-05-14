@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 
 class CustomerPhoneRecoveryPage extends StatefulWidget {
@@ -207,6 +208,34 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         updatedAt: now.toIso8601String(),
       );
       await CustomerSessionStore.instance.save(session);
+      await CustomerProfileStore.instance.mergeBackendProfileForSession(
+        const <String, dynamic>{},
+        sessionCustomerId: session.customerId,
+        sessionPhoneE164: session.phoneE164,
+      );
+      try {
+        final backendProfile = await fetchPublicCustomerProfile(
+          customerSessionToken: session.customerSessionToken,
+        );
+        if (backendProfile != null) {
+          await CustomerProfileStore.instance.mergeBackendProfileForSession(
+            backendProfile,
+            sessionCustomerId: session.customerId,
+            sessionPhoneE164: session.phoneE164,
+          );
+          debugPrint(
+            '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=true reason=merged',
+          );
+        } else {
+          debugPrint(
+            '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=empty_or_unauthorized',
+          );
+        }
+      } catch (_) {
+        debugPrint(
+          '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=fetch_failed',
+        );
+      }
       debugPrint(
         '[CUSTOMER_PHONE_LOGIN][VERIFY_OK] customer=${customerId.length > 4 ? customerId.substring(customerId.length - 4) : customerId}',
       );

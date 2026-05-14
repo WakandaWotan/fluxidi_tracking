@@ -2575,6 +2575,10 @@ int? _lastCustomerBootstrapHttpStatusCode;
 int? get lastCustomerBootstrapHttpStatusCode =>
     _lastCustomerBootstrapHttpStatusCode;
 
+int? _lastCustomerProfileHttpStatusCode;
+int? get lastCustomerProfileHttpStatusCode =>
+    _lastCustomerProfileHttpStatusCode;
+
 Future<Map<String, dynamic>?> fetchCompanyBootstrapWithToken({
   required String companySessionToken,
 }) async {
@@ -2759,6 +2763,138 @@ Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
     final map = Map<String, dynamic>.from(decoded);
     return map['ok'] == true ? map : null;
   } catch (_) {
+    return null;
+  }
+}
+
+Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
+  Map<String, dynamic> payload,
+) {
+  String readAny(List<String> keys) {
+    for (final key in keys) {
+      final value = payload[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  return <String, dynamic>{
+    'name': readAny(const ['name']),
+    'phone': readAny(const ['phone']),
+    'email': readAny(const ['email']).toLowerCase(),
+    'preferred_postcode': readAny(const [
+      'preferred_postcode',
+      'preferredPostcode',
+    ]),
+    'company_name': readAny(const ['company_name', 'companyName']),
+    'vat_number': readAny(const ['vat_number', 'vatNumber']),
+  };
+}
+
+Future<Map<String, dynamic>?> fetchPublicCustomerProfile({
+  required String customerSessionToken,
+}) async {
+  final token = customerSessionToken.trim();
+  if (token.isEmpty) return null;
+  _lastCustomerProfileHttpStatusCode = null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/profile',
+  );
+  try {
+    final res = await http
+        .get(
+          endpoint,
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
+    _lastCustomerProfileHttpStatusCode = res.statusCode;
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_API][GET] ok=false status=${res.statusCode} reason=http_error',
+      );
+      return null;
+    }
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_API][GET] ok=false status=${res.statusCode} reason=invalid_response',
+      );
+      return null;
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    final profileRaw = map['profile'];
+    final profile = profileRaw is Map
+        ? Map<String, dynamic>.from(profileRaw)
+        : null;
+    final ok = map['ok'] == true && profile != null;
+    debugPrint(
+      '[CUSTOMER_PROFILE_API][GET] ok=$ok status=${res.statusCode} reason=${ok ? "ok" : "missing_profile"}',
+    );
+    return ok ? profile : null;
+  } catch (_) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_API][GET] ok=false status=0 reason=network_error',
+    );
+    return null;
+  }
+}
+
+Future<Map<String, dynamic>?> upsertPublicCustomerProfile({
+  required String customerSessionToken,
+  required Map<String, dynamic> payload,
+}) async {
+  final token = customerSessionToken.trim();
+  if (token.isEmpty) return null;
+  _lastCustomerProfileHttpStatusCode = null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/profile',
+  );
+  final safePayload = _sanitizePublicCustomerProfilePayload(payload);
+  try {
+    final res = await http
+        .post(
+          endpoint,
+          headers: <String, String>{
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(safePayload),
+        )
+        .timeout(const Duration(seconds: 12));
+    _lastCustomerProfileHttpStatusCode = res.statusCode;
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_API][POST] ok=false status=${res.statusCode} reason=http_error',
+      );
+      return null;
+    }
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_API][POST] ok=false status=${res.statusCode} reason=invalid_response',
+      );
+      return null;
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    final profileRaw = map['profile'];
+    final profile = profileRaw is Map
+        ? Map<String, dynamic>.from(profileRaw)
+        : null;
+    final ok = map['ok'] == true && profile != null;
+    debugPrint(
+      '[CUSTOMER_PROFILE_API][POST] ok=$ok status=${res.statusCode} reason=${ok ? "ok" : "missing_profile"}',
+    );
+    return ok ? profile : null;
+  } catch (_) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_API][POST] ok=false status=0 reason=network_error',
+    );
     return null;
   }
 }

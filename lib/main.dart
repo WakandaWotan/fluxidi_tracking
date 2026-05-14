@@ -1179,6 +1179,97 @@ Future<int> _bootstrapCustomerSessionAndMergeBookings({
   }
 }
 
+Future<CustomerProfile?> _syncCustomerProfileFromBackendBestEffort({
+  required String reason,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=no_valid_session',
+      );
+      return null;
+    }
+    final remote = await fetchPublicCustomerProfile(
+      customerSessionToken: session.customerSessionToken,
+    );
+    if (remote == null) {
+      final status = lastCustomerProfileHttpStatusCode ?? 0;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+      }
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=fetch_failed status=$status',
+      );
+      return null;
+    }
+    final merged = await CustomerProfileStore.instance
+        .mergeBackendProfileForSession(
+          remote,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
+    _setCachedCustomerProfile(merged);
+    debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=true reason=$reason');
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason stage=error error=$err',
+    );
+    return null;
+  }
+}
+
+Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
+  required String reason,
+  required CustomerProfile localProfile,
+}) async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    if (session == null) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=no_valid_session',
+      );
+      return null;
+    }
+    final remote = await upsertPublicCustomerProfile(
+      customerSessionToken: session.customerSessionToken,
+      payload: <String, dynamic>{
+        'name': localProfile.name,
+        'phone': localProfile.phone,
+        'email': localProfile.email,
+        'preferred_postcode': localProfile.preferredPostcode,
+        'company_name': localProfile.companyName,
+        'vat_number': localProfile.vatNumber,
+      },
+    );
+    if (remote == null) {
+      final status = lastCustomerProfileHttpStatusCode ?? 0;
+      if (status == 401 || status == 403) {
+        await CustomerSessionStore.instance.clear();
+      }
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=post_failed status=$status',
+      );
+      return null;
+    }
+    final merged = await CustomerProfileStore.instance
+        .mergeBackendProfileForSession(
+          remote,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
+    _setCachedCustomerProfile(merged);
+    debugPrint('[CUSTOMER_PROFILE_SYNC][PUSH] ok=true reason=$reason');
+    return merged;
+  } catch (err) {
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PUSH] ok=false reason=$reason stage=error error=$err',
+    );
+    return null;
+  }
+}
+
 /// Admin token (optional) for driver actions like complete/cancel/delete.
 /// Set at run/build time:
 /// flutter run --dart-define=ADMIN_TOKEN=yourSecret
@@ -2822,6 +2913,9 @@ class RoleEntryPage extends StatelessWidget {
       await _bootstrapCustomerSessionAndMergeBookings(
         reason: 'customer_role_entry',
       );
+      await _syncCustomerProfileFromBackendBestEffort(
+        reason: 'customer_role_entry',
+      );
       if (!context.mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const CustomerHomePage()),
@@ -2841,6 +2935,9 @@ class RoleEntryPage extends StatelessWidget {
       );
       if (!context.mounted || sessionResult == null) return;
       await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_phone_login',
+      );
+      await _syncCustomerProfileFromBackendBestEffort(
         reason: 'customer_phone_login',
       );
       if (!context.mounted) return;
@@ -5935,14 +6032,23 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+    final session = await CustomerSessionStore.instance.loadValidSession();
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
+      sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
+    final synced = await _syncCustomerProfileToBackendBestEffort(
+      reason: 'customer_onboarding_save',
+      localProfile: saved,
+    );
+    if (synced != null) {
+      _setCachedCustomerProfile(synced);
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     await _goToCustomerHome();
@@ -6448,19 +6554,31 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
 
   Future<void> _loadProfile() async {
     final profile = await CustomerProfileStore.instance.load();
-    if (!mounted || profile == null) return;
-    _nameCtrl.text = profile.name;
-    _postcodeCtrl.text = profile.preferredPostcode;
-    _phoneCtrl.text = profile.phone;
-    _emailCtrl.text = profile.email;
-    _companyNameCtrl.text = profile.companyName;
-    _vatNumberCtrl.text = profile.vatNumber;
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final sessionPhone = normalizeCustomerSessionPhoneE164(
+      session?.phoneE164 ?? '',
+    );
+    final profilePhone = (profile?.phone ?? '').trim();
+    final phoneForForm = profilePhone.isNotEmpty ? profilePhone : sessionPhone;
+    debugPrint(
+      '[CUSTOMER_PROFILE][PHONE_READY_FOR_FORM] source=${profilePhone.isNotEmpty ? "profile" : (sessionPhone.isNotEmpty ? "session" : "empty")} ready=${phoneForForm.isNotEmpty}',
+    );
+    if (!mounted) return;
+    if (profile != null) {
+      _nameCtrl.text = profile.name;
+      _postcodeCtrl.text = profile.preferredPostcode;
+      _emailCtrl.text = profile.email;
+      _companyNameCtrl.text = profile.companyName;
+      _vatNumberCtrl.text = profile.vatNumber;
+    }
+    _phoneCtrl.text = phoneForForm;
   }
 
   Future<void> _save() async {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+    final session = await CustomerSessionStore.instance.loadValidSession();
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
       preferredPostcode: _postcodeCtrl.text,
@@ -6468,8 +6586,16 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
+      sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
+    final synced = await _syncCustomerProfileToBackendBestEffort(
+      reason: 'customer_profile_edit_save',
+      localProfile: saved,
+    );
+    if (synced != null) {
+      _setCachedCustomerProfile(synced);
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
