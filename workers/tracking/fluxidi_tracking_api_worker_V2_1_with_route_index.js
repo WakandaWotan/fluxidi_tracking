@@ -3007,20 +3007,18 @@ async function handleDeleteBooking(req, url, env, origin) {
 
   const scopedIndexStorageKey = scopedBookingIndexKey(scope);
   const scopedIndex = (await kvGetJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey)) ?? [];
-  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
-  const map = mapResolved.map;
+  const currentIndex = Array.isArray(scopedIndex) ? scopedIndex : [];
+
+  const mapKey = scopedBookingSessionKey(scope, booking_id);
+  const map = await kvGetJson(env.FLUXIDI_TRACKING, mapKey);
+
+  if (map && !recordMatchesTenantCompanyScope(map, scope)) {
+    throw new Error("invalid booking scope");
+  }
 
   if (!map) {
-    const legacyMap = await kvGetJson(env.FLUXIDI_TRACKING, `booking:${booking_id}:session`);
-    const legacyScope = extractScopeFromRecord(legacyMap);
-    const legacyCompanylessScopeMatch =
-      Boolean(legacyMap) &&
-      legacyScope?.tenant_id === scope.tenant_id &&
-      !legacyScope?.company_id;
-    const next = Array.isArray(scopedIndex)
-      ? scopedIndex.filter((x) => x !== booking_id)
-      : [];
-    if (next.length !== scopedIndex.length) {
+    const next = currentIndex.filter((x) => x !== booking_id);
+    if (next.length !== currentIndex.length || !Array.isArray(scopedIndex)) {
       await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, next, TTL_INDEX);
     }
 
@@ -3031,10 +3029,7 @@ async function handleDeleteBooking(req, url, env, origin) {
           deleted: false,
           booking_id,
           scope_mode: "scoped",
-          legacy_unmodified: Boolean(legacyMap),
-          note: legacyCompanylessScopeMatch
-            ? "Legacy companyless mapping detected; left unmodified for compatibility."
-            : "No scoped mapping found; removed from scoped index if present.",
+          note: "No scoped mapping found; removed from scoped index if present.",
         },
         { status: 200 },
       ),
@@ -3042,29 +3037,27 @@ async function handleDeleteBooking(req, url, env, origin) {
     );
   }
 
-  const mapKey = mapResolved.key;
   const session_id = safeStr(map.session_id ?? map.sessionId, 128);
   const public_token = safeStr(map.public_token ?? "", 128) || null;
-  const sessionResolved = session_id
-    ? await getScopedOrLegacySessionForScope(env, scope, session_id)
-    : null;
+
+  if (session_id) {
+    const session = await kvGetJson(env.FLUXIDI_TRACKING, scopedSessionKey(scope, session_id));
+    if (session && !recordMatchesTenantCompanyScope(session, scope)) {
+      throw new Error("invalid session scope");
+    }
+  }
 
   await kvDel(env.FLUXIDI_TRACKING, mapKey);
   if (session_id) {
-    await kvDel(
-      env.FLUXIDI_TRACKING,
-      sessionResolved?.key ?? scopedSessionKey(scope, session_id),
-    );
+    await kvDel(env.FLUXIDI_TRACKING, scopedSessionKey(scope, session_id));
     await kvDel(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, session_id));
   }
   if (public_token) {
     await kvDel(env.FLUXIDI_TRACKING, scopedPublicBookingKey(scope, public_token));
   }
 
-  const next = Array.isArray(scopedIndex)
-    ? scopedIndex.filter((x) => x !== booking_id)
-    : [];
-  if (next.length !== scopedIndex.length) {
+  const next = currentIndex.filter((x) => x !== booking_id);
+  if (next.length !== currentIndex.length || !Array.isArray(scopedIndex)) {
     await kvPutJson(env.FLUXIDI_TRACKING, scopedIndexStorageKey, next, TTL_INDEX);
   }
 
@@ -3077,7 +3070,6 @@ async function handleDeleteBooking(req, url, env, origin) {
         session_id,
         public_token,
         scope_mode: "scoped",
-        legacy_unmodified: true,
       },
       { status: 200 },
     ),
