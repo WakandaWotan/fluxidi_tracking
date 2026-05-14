@@ -640,8 +640,13 @@ Future<void> showDriverDocumentEditorSheet(
                                 }
                                 var company = DriverDocumentsStore.instance
                                     .resolvedCompanyIdForNewDoc();
+                                var tenant = DriverDocumentsStore.instance
+                                    .resolvedTenantIdForNewDoc();
                                 if (activeCompanyId.isNotEmpty) {
                                   company = activeCompanyId;
+                                  if (tenant.trim().isEmpty) {
+                                    tenant = activeCompanyId;
+                                  }
                                 }
                                 final resolvedDocId =
                                     existing?.documentId ??
@@ -690,6 +695,7 @@ Future<void> showDriverDocumentEditorSheet(
 
                                 if (existing == null) {
                                   final doc = DriverDocumentsStore.buildNew(
+                                    tenantId: tenant,
                                     driverId: driver.id,
                                     documentType: selectedType,
                                     title: titleCtrl.text,

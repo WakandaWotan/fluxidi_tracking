@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 
 /// MVP chauffeur compliance documents (local-first).
 ///
@@ -220,6 +221,7 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
 class DriverDocument {
   const DriverDocument({
     required this.documentId,
+    required this.tenantId,
     required this.companyId,
     required this.driverId,
     required this.documentType,
@@ -233,6 +235,7 @@ class DriverDocument {
   });
 
   final String documentId;
+  final String tenantId;
   final String companyId;
   final String driverId;
   final String documentType;
@@ -259,8 +262,12 @@ class DriverDocument {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'documentId': documentId,
+    'tenantId': tenantId,
+    'tenant_id': tenantId,
     'companyId': companyId,
+    'company_id': companyId,
     'driverId': driverId,
+    'driver_id': driverId,
     'documentType': documentType,
     'title': title,
     'filePath': filePath,
@@ -272,36 +279,44 @@ class DriverDocument {
   };
 
   factory DriverDocument.fromJson(Map<String, dynamic> m) {
-    String r(String k) => (m[k] ?? '').toString();
-    final tid = r('tenantId');
-    final cid = r('companyId');
-    final company = cid.isNotEmpty ? cid : tid;
-    var type = r('documentType').trim();
+    String readAny(List<String> keys) {
+      for (final key in keys) {
+        final text = (m[key] ?? '').toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    final tenant = readAny(const ['tenantId', 'tenant_id']);
+    final company = readAny(const ['companyId', 'company_id']);
+    final driver = readAny(const ['driverId', 'driver_id']);
+    var type = readAny(const ['documentType', 'document_type']);
     if (type.isEmpty || !DriverDocumentTypes.all.contains(type)) {
       type = DriverDocumentTypes.other;
     }
-    var st = r('status').trim();
+    var st = readAny(const ['status']);
     if (st.isEmpty || !DriverDocumentStatuses.all.contains(st)) {
       st = DriverDocumentStatuses.pendingReview;
     }
     return DriverDocument(
       documentId: () {
-        final x = r('documentId').trim();
+        final x = readAny(const ['documentId', 'document_id']);
         if (x.isNotEmpty) return x;
-        final dr = r('driverId');
-        final tl = r('title');
+        final dr = driver;
+        final tl = readAny(const ['title']);
         return 'ddoc_legacy_${dr.hashCode}_${tl.hashCode}';
       }(),
+      tenantId: tenant,
       companyId: company,
-      driverId: r('driverId'),
+      driverId: driver,
       documentType: type,
-      title: r('title'),
-      filePath: r('filePath'),
-      expiryDate: r('expiryDate'),
+      title: readAny(const ['title']),
+      filePath: readAny(const ['filePath', 'file_path']),
+      expiryDate: readAny(const ['expiryDate', 'expiry_date']),
       status: st,
-      notes: r('notes'),
-      createdAt: r('createdAt'),
-      updatedAt: r('updatedAt'),
+      notes: readAny(const ['notes']),
+      createdAt: readAny(const ['createdAt', 'created_at']),
+      updatedAt: readAny(const ['updatedAt', 'updated_at']),
     );
   }
 }
@@ -460,16 +475,25 @@ class DriverDocumentsStore {
         return;
       }
       final out = <DriverDocument>[];
+      var migratedAny = false;
       for (final e in list) {
         if (e is! Map) continue;
         try {
-          final doc = DriverDocument.fromJson(Map<String, dynamic>.from(e));
+          final parsed = DriverDocument.fromJson(Map<String, dynamic>.from(e));
+          final doc = _migrateLegacyScopeIfSafe(parsed);
+          if (doc.tenantId != parsed.tenantId ||
+              doc.companyId != parsed.companyId) {
+            migratedAny = true;
+          }
           if (doc.driverId.trim().isEmpty) continue;
           out.add(doc);
         } catch (_) {}
       }
       _memory = out;
       driverDocumentsNotifier.value = List<DriverDocument>.from(out);
+      if (migratedAny) {
+        await _persist();
+      }
     } catch (_) {
       driverDocumentsNotifier.value = <DriverDocument>[];
       _memory = driverDocumentsNotifier.value;
@@ -493,7 +517,81 @@ class DriverDocumentsStore {
       };
       await file.writeAsString(jsonEncode(payload));
       _memory = List<DriverDocument>.from(driverDocumentsNotifier.value);
+      debugPrint(
+        '[DRIVER_DOCS][SAVE] count=${driverDocumentsNotifier.value.length}',
+      );
     } catch (_) {}
+  }
+
+  ({String tenantId, String companyId}) _activeTenantCompanyScope() {
+    final sessionTenant = (activeDriverSessionNotifier.value?.tenantId ?? '')
+        .trim();
+    final sessionCompany = (activeDriverSessionNotifier.value?.companyId ?? '')
+        .trim();
+    if (sessionTenant.isNotEmpty && sessionCompany.isNotEmpty) {
+      return (tenantId: sessionTenant, companyId: sessionCompany);
+    }
+    final company = _activeCompanyIdForDocuments().trim();
+    if (company.isNotEmpty) {
+      return (tenantId: company, companyId: company);
+    }
+    return (tenantId: '', companyId: '');
+  }
+
+  String _activeDriverIdForScope() {
+    return (activeDriverSessionNotifier.value?.driverId ?? '').trim();
+  }
+
+  DriverDocument _copyWithScope(
+    DriverDocument doc, {
+    required String tenantId,
+    required String companyId,
+    String? driverId,
+  }) {
+    return DriverDocument(
+      documentId: doc.documentId,
+      tenantId: tenantId.trim(),
+      companyId: companyId.trim(),
+      driverId: (driverId ?? doc.driverId).trim(),
+      documentType: doc.documentType,
+      title: doc.title,
+      filePath: doc.filePath,
+      expiryDate: doc.expiryDate,
+      status: doc.status,
+      notes: doc.notes,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    );
+  }
+
+  DriverDocument _migrateLegacyScopeIfSafe(DriverDocument doc) {
+    var tenant = doc.tenantId.trim();
+    var company = doc.companyId.trim();
+    final driver = doc.driverId.trim();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    var changed = false;
+
+    if (tenant.isEmpty && company.isNotEmpty) {
+      tenant = company;
+      changed = true;
+    }
+    if (company.isEmpty && tenant.isNotEmpty) {
+      company = tenant;
+      changed = true;
+    }
+    if (tenant.isEmpty &&
+        company.isEmpty &&
+        activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (activeDriverId.isEmpty || activeDriverId == driver)) {
+      tenant = activeScope.tenantId;
+      company = activeScope.companyId;
+      changed = true;
+    }
+
+    if (!changed) return doc;
+    return _copyWithScope(doc, tenantId: tenant, companyId: company);
   }
 
   String _activeCompanyIdForDocuments() {
@@ -516,19 +614,7 @@ class DriverDocumentsStore {
   DriverDocument _copyWithCompanyId(DriverDocument doc, String companyId) {
     final cid = companyId.trim();
     if (doc.companyId.trim() == cid) return doc;
-    return DriverDocument(
-      documentId: doc.documentId,
-      companyId: cid,
-      driverId: doc.driverId,
-      documentType: doc.documentType,
-      title: doc.title,
-      filePath: doc.filePath,
-      expiryDate: doc.expiryDate,
-      status: doc.status,
-      notes: doc.notes,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
-    );
+    return _copyWithScope(doc, tenantId: cid, companyId: cid);
   }
 
   /// Exposed for UI-level pre-save guards.
@@ -537,18 +623,35 @@ class DriverDocumentsStore {
 
   List<DriverDocument> documentsVisibleForDriver(String driverId) {
     final did = driverId.trim();
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    final rid = resolvedCompanyId.trim();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=visible tenant=${activeScope.tenantId.isNotEmpty} company=${activeScope.companyId.isNotEmpty} activeDriver=${activeDriverId.isNotEmpty}',
+    );
     return driverDocumentsNotifier.value
         .where((d) {
           if (d.driverId.trim() != did) return false;
-          final c = d.companyId.trim();
-          if (activeCompanyId.isNotEmpty) {
-            // Companyless legacy docs are hidden in active-company context to avoid cross-company leakage.
-            return c == activeCompanyId;
+          if (activeDriverId.isNotEmpty &&
+              d.driverId.trim() != activeDriverId) {
+            return false;
           }
-          if (c.isEmpty) return true;
-          return c == rid;
+          final tenant = d.tenantId.trim();
+          final company = d.companyId.trim();
+          if (activeScope.tenantId.isNotEmpty &&
+              activeScope.companyId.isNotEmpty) {
+            final scopeMatch =
+                tenant == activeScope.tenantId &&
+                company == activeScope.companyId;
+            if (!scopeMatch) {
+              debugPrint('[DRIVER_DOCS][LEGACY_HIDDEN] reason=scope_mismatch');
+            }
+            return scopeMatch;
+          }
+          if (tenant.isEmpty || company.isEmpty) {
+            debugPrint('[DRIVER_DOCS][LEGACY_HIDDEN] reason=missing_scope');
+            return false;
+          }
+          return true;
         })
         .toList(growable: false);
   }
@@ -562,25 +665,38 @@ class DriverDocumentsStore {
   }
 
   Future<void> addDocument(DriverDocument doc) async {
-    if (doc.driverId.trim().isEmpty) return;
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    var candidate = doc;
-    if (activeCompanyId.isNotEmpty) {
-      final docCompanyId = doc.companyId.trim();
-      if (docCompanyId.isEmpty) {
-        candidate = _copyWithCompanyId(doc, activeCompanyId);
-      } else if (docCompanyId != activeCompanyId) {
-        return;
-      }
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    final driverId = doc.driverId.trim();
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=add hasTenant=${tenantId.isNotEmpty} hasCompany=${companyId.isNotEmpty} hasDriver=${driverId.isNotEmpty}',
+    );
+    if (driverId.isEmpty || tenantId.isEmpty || companyId.isEmpty) return;
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (tenantId != activeScope.tenantId ||
+            companyId != activeScope.companyId)) {
+      return;
     }
+    if (activeDriverId.isNotEmpty && driverId != activeDriverId) return;
+    final candidate = doc;
     final next = <DriverDocument>[...driverDocumentsNotifier.value, candidate];
     driverDocumentsNotifier.value = next;
     await _persist();
   }
 
   Future<void> updateDocument(DriverDocument doc) async {
-    if (doc.driverId.trim().isEmpty) return;
-    final activeCompanyId = _activeCompanyIdForDocuments();
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][SCOPE] op=update hasTenant=${tenantId.isNotEmpty} hasCompany=${companyId.isNotEmpty} hasDriver=${driverId.isNotEmpty}',
+    );
+    if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) return;
     DriverDocument? existing;
     for (final entry in driverDocumentsNotifier.value) {
       if (entry.documentId == doc.documentId) {
@@ -589,16 +705,22 @@ class DriverDocumentsStore {
       }
     }
     if (existing == null) return;
-    var candidate = doc;
-    if (activeCompanyId.isNotEmpty) {
-      if (existing.companyId.trim() != activeCompanyId) return;
-      final docCompanyId = doc.companyId.trim();
-      if (docCompanyId.isEmpty) {
-        candidate = _copyWithCompanyId(doc, activeCompanyId);
-      } else if (docCompanyId != activeCompanyId) {
-        return;
-      }
+    if (existing.tenantId.trim() != tenantId ||
+        existing.companyId.trim() != companyId ||
+        existing.driverId.trim() != driverId) {
+      return;
     }
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (existing.tenantId.trim() != activeScope.tenantId ||
+            existing.companyId.trim() != activeScope.companyId)) {
+      return;
+    }
+    if (activeDriverId.isNotEmpty &&
+        existing.driverId.trim() != activeDriverId) {
+      return;
+    }
+    final candidate = doc;
     final next = driverDocumentsNotifier.value
         .map((d) => d.documentId == candidate.documentId ? candidate : d)
         .toList(growable: false);
@@ -608,17 +730,25 @@ class DriverDocumentsStore {
 
   Future<void> deleteDocument(String documentId) async {
     final id = documentId.trim();
-    final activeCompanyId = _activeCompanyIdForDocuments();
-    if (activeCompanyId.isNotEmpty) {
-      DriverDocument? target;
-      for (final entry in driverDocumentsNotifier.value) {
-        if (entry.documentId == id) {
-          target = entry;
-          break;
-        }
+    final activeScope = _activeTenantCompanyScope();
+    final activeDriverId = _activeDriverIdForScope();
+    debugPrint('[DRIVER_DOCS][SCOPE] op=delete requested=${id.isNotEmpty}');
+    DriverDocument? target;
+    for (final entry in driverDocumentsNotifier.value) {
+      if (entry.documentId == id) {
+        target = entry;
+        break;
       }
-      if (target == null) return;
-      if (target.companyId.trim() != activeCompanyId) return;
+    }
+    if (target == null) return;
+    if (activeScope.tenantId.isNotEmpty &&
+        activeScope.companyId.isNotEmpty &&
+        (target.tenantId.trim() != activeScope.tenantId ||
+            target.companyId.trim() != activeScope.companyId)) {
+      return;
+    }
+    if (activeDriverId.isNotEmpty && target.driverId.trim() != activeDriverId) {
+      return;
     }
     final next = driverDocumentsNotifier.value
         .where((d) => d.documentId != id)
@@ -634,7 +764,15 @@ class DriverDocumentsStore {
     return companyProfileNotifier.value != null ? resolvedCompanyId : '';
   }
 
+  String resolvedTenantIdForNewDoc() {
+    final scope = _activeTenantCompanyScope();
+    if (scope.tenantId.isNotEmpty) return scope.tenantId;
+    final company = resolvedCompanyIdForNewDoc().trim();
+    return company;
+  }
+
   static DriverDocument buildNew({
+    required String tenantId,
     required String driverId,
     required String documentType,
     required String title,
@@ -649,6 +787,7 @@ class DriverDocumentsStore {
     final id = documentId?.trim();
     return DriverDocument(
       documentId: (id != null && id.isNotEmpty) ? id : _newDocumentId(),
+      tenantId: tenantId.trim(),
       companyId: companyId.trim(),
       driverId: driverId.trim(),
       documentType: documentType.trim().isEmpty
@@ -678,6 +817,7 @@ class DriverDocumentsStore {
     final now = DateTime.now().toUtc().toIso8601String();
     return DriverDocument(
       documentId: existing.documentId,
+      tenantId: existing.tenantId,
       companyId: existing.companyId,
       driverId: existing.driverId,
       documentType: documentType.trim().isEmpty
