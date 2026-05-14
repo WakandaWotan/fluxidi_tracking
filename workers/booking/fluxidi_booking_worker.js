@@ -1747,6 +1747,9 @@ const COMPANY_ADMIN_PAIRING_MAX_ATTEMPTS = 5;
 const COMPANY_DRIVER_INDEX_KEY_PREFIX = "tenant:";
 const COMPANY_DRIVER_INDEX_KEY_MIDDLE = ":company:";
 const COMPANY_DRIVER_INDEX_KEY_SUFFIX = ":drivers:index:v1";
+const DRIVER_DOCUMENT_PRIVATE_R2_PREFIX = "driver-documents/v1";
+const DRIVER_DOCUMENT_KV_KEY_PREFIX = "driver_document_v1/tenant/";
+const DRIVER_DOCUMENT_INDEX_KV_KEY_PREFIX = "driver_document_index_v1/tenant/";
 const COMPANY_DRIVER_LINK_CHALLENGE_KEY_PREFIX = "company_driver_link:challenge:";
 const COMPANY_DRIVER_LINK_CHALLENGE_KEY_SUFFIX = ":v1";
 const COMPANY_DRIVER_LINK_ACTIVE_KEY_PREFIX = "company_driver_link:active:";
@@ -3095,6 +3098,477 @@ function _normalizeDriverPairingSessionExpiry(nowMs = Date.now()) {
 
 function _companyDriverIndexKey(scope) {
   return `${COMPANY_DRIVER_INDEX_KEY_PREFIX}${scope.tenant_id}${COMPANY_DRIVER_INDEX_KEY_MIDDLE}${scope.company_id}${COMPANY_DRIVER_INDEX_KEY_SUFFIX}`;
+}
+
+function _safeDriverDocumentScopePart(value, maxLen = 96) {
+  const text = sanitizeTenantString(value, maxLen);
+  if (!text) return "";
+  if (!/^[A-Za-z0-9._-]+$/.test(text)) return "";
+  return text;
+}
+
+function _driverDocumentFileNamePart(value) {
+  const raw = sanitizeTenantString(value, 220);
+  if (!raw) return "document.bin";
+  const noPath = raw.split(/[\\/]/).pop() || "document.bin";
+  const normalized = noPath.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/_+/g, "_");
+  return normalized.slice(0, 180) || "document.bin";
+}
+
+function _driverDocumentMetadataKey(scope = {}) {
+  const tenant = _safeDriverDocumentScopePart(
+    scope.tenantId ?? scope.tenant_id,
+    80,
+  );
+  const company = _safeDriverDocumentScopePart(
+    scope.companyId ?? scope.company_id,
+    80,
+  );
+  const driver = _safeDriverDocumentScopePart(
+    scope.driverId ?? scope.driver_id,
+    96,
+  );
+  const doc = _safeDriverDocumentScopePart(
+    scope.documentId ?? scope.document_id,
+    160,
+  );
+  if (!tenant || !company || !driver || !doc) return "";
+  return `${DRIVER_DOCUMENT_KV_KEY_PREFIX}${tenant}/company/${company}/driver/${driver}/doc/${doc}`;
+}
+
+function _driverDocumentIndexKey(scope = {}) {
+  const tenant = _safeDriverDocumentScopePart(
+    scope.tenantId ?? scope.tenant_id,
+    80,
+  );
+  const company = _safeDriverDocumentScopePart(
+    scope.companyId ?? scope.company_id,
+    80,
+  );
+  const driver = _safeDriverDocumentScopePart(
+    scope.driverId ?? scope.driver_id,
+    96,
+  );
+  if (!tenant || !company || !driver) return "";
+  return `${DRIVER_DOCUMENT_INDEX_KV_KEY_PREFIX}${tenant}/company/${company}/driver/${driver}`;
+}
+
+function _generateDriverDocumentId() {
+  const id = crypto?.randomUUID ? crypto.randomUUID() : `ddoc_${Date.now()}_${Math.random()}`;
+  return _safeDriverDocumentScopePart(id.replace(/[^A-Za-z0-9._-]+/g, "_"), 160);
+}
+
+function _normalizeDriverDocumentStatus(value) {
+  const status = sanitizeTenantString(value, 40).toLowerCase();
+  if (!status) return "pending_review";
+  const allowed = new Set([
+    "missing",
+    "pending_review",
+    "active",
+    "approved",
+    "verified",
+    "expired",
+    "rejected",
+    "archived",
+    "pending",
+  ]);
+  return allowed.has(status) ? status : "pending_review";
+}
+
+function _normalizeDriverDocumentDate(value) {
+  const raw = sanitizeTenantString(value, 40);
+  if (!raw) return "";
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function _sanitizeDriverDocumentMetadata(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  return {
+    tenant_id: _safeDriverDocumentScopePart(record.tenant_id ?? record.tenantId, 80),
+    company_id: _safeDriverDocumentScopePart(record.company_id ?? record.companyId, 80),
+    driver_id: _safeDriverDocumentScopePart(record.driver_id ?? record.driverId, 96),
+    document_id: _safeDriverDocumentScopePart(record.document_id ?? record.documentId, 160),
+    document_type: sanitizeTenantString(record.document_type ?? record.documentType, 80),
+    title: sanitizeTenantString(record.title, 160),
+    expiry_date: _normalizeDriverDocumentDate(record.expiry_date ?? record.expiryDate),
+    status: _normalizeDriverDocumentStatus(record.status),
+    notes: sanitizeTenantString(record.notes, 1600),
+    file_name: _driverDocumentFileNamePart(record.file_name ?? record.fileName),
+    content_type: sanitizeTenantString(record.content_type ?? record.contentType, 120),
+    size_bytes: Math.max(0, Math.round(Number(record.size_bytes ?? record.sizeBytes) || 0)),
+    r2_key: sanitizeTenantString(record.r2_key ?? record.r2Key, 800),
+    storage_state: sanitizeTenantString(record.storage_state ?? record.storageState, 40) || "stored",
+    created_at: sanitizeTenantString(record.created_at ?? record.createdAt, 80),
+    updated_at: sanitizeTenantString(record.updated_at ?? record.updatedAt, 80),
+  };
+}
+
+function _driverDocumentListView(record) {
+  if (!record || typeof record !== "object") return null;
+  return {
+    document_id: record.document_id,
+    document_type: record.document_type,
+    title: record.title,
+    expiry_date: record.expiry_date,
+    status: record.status,
+    notes: record.notes,
+    file_name: record.file_name,
+    content_type: record.content_type,
+    size: record.size_bytes,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    storage_state: record.storage_state,
+  };
+}
+
+async function _readDriverDocumentIndex(env, scope) {
+  const key = _driverDocumentIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { key, record: null, ids: [] };
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { key, record: null, ids: [] };
+  }
+  const list = Array.isArray(raw.document_ids ?? raw.documentIds)
+    ? (raw.document_ids ?? raw.documentIds)
+    : [];
+  const ids = [];
+  const seen = new Set();
+  for (const item of list) {
+    const docId = _safeDriverDocumentScopePart(item, 160);
+    if (!docId || seen.has(docId)) continue;
+    seen.add(docId);
+    ids.push(docId);
+  }
+  return { key, record: raw, ids };
+}
+
+async function _writeDriverDocumentIndex(env, scope, ids, nowIso) {
+  const key = _driverDocumentIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  const filtered = [];
+  const seen = new Set();
+  for (const item of Array.isArray(ids) ? ids : []) {
+    const docId = _safeDriverDocumentScopePart(item, 160);
+    if (!docId || seen.has(docId)) continue;
+    seen.add(docId);
+    filtered.push(docId);
+  }
+  await env.BOOKING_KV.put(
+    key,
+    JSON.stringify({
+      version: 1,
+      tenant_id: sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80),
+      company_id: sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80),
+      driver_id: sanitizeTenantString(scope?.driver_id ?? scope?.driverId, 96),
+      document_ids: filtered,
+      documentIds: filtered,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
+  return { ok: true, key, count: filtered.length };
+}
+
+async function _upsertDriverDocumentIndexId(env, scope, documentId, nowIso) {
+  const current = await _readDriverDocumentIndex(env, scope);
+  const next = current.ids.slice();
+  if (!next.includes(documentId)) next.unshift(documentId);
+  return _writeDriverDocumentIndex(env, scope, next, nowIso);
+}
+
+async function _removeDriverDocumentIndexId(env, scope, documentId, nowIso) {
+  const current = await _readDriverDocumentIndex(env, scope);
+  const next = current.ids.filter((id) => id !== documentId);
+  return _writeDriverDocumentIndex(env, scope, next, nowIso);
+}
+
+function _readDriverDocumentScopeFromInput(input = {}) {
+  const tenantId = _safeDriverDocumentScopePart(
+    input.tenant_id ?? input.tenantId,
+    80,
+  );
+  const companyId = _safeDriverDocumentScopePart(
+    input.company_id ?? input.companyId,
+    80,
+  );
+  const driverId = _safeDriverDocumentScopePart(
+    input.driver_id ?? input.driverId,
+    96,
+  );
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    driver_id: driverId,
+    hasScope: !!(tenantId && companyId && driverId),
+  };
+}
+
+function _driverDocumentsStorageBinding(env) {
+  if (env?.DRIVER_DOCUMENTS_PRIVATE) return env.DRIVER_DOCUMENTS_PRIVATE;
+  if (env?.PRIVATE_MEDIA) return env.PRIVATE_MEDIA;
+  return env?.PUBLIC_MEDIA || null;
+}
+
+async function _resolveDriverDocumentsAuthScope({ request, url, env, inputScope }) {
+  const scoped = inputScope && inputScope.hasScope ? inputScope : _readDriverDocumentScopeFromInput({});
+  if (hasValidAdminToken(request, url, env)) {
+    if (!scoped.hasScope) {
+      return { ok: false, response: json(missingTenantScopeError(), 400) };
+    }
+    return {
+      ok: true,
+      auth_mode: "admin_token",
+      tenant_id: scoped.tenant_id,
+      company_id: scoped.company_id,
+      driver_id: scoped.driver_id,
+    };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    return { ok: false, response: _companyAuthFail() };
+  }
+  if (scoped.hasScope) {
+    if (
+      scoped.tenant_id !== companySession.tenant_id ||
+      scoped.company_id !== companySession.company_id
+    ) {
+      return { ok: false, response: json({ ok: false, error: "scope_forbidden" }, 403) };
+    }
+  }
+  if (!scoped.driver_id) {
+    return { ok: false, response: json({ ok: false, error: "driver_id is required" }, 400) };
+  }
+  return {
+    ok: true,
+    auth_mode: "company_session",
+    tenant_id: companySession.tenant_id,
+    company_id: companySession.company_id,
+    driver_id: scoped.driver_id,
+    company_session: companySession,
+  };
+}
+
+async function handleAdminDriverDocumentsUpload(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const storage = _driverDocumentsStorageBinding(env);
+  if (!storage) {
+    return json(
+      {
+        ok: false,
+        error: "driver document storage binding is missing (set DRIVER_DOCUMENTS_PRIVATE or PRIVATE_MEDIA)",
+      },
+      500,
+    );
+  }
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("multipart/form-data")) {
+    return json({ ok: false, error: "multipart_form_data_required" }, 400);
+  }
+  const form = await request.formData();
+  const input = {
+    tenant_id: form.get("tenant_id") ?? form.get("tenantId"),
+    company_id: form.get("company_id") ?? form.get("companyId"),
+    driver_id: form.get("driver_id") ?? form.get("driverId"),
+    document_id: form.get("document_id") ?? form.get("documentId"),
+    document_type: form.get("document_type") ?? form.get("documentType"),
+    title: form.get("title"),
+    expiry_date: form.get("expiry_date") ?? form.get("expiryDate"),
+    status: form.get("status"),
+    notes: form.get("notes"),
+  };
+  const scopeInput = _readDriverDocumentScopeFromInput(input);
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const file = form.get("file");
+  if (!file || typeof file.arrayBuffer !== "function") {
+    return json({ ok: false, error: "file is required" }, 400);
+  }
+  const documentType = sanitizeTenantString(input.document_type, 80);
+  const title = sanitizeTenantString(input.title, 160);
+  if (!documentType) return json({ ok: false, error: "document_type is required" }, 400);
+  if (!title) return json({ ok: false, error: "title is required" }, 400);
+  const sizeBytes = Math.max(0, Math.round(Number(file.size) || 0));
+  if (sizeBytes <= 0) return json({ ok: false, error: "file is empty" }, 400);
+  if (sizeBytes > 20 * 1024 * 1024) {
+    return json({ ok: false, error: "file_too_large_max_20mb" }, 400);
+  }
+
+  const nowIso = new Date().toISOString();
+  const documentId = _safeDriverDocumentScopePart(input.document_id, 160) || _generateDriverDocumentId();
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const safeFileName = _driverDocumentFileNamePart(file.name || "document.bin");
+  const r2Key = `${DRIVER_DOCUMENT_PRIVATE_R2_PREFIX}/tenant/${auth.tenant_id}/company/${auth.company_id}/driver/${auth.driver_id}/${documentId}/${safeFileName}`;
+  const contentTypeSafe = sanitizeTenantString(file.type, 120) || "application/octet-stream";
+
+  const metadataKey = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!metadataKey) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+
+  // Private driver-document storage: keep under non-public prefix and never route via /public/media.
+  const buffer = await file.arrayBuffer();
+  await storage.put(r2Key, buffer, {
+    httpMetadata: {
+      contentType: contentTypeSafe,
+      cacheControl: "private, no-store",
+    },
+    customMetadata: {
+      area: "driver_documents_private",
+      tenant_id: auth.tenant_id,
+      company_id: auth.company_id,
+      driver_id: auth.driver_id,
+      document_id: documentId,
+    },
+  });
+
+  const existing = await env.BOOKING_KV.get(metadataKey, { type: "json" });
+  const createdAt = sanitizeTenantString(existing?.created_at ?? existing?.createdAt, 80) || nowIso;
+  const record = _sanitizeDriverDocumentMetadata({
+    tenant_id: auth.tenant_id,
+    company_id: auth.company_id,
+    driver_id: auth.driver_id,
+    document_id: documentId,
+    document_type: documentType,
+    title,
+    expiry_date: input.expiry_date,
+    status: input.status,
+    notes: input.notes,
+    file_name: safeFileName,
+    content_type: contentTypeSafe,
+    size_bytes: sizeBytes,
+    r2_key: r2Key,
+    storage_state: "stored",
+    created_at: createdAt,
+    updated_at: nowIso,
+  });
+  await env.BOOKING_KV.put(metadataKey, JSON.stringify(record));
+  await _upsertDriverDocumentIndexId(
+    env,
+    { tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id },
+    documentId,
+    nowIso,
+  );
+
+  return json({ ok: true, document: record }, 200);
+}
+
+async function handleAdminDriverDocumentsList(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const index = await _readDriverDocumentIndex(env, {
+    tenant_id: auth.tenant_id,
+    company_id: auth.company_id,
+    driver_id: auth.driver_id,
+  });
+  const items = [];
+  for (const documentId of index.ids) {
+    const key = _driverDocumentMetadataKey({
+      tenantId: auth.tenant_id,
+      companyId: auth.company_id,
+      driverId: auth.driver_id,
+      documentId,
+    });
+    if (!key) continue;
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const normalized = _sanitizeDriverDocumentMetadata(raw);
+    if (!normalized) continue;
+    if (
+      normalized.tenant_id !== auth.tenant_id ||
+      normalized.company_id !== auth.company_id ||
+      normalized.driver_id !== auth.driver_id ||
+      normalized.document_id !== documentId
+    ) {
+      continue;
+    }
+    const view = _driverDocumentListView(normalized);
+    if (view) items.push(view);
+  }
+  return json({ ok: true, tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id, items, count: items.length }, 200);
+}
+
+async function handleAdminDriverDocumentsDelete(request, url, env, documentIdInput) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const storage = _driverDocumentsStorageBinding(env);
+  if (!storage) {
+    return json(
+      {
+        ok: false,
+        error: "driver document storage binding is missing (set DRIVER_DOCUMENTS_PRIVATE or PRIVATE_MEDIA)",
+      },
+      500,
+    );
+  }
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+
+  const documentId = _safeDriverDocumentScopePart(documentIdInput, 160);
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const key = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!key) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return json({ ok: false, error: "not_found" }, 404);
+  }
+  const normalized = _sanitizeDriverDocumentMetadata(raw);
+  if (!normalized) return json({ ok: false, error: "not_found" }, 404);
+  if (
+    normalized.tenant_id !== auth.tenant_id ||
+    normalized.company_id !== auth.company_id ||
+    normalized.driver_id !== auth.driver_id
+  ) {
+    return json({ ok: false, error: "scope_forbidden" }, 403);
+  }
+
+  if (normalized.r2_key) {
+    await storage.delete(normalized.r2_key);
+  }
+  await env.BOOKING_KV.delete(key);
+  await _removeDriverDocumentIndexId(
+    env,
+    { tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id },
+    documentId,
+    new Date().toISOString(),
+  );
+  return json({ ok: true }, 200);
 }
 
 function _companyDriverLinkChallengeKey(challengeId) {
@@ -12655,6 +13129,35 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyDriverLinkCodeCreate(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/upload") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsUpload(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/list") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsList(request, url, env);
+      }
+
+      const adminDriverDocumentsDeleteMatch = url.pathname.match(
+        /^\/admin\/driver-documents\/([A-Za-z0-9._-]+)$/,
+      );
+      if (adminDriverDocumentsDeleteMatch) {
+        if (request.method !== "DELETE") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsDelete(
+          request,
+          url,
+          env,
+          adminDriverDocumentsDeleteMatch[1],
+        );
       }
 
       if (url.pathname === "/public/company/driver-link/verify") {
