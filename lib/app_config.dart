@@ -2579,6 +2579,194 @@ int? _lastCustomerProfileHttpStatusCode;
 int? get lastCustomerProfileHttpStatusCode =>
     _lastCustomerProfileHttpStatusCode;
 
+String _trimBookingBaseUrl(String bookingBaseUrl) {
+  final base = bookingBaseUrl.trim();
+  if (base.isEmpty) return '';
+  if (base.endsWith('/')) return base.substring(0, base.length - 1);
+  return base;
+}
+
+Map<String, String> companyBearerHeaders(
+  String companySessionToken, {
+  bool json = false,
+}) {
+  final token = companySessionToken.trim();
+  final headers = <String, String>{'Accept': 'application/json'};
+  if (json) headers['Content-Type'] = 'application/json';
+  if (token.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $token';
+  }
+  return headers;
+}
+
+Future<Map<String, dynamic>> uploadAdminDriverDocument({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+  required String documentId,
+  required String documentType,
+  required String title,
+  String expiryDate = '',
+  String status = 'pending_review',
+  String notes = '',
+  required String filePath,
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final normalizedTenantId = tenantId.trim();
+  final normalizedCompanyId = companyId.trim();
+  final normalizedDriverId = driverId.trim();
+  final normalizedDocumentId = documentId.trim();
+  final normalizedDocumentType = documentType.trim();
+  final normalizedTitle = title.trim();
+  final normalizedStatus = status.trim().isEmpty
+      ? 'pending_review'
+      : status.trim();
+  final normalizedNotes = notes.trim();
+  final normalizedExpiryDate = expiryDate.trim();
+  final normalizedFilePath = filePath.trim();
+
+  if (baseUrl.isEmpty) throw Exception('bookingBaseUrl is required');
+  if (token.isEmpty) throw Exception('companySessionToken is required');
+  if (normalizedTenantId.isEmpty) throw Exception('tenantId is required');
+  if (normalizedCompanyId.isEmpty) throw Exception('companyId is required');
+  if (normalizedDriverId.isEmpty) throw Exception('driverId is required');
+  if (normalizedDocumentId.isEmpty) throw Exception('documentId is required');
+  if (normalizedDocumentType.isEmpty)
+    throw Exception('documentType is required');
+  if (normalizedTitle.isEmpty) throw Exception('title is required');
+  if (normalizedFilePath.isEmpty) throw Exception('filePath is required');
+  if (!await File(normalizedFilePath).exists()) {
+    throw Exception('filePath does not exist');
+  }
+
+  final endpoint = Uri.parse('$baseUrl/admin/driver-documents/upload');
+  final request = http.MultipartRequest('POST', endpoint);
+  final headers = Map<String, String>.from(companyBearerHeaders(token));
+  headers.removeWhere((key, _) => key.toLowerCase() == 'content-type');
+  request.headers.addAll(headers);
+
+  request.fields['tenant_id'] = normalizedTenantId;
+  request.fields['company_id'] = normalizedCompanyId;
+  request.fields['driver_id'] = normalizedDriverId;
+  request.fields['document_id'] = normalizedDocumentId;
+  request.fields['document_type'] = normalizedDocumentType;
+  request.fields['title'] = normalizedTitle;
+  request.fields['status'] = normalizedStatus;
+  if (normalizedExpiryDate.isNotEmpty) {
+    request.fields['expiry_date'] = normalizedExpiryDate;
+  }
+  if (normalizedNotes.isNotEmpty) {
+    request.fields['notes'] = normalizedNotes;
+  }
+
+  request.files.add(
+    await http.MultipartFile.fromPath('file', normalizedFilePath),
+  );
+
+  final streamed = await request.send().timeout(const Duration(seconds: 30));
+  final body = await streamed.stream.bytesToString();
+  if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+    throw Exception('HTTP ${streamed.statusCode}: $body');
+  }
+  final decoded = jsonDecode(body);
+  if (decoded is! Map) {
+    throw Exception('driver_document_upload_failed');
+  }
+  return Map<String, dynamic>.from(decoded);
+}
+
+Future<Map<String, dynamic>> listAdminDriverDocuments({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final normalizedTenantId = tenantId.trim();
+  final normalizedCompanyId = companyId.trim();
+  final normalizedDriverId = driverId.trim();
+
+  if (baseUrl.isEmpty) throw Exception('bookingBaseUrl is required');
+  if (token.isEmpty) throw Exception('companySessionToken is required');
+  if (normalizedTenantId.isEmpty) throw Exception('tenantId is required');
+  if (normalizedCompanyId.isEmpty) throw Exception('companyId is required');
+  if (normalizedDriverId.isEmpty) throw Exception('driverId is required');
+
+  final endpoint = Uri.parse('$baseUrl/admin/driver-documents/list').replace(
+    queryParameters: <String, String>{
+      'tenant_id': normalizedTenantId,
+      'company_id': normalizedCompanyId,
+      'driver_id': normalizedDriverId,
+    },
+  );
+  final res = await http
+      .get(endpoint, headers: companyBearerHeaders(token))
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('driver_document_list_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    final errorCode = (map['error'] ?? '').toString().trim();
+    if (errorCode.isNotEmpty) throw Exception(errorCode);
+    throw Exception('driver_document_list_failed');
+  }
+  return map;
+}
+
+Future<Map<String, dynamic>> deleteAdminDriverDocument({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+  required String documentId,
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final normalizedTenantId = tenantId.trim();
+  final normalizedCompanyId = companyId.trim();
+  final normalizedDriverId = driverId.trim();
+  final normalizedDocumentId = documentId.trim();
+
+  if (baseUrl.isEmpty) throw Exception('bookingBaseUrl is required');
+  if (token.isEmpty) throw Exception('companySessionToken is required');
+  if (normalizedTenantId.isEmpty) throw Exception('tenantId is required');
+  if (normalizedCompanyId.isEmpty) throw Exception('companyId is required');
+  if (normalizedDriverId.isEmpty) throw Exception('driverId is required');
+  if (normalizedDocumentId.isEmpty) throw Exception('documentId is required');
+
+  final encodedDocumentId = Uri.encodeComponent(normalizedDocumentId);
+  final endpoint =
+      Uri.parse('$baseUrl/admin/driver-documents/$encodedDocumentId').replace(
+        queryParameters: <String, String>{
+          'tenant_id': normalizedTenantId,
+          'company_id': normalizedCompanyId,
+          'driver_id': normalizedDriverId,
+        },
+      );
+  final res = await http
+      .delete(endpoint, headers: companyBearerHeaders(token))
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('driver_document_delete_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    final errorCode = (map['error'] ?? '').toString().trim();
+    if (errorCode.isNotEmpty) throw Exception(errorCode);
+    throw Exception('driver_document_delete_failed');
+  }
+  return map;
+}
+
 Future<Map<String, dynamic>?> fetchCompanyBootstrapWithToken({
   required String companySessionToken,
 }) async {
