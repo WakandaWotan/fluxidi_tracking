@@ -2503,12 +2503,21 @@ async function handleStart(req, url, env, origin) {
     return withCors(json(_trackingOwnershipError("booking_not_assigned_to_driver"), { status: 403 }), origin);
   }
   if (actor.actor_role === "driver") {
-    const existingBookingMapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
-    const existingBookingMap = existingBookingMapResolved.map;
+    const existingBookingMap = await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedBookingSessionKey(scope, booking_id),
+    );
+    if (existingBookingMap && !recordMatchesTenantCompanyScope(existingBookingMap, scope)) {
+      throw new Error("invalid booking scope");
+    }
     if (existingBookingMap) {
-      const existingSession = existingBookingMap.session_id
-        ? (await getScopedOrLegacySessionForScope(env, scope, existingBookingMap.session_id)).session
+      const existingSessionId = safeStr(existingBookingMap.session_id ?? existingBookingMap.sessionId, 128);
+      const existingSession = existingSessionId
+        ? await kvGetJson(env.FLUXIDI_TRACKING, scopedSessionKey(scope, existingSessionId))
         : null;
+      if (existingSession && !recordMatchesTenantCompanyScope(existingSession, scope)) {
+        throw new Error("invalid session scope");
+      }
       const ownerCheck = _trackingOwnershipAllowed({
         actorDriverId: actor.actor_driver_id,
         actorVehicleId: actor.actor_vehicle_id,
@@ -2638,7 +2647,7 @@ async function handleStart(req, url, env, origin) {
     },
     TTL_PUBLIC_TOKEN
   );
-  // New public token mappings are scoped-only; legacy key remains read fallback only.
+  // Public token mappings are scoped-only in normal operation.
 
   const idx = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
   const next = [booking_id, ...idx.filter((x) => x !== booking_id)].slice(0, 200);
