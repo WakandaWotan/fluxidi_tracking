@@ -6073,13 +6073,56 @@ function _projectSafeCustomerBookingSummary(bookingId, rec, scope) {
     status: safeStr(row?.status, 40),
     from: safeStr(row?.from, 240),
     to: safeStr(row?.to, 240),
+    pickup_at: safeStr(row?.pickup_iso, 80),
+    pickupAt: safeStr(row?.pickup_iso, 80),
+    scheduled_at: safeStr(row?.pickup_iso, 80),
+    scheduledAt: safeStr(row?.pickup_iso, 80),
+    destination: safeStr(row?.to, 240),
     pickup_iso: safeStr(row?.pickup_iso, 80),
     created_at: createdAt || undefined,
     updated_at: updatedAt || undefined,
     amount_total: Number.isFinite(Number(row?.price)) ? Number(row.price) : undefined,
+    total: Number.isFinite(Number(row?.price)) ? Number(row.price) : undefined,
+    price: Number.isFinite(Number(row?.price)) ? Number(row.price) : undefined,
     currency: safeStr(row?.currency, 16) || "EUR",
     payment_status: safeStr(row?.payment_status ?? row?.paymentStatus, 40) || undefined,
     paymentStatus: safeStr(row?.paymentStatus ?? row?.payment_status, 40) || undefined,
+    payment_method: safeStr(
+      row?.payment_method ??
+        row?.paymentMethod ??
+        rec?.payment_method ??
+        rec?.paymentMethod ??
+        booking?.payment_method ??
+        booking?.paymentMethod,
+      40,
+    ) || undefined,
+    paymentMethod: safeStr(
+      row?.paymentMethod ??
+        row?.payment_method ??
+        rec?.paymentMethod ??
+        rec?.payment_method ??
+        booking?.paymentMethod ??
+        booking?.payment_method,
+      40,
+    ) || undefined,
+    payment_provider: safeStr(
+      row?.payment_provider ??
+        row?.paymentProvider ??
+        rec?.payment_provider ??
+        rec?.paymentProvider ??
+        booking?.payment_provider ??
+        booking?.paymentProvider,
+      40,
+    ) || undefined,
+    paymentProvider: safeStr(
+      row?.paymentProvider ??
+        row?.payment_provider ??
+        rec?.paymentProvider ??
+        rec?.payment_provider ??
+        booking?.paymentProvider ??
+        booking?.payment_provider,
+      40,
+    ) || undefined,
     service: safeStr(
       booking?.service ??
         booking?.extra_service ??
@@ -6087,6 +6130,8 @@ function _projectSafeCustomerBookingSummary(bookingId, rec, scope) {
       64,
     ) || undefined,
     tier: safeStr(row?.tier, 40) || undefined,
+    pax: safeStr(booking?.pax ?? row?.pax, 12) || undefined,
+    bags: safeStr(booking?.bags ?? row?.bags, 12) || undefined,
     ...(publicBookingReference
       ? {
           public_booking_reference: publicBookingReference,

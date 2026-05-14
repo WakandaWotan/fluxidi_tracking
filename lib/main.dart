@@ -1155,6 +1155,83 @@ StoredCustomerBooking? _storedBookingFromCustomerBootstrap(
   );
 }
 
+bool _isSafeRecoveredCustomerScopeValue(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return false;
+  final normalized = trimmed.toLowerCase();
+  if (normalized == 'global' || normalized == 'fluxidi') return false;
+  return true;
+}
+
+({String tenantId, String companyId})?
+_defaultCustomerScopeFromBootstrapResponse({
+  required Map<String, dynamic> response,
+  required List<dynamic> bookings,
+}) {
+  final customerNode = response['customer'] is Map
+      ? Map<String, dynamic>.from(response['customer'] as Map)
+      : const <String, dynamic>{};
+  final customerTenant =
+      (customerNode['tenant_id'] ?? customerNode['tenantId'] ?? '')
+          .toString()
+          .trim();
+  final customerCompany =
+      (customerNode['company_id'] ?? customerNode['companyId'] ?? '')
+          .toString()
+          .trim();
+  if (_isSafeRecoveredCustomerScopeValue(customerTenant) &&
+      _isSafeRecoveredCustomerScopeValue(customerCompany)) {
+    return (tenantId: customerTenant, companyId: customerCompany);
+  }
+  for (final entry in bookings) {
+    if (entry is! Map) continue;
+    final item = Map<String, dynamic>.from(entry);
+    final tenant = (item['tenant_id'] ?? item['tenantId'] ?? '')
+        .toString()
+        .trim();
+    final company = (item['company_id'] ?? item['companyId'] ?? '')
+        .toString()
+        .trim();
+    if (_isSafeRecoveredCustomerScopeValue(tenant) &&
+        _isSafeRecoveredCustomerScopeValue(company)) {
+      return (tenantId: tenant, companyId: company);
+    }
+  }
+  return null;
+}
+
+Future<void> _persistCustomerSessionDefaultScopeIfNeeded({
+  required CustomerSession session,
+  required Map<String, dynamic> response,
+  required List<dynamic> bookings,
+}) async {
+  final inferred = _defaultCustomerScopeFromBootstrapResponse(
+    response: response,
+    bookings: bookings,
+  );
+  if (inferred == null) return;
+  final currentTenant = (session.defaultTenantId ?? '').trim();
+  final currentCompany = (session.defaultCompanyId ?? '').trim();
+  if (currentTenant == inferred.tenantId &&
+      currentCompany == inferred.companyId) {
+    return;
+  }
+  final nextSession = CustomerSession(
+    customerSessionToken: session.customerSessionToken,
+    expiresAt: session.expiresAt,
+    customerId: session.customerId,
+    phoneE164: session.phoneE164,
+    defaultTenantId: inferred.tenantId,
+    defaultCompanyId: inferred.companyId,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  );
+  await CustomerSessionStore.instance.save(nextSession);
+  debugPrint(
+    '[CUSTOMER_BOOTSTRAP][SESSION_SCOPE] tenant=${inferred.tenantId} company=${inferred.companyId}',
+  );
+}
+
 Future<int> _bootstrapCustomerSessionAndMergeBookings({
   required String reason,
 }) async {
@@ -1182,6 +1259,11 @@ Future<int> _bootstrapCustomerSessionAndMergeBookings({
         _customerBootstrapValueAtPath(response, 'data.bookings') ??
         const <dynamic>[];
     final bookings = bookingsRaw is List ? bookingsRaw : const <dynamic>[];
+    await _persistCustomerSessionDefaultScopeIfNeeded(
+      session: session,
+      response: response,
+      bookings: bookings,
+    );
     debugPrint('[CUSTOMER_BOOTSTRAP][OK] count=${bookings.length}');
     var merged = 0;
     for (final entry in bookings) {

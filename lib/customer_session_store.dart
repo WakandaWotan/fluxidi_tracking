@@ -115,6 +115,10 @@ class CustomerSessionStore {
 
   CustomerSession? _cache;
 
+  CustomerSession? peekCachedSession() {
+    return _cache;
+  }
+
   Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
     final root = Directory(

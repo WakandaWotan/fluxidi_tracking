@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -21,8 +22,21 @@ String _maskScopeId(String value) {
 
 ({String tenantId, String companyId})? _activeLocalScope() {
   final scope = resolveStrictTenantCompanyScope(allowDriverFallback: true);
-  if (scope == null) return null;
-  return (tenantId: scope.tenantId, companyId: scope.companyId);
+  if (scope != null) {
+    return (tenantId: scope.tenantId, companyId: scope.companyId);
+  }
+  final session = CustomerSessionStore.instance.peekCachedSession();
+  final defaultTenant = (session?.defaultTenantId ?? '').trim();
+  final defaultCompany = (session?.defaultCompanyId ?? '').trim();
+  if (defaultTenant.isEmpty || defaultCompany.isEmpty) return null;
+  final tenantLower = defaultTenant.toLowerCase();
+  final companyLower = defaultCompany.toLowerCase();
+  if (tenantLower == 'global' || companyLower == 'global') return null;
+  if (tenantLower == 'fluxidi' || companyLower == 'fluxidi') return null;
+  debugPrint(
+    '[CUSTOMER_BOOKINGS][SCOPE_FALLBACK] source=customer_session_default',
+  );
+  return (tenantId: defaultTenant, companyId: defaultCompany);
 }
 
 class StoredCustomerBooking {

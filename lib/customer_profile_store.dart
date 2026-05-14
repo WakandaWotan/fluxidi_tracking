@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -107,8 +108,21 @@ class CustomerProfileStore {
 
   ({String tenantId, String companyId})? _activeLocalScope() {
     final strict = resolveStrictTenantCompanyScope(allowDriverFallback: true);
-    if (strict == null) return null;
-    return (tenantId: strict.tenantId, companyId: strict.companyId);
+    if (strict != null) {
+      return (tenantId: strict.tenantId, companyId: strict.companyId);
+    }
+    final session = CustomerSessionStore.instance.peekCachedSession();
+    final defaultTenant = (session?.defaultTenantId ?? '').trim();
+    final defaultCompany = (session?.defaultCompanyId ?? '').trim();
+    if (defaultTenant.isEmpty || defaultCompany.isEmpty) return null;
+    final tenantLower = defaultTenant.toLowerCase();
+    final companyLower = defaultCompany.toLowerCase();
+    if (tenantLower == 'global' || companyLower == 'global') return null;
+    if (tenantLower == 'fluxidi' || companyLower == 'fluxidi') return null;
+    debugPrint(
+      '[CUSTOMER_PROFILE][SCOPE_FALLBACK] source=customer_session_default',
+    );
+    return (tenantId: defaultTenant, companyId: defaultCompany);
   }
 
   Future<Directory> _stateRootDir() async {
