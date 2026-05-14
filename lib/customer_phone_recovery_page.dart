@@ -18,7 +18,9 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
   bool _busy = false;
   bool _otpStep = false;
   String _challengeId = '';
+  String _verificationChannel = 'sms_otp';
   String _maskedPhone = '';
+  String _maskedEmail = '';
   String _debugOtp = '';
   String? _error;
 
@@ -111,7 +113,9 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         _busy = false;
         _otpStep = true;
         _challengeId = challengeId;
+        _verificationChannel = 'sms_otp';
         _maskedPhone = maskedPhone;
+        _maskedEmail = '';
         _debugOtp = debugOtp;
       });
       if (debugOtp.isNotEmpty) {
@@ -127,6 +131,140 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
           fr: "L'envoi du code a échoué. Réessayez.",
           es: 'No se pudo enviar el código. Inténtalo de nuevo.',
         );
+      });
+    }
+  }
+
+  Future<CustomerSession> _persistSessionFromVerifiedResponse({
+    required Map<String, dynamic> verified,
+    required String phone,
+  }) async {
+    final token =
+        (verified['customer_session_token'] ??
+                verified['customerSessionToken'] ??
+                '')
+            .toString()
+            .trim();
+    final customerId = (verified['customer_id'] ?? verified['customerId'] ?? '')
+        .toString()
+        .trim();
+    final expiresInSeconds =
+        int.tryParse(
+          (verified['expires_in_seconds'] ?? verified['expiresInSeconds'] ?? '')
+              .toString(),
+        ) ??
+        (30 * 24 * 60 * 60);
+    if (token.isEmpty || customerId.isEmpty) {
+      throw Exception('session_missing');
+    }
+    final now = DateTime.now().toUtc();
+    final sessionPhone = normalizeCustomerSessionPhoneE164(phone);
+    final session = CustomerSession(
+      customerSessionToken: token,
+      expiresAt: now.add(Duration(seconds: expiresInSeconds)).toIso8601String(),
+      customerId: customerId,
+      phoneE164: sessionPhone,
+      defaultTenantId: null,
+      defaultCompanyId: null,
+      createdAt: now.toIso8601String(),
+      updatedAt: now.toIso8601String(),
+    );
+    await CustomerSessionStore.instance.save(session);
+    await CustomerProfileStore.instance.mergeBackendProfileForSession(
+      const <String, dynamic>{},
+      sessionCustomerId: session.customerId,
+      sessionPhoneE164: session.phoneE164,
+    );
+    try {
+      final backendProfile = await fetchPublicCustomerProfile(
+        customerSessionToken: session.customerSessionToken,
+      );
+      if (backendProfile != null) {
+        await CustomerProfileStore.instance.mergeBackendProfileForSession(
+          backendProfile,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
+        debugPrint(
+          '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=true reason=merged',
+        );
+      } else {
+        debugPrint(
+          '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=empty_or_unauthorized',
+        );
+      }
+    } catch (_) {
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=fetch_failed',
+      );
+    }
+    return session;
+  }
+
+  Future<void> _startEmailFallback() async {
+    if (_busy) return;
+    final phone = _normalizePhoneInput(_phoneCtrl.text);
+    if (!_looksLikeE164(phone)) {
+      setState(() {
+        _error = _t(
+          nl: 'Gebruik eerst een geldig gsm-nummer.',
+          en: 'Use a valid phone number first.',
+          fr: "Utilisez d'abord un numéro valide.",
+          es: 'Primero usa un número válido.',
+        );
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _debugOtp = '';
+    });
+    try {
+      final started = await startPublicCustomerEmailAuth(
+        payload: <String, dynamic>{'phone_e164': phone},
+      );
+      final challengeId =
+          (started['challenge_id'] ?? started['challengeId'] ?? '')
+              .toString()
+              .trim();
+      final maskedEmail =
+          (started['masked_email'] ?? started['maskedEmail'] ?? '')
+              .toString()
+              .trim();
+      final debugOtp = (started['debug_otp'] ?? started['debugOtp'] ?? '')
+          .toString()
+          .trim();
+      if (challengeId.isEmpty) {
+        throw Exception('challenge_missing');
+      }
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _otpStep = true;
+        _challengeId = challengeId;
+        _verificationChannel = 'email_otp';
+        _maskedEmail = maskedEmail;
+        _debugOtp = debugOtp;
+      });
+    } catch (err) {
+      if (!mounted) return;
+      final reason = err.toString().toLowerCase();
+      setState(() {
+        _busy = false;
+        _error = reason.contains('email_not_linked')
+            ? _t(
+                nl: 'Voor dit gsm-nummer is nog geen gekoppeld e-mailadres bevestigd.',
+                en: 'No linked email is verified for this phone number yet.',
+                fr: "Aucun e-mail lié n'est encore vérifié pour ce numéro.",
+                es: 'Aún no hay correo vinculado verificado para este número.',
+              )
+            : _t(
+                nl: 'E-mailcode verzenden mislukt. Probeer opnieuw.',
+                en: 'Sending email code failed. Please try again.',
+                fr: "L'envoi du code e-mail a échoué. Réessayez.",
+                es: 'No se pudo enviar el código por correo. Inténtalo de nuevo.',
+              );
       });
     }
   }
@@ -165,77 +303,26 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       _error = null;
     });
     try {
-      final verified = await verifyPublicCustomerPhoneAuth(
-        payload: <String, dynamic>{
-          'challenge_id': _challengeId,
-          'phone_e164': phone,
-          'otp': otp,
-        },
+      final verified = _verificationChannel == 'email_otp'
+          ? await verifyPublicCustomerEmailAuth(
+              payload: <String, dynamic>{
+                'challenge_id': _challengeId,
+                'phone_e164': phone,
+                'otp': otp,
+              },
+            )
+          : await verifyPublicCustomerPhoneAuth(
+              payload: <String, dynamic>{
+                'challenge_id': _challengeId,
+                'phone_e164': phone,
+                'otp': otp,
+              },
+            );
+      final session = await _persistSessionFromVerifiedResponse(
+        verified: verified,
+        phone: phone,
       );
-      final token =
-          (verified['customer_session_token'] ??
-                  verified['customerSessionToken'] ??
-                  '')
-              .toString()
-              .trim();
-      final customerId =
-          (verified['customer_id'] ?? verified['customerId'] ?? '')
-              .toString()
-              .trim();
-      final expiresInSeconds =
-          int.tryParse(
-            (verified['expires_in_seconds'] ??
-                    verified['expiresInSeconds'] ??
-                    '')
-                .toString(),
-          ) ??
-          (30 * 24 * 60 * 60);
-      if (token.isEmpty || customerId.isEmpty) {
-        throw Exception('session_missing');
-      }
-      final now = DateTime.now().toUtc();
-      final sessionPhone = normalizeCustomerSessionPhoneE164(phone);
-      final session = CustomerSession(
-        customerSessionToken: token,
-        expiresAt: now
-            .add(Duration(seconds: expiresInSeconds))
-            .toIso8601String(),
-        customerId: customerId,
-        phoneE164: sessionPhone,
-        defaultTenantId: null,
-        defaultCompanyId: null,
-        createdAt: now.toIso8601String(),
-        updatedAt: now.toIso8601String(),
-      );
-      await CustomerSessionStore.instance.save(session);
-      await CustomerProfileStore.instance.mergeBackendProfileForSession(
-        const <String, dynamic>{},
-        sessionCustomerId: session.customerId,
-        sessionPhoneE164: session.phoneE164,
-      );
-      try {
-        final backendProfile = await fetchPublicCustomerProfile(
-          customerSessionToken: session.customerSessionToken,
-        );
-        if (backendProfile != null) {
-          await CustomerProfileStore.instance.mergeBackendProfileForSession(
-            backendProfile,
-            sessionCustomerId: session.customerId,
-            sessionPhoneE164: session.phoneE164,
-          );
-          debugPrint(
-            '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=true reason=merged',
-          );
-        } else {
-          debugPrint(
-            '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=empty_or_unauthorized',
-          );
-        }
-      } catch (_) {
-        debugPrint(
-          '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=fetch_failed',
-        );
-      }
+      final customerId = session.customerId;
       debugPrint(
         '[CUSTOMER_PHONE_LOGIN][VERIFY_OK] customer=${customerId.length > 4 ? customerId.substring(customerId.length - 4) : customerId}',
       );
@@ -355,7 +442,22 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
                     ),
                     if (_otpStep) ...[
                       const SizedBox(height: 10),
-                      if (_maskedPhone.trim().isNotEmpty)
+                      if (_verificationChannel == 'email_otp' &&
+                          _maskedEmail.trim().isNotEmpty)
+                        Text(
+                          _t(
+                            nl: 'Code verzonden naar: $_maskedEmail',
+                            en: 'Code sent to: $_maskedEmail',
+                            fr: 'Code envoyé à : $_maskedEmail',
+                            es: 'Código enviado a: $_maskedEmail',
+                          ),
+                          style: TextStyle(
+                            color: appConfig.primaryColor.withOpacity(0.95),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      if (_verificationChannel != 'email_otp' &&
+                          _maskedPhone.trim().isNotEmpty)
                         Text(
                           _t(
                             nl: 'Code verzonden naar: $_maskedPhone',
@@ -473,6 +575,24 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
                                 fr: 'Envoyer le code',
                                 es: 'Enviar código',
                               ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: _busy ? null : _startEmailFallback,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: appConfig.primaryColor.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Code via e-mail ontvangen',
+                          en: 'Receive code via e-mail',
+                          fr: 'Recevoir le code par e-mail',
+                          es: 'Recibir código por correo',
+                        ),
                       ),
                     ),
                   ],

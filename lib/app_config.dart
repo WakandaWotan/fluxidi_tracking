@@ -3005,6 +3005,58 @@ Future<Map<String, dynamic>> verifyPublicCustomerPhoneAuth({
   throw Exception('customer_phone_auth_verify_failed');
 }
 
+Future<Map<String, dynamic>> startPublicCustomerEmailAuth({
+  required Map<String, dynamic> payload,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/auth/email/start',
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('customer_email_auth_start_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true) {
+    return map;
+  }
+  final errorCode = (map['error'] ?? '').toString().trim();
+  if (errorCode.isNotEmpty) throw Exception(errorCode);
+  throw Exception('customer_email_auth_start_failed');
+}
+
+Future<Map<String, dynamic>> verifyPublicCustomerEmailAuth({
+  required Map<String, dynamic> payload,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/customer/auth/email/verify',
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('customer_email_auth_verify_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true) {
+    return map;
+  }
+  final errorCode = (map['error'] ?? '').toString().trim();
+  if (errorCode.isNotEmpty) throw Exception(errorCode);
+  throw Exception('customer_email_auth_verify_failed');
+}
+
 Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
   required String customerSessionToken,
 }) async {

@@ -1728,6 +1728,18 @@ const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX = "customer_phone_auth:rate:ver
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX = ":v1";
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
 const CUSTOMER_PHONE_AUTH_VERIFY_RATE_MAX = 20;
+const CUSTOMER_EMAIL_AUTH_CHALLENGE_KEY_PREFIX = "customer_email_auth:challenge:";
+const CUSTOMER_EMAIL_AUTH_CHALLENGE_KEY_SUFFIX = ":v1";
+const CUSTOMER_EMAIL_AUTH_CHALLENGE_TTL_SECONDS = 10 * 60;
+const CUSTOMER_EMAIL_AUTH_MAX_ATTEMPTS = 5;
+const CUSTOMER_EMAIL_AUTH_START_RATE_KEY_PREFIX = "customer_email_auth:rate:start:";
+const CUSTOMER_EMAIL_AUTH_START_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_EMAIL_AUTH_START_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_EMAIL_AUTH_START_RATE_MAX = 5;
+const CUSTOMER_EMAIL_AUTH_VERIFY_RATE_KEY_PREFIX = "customer_email_auth:rate:verify:";
+const CUSTOMER_EMAIL_AUTH_VERIFY_RATE_KEY_SUFFIX = ":v1";
+const CUSTOMER_EMAIL_AUTH_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
+const CUSTOMER_EMAIL_AUTH_VERIFY_RATE_MAX = 20;
 const CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_PREFIX = "customer_phone_auth:sms_message:";
 const CUSTOMER_PHONE_AUTH_SMS_MESSAGE_KEY_SUFFIX = ":v1";
 const CUSTOMER_GLOBAL_PHONE_INDEX_KEY_PREFIX = "customer:global:index:phone:sha256:";
@@ -1908,6 +1920,17 @@ function _customerPhoneAuthChallengeId() {
     .replace(/[^a-zA-Z0-9_-]+/g, "");
 }
 
+function _customerEmailAuthChallengeKey(challengeId) {
+  const safeChallengeId = sanitizeTenantString(challengeId, 160).replace(/[^a-zA-Z0-9_-]+/g, "");
+  if (!safeChallengeId) return "";
+  return `${CUSTOMER_EMAIL_AUTH_CHALLENGE_KEY_PREFIX}${safeChallengeId}${CUSTOMER_EMAIL_AUTH_CHALLENGE_KEY_SUFFIX}`;
+}
+
+function _customerEmailAuthChallengeId() {
+  return (crypto?.randomUUID ? crypto.randomUUID() : `cea_${Date.now()}_${Math.random()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, "");
+}
+
 function _sanitizeCustomerPhoneAuthSmsProviderMessageId(value) {
   const normalized = sanitizeTenantString(value, 200);
   if (!normalized) return "";
@@ -1989,6 +2012,20 @@ function _customerPhoneAuthVerifyRateKey(phoneHash, clientHash) {
   const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
   if (!normalizedPhoneHash || !normalizedClientHash) return "";
   return `${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_PHONE_AUTH_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+function _customerEmailAuthStartRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_EMAIL_AUTH_START_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_EMAIL_AUTH_START_RATE_KEY_SUFFIX}`;
+}
+
+function _customerEmailAuthVerifyRateKey(phoneHash, clientHash) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedPhoneHash || !normalizedClientHash) return "";
+  return `${CUSTOMER_EMAIL_AUTH_VERIFY_RATE_KEY_PREFIX}${normalizedPhoneHash}:${normalizedClientHash}${CUSTOMER_EMAIL_AUTH_VERIFY_RATE_KEY_SUFFIX}`;
 }
 
 function _globalCustomerPhoneIndexKey(phoneHash) {
@@ -5566,6 +5603,58 @@ async function _incrementSimpleRateLimit({
   return { limited: false, count: count + 1 };
 }
 
+async function _resolveCustomerEmailAuthLinkedEmailByPhone({
+  env,
+  phoneHash,
+}) {
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  if (!env?.BOOKING_KV || !normalizedPhoneHash) {
+    return { ok: false, reason: "invalid_phone_hash" };
+  }
+  const phoneIndexKey = _globalCustomerPhoneIndexKey(normalizedPhoneHash);
+  if (!phoneIndexKey) {
+    return { ok: false, reason: "phone_index_key_invalid" };
+  }
+  const customerId = _normalizeCustomerIdentityId(await env.BOOKING_KV.get(phoneIndexKey));
+  if (!customerId) {
+    return { ok: false, reason: "phone_identity_missing" };
+  }
+  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!profileKey) {
+    return { ok: false, reason: "profile_key_invalid" };
+  }
+  const profileRaw = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  const profile = profileRaw && typeof profileRaw === "object" && !Array.isArray(profileRaw)
+    ? profileRaw
+    : {};
+  const linkedEmail = _normalizeRecoveryEmail(profile?.email ?? profile?.contact_email ?? "");
+  if (!linkedEmail) {
+    return { ok: false, reason: "email_not_linked" };
+  }
+  return {
+    ok: true,
+    customerId,
+    linkedEmail,
+    linkedEmailHash: (await _sha256Hex(linkedEmail)).toLowerCase(),
+  };
+}
+
+function _sanitizeCustomerEmailAuthSendFailReason(value) {
+  const raw = sanitizeTenantString(value, 240);
+  if (!raw) return "send_failed";
+  const redactedEmails = raw.replace(
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
+    "[redacted_email]",
+  );
+  const compact = redactedEmails
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return compact || "send_failed";
+}
+
 async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
@@ -5892,6 +5981,312 @@ async function handlePublicCustomerPhoneAuthVerify(body, env, request = null) {
   });
   console.log(
     `[CUSTOMER_PHONE_AUTH][VERIFY_OK] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
+  );
+  return json(
+    {
+      ok: true,
+      customer_session_token: customerSessionToken,
+      customerSessionToken: customerSessionToken,
+      expires_in_seconds: CUSTOMER_SESSION_TTL_SECONDS,
+      expiresInSeconds: CUSTOMER_SESSION_TTL_SECONDS,
+      customer_id: customerId,
+      customerId: customerId,
+    },
+    200,
+  );
+}
+
+async function handlePublicCustomerEmailAuthStart(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "recovery_unavailable" }, 500);
+  }
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) {
+    return json({ ok: false, error: "invalid_phone" }, 400);
+  }
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const startRateKey = _customerEmailAuthStartRateKey(phoneHash, clientHash);
+  if (startRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: startRateKey,
+      maxCount: CUSTOMER_EMAIL_AUTH_START_RATE_MAX,
+      windowSeconds: CUSTOMER_EMAIL_AUTH_START_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_EMAIL_AUTH][START] phone=${maskedPhone || "-"} bucket=rate_limited`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  const linked = await _resolveCustomerEmailAuthLinkedEmailByPhone({
+    env,
+    phoneHash,
+  });
+  if (!linked?.ok || !linked?.customerId || !linked?.linkedEmail) {
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][START] phone=${maskedPhone || "-"} bucket=email_not_linked`,
+    );
+    return json({ ok: false, error: "email_not_linked" }, 409);
+  }
+  const challengeId = _customerEmailAuthChallengeId();
+  const challengeKey = _customerEmailAuthChallengeKey(challengeId);
+  if (!challengeKey) {
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][START] phone=${maskedPhone || "-"} bucket=challenge_key_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + CUSTOMER_EMAIL_AUTH_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`);
+  await env.BOOKING_KV.put(
+    challengeKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_email_auth",
+      challenge_id: challengeId,
+      customer_id: linked.customerId,
+      phone_hash: phoneHash,
+      email_hash: sanitizeTenantString(linked.linkedEmailHash, 200).toLowerCase(),
+      otp_hash: sanitizeTenantString(otpHash, 200).toLowerCase(),
+      attempts: 0,
+      max_attempts: CUSTOMER_EMAIL_AUTH_MAX_ATTEMPTS,
+      created_at: nowIso,
+      updated_at: nowIso,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }),
+    { expirationTtl: CUSTOMER_EMAIL_AUTH_CHALLENGE_TTL_SECONDS },
+  );
+  console.log(
+    `[CUSTOMER_EMAIL_AUTH][START] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
+  );
+  const debugOtpEnabled = _isCustomerPhoneAuthDebugOtpEnabled(env);
+  let emailSent = false;
+  let sendResult = { ok: false, reason: "email_not_attempted" };
+  try {
+    sendResult = await _sendCustomerRecoveryOtpEmail({
+      env,
+      tenantId: "",
+      companyId: "",
+      recipientEmail: linked.linkedEmail,
+      otp,
+    });
+    emailSent = sendResult?.ok === true;
+    if (emailSent) {
+      console.log(
+        `[CUSTOMER_EMAIL_AUTH][SEND_OK] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} email=${_maskEmailForPublic(linked.linkedEmail) || "-"} provider_id=${sanitizeTenantString(sendResult?.id, 120) || "-"}`,
+      );
+    } else {
+      const safeFailReason = _sanitizeCustomerEmailAuthSendFailReason(sendResult?.reason);
+      console.log(
+        `[CUSTOMER_EMAIL_AUTH][SEND_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} email=${_maskEmailForPublic(linked.linkedEmail) || "-"} reason=${safeFailReason}`,
+      );
+    }
+  } catch (err) {
+    const safeFailReason = _sanitizeCustomerEmailAuthSendFailReason(
+      sanitizeTenantString(err?.name, 40) || "send_exception",
+    );
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][SEND_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} email=${_maskEmailForPublic(linked.linkedEmail) || "-"} reason=${safeFailReason}`,
+    );
+    sendResult = { ok: false, reason: "send_failed" };
+  }
+  if (!emailSent && !debugOtpEnabled) {
+    return json({ ok: false, error: "email_send_failed" }, 502);
+  }
+  const response = {
+    ok: true,
+    challenge_id: challengeId,
+    challengeId: challengeId,
+    verification_channel: "email_otp",
+    verificationChannel: "email_otp",
+    expires_in_seconds: CUSTOMER_EMAIL_AUTH_CHALLENGE_TTL_SECONDS,
+    expiresInSeconds: CUSTOMER_EMAIL_AUTH_CHALLENGE_TTL_SECONDS,
+    masked_email: _maskEmailForPublic(linked.linkedEmail),
+    maskedEmail: _maskEmailForPublic(linked.linkedEmail),
+    debug_otp: null,
+    debugOtp: null,
+  };
+  if (debugOtpEnabled) {
+    response.debug_otp = otp;
+    response.debugOtp = otp;
+  }
+  return json(response, 200);
+}
+
+async function handlePublicCustomerEmailAuthVerify(body, env, request = null) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  const challengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    160,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const phoneE164 = _readCustomerPhoneAuthInputPhone(body);
+  if (!phoneE164) return json({ ok: false, error: "invalid_phone" }, 400);
+  const otp = sanitizeTenantString(
+    body.otp ?? body.code ?? body.recovery_code ?? body.recoveryCode,
+    24,
+  ).replace(/\s+/g, "");
+  const maskedPhone = _maskCustomerPhoneForAuth(phoneE164);
+  const phoneHash = sanitizeTenantString(await _sha256Hex(phoneE164), 200).toLowerCase();
+  const clientHash = sanitizeTenantString(
+    await _companyRecoveryVerifyClientHash(request),
+    200,
+  ).toLowerCase();
+  const verifyRateKey = _customerEmailAuthVerifyRateKey(phoneHash, clientHash);
+  if (verifyRateKey) {
+    const rate = await _incrementSimpleRateLimit({
+      env,
+      rateKey: verifyRateKey,
+      maxCount: CUSTOMER_EMAIL_AUTH_VERIFY_RATE_MAX,
+      windowSeconds: CUSTOMER_EMAIL_AUTH_VERIFY_RATE_WINDOW_SECONDS,
+    });
+    if (rate.limited) {
+      console.log(
+        `[CUSTOMER_EMAIL_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} bucket=rate_limited`,
+      );
+      return json({ ok: false, error: "rate_limited" }, 429);
+    }
+  }
+  if (!challengeId || !/^\d{6}$/.test(otp)) {
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=invalid_input`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const challengeKey = _customerEmailAuthChallengeKey(challengeId);
+  if (!challengeKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
+  if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_missing`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = Date.parse(sanitizeTenantString(challenge.expires_at, 80));
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      10,
+      Number.isFinite(Number(challenge.max_attempts))
+        ? Math.round(Number(challenge.max_attempts))
+        : CUSTOMER_EMAIL_AUTH_MAX_ATTEMPTS,
+    ),
+  );
+  const attempts = Number.isFinite(Number(challenge.attempts))
+    ? Math.max(0, Math.round(Number(challenge.attempts)))
+    : 0;
+  const challengePhoneHash = sanitizeTenantString(
+    challenge.phone_hash ?? challenge.phoneHash,
+    200,
+  ).toLowerCase();
+  const customerId = _normalizeCustomerIdentityId(
+    challenge.customer_id ?? challenge.customerId,
+  );
+  if (
+    sanitizeTenantString(challenge.purpose, 80) !== "customer_email_auth" ||
+    sanitizeTenantString(challenge.consumed_at, 80) ||
+    !Number.isFinite(expiresAtMs) ||
+    nowMs >= expiresAtMs ||
+    attempts >= maxAttempts ||
+    !_constantTimeEquals(challengePhoneHash, phoneHash) ||
+    !customerId
+  ) {
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=challenge_invalid`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const expectedOtpHash = sanitizeTenantString(challenge.otp_hash, 200).toLowerCase();
+  const candidateOtpHash = (await _sha256Hex(`${challengeId}:${phoneE164}:${otp}`)).toLowerCase();
+  if (!_constantTimeEquals(expectedOtpHash, candidateOtpHash)) {
+    await _customerPhoneAuthIncrementAttempts({
+      env,
+      challengeKey,
+      challenge,
+      nowIso,
+      nowMs,
+    });
+    console.log(
+      `[CUSTOMER_EMAIL_AUTH][VERIFY_FAIL] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=otp_mismatch`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  const customerIdentityKey = _globalCustomerIdentityKey(customerId);
+  if (!customerIdentityKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const existingIdentity = await env.BOOKING_KV.get(customerIdentityKey, { type: "json" });
+  const identityCreatedAt = sanitizeTenantString(existingIdentity?.created_at, 80) || nowIso;
+  const challengeEmailHash = sanitizeTenantString(
+    challenge.email_hash ?? challenge.emailHash,
+    200,
+  ).toLowerCase();
+  await env.BOOKING_KV.put(
+    customerIdentityKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "customer_global_identity",
+      customer_id: customerId,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      email_hash: challengeEmailHash,
+      email_verified: true,
+      email_verified_at: nowIso,
+      created_at: identityCreatedAt,
+      updated_at: nowIso,
+      recovery_method: "email_otp_linked_phone",
+    }),
+  );
+  const customerSessionToken = _generateOpaqueToken(32, "cus_");
+  const customerSessionTokenHash = await _hashCustomerSessionToken(customerSessionToken);
+  const customerSessionKey = _customerSessionKey(customerSessionTokenHash);
+  if (!customerSessionKey) return json({ ok: false, error: "verification_failed" }, 403);
+  const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    customerSessionKey,
+    JSON.stringify({
+      role: "customer",
+      purpose: "customer_session",
+      tenant_id: "global",
+      company_id: "global",
+      customer_id: customerId,
+      email_hash: challengeEmailHash,
+      phone_hash: phoneHash,
+      phone_e164_masked: maskedPhone,
+      created_at: nowIso,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      recovery_method: "email_otp_linked_phone",
+    }),
+    { expirationTtl: CUSTOMER_SESSION_TTL_SECONDS },
+  );
+  const remainingSeconds = Math.max(1, Math.floor((expiresAtMs - nowMs) / 1000));
+  challenge.attempts = attempts + 1;
+  challenge.consumed_at = nowIso;
+  challenge.updated_at = nowIso;
+  challenge.recovered_customer_id = customerId;
+  challenge.link_method = "public_customer_email_auth";
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: remainingSeconds,
+  });
+  console.log(
+    `[CUSTOMER_EMAIL_AUTH][VERIFY_OK] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} customer=${_maskPublicDriverLoginValue(customerId)}`,
   );
   return json(
     {
@@ -13356,6 +13751,22 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicCustomerPhoneAuthVerify(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/auth/email/start") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerEmailAuthStart(body, env, request);
+      }
+
+      if (url.pathname === "/public/customer/auth/email/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCustomerEmailAuthVerify(body, env, request);
       }
 
       if (url.pathname === "/public/customer/profile") {
