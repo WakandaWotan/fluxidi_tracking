@@ -11795,6 +11795,17 @@ class CompanyDriverManagementPage extends StatelessWidget {
       ),
     );
     if (ok == true) {
+      bool hasBackendSyncState(DriverDocument d) {
+        return d.storageState.trim().isNotEmpty ||
+            d.backendFileName.trim().isNotEmpty ||
+            d.backendContentType.trim().isNotEmpty ||
+            d.backendSizeBytes > 0 ||
+            d.backendSyncedAt.trim().isNotEmpty ||
+            d.backendPendingUpload ||
+            d.backendPendingDelete ||
+            d.backendSyncError.trim().isNotEmpty;
+      }
+
       final companySessionToken =
           (activeCompanySessionNotifier.value?.companySessionToken ?? '')
               .trim();
@@ -11812,6 +11823,15 @@ class CompanyDriverManagementPage extends StatelessWidget {
         debugPrint(
           '[DRIVER_DOCS][UI_DELETE_BACKEND_SKIP] reason=missing_token_or_scope',
         );
+        if (hasBackendSyncState(doc)) {
+          debugPrint(
+            '[DRIVER_DOCS][UI_DELETE_BACKEND_PENDING] reason=missing_scope_with_backend_state',
+          );
+          return;
+        }
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_LOCAL_ONLY] reason=no_backend_state',
+        );
         await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
         return;
       }
@@ -11827,9 +11847,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
           );
       if (!removed) {
         debugPrint(
-          '[DRIVER_DOCS][UI_DELETE_BACKEND_SKIP] reason=backend_delete_failed_local_fallback',
+          '[DRIVER_DOCS][UI_DELETE_BACKEND_PENDING] reason=backend_delete_failed',
         );
-        await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
       }
       debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_DONE] ok=$removed');
     }
@@ -11860,12 +11879,28 @@ class CompanyDriverManagementPage extends StatelessWidget {
         d.storageState.trim().isNotEmpty ||
         d.backendSyncedAt.trim().isNotEmpty;
     String storageLabel(DriverDocument d) {
+      if (d.backendPendingDelete) {
+        return _t(
+          nl: 'Verwijderen in wachtrij',
+          en: 'Delete pending',
+          fr: 'Suppression en attente',
+          es: 'Eliminacion pendiente',
+        );
+      }
+      if (d.backendPendingUpload) {
+        return _t(
+          nl: 'Synchronisatie in wachtrij',
+          en: 'Sync pending',
+          fr: 'Synchronisation en attente',
+          es: 'Sincronizacion pendiente',
+        );
+      }
       if (d.backendSyncError.trim().isNotEmpty) {
         return _t(
-          nl: 'Synchronisatie mislukt',
-          en: 'Sync failed',
-          fr: 'Échec de synchronisation',
-          es: 'Sincronización fallida',
+          nl: 'Synchronisatie opnieuw proberen',
+          en: 'Sync needs retry',
+          fr: 'Nouvelle tentative de synchro requise',
+          es: 'Sincronizacion requiere reintento',
         );
       }
       if (isBackendSynced(d)) {

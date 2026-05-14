@@ -45,6 +45,22 @@ bool _ddIsLikelyPdfPath(String path) {
   return path.toLowerCase().trim().endsWith('.pdf');
 }
 
+bool _isLocalFilesystemPath(String value) {
+  final raw = value.trim();
+  if (raw.isEmpty) return false;
+  final normalized = raw.replaceAll('\\', '/').toLowerCase();
+  if (normalized.startsWith('/data/user/')) return true;
+  if (normalized.contains('/app_flutter/')) return true;
+  if (normalized.contains('/driver_documents/files/')) return true;
+  if (normalized.startsWith('file://')) return true;
+  if (normalized.startsWith('content://')) return true;
+  if (RegExp(r'^[a-z]:[\\/]', caseSensitive: false).hasMatch(raw)) {
+    return true;
+  }
+  if (raw.contains('\\')) return true;
+  return false;
+}
+
 /// Shared attachment preview (admin + driver UI).
 Widget driverDocAttachmentPreview(String rawPath, AppLanguage lang) {
   final path = rawPath.trim();
@@ -233,7 +249,7 @@ Future<void> _pickCamera(
   ImagePicker picker,
   BuildContext sheetCtx,
   void Function(VoidCallback fn) setLocal,
-  TextEditingController pathCtrl,
+  void Function(String path) onPicked,
 ) async {
   try {
     final x = await picker.pickImage(
@@ -242,7 +258,7 @@ Future<void> _pickCamera(
     );
     if (!sheetCtx.mounted) return;
     if (x == null) return;
-    setLocal(() => pathCtrl.text = x.path);
+    setLocal(() => onPicked(x.path));
   } catch (_) {}
 }
 
@@ -250,7 +266,7 @@ Future<void> _pickGallery(
   ImagePicker picker,
   BuildContext sheetCtx,
   void Function(VoidCallback fn) setLocal,
-  TextEditingController pathCtrl,
+  void Function(String path) onPicked,
 ) async {
   try {
     final x = await picker.pickImage(
@@ -259,14 +275,14 @@ Future<void> _pickGallery(
     );
     if (!sheetCtx.mounted) return;
     if (x == null) return;
-    setLocal(() => pathCtrl.text = x.path);
+    setLocal(() => onPicked(x.path));
   } catch (_) {}
 }
 
 Future<void> _pickFile(
   BuildContext sheetCtx,
   void Function(VoidCallback fn) setLocal,
-  TextEditingController pathCtrl,
+  void Function(String path) onPicked,
 ) async {
   try {
     final result = await FilePicker.pickFiles(
@@ -286,7 +302,7 @@ Future<void> _pickFile(
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path != null && path.trim().isNotEmpty) {
-      setLocal(() => pathCtrl.text = path);
+      setLocal(() => onPicked(path));
     }
   } catch (_) {}
 }
@@ -300,11 +316,21 @@ Future<void> showDriverDocumentEditorSheet(
   required DriverProfile driver,
   DriverDocument? existing,
   bool driverSelfService = false,
+  String? initialDocumentType,
 }) async {
   final picker = ImagePicker();
-  var selectedType = existing?.documentType ?? DriverDocumentTypes.other;
+  final preferredType = initialDocumentType?.trim() ?? '';
+  var selectedType =
+      existing?.documentType ??
+      (DriverDocumentTypes.all.contains(preferredType)
+          ? preferredType
+          : DriverDocumentTypes.other);
   final titleCtrl = TextEditingController(text: existing?.title ?? '');
-  final pathCtrl = TextEditingController(text: existing?.filePath ?? '');
+  final existingPath = (existing?.filePath ?? '').trim();
+  var selectedAttachmentPath = existingPath;
+  final manualReferenceCtrl = TextEditingController(
+    text: _isLocalFilesystemPath(existingPath) ? '' : existingPath,
+  );
   final expiryCtrl = TextEditingController(text: existing?.expiryDate ?? '');
   var selectedStatus = existing?.status ?? DriverDocumentStatuses.pendingReview;
   final notesCtrl = TextEditingController(text: existing?.notes ?? '');
@@ -412,7 +438,9 @@ Future<void> showDriverDocumentEditorSheet(
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () =>
-                                  _pickCamera(picker, ctx, setLocal, pathCtrl),
+                                  _pickCamera(picker, ctx, setLocal, (path) {
+                                    selectedAttachmentPath = path.trim();
+                                  }),
                               icon: const Icon(
                                 Icons.photo_camera_outlined,
                                 size: 18,
@@ -433,7 +461,9 @@ Future<void> showDriverDocumentEditorSheet(
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () =>
-                                  _pickGallery(picker, ctx, setLocal, pathCtrl),
+                                  _pickGallery(picker, ctx, setLocal, (path) {
+                                    selectedAttachmentPath = path.trim();
+                                  }),
                               icon: const Icon(
                                 Icons.photo_library_outlined,
                                 size: 18,
@@ -456,7 +486,9 @@ Future<void> showDriverDocumentEditorSheet(
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: () => _pickFile(ctx, setLocal, pathCtrl),
+                          onPressed: () => _pickFile(ctx, setLocal, (path) {
+                            selectedAttachmentPath = path.trim();
+                          }),
                           icon: const Icon(Icons.attach_file, size: 18),
                           label: Text(
                             t(
@@ -471,10 +503,15 @@ Future<void> showDriverDocumentEditorSheet(
                       ),
                       Builder(
                         builder: (_) =>
-                            driverDocAttachmentPreview(pathCtrl.text, lang),
+                            _isLocalFilesystemPath(selectedAttachmentPath)
+                            ? driverDocAttachmentPreview(
+                                selectedAttachmentPath,
+                                lang,
+                              )
+                            : const SizedBox.shrink(),
                       ),
                       _sheetField(
-                        pathCtrl,
+                        manualReferenceCtrl,
                         t(
                           nl: 'Handmatig pad / referentie (optioneel)',
                           en: 'Manual path / reference (optional)',
@@ -647,39 +684,67 @@ Future<void> showDriverDocumentEditorSheet(
                                           DriverDocumentStatuses.pendingReview)
                                     : selectedStatus;
 
-                                var path = pathCtrl.text.trim();
-                                if (path.isNotEmpty) {
-                                  final beforePath = path;
-                                  final persisted = await DriverDocumentsStore
-                                      .instance
-                                      .persistPickedFileIfNeeded(
-                                        sourcePath: path,
-                                        documentId: resolvedDocId,
-                                        driverId: driver.id,
-                                        companyId: company,
-                                      );
-                                  if (persisted != null) {
-                                    path = persisted;
-                                  } else if (await File(beforePath).exists() &&
-                                      !DriverDocumentsStore.isPersistedManagedPath(
-                                        beforePath,
-                                        resolvedDocId,
-                                      )) {
-                                    if (ctx.mounted) {
-                                      ScaffoldMessenger.of(ctx).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            t(
-                                              nl: 'Kon bestand niet naar permanente opslag kopiëren.',
-                                              en: 'Could not copy file to persistent storage.',
-                                              fr: 'Impossible de copier le fichier vers le stockage permanent.',
-                                              es: 'No se pudo copiar el archivo al almacenamiento persistente.',
-                                            ),
+                                final manualReference = manualReferenceCtrl.text
+                                    .trim();
+                                var path = selectedAttachmentPath.trim();
+                                if (manualReference.isNotEmpty &&
+                                    !_isLocalFilesystemPath(manualReference)) {
+                                  path = manualReference;
+                                }
+                                if (manualReference.isNotEmpty &&
+                                    _isLocalFilesystemPath(manualReference)) {
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          t(
+                                            nl: 'Lokale apparaatpaden zijn niet toegestaan als handmatige referentie.',
+                                            en: 'Local device paths are not allowed as manual references.',
+                                            fr: 'Les chemins locaux de l appareil ne sont pas autorises comme reference manuelle.',
+                                            es: 'Las rutas locales del dispositivo no estan permitidas como referencia manual.',
                                           ),
                                         ),
-                                      );
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+                                if (path.isNotEmpty) {
+                                  final beforePath = path;
+                                  if (_isLocalFilesystemPath(path)) {
+                                    final persisted = await DriverDocumentsStore
+                                        .instance
+                                        .persistPickedFileIfNeeded(
+                                          sourcePath: path,
+                                          documentId: resolvedDocId,
+                                          driverId: driver.id,
+                                          companyId: company,
+                                        );
+                                    if (persisted != null) {
+                                      path = persisted;
+                                    } else if (await File(
+                                          beforePath,
+                                        ).exists() &&
+                                        !DriverDocumentsStore.isPersistedManagedPath(
+                                          beforePath,
+                                          resolvedDocId,
+                                        )) {
+                                      if (ctx.mounted) {
+                                        ScaffoldMessenger.of(ctx).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              t(
+                                                nl: 'Kon bestand niet naar permanente opslag kopiëren.',
+                                                en: 'Could not copy file to persistent storage.',
+                                                fr: 'Impossible de copier le fichier vers le stockage permanent.',
+                                                es: 'No se pudo copiar el archivo al almacenamiento persistente.',
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return;
                                     }
-                                    return;
                                   }
                                 }
 

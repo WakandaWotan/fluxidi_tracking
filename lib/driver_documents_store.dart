@@ -243,6 +243,10 @@ class DriverDocument {
     this.backendSizeBytes = 0,
     this.backendSyncedAt = '',
     this.backendSyncError = '',
+    this.backendPendingDelete = false,
+    this.backendPendingUpload = false,
+    this.backendLastSyncAttemptAt = '',
+    this.backendSyncAttemptCount = 0,
   });
 
   final String documentId;
@@ -265,6 +269,10 @@ class DriverDocument {
   final int backendSizeBytes;
   final String backendSyncedAt;
   final String backendSyncError;
+  final bool backendPendingDelete;
+  final bool backendPendingUpload;
+  final String backendLastSyncAttemptAt;
+  final int backendSyncAttemptCount;
 
   static const Set<String> allowedStatusValues = <String>{
     DriverDocumentStatuses.missing,
@@ -317,6 +325,14 @@ class DriverDocument {
     'backend_synced_at': backendSyncedAt,
     'backendSyncError': backendSyncError,
     'backend_sync_error': backendSyncError,
+    'backendPendingDelete': backendPendingDelete,
+    'backend_pending_delete': backendPendingDelete,
+    'backendPendingUpload': backendPendingUpload,
+    'backend_pending_upload': backendPendingUpload,
+    'backendLastSyncAttemptAt': backendLastSyncAttemptAt,
+    'backend_last_sync_attempt_at': backendLastSyncAttemptAt,
+    'backendSyncAttemptCount': backendSyncAttemptCount,
+    'backend_sync_attempt_count': backendSyncAttemptCount,
   };
 
   factory DriverDocument.fromJson(Map<String, dynamic> m) {
@@ -337,6 +353,18 @@ class DriverDocument {
         if (parsed != null) return parsed;
       }
       return 0;
+    }
+
+    bool readBoolAny(List<String> keys) {
+      for (final key in keys) {
+        final value = m[key];
+        if (value == null) continue;
+        if (value is bool) return value;
+        final text = value.toString().trim().toLowerCase();
+        if (text == 'true' || text == '1' || text == 'yes') return true;
+        if (text == 'false' || text == '0' || text == 'no') return false;
+      }
+      return false;
     }
 
     final tenant = readAny(const ['tenantId', 'tenant_id']);
@@ -394,6 +422,25 @@ class DriverDocument {
         'backendSyncError',
         'backend_sync_error',
       ]),
+      backendPendingDelete: readBoolAny(const [
+        'backendPendingDelete',
+        'backend_pending_delete',
+      ]),
+      backendPendingUpload: readBoolAny(const [
+        'backendPendingUpload',
+        'backend_pending_upload',
+      ]),
+      backendLastSyncAttemptAt: readAny(const [
+        'backendLastSyncAttemptAt',
+        'backend_last_sync_attempt_at',
+      ]),
+      backendSyncAttemptCount: math.max(
+        0,
+        readIntAny(const [
+          'backendSyncAttemptCount',
+          'backend_sync_attempt_count',
+        ]),
+      ),
     );
   }
 
@@ -416,6 +463,10 @@ class DriverDocument {
     int? backendSizeBytes,
     String? backendSyncedAt,
     String? backendSyncError,
+    bool? backendPendingDelete,
+    bool? backendPendingUpload,
+    String? backendLastSyncAttemptAt,
+    int? backendSyncAttemptCount,
   }) {
     return DriverDocument(
       documentId: documentId ?? this.documentId,
@@ -436,6 +487,12 @@ class DriverDocument {
       backendSizeBytes: backendSizeBytes ?? this.backendSizeBytes,
       backendSyncedAt: backendSyncedAt ?? this.backendSyncedAt,
       backendSyncError: backendSyncError ?? this.backendSyncError,
+      backendPendingDelete: backendPendingDelete ?? this.backendPendingDelete,
+      backendPendingUpload: backendPendingUpload ?? this.backendPendingUpload,
+      backendLastSyncAttemptAt:
+          backendLastSyncAttemptAt ?? this.backendLastSyncAttemptAt,
+      backendSyncAttemptCount:
+          backendSyncAttemptCount ?? this.backendSyncAttemptCount,
     );
   }
 }
@@ -686,6 +743,10 @@ class DriverDocumentsStore {
       backendSizeBytes: doc.backendSizeBytes,
       backendSyncedAt: doc.backendSyncedAt,
       backendSyncError: doc.backendSyncError,
+      backendPendingDelete: doc.backendPendingDelete,
+      backendPendingUpload: doc.backendPendingUpload,
+      backendLastSyncAttemptAt: doc.backendLastSyncAttemptAt,
+      backendSyncAttemptCount: doc.backendSyncAttemptCount,
     );
   }
 
@@ -707,6 +768,17 @@ class DriverDocumentsStore {
     if (status.isEmpty) return DriverDocumentStatuses.pendingReview;
     if (DriverDocument.allowedStatusValues.contains(status)) return status;
     return DriverDocumentStatuses.pendingReview;
+  }
+
+  String _safeSyncErrorCode(String raw, {String fallback = 'sync_failed'}) {
+    var out = raw.trim().toLowerCase();
+    if (out.isEmpty) return fallback;
+    out = out.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    out = out.replaceAll(RegExp(r'_+'), '_');
+    out = out.replaceAll(RegExp(r'^_+|_+$'), '');
+    if (out.isEmpty) return fallback;
+    if (out.length > 64) out = out.substring(0, 64);
+    return out;
   }
 
   String _documentScopeKey({
@@ -880,16 +952,10 @@ class DriverDocumentsStore {
           : (existing?.backendSizeBytes ?? 0),
       backendSyncedAt: nowIso,
       backendSyncError: '',
-    );
-  }
-
-  DriverDocument _withBackendSyncError(DriverDocument doc, String errorCode) {
-    final nowIso = DateTime.now().toUtc().toIso8601String();
-    return doc.copyWith(
-      backendSyncedAt: nowIso,
-      backendSyncError: errorCode.trim().isEmpty
-          ? 'sync_failed'
-          : errorCode.trim(),
+      backendPendingDelete: existing?.backendPendingDelete ?? false,
+      backendPendingUpload: false,
+      backendLastSyncAttemptAt: existing?.backendLastSyncAttemptAt ?? '',
+      backendSyncAttemptCount: existing?.backendSyncAttemptCount ?? 0,
     );
   }
 
@@ -1108,11 +1174,18 @@ class DriverDocumentsStore {
           documentId: documentId,
         ) ??
         doc;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    target = target.copyWith(
+      backendPendingUpload: true,
+      backendLastSyncAttemptAt: nowIso,
+      backendSyncAttemptCount: target.backendSyncAttemptCount + 1,
+    );
+    await _upsertDocumentAndPersist(target);
 
     if (companySessionToken.trim().isEmpty) {
-      final withError = _withBackendSyncError(
-        target,
-        'missing_company_session_token',
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_company_session_token',
       );
       await _upsertDocumentAndPersist(withError);
       debugPrint(
@@ -1124,9 +1197,9 @@ class DriverDocumentsStore {
         companyId.isEmpty ||
         driverId.isEmpty ||
         documentId.isEmpty) {
-      final withError = _withBackendSyncError(
-        target,
-        'invalid_scope_or_document_id',
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'invalid_scope_or_document_id',
       );
       await _upsertDocumentAndPersist(withError);
       debugPrint(
@@ -1135,7 +1208,10 @@ class DriverDocumentsStore {
       return null;
     }
     if (path.isEmpty || !await File(path).exists()) {
-      final withError = _withBackendSyncError(target, 'missing_local_file');
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: 'missing_local_file',
+      );
       await _upsertDocumentAndPersist(withError);
       debugPrint(
         '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_local_file',
@@ -1169,11 +1245,21 @@ class DriverDocumentsStore {
         driverId: driverId,
         existing: target,
       );
-      await _upsertDocumentAndPersist(merged);
+      final persisted = merged.copyWith(
+        backendPendingUpload: false,
+        backendSyncError: '',
+        backendSyncedAt: DateTime.now().toUtc().toIso8601String(),
+        backendLastSyncAttemptAt: nowIso,
+        backendSyncAttemptCount: target.backendSyncAttemptCount,
+      );
+      await _upsertDocumentAndPersist(persisted);
       debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_OK] ok=true');
-      return merged;
+      return persisted;
     } catch (e) {
-      final withError = _withBackendSyncError(target, e.toString());
+      final withError = target.copyWith(
+        backendPendingUpload: true,
+        backendSyncError: _safeSyncErrorCode(e.toString()),
+      );
       await _upsertDocumentAndPersist(withError);
       debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=exception');
       return null;
@@ -1313,6 +1399,87 @@ class DriverDocumentsStore {
         doc.driverId.trim() == driverId.trim();
   }
 
+  Future<void> retryPendingDriverDocumentSync({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    debugPrint(
+      '[DRIVER_DOCS][BACKEND_RETRY_START] hasScope=${scopedTenant.isNotEmpty && scopedCompany.isNotEmpty && scopedDriver.isNotEmpty}',
+    );
+    if (companySessionToken.trim().isEmpty ||
+        scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_scope_or_token',
+      );
+      return;
+    }
+    final scopedDocs = driverDocumentsNotifier.value
+        .where(
+          (doc) => _matchesExactScope(
+            doc,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          ),
+        )
+        .toList(growable: false);
+    for (final doc in scopedDocs) {
+      final hasSyncError = doc.backendSyncError.trim().isNotEmpty;
+      if (doc.backendPendingDelete) {
+        debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DELETE] queued=true');
+        try {
+          await deleteDocumentInBackendThenLocal(
+            bookingBaseUrl: bookingBaseUrl,
+            companySessionToken: companySessionToken,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+            documentId: doc.documentId,
+          );
+        } catch (_) {
+          // Best-effort: leave local pending marker.
+        }
+        continue;
+      }
+      if (!doc.backendPendingUpload && !hasSyncError) continue;
+
+      final path = doc.filePath.trim();
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      if (path.isEmpty || !await File(path).exists()) {
+        final updated = doc.copyWith(
+          backendPendingUpload: true,
+          backendLastSyncAttemptAt: nowIso,
+          backendSyncAttemptCount: doc.backendSyncAttemptCount + 1,
+          backendSyncError: 'missing_local_file_for_retry',
+        );
+        await _upsertDocumentAndPersist(updated);
+        debugPrint(
+          '[DRIVER_DOCS][BACKEND_RETRY_SKIP] reason=missing_local_file_for_retry',
+        );
+        continue;
+      }
+      debugPrint('[DRIVER_DOCS][BACKEND_RETRY_UPLOAD] queued=true');
+      try {
+        await syncDocumentUpsertToBackend(
+          doc: doc,
+          bookingBaseUrl: bookingBaseUrl,
+          companySessionToken: companySessionToken,
+        );
+      } catch (_) {
+        // Best-effort: upload method persists failure state.
+      }
+    }
+    debugPrint('[DRIVER_DOCS][BACKEND_RETRY_DONE] ok=true');
+  }
+
   Future<bool> deleteDocumentInBackendThenLocal({
     required String bookingBaseUrl,
     required String companySessionToken,
@@ -1355,7 +1522,47 @@ class DriverDocumentsStore {
         documentId: id,
       );
       final ok = out['ok'] == true;
+      final outError = _safeBackendText(
+        out['error'] ?? out['code'] ?? out['message'],
+      ).toLowerCase();
+      final backendNotFound =
+          outError.contains('not_found') || outError.contains('404');
+      if (backendNotFound &&
+          before != null &&
+          _matchesExactScope(
+            before,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          )) {
+        await deleteDocument(id);
+        final after = _findByDocumentScope(
+          tenantId: scopedTenant,
+          companyId: scopedCompany,
+          driverId: scopedDriver,
+          documentId: id,
+        );
+        final removed = after == null;
+        debugPrint('[DRIVER_DOCS][BACKEND_DELETE_OK] ok=$removed');
+        return removed;
+      }
       if (!ok) {
+        if (before != null &&
+            _matchesExactScope(
+              before,
+              tenantId: scopedTenant,
+              companyId: scopedCompany,
+              driverId: scopedDriver,
+            )) {
+          final pendingDelete = before.copyWith(
+            backendPendingDelete: true,
+            backendPendingUpload: false,
+            backendLastSyncAttemptAt: DateTime.now().toUtc().toIso8601String(),
+            backendSyncAttemptCount: before.backendSyncAttemptCount + 1,
+            backendSyncError: 'delete_pending',
+          );
+          await _upsertDocumentAndPersist(pendingDelete);
+        }
         debugPrint('[DRIVER_DOCS][BACKEND_DELETE_FAIL] reason=backend_not_ok');
         return false;
       }
@@ -1396,6 +1603,22 @@ class DriverDocumentsStore {
           debugPrint('[DRIVER_DOCS][BACKEND_DELETE_OK] ok=$removed');
           return removed;
         }
+      }
+      if (before != null &&
+          _matchesExactScope(
+            before,
+            tenantId: scopedTenant,
+            companyId: scopedCompany,
+            driverId: scopedDriver,
+          )) {
+        final pendingDelete = before.copyWith(
+          backendPendingDelete: true,
+          backendPendingUpload: false,
+          backendLastSyncAttemptAt: DateTime.now().toUtc().toIso8601String(),
+          backendSyncAttemptCount: before.backendSyncAttemptCount + 1,
+          backendSyncError: 'delete_pending',
+        );
+        await _upsertDocumentAndPersist(pendingDelete);
       }
       debugPrint('[DRIVER_DOCS][BACKEND_DELETE_FAIL] reason=exception');
       return false;
@@ -1453,6 +1676,10 @@ class DriverDocumentsStore {
       backendSizeBytes: 0,
       backendSyncedAt: '',
       backendSyncError: '',
+      backendPendingDelete: false,
+      backendPendingUpload: false,
+      backendLastSyncAttemptAt: '',
+      backendSyncAttemptCount: 0,
     );
   }
 
@@ -1489,6 +1716,10 @@ class DriverDocumentsStore {
       backendSizeBytes: existing.backendSizeBytes,
       backendSyncedAt: existing.backendSyncedAt,
       backendSyncError: existing.backendSyncError,
+      backendPendingDelete: existing.backendPendingDelete,
+      backendPendingUpload: existing.backendPendingUpload,
+      backendLastSyncAttemptAt: existing.backendLastSyncAttemptAt,
+      backendSyncAttemptCount: existing.backendSyncAttemptCount,
     );
   }
 }

@@ -64,6 +64,7 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       debugPrint(
         '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_driver_session',
       );
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_driver_session');
       return;
     }
     final tenantId = (session.tenantId ?? '').trim();
@@ -75,10 +76,14 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
       debugPrint(
         '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_company_session_token',
       );
+      debugPrint(
+        '[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_company_session_token',
+      );
       return;
     }
     if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) {
       debugPrint('[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_scope');
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=missing_scope');
       return;
     }
     try {
@@ -89,8 +94,26 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
         companyId: companyId,
         driverId: driverId,
       );
+      debugPrint('[DRIVER_DOCS][UI_RETRY_START] source=driver_page_init');
+      unawaited(
+        DriverDocumentsStore.instance
+            .retryPendingDriverDocumentSync(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              companySessionToken: companySessionToken,
+              tenantId: tenantId,
+              companyId: companyId,
+              driverId: driverId,
+            )
+            .then((_) {
+              debugPrint('[DRIVER_DOCS][UI_RETRY_DONE] ok=true');
+            })
+            .catchError((_) {
+              debugPrint('[DRIVER_DOCS][UI_RETRY_DONE] ok=false');
+            }),
+      );
       debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=true');
     } catch (_) {
+      debugPrint('[DRIVER_DOCS][UI_RETRY_SKIP] reason=refresh_failed');
       debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=false');
     }
   }
@@ -168,10 +191,12 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   ];
 
   int _docStatusPriority(String status) {
-    switch (status) {
+    switch (status.trim().toLowerCase()) {
       case DriverDocumentStatuses.approved:
         return 5;
       case DriverDocumentStatuses.pendingReview:
+      case 'active':
+      case 'verified':
         return 4;
       case DriverDocumentStatuses.expired:
         return 3;
@@ -196,9 +221,39 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
         b.status.trim(),
       ).compareTo(_docStatusPriority(a.status.trim()));
       if (prio != 0) return prio;
-      return b.updatedAt.compareTo(a.updatedAt);
+      final bUpdated = b.updatedAt.trim();
+      final aUpdated = a.updatedAt.trim();
+      if (bUpdated != aUpdated) return bUpdated.compareTo(aUpdated);
+      return b.createdAt.trim().compareTo(a.createdAt.trim());
     });
     return matches.first;
+  }
+
+  DriverDocument? _bestRequiredDocForScope({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required List<String> types,
+  }) {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    final allowedTypes = types.map((e) => e.trim()).toSet();
+    if (scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty ||
+        allowedTypes.isEmpty) {
+      return null;
+    }
+    final scoped = driverDocumentsNotifier.value
+        .where((doc) {
+          return doc.tenantId.trim() == scopedTenant &&
+              doc.companyId.trim() == scopedCompany &&
+              doc.driverId.trim() == scopedDriver &&
+              allowedTypes.contains(doc.documentType.trim());
+        })
+        .toList(growable: false);
+    return _bestDocForTypes(scoped, types);
   }
 
   ({String text, Color color}) _docStateChip(DriverDocument? doc) {
@@ -710,6 +765,9 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                 builder: (context, _, __) {
                   final docs = DriverDocumentsStore.instance
                       .documentsVisibleForDriver(driver.id);
+                  final scopedTenant = (session.tenantId ?? '').trim();
+                  final scopedCompany = (session.companyId ?? '').trim();
+                  final scopedDriver = session.driverId.trim();
                   final pending = docs
                       .where(
                         (e) => e.status == DriverDocumentStatuses.pendingReview,
@@ -723,7 +781,12 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                       .map(
                         (def) => (
                           def: def,
-                          doc: _bestDocForTypes(docs, def.matchTypes),
+                          doc: _bestRequiredDocForScope(
+                            tenantId: scopedTenant,
+                            companyId: scopedCompany,
+                            driverId: scopedDriver,
+                            types: def.matchTypes,
+                          ),
                         ),
                       )
                       .toList(growable: false);
@@ -896,7 +959,11 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
                                 onPressed: () => showDriverDocumentEditorSheet(
                                   context,
                                   driver: driver,
+                                  existing: doc,
                                   driverSelfService: true,
+                                  initialDocumentType: doc == null
+                                      ? def.matchTypes.first
+                                      : null,
                                 ),
                                 child: Text(
                                   doc == null
@@ -1056,12 +1123,28 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
         d.storageState.trim().isNotEmpty ||
         d.backendSyncedAt.trim().isNotEmpty;
     String storageLabel(DriverDocument d) {
+      if (d.backendPendingDelete) {
+        return _tr(
+          nl: 'Verwijderen in wachtrij',
+          en: 'Delete pending',
+          fr: 'Suppression en attente',
+          es: 'Eliminacion pendiente',
+        );
+      }
+      if (d.backendPendingUpload) {
+        return _tr(
+          nl: 'Synchronisatie in wachtrij',
+          en: 'Sync pending',
+          fr: 'Synchronisation en attente',
+          es: 'Sincronizacion pendiente',
+        );
+      }
       if (d.backendSyncError.trim().isNotEmpty) {
         return _tr(
-          nl: 'Synchronisatie mislukt',
-          en: 'Sync failed',
-          fr: 'Échec de synchronisation',
-          es: 'Sincronización fallida',
+          nl: 'Synchronisatie opnieuw proberen',
+          en: 'Sync needs retry',
+          fr: 'Nouvelle tentative de synchro requise',
+          es: 'Sincronizacion requiere reintento',
         );
       }
       if (isBackendSynced(d)) {
