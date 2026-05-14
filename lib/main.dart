@@ -11850,6 +11850,66 @@ class CompanyDriverManagementPage extends StatelessWidget {
     DriverProfile driver,
     DriverDocument doc,
   ) {
+    bool isBackendSynced(DriverDocument d) =>
+        d.storageState.trim().toLowerCase() == 'stored' ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    bool hasBackendMetadata(DriverDocument d) =>
+        d.backendFileName.trim().isNotEmpty ||
+        d.backendContentType.trim().isNotEmpty ||
+        d.backendSizeBytes > 0 ||
+        d.storageState.trim().isNotEmpty ||
+        d.backendSyncedAt.trim().isNotEmpty;
+    String storageLabel(DriverDocument d) {
+      if (d.backendSyncError.trim().isNotEmpty) {
+        return _t(
+          nl: 'Synchronisatie mislukt',
+          en: 'Sync failed',
+          fr: 'Échec de synchronisation',
+          es: 'Sincronización fallida',
+        );
+      }
+      if (isBackendSynced(d)) {
+        return _t(
+          nl: 'In cloud opgeslagen',
+          en: 'Cloud saved',
+          fr: 'Enregistré dans le cloud',
+          es: 'Guardado en la nube',
+        );
+      }
+      if (d.filePath.trim().isNotEmpty) {
+        return _t(
+          nl: 'Op dit toestel opgeslagen',
+          en: 'Saved on this device',
+          fr: 'Enregistré sur cet appareil',
+          es: 'Guardado en este dispositivo',
+        );
+      }
+      if (hasBackendMetadata(d)) {
+        return _t(
+          nl: 'Cloud copy beschikbaar',
+          en: 'Cloud copy available',
+          fr: 'Copie cloud disponible',
+          es: 'Copia en la nube disponible',
+        );
+      }
+      return _t(
+        nl: 'Alleen lokale metadata',
+        en: 'Local metadata only',
+        fr: 'Métadonnées locales uniquement',
+        es: 'Solo metadatos locales',
+      );
+    }
+
+    bool canOpenLocal(DriverDocument d) {
+      final path = d.filePath.trim();
+      if (path.isEmpty || kIsWeb) return false;
+      try {
+        return File(path).existsSync();
+      } catch (_) {
+        return false;
+      }
+    }
+
     final typeLabel = driverDocumentTypeLabel(doc.documentType, _lang);
     final statusLabel = driverDocumentStatusLabel(doc.status, _lang);
     final expiredVisual =
@@ -11909,13 +11969,15 @@ class CompanyDriverManagementPage extends StatelessWidget {
             ),
           if (doc.filePath.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(
-              '${_t(nl: 'Bestand', en: 'File', fr: 'Fichier', es: 'Archivo')}: ${doc.filePath}',
-              style: const TextStyle(fontSize: 10, color: Colors.white38),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            driverDocAttachmentPreview(doc.filePath, _lang),
           ],
+          const SizedBox(height: 4),
+          Text(
+            storageLabel(doc),
+            style: const TextStyle(fontSize: 11, color: Colors.white60),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           if (doc.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
@@ -11945,7 +12007,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                onPressed: doc.filePath.trim().isEmpty
+                onPressed: !canOpenLocal(doc)
                     ? null
                     : () =>
                           openDriverDocumentFile(context, doc.filePath, _lang),

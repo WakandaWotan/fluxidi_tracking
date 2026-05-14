@@ -30,12 +30,6 @@ String _ddT(
   }
 }
 
-String _ddBasename(String path) {
-  final s = path.replaceAll('\\', '/');
-  final i = s.lastIndexOf('/');
-  return i >= 0 ? s.substring(i + 1) : s;
-}
-
 bool _ddIsLikelyImagePath(String path) {
   final lower = path.toLowerCase().trim();
   return lower.endsWith('.jpg') ||
@@ -55,32 +49,20 @@ bool _ddIsLikelyPdfPath(String path) {
 Widget driverDocAttachmentPreview(String rawPath, AppLanguage lang) {
   final path = rawPath.trim();
   if (path.isEmpty) return const SizedBox.shrink();
-  final name = _ddBasename(path);
   if (!kIsWeb && !File(path).existsSync()) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _ddT(
-              lang,
-              nl: 'Bestand niet gevonden op dit toestel',
-              en: 'File not found on this device',
-              fr: 'Fichier introuvable sur cet appareil',
-              es: 'Archivo no encontrado en este dispositivo',
-            ),
-            style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Text(
-            name,
-            style: const TextStyle(fontSize: 11, color: Colors.white54),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+      child: Text(
+        _ddT(
+          lang,
+          nl: 'Lokale kopie niet gevonden',
+          en: 'Local copy not found',
+          fr: 'Copie locale introuvable',
+          es: 'Copia local no encontrada',
+        ),
+        style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -158,7 +140,13 @@ Widget driverDocAttachmentPreview(String rawPath, AppLanguage lang) {
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            name,
+            _ddT(
+              lang,
+              nl: 'Lokale bijlage beschikbaar',
+              en: 'Local attachment available',
+              fr: 'Pièce jointe locale disponible',
+              es: 'Adjunto local disponible',
+            ),
             style: const TextStyle(fontSize: 11, color: Colors.white60),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
