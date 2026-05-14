@@ -5910,7 +5910,7 @@ async function handlePublicCustomerProfilePost(request, env, body) {
     customer_id: customerId,
     customerId,
     name: incoming.name || existing.name || "",
-    phone: sessionPhone || existing.phone || "",
+    phone: sessionPhone || incoming.phone || existing.phone || "",
     email: incoming.email || existing.email || "",
     preferred_postcode: incoming.preferred_postcode || existing.preferred_postcode || "",
     preferredPostcode: incoming.preferred_postcode || existing.preferred_postcode || "",
@@ -16798,13 +16798,13 @@ async function handleBooking(payload, env, request) {
           customerPhoneLookupStep = "read_global_phone_index";
           const indexRaw = await env.BOOKING_KV.get(phoneIndexKey);
           const indexRawText = safeStr(indexRaw, 400).trim();
-          customerPhoneLinkHasIndex = indexRawText.isNotEmpty;
+          customerPhoneLinkHasIndex = indexRawText.length > 0;
           customerPhoneLookupStep = "parse_index";
           let parsedIndex = null;
           if (indexRaw && typeof indexRaw === "object") {
             parsedIndex = indexRaw;
             customerPhoneLinkHasIndex = true;
-          } else if (indexRawText.isNotEmpty) {
+          } else if (indexRawText.length > 0) {
             if (indexRawText.startsWith("{") || indexRawText.startsWith("[")) {
               try {
                 parsedIndex = JSON.parse(indexRawText);
