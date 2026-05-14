@@ -2763,35 +2763,34 @@ async function handleBookings(req, url, env, origin) {
   const scope = requiredScope;
 
   const scopedIndex = (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
-  const legacyIndex = (await kvGetJson(env.FLUXIDI_TRACKING, "booking_index")) ?? [];
-  const idx =
-    Array.isArray(scopedIndex) && scopedIndex.length > 0
-      ? scopedIndex
-      : Array.isArray(legacyIndex)
-      ? legacyIndex
-      : [];
+  const idx = Array.isArray(scopedIndex) ? scopedIndex : [];
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
 
   const bookings = [];
   const cleanedIndex = [];
 
   for (const booking_id of idx) {
-    const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
-    const map = mapResolved.map;
+    const map = await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedBookingSessionKey(scope, booking_id),
+    );
     if (!map) continue; // orphan index entry: drop it
     if (!recordMatchesTenantCompanyScope(map, scope)) continue;
 
     const sessionId = safeStr(map.session_id ?? map.sessionId, 128);
     if (!sessionId) continue;
-    const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, sessionId);
-    const session = sessionResolved.session;
+    const session = await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedSessionKey(scope, sessionId),
+    );
     if (!session || !recordMatchesTenantCompanyScope(session, scope)) continue;
 
     cleanedIndex.push(booking_id);
 
-    const last =
-      (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, sessionId))) ??
-      (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${sessionId}:last`));
+    const last = await kvGetJson(
+      env.FLUXIDI_TRACKING,
+      scopedPingLastKey(scope, sessionId),
+    );
     bookings.push({
       booking_id,
       session_id: sessionId,
@@ -2889,38 +2888,40 @@ async function handlePublicLive(req, url, env, origin) {
   const token = safeStr(url.searchParams.get("token"), 128);
   if (!token) throw new Error("token is required");
 
-  const explicitScope = parseOptionalTenantCompanyScope(req, url, null, null);
-  let link = null;
-  if (explicitScope?.tenant_id && explicitScope?.company_id) {
-    link = await kvGetJson(env.FLUXIDI_TRACKING, scopedPublicBookingKey(explicitScope, token));
-    if (!link) {
-      link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
-    }
-  } else {
-    link = await kvGetJson(env.FLUXIDI_TRACKING, `public:${token}:booking`);
-  }
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const explicitScope = requiredScope;
+  const link = await kvGetJson(env.FLUXIDI_TRACKING, scopedPublicBookingKey(explicitScope, token));
   if (!link || !link.booking_id) throw new Error("Invalid token");
+  if (!recordMatchesTenantCompanyScope(link, explicitScope)) {
+    throw new Error("invalid token scope");
+  }
 
-  const linkScope =
-    parseOptionalTenantCompanyScope(req, url, null, link) ??
-    (explicitScope?.tenant_id && explicitScope?.company_id ? explicitScope : null);
-  if (!linkScope) throw new Error("invalid token scope");
+  const linkScope = explicitScope;
   const booking_id = safeStr(link.booking_id, 96);
   if (!booking_id) throw new Error("Invalid token");
   const session_id_from_link = safeStr(link.session_id ?? link.sessionId, 128);
 
   const limit = Math.min(1200, Math.max(1, Number(url.searchParams.get("limit") || 300)));
-  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, linkScope, booking_id);
-  const map = mapResolved.map;
+  const map = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedBookingSessionKey(linkScope, booking_id),
+  );
+  if (map && !recordMatchesTenantCompanyScope(map, linkScope)) {
+    throw new Error("invalid booking scope");
+  }
   const resolvedSessionId = safeStr(map?.session_id ?? map?.sessionId ?? session_id_from_link, 128);
   if (!resolvedSessionId) throw new Error("Unknown booking_id");
-  const sessionResolved = await getScopedOrLegacySessionForScope(env, linkScope, resolvedSessionId);
-  const session = sessionResolved.session;
+  const session = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedSessionKey(linkScope, resolvedSessionId),
+  );
   if (!session) throw new Error("Unknown booking_id");
   if (!recordMatchesTenantCompanyScope(session, linkScope)) throw new Error("invalid session scope");
-  const last =
-    (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(linkScope, resolvedSessionId))) ??
-    (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${resolvedSessionId}:last`));
+  const last = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedPingLastKey(linkScope, resolvedSessionId),
+  );
   const points = Array.isArray(session?.points) ? session.points : [];
   const sliced = points.slice(Math.max(0, points.length - limit));
 
