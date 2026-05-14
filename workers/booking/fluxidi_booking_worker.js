@@ -3498,6 +3498,136 @@ function _isCompanyLinkSmsProviderConfigured(env) {
   return false;
 }
 
+function _readCustomerPhoneAuthSmsConfig(env) {
+  const provider = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_PROVIDER,
+    32,
+  ).toLowerCase();
+  const url = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_URL, 800);
+  const authHeader = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_AUTH_HEADER,
+    1200,
+  );
+  const apiKey = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_API_KEY, 800);
+  const from = sanitizeTenantString(env?.CUSTOMER_PHONE_AUTH_SMS_FROM, 80);
+  return {
+    provider,
+    url,
+    auth_header: authHeader,
+    api_key: apiKey,
+    from,
+    has_url: !!url,
+    has_auth_header: !!authHeader,
+    has_api_key: !!apiKey,
+    has_from: !!from,
+  };
+}
+
+function _isCustomerPhoneAuthSmsConfigured(env) {
+  const cfg = _readCustomerPhoneAuthSmsConfig(env);
+  return !!(cfg.has_url && cfg.has_from && (cfg.has_auth_header || cfg.has_api_key));
+}
+
+function _isCustomerPhoneAuthDebugOtpEnabled(env) {
+  const explicit = String(env?.CUSTOMER_PHONE_AUTH_DEBUG_OTP || "")
+    .trim()
+    .toLowerCase() === "true";
+  if (!explicit) return false;
+  const runtimeEnv = mollieRuntimeEnv(env);
+  return isDevelopmentLikeMollieEnv(runtimeEnv);
+}
+
+async function _sendCustomerPhoneAuthOtpSms(
+  env,
+  { phoneE164, otp, locale = "", challengeId = "" } = {},
+) {
+  const normalizedPhone = sanitizeTenantString(phoneE164, 40);
+  const maskedPhone = _maskCustomerPhoneForAuth(normalizedPhone);
+  const normalizedOtp = sanitizeTenantString(otp, 24).replace(/\s+/g, "");
+  if (!_looksLikeE164Phone(normalizedPhone) || !/^\d{6}$/.test(normalizedOtp)) {
+    return { ok: false, reason: "sms_send_failed" };
+  }
+  if (!_isCustomerPhoneAuthSmsConfigured(env)) {
+    return { ok: false, reason: "sms_not_configured" };
+  }
+  const cfg = _readCustomerPhoneAuthSmsConfig(env);
+  const smsLocale = sanitizeTenantString(locale, 16).toLowerCase();
+  const challengeRef = sanitizeTenantString(challengeId, 160).replace(
+    /[^a-zA-Z0-9_-]+/g,
+    "",
+  );
+  const messageTemplate = sanitizeTenantString(
+    env?.CUSTOMER_PHONE_AUTH_SMS_TEMPLATE,
+    320,
+  );
+  const fallbackMessage = `Fluxidi verificatiecode: ${normalizedOtp}. Deze code vervalt over 10 minuten.`;
+  const message = (messageTemplate || fallbackMessage)
+    .replaceAll("{code}", normalizedOtp)
+    .replaceAll("{otp}", normalizedOtp)
+    .replaceAll("{brand}", "Fluxidi")
+    .replaceAll("{ttl_minutes}", "10");
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (cfg.auth_header) {
+    headers.Authorization = cfg.auth_header;
+  } else {
+    headers.Authorization = `Bearer ${cfg.api_key}`;
+  }
+  const payload = {
+    to: normalizedPhone,
+    phone_e164: normalizedPhone,
+    from: cfg.from,
+    message,
+    channel: "sms",
+    locale: smsLocale || "nl",
+    challenge_id: challengeRef,
+    challengeId: challengeRef,
+    purpose: "customer_phone_auth",
+  };
+  try {
+    const response = await fetch(cfg.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    const body = (() => {
+      try {
+        return text ? JSON.parse(text) : null;
+      } catch (_) {
+        return null;
+      }
+    })();
+    if (!response.ok) {
+      console.log(
+        `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_provider_error status=${response.status}`,
+      );
+      return { ok: false, reason: "sms_provider_error" };
+    }
+    const providerMessageId = sanitizeTenantString(
+      body?.message_id ??
+        body?.messageId ??
+        body?.id ??
+        body?.sid ??
+        response.headers.get("x-message-id"),
+      160,
+    );
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][SMS_SEND_OK] phone=${maskedPhone || "-"} hasMessageId=${providerMessageId ? "true" : "false"}`,
+    );
+    return providerMessageId
+      ? { ok: true, providerMessageId }
+      : { ok: true };
+  } catch (_) {
+    console.log(
+      `[CUSTOMER_PHONE_AUTH][SMS_SEND_FAIL] phone=${maskedPhone || "-"} reason=sms_send_failed status=0`,
+    );
+    return { ok: false, reason: "sms_send_failed" };
+  }
+}
+
 function normalizeBelgianVatNumber(value) {
   const raw = sanitizeTenantString(value, 96).toUpperCase();
   if (!raw) return "";
@@ -4819,6 +4949,26 @@ async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
   console.log(
     `[CUSTOMER_PHONE_AUTH][START] phone=${maskedPhone || "-"} challenge=${_maskRecoveryChallengeId(challengeId)}`,
   );
+  const debugOtpEnabled = _isCustomerPhoneAuthDebugOtpEnabled(env);
+  const smsConfigured = _isCustomerPhoneAuthSmsConfigured(env);
+  console.log(
+    `[CUSTOMER_PHONE_AUTH][SMS_CONFIG] configured=${smsConfigured} debug=${debugOtpEnabled} phone=${maskedPhone || "-"}`,
+  );
+  let smsSent = false;
+  if (smsConfigured) {
+    const sendResult = await _sendCustomerPhoneAuthOtpSms(env, {
+      phoneE164,
+      otp,
+      locale: sanitizeTenantString(body?.locale ?? body?.language ?? body?.lang, 16),
+      challengeId,
+    });
+    smsSent = sendResult?.ok === true;
+    if (!smsSent && !debugOtpEnabled) {
+      return json({ ok: false, error: "sms_send_failed" }, 502);
+    }
+  } else if (!debugOtpEnabled) {
+    return json({ ok: false, error: "sms_not_configured" }, 503);
+  }
   const response = {
     ok: true,
     challenge_id: challengeId,
@@ -4829,9 +4979,11 @@ async function handlePublicCustomerPhoneAuthStart(body, env, request = null) {
     expiresInSeconds: CUSTOMER_PHONE_AUTH_CHALLENGE_TTL_SECONDS,
     masked_phone: maskedPhone,
     maskedPhone: maskedPhone,
+    sms_sent: smsSent,
+    smsSent: smsSent,
+    debug_otp: null,
+    debugOtp: null,
   };
-  const debugOtpEnabled =
-    String(env?.CUSTOMER_PHONE_AUTH_DEBUG_OTP || "").trim().toLowerCase() === "true";
   if (debugOtpEnabled) {
     response.debug_otp = otp;
     response.debugOtp = otp;
