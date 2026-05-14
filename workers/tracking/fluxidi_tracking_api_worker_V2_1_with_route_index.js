@@ -2736,22 +2736,29 @@ async function handleStop(req, url, env, origin) {
   return withCors(json({ ok: true, session_id, status: "stopped" }, { status: 200 }), origin);
 }
 
-// Resolve booking -> map + session + last ping (scoped-first)
+// Resolve booking -> map + session + last ping (scoped-only)
 async function resolveSessionByBookingForScope(env, scope, booking_id) {
-  const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, booking_id);
-  const map = mapResolved.map;
-  const sessionId = safeStr(map?.session_id ?? map?.sessionId, 128);
-  if (!map || !sessionId) return null;
+  const map = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedBookingSessionKey(scope, booking_id),
+  );
+  if (!map) return null;
   if (!recordMatchesTenantCompanyScope(map, scope)) return null;
 
-  const sessionResolved = await getScopedOrLegacySessionForScope(env, scope, sessionId);
-  const session = sessionResolved.session;
+  const sessionId = safeStr(map?.session_id ?? map?.sessionId, 128);
+  if (!sessionId) return null;
+
+  const session = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedSessionKey(scope, sessionId),
+  );
   if (!session) return null;
   if (!recordMatchesTenantCompanyScope(session, scope)) return null;
 
-  const last =
-    (await kvGetJson(env.FLUXIDI_TRACKING, scopedPingLastKey(scope, sessionId))) ??
-    (await kvGetJson(env.FLUXIDI_TRACKING, `ping:${sessionId}:last`));
+  const last = await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedPingLastKey(scope, sessionId),
+  );
   return { map, session, last, session_id: sessionId };
 }
 
