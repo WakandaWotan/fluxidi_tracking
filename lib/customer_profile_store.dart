@@ -98,6 +98,12 @@ class CustomerProfileStore {
   CustomerProfile? _cache;
   String _cacheScopeKey = '';
 
+  String _maskCustomerId(String value) {
+    final trimmed = value.trim();
+    if (trimmed.length <= 4) return trimmed.isEmpty ? '-' : '...$trimmed';
+    return '${trimmed.substring(0, 2)}...${trimmed.substring(trimmed.length - 2)}';
+  }
+
   String _localScopeSegment(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return 'default';
@@ -154,10 +160,56 @@ class CustomerProfileStore {
     return file;
   }
 
-  Future<File?> _file() async {
+  Future<String> _activeValidCustomerSessionId() async {
+    final cached = CustomerSessionStore.instance.peekCachedSession();
+    if (cached != null && CustomerSessionStore.instance.isValid(cached)) {
+      final cachedId = cached.customerId.trim();
+      if (cachedId.isNotEmpty) return cachedId;
+    }
+    final loaded = await CustomerSessionStore.instance.loadValidSession();
+    return (loaded?.customerId ?? '').trim();
+  }
+
+  Future<File> _customerSessionFile({required String customerId}) async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}customer_session${Platform.pathSeparator}customer_${_localScopeSegment(customerId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[CUSTOMER_PROFILE][PATH] scope=customer_session path=${file.path}',
+    );
+    return file;
+  }
+
+  Future<({String scopeKey, String scopeType, String customerId, File file})?>
+  _resolveStorageTarget() async {
     final scope = _activeLocalScope();
-    if (scope == null) return null;
-    return _scopedFile(tenantId: scope.tenantId, companyId: scope.companyId);
+    if (scope != null) {
+      final file = await _scopedFile(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      return (
+        scopeKey: '${scope.tenantId.trim()}::${scope.companyId.trim()}',
+        scopeType: 'tenant_company',
+        customerId: '',
+        file: file,
+      );
+    }
+    final customerId = await _activeValidCustomerSessionId();
+    if (customerId.isEmpty) return null;
+    debugPrint('[CUSTOMER_PROFILE][SCOPE_FALLBACK] source=customer_session');
+    final file = await _customerSessionFile(customerId: customerId);
+    return (
+      scopeKey: 'customer_session::$customerId',
+      scopeType: 'customer_session',
+      customerId: customerId,
+      file: file,
+    );
   }
 
   Future<CustomerProfile?> _readFromFile(File file) async {
@@ -181,8 +233,8 @@ class CustomerProfileStore {
   }
 
   Future<CustomerProfile?> load() async {
-    final scope = _activeLocalScope();
-    if (scope == null) {
+    final target = await _resolveStorageTarget();
+    if (target == null) {
       _cache = null;
       _cacheScopeKey = '';
       debugPrint(
@@ -190,14 +242,12 @@ class CustomerProfileStore {
       );
       return null;
     }
-    final scopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+    final scopeKey = target.scopeKey;
     if (_cache != null && _cacheScopeKey == scopeKey) return _cache;
     _cache = null;
     _cacheScopeKey = scopeKey;
     try {
-      final file = await _file();
-      if (file == null) return null;
-      final scopedProfile = await _readFromFile(file);
+      final scopedProfile = await _readFromFile(target.file);
       if (scopedProfile != null) {
         _cache = scopedProfile;
         return scopedProfile;
@@ -238,24 +288,28 @@ class CustomerProfileStore {
       updatedAt: now,
     );
     try {
-      final file = await _file();
-      if (file == null) {
+      final target = await _resolveStorageTarget();
+      if (target == null) {
         debugPrint(
           '[CUSTOMER_PROFILE][SKIP_SCOPE] reason=missing_tenant_company_scope',
         );
         return profile;
       }
-      await file.writeAsString(jsonEncode(profile.toJson()));
+      await target.file.writeAsString(jsonEncode(profile.toJson()));
       _cache = profile;
-      final scope = _activeLocalScope();
-      if (scope == null) {
-        _cacheScopeKey = '';
-        return profile;
+      _cacheScopeKey = target.scopeKey;
+      if (target.scopeType == 'customer_session') {
+        debugPrint(
+          '[CUSTOMER_PROFILE][SAVE] scope=customer_session customer=${_maskCustomerId(target.customerId)}',
+        );
+      } else {
+        final scope = _activeLocalScope();
+        if (scope != null) {
+          debugPrint(
+            '[CUSTOMER_PROFILE][SAVE] tenant=${scope.tenantId} company=${scope.companyId} path=${target.file.path}',
+          );
+        }
       }
-      _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
-      debugPrint(
-        '[CUSTOMER_PROFILE][SAVE] tenant=${scope.tenantId} company=${scope.companyId} path=${file.path}',
-      );
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][SAVE_ERROR] $err');
     }
@@ -353,21 +407,16 @@ class CustomerProfileStore {
     );
 
     try {
-      final file = await _file();
-      if (file == null) {
+      final target = await _resolveStorageTarget();
+      if (target == null) {
         debugPrint(
           '[CUSTOMER_PROFILE][SKIP_SCOPE] reason=missing_tenant_company_scope',
         );
         return merged;
       }
-      await file.writeAsString(jsonEncode(merged.toJson()));
+      await target.file.writeAsString(jsonEncode(merged.toJson()));
       _cache = merged;
-      final scope = _activeLocalScope();
-      if (scope == null) {
-        _cacheScopeKey = '';
-        return merged;
-      }
-      _cacheScopeKey = '${scope.tenantId.trim()}::${scope.companyId.trim()}';
+      _cacheScopeKey = target.scopeKey;
       debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=true');
     } catch (err) {
       debugPrint('[CUSTOMER_PROFILE][MERGE_BACKEND] ok=false error=$err');

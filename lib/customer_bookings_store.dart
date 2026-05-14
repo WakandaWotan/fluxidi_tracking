@@ -39,6 +39,13 @@ String _maskScopeId(String value) {
   return (tenantId: defaultTenant, companyId: defaultCompany);
 }
 
+bool _isSafeBusinessScopeValue(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return false;
+  final normalized = trimmed.toLowerCase();
+  return normalized != 'global' && normalized != 'fluxidi';
+}
+
 class StoredCustomerBooking {
   const StoredCustomerBooking({
     required this.bookingId,
@@ -991,6 +998,31 @@ class CustomerBookingsStore {
     return file;
   }
 
+  Future<String> _activeValidCustomerSessionId() async {
+    final cached = CustomerSessionStore.instance.peekCachedSession();
+    if (cached != null && CustomerSessionStore.instance.isValid(cached)) {
+      final cachedId = cached.customerId.trim();
+      if (cachedId.isNotEmpty) return cachedId;
+    }
+    final loaded = await CustomerSessionStore.instance.loadValidSession();
+    return (loaded?.customerId ?? '').trim();
+  }
+
+  Future<File> _customerSessionScopedFile({required String customerId}) async {
+    final root = await _stateRootDir();
+    final scopedDir = Directory(
+      '${root.path}${Platform.pathSeparator}customer_session${Platform.pathSeparator}customer_${_localScopeSegment(customerId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    final file = File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+    debugPrint(
+      '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_PATH] scope=customer_session path=${file.path}',
+    );
+    return file;
+  }
+
   Future<File?> _file() async {
     final scope = _activeLocalScope();
     if (scope == null) return null;
@@ -1103,18 +1135,51 @@ class CustomerBookingsStore {
 
   Future<List<StoredCustomerBooking>> loadAll() async {
     final scope = _activeLocalScope();
-    if (scope == null) {
+    if (scope != null) {
+      return _loadAllForScope(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+    }
+    final customerId = await _activeValidCustomerSessionId();
+    if (customerId.isNotEmpty) {
+      debugPrint('[CUSTOMER_BOOKINGS][SCOPE_FALLBACK] source=customer_session');
+      return _loadAllForCustomerSessionScope(customerId);
+    }
+    _cache = <StoredCustomerBooking>[];
+    _cacheScopeKey = '';
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
+    );
+    return <StoredCustomerBooking>[];
+  }
+
+  Future<List<StoredCustomerBooking>> _loadAllForCustomerSessionScope(
+    String customerId,
+  ) async {
+    final normalizedCustomerId = customerId.trim();
+    if (normalizedCustomerId.isEmpty) return <StoredCustomerBooking>[];
+    final scopeKey = 'customer_session::$normalizedCustomerId';
+    if (_cache != null) {
+      if (_cacheScopeKey == scopeKey) {
+        return List<StoredCustomerBooking>.from(_cache!);
+      }
       _cache = <StoredCustomerBooking>[];
       _cacheScopeKey = '';
-      debugPrint(
-        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
+    }
+    try {
+      _cacheScopeKey = scopeKey;
+      final file = await _customerSessionScopedFile(
+        customerId: normalizedCustomerId,
       );
+      final items = await _readFileItems(file);
+      _cache = List<StoredCustomerBooking>.from(items);
+      return List<StoredCustomerBooking>.from(items);
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][LOAD_ERROR] $err');
+      _cache = <StoredCustomerBooking>[];
       return <StoredCustomerBooking>[];
     }
-    return _loadAllForScope(
-      tenantId: scope.tenantId,
-      companyId: scope.companyId,
-    );
   }
 
   Future<List<StoredCustomerBooking>> _loadAllForScope({
@@ -1171,16 +1236,29 @@ class CustomerBookingsStore {
 
   Future<void> _saveAll(List<StoredCustomerBooking> items) async {
     final scope = _activeLocalScope();
-    if (scope == null) {
-      debugPrint(
-        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
+    if (scope != null) {
+      await _saveAllForScope(
+        items,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
       );
       return;
     }
-    await _saveAllForScope(
-      items,
-      tenantId: scope.tenantId,
-      companyId: scope.companyId,
+    final key = _cacheScopeKey;
+    if (key.startsWith('customer_session::')) {
+      final customerId = key.substring('customer_session::'.length).trim();
+      if (customerId.isNotEmpty) {
+        await _saveAllForCustomerSessionScope(items, customerId: customerId);
+        return;
+      }
+    }
+    final customerId = await _activeValidCustomerSessionId();
+    if (customerId.isNotEmpty) {
+      await _saveAllForCustomerSessionScope(items, customerId: customerId);
+      return;
+    }
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope',
     );
   }
 
@@ -1212,6 +1290,28 @@ class CustomerBookingsStore {
         final payload = normalized
             .map((e) => e.toJson())
             .toList(growable: false);
+        await _atomicWriteJsonArray(file: file, payload: payload);
+      } catch (err) {
+        debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
+      }
+    });
+  }
+
+  Future<void> _saveAllForCustomerSessionScope(
+    List<StoredCustomerBooking> items, {
+    required String customerId,
+  }) async {
+    final normalizedCustomerId = customerId.trim();
+    if (normalizedCustomerId.isEmpty) return;
+    final scopeKey = 'customer_session::$normalizedCustomerId';
+    _cacheScopeKey = scopeKey;
+    _cache = List<StoredCustomerBooking>.from(items);
+    await _enqueueWrite(() async {
+      try {
+        final file = await _customerSessionScopedFile(
+          customerId: normalizedCustomerId,
+        );
+        final payload = items.map((e) => e.toJson()).toList(growable: false);
         await _atomicWriteJsonArray(file: file, payload: payload);
       } catch (err) {
         debugPrint('[CUSTOMER_BOOKINGS][SAVE_ERROR] $err');
@@ -1310,36 +1410,63 @@ class CustomerBookingsStore {
 
   Future<void> upsert(StoredCustomerBooking booking) async {
     final now = DateTime.now().toIso8601String();
+    final bookingTenantId = booking.tenantId.trim();
+    final bookingCompanyId = booking.companyId.trim();
+    final hasBookingBusinessScope =
+        _isSafeBusinessScopeValue(bookingTenantId) &&
+        _isSafeBusinessScopeValue(bookingCompanyId);
     final activeScope = _activeLocalScope();
-    if (activeScope == null) {
-      debugPrint(
-        '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope op=upsert',
-      );
-      return;
+
+    bool useCustomerSessionStorage = false;
+    String targetTenantId = '';
+    String targetCompanyId = '';
+    String customerSessionId = '';
+
+    if (hasBookingBusinessScope) {
+      targetTenantId = bookingTenantId;
+      targetCompanyId = bookingCompanyId;
+    } else if (activeScope != null) {
+      targetTenantId = activeScope.tenantId;
+      targetCompanyId = activeScope.companyId;
+    } else {
+      customerSessionId = await _activeValidCustomerSessionId();
+      if (customerSessionId.isEmpty) {
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][SKIP_SCOPE] reason=missing_tenant_company_scope op=upsert',
+        );
+        return;
+      }
+      useCustomerSessionStorage = true;
     }
-    final targetTenantId = booking.tenantId.trim().isNotEmpty
-        ? booking.tenantId
-        : activeScope.tenantId;
-    final targetCompanyId = booking.companyId.trim().isNotEmpty
-        ? booking.companyId
-        : activeScope.companyId;
+
     final list = List<StoredCustomerBooking>.from(
-      await _loadAllForScope(
-        tenantId: targetTenantId,
-        companyId: targetCompanyId,
-      ),
+      useCustomerSessionStorage
+          ? await _loadAllForCustomerSessionScope(customerSessionId)
+          : await _loadAllForScope(
+              tenantId: targetTenantId,
+              companyId: targetCompanyId,
+            ),
     );
     final index = _findIndex(list, booking);
-    final incoming = booking.copyWith(
-      tenantId: booking.tenantId.trim().isNotEmpty
-          ? booking.tenantId
-          : targetTenantId,
-      companyId: booking.companyId.trim().isNotEmpty
-          ? booking.companyId
-          : targetCompanyId,
-      updatedAt: now,
-      createdAt: booking.createdAt.trim().isEmpty ? now : booking.createdAt,
-    );
+    final incoming = useCustomerSessionStorage
+        ? booking.copyWith(
+            updatedAt: now,
+            createdAt: booking.createdAt.trim().isEmpty
+                ? now
+                : booking.createdAt,
+          )
+        : booking.copyWith(
+            tenantId: booking.tenantId.trim().isNotEmpty
+                ? booking.tenantId
+                : targetTenantId,
+            companyId: booking.companyId.trim().isNotEmpty
+                ? booking.companyId
+                : targetCompanyId,
+            updatedAt: now,
+            createdAt: booking.createdAt.trim().isEmpty
+                ? now
+                : booking.createdAt,
+          );
     if (index >= 0) {
       final existing = list[index];
       list[index] = existing.copyWith(
@@ -1424,6 +1551,13 @@ class CustomerBookingsStore {
       list.add(incoming);
     }
     list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    if (useCustomerSessionStorage) {
+      await _saveAllForCustomerSessionScope(
+        list,
+        customerId: customerSessionId,
+      );
+      return;
+    }
     await _saveAllForScope(
       list,
       tenantId: targetTenantId,
