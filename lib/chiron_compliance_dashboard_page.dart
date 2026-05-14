@@ -1603,19 +1603,21 @@ class _RemoteComplianceEventsSectionState
 
   String _text(dynamic value) => (value ?? '').toString().trim();
 
-  ({String tenantId, String companyId}) _effectiveTenantCompanyIds() {
+  ({String tenantId, String companyId})? _effectiveTenantCompanyIds() {
     final activeCompanyId =
         companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (activeCompanyId.isNotEmpty) {
+      return (tenantId: activeCompanyId, companyId: activeCompanyId);
+    }
     final sessionCompanyId =
         activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-    final resolvedId = resolvedCompanyId.trim();
-    final effectiveCompanyId = activeCompanyId.isNotEmpty
-        ? activeCompanyId
-        : (sessionCompanyId.isNotEmpty
-              ? sessionCompanyId
-              : (resolvedId.isNotEmpty ? resolvedId : ''));
-    final effectiveTenantId = effectiveCompanyId;
-    return (tenantId: effectiveTenantId, companyId: effectiveCompanyId);
+    if (sessionCompanyId.isNotEmpty) {
+      return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+    }
+    debugPrint(
+      '[CHIRON_REMOTE][SKIP_SCOPE] reason=missing_explicit_tenant_company_scope',
+    );
+    return null;
   }
 
   String _localizedUnknown() {
@@ -1832,9 +1834,7 @@ class _RemoteComplianceEventsSectionState
 
   Future<RemoteComplianceEventsResponse> _loadRemoteEvents() async {
     final effective = _effectiveTenantCompanyIds();
-    final effectiveTenantId = effective.tenantId;
-    final effectiveCompanyId = effective.companyId;
-    if (effectiveTenantId.isEmpty || effectiveCompanyId.isEmpty) {
+    if (effective == null) {
       return RemoteComplianceEventsResponse(
         ok: false,
         tenantId: '',
@@ -1851,6 +1851,8 @@ class _RemoteComplianceEventsSectionState
         ),
       );
     }
+    final effectiveTenantId = effective.tenantId;
+    final effectiveCompanyId = effective.companyId;
 
     final token = _complianceAdminToken.trim();
     if (token.isEmpty) {
@@ -1979,8 +1981,7 @@ class _RemoteComplianceEventsSectionState
       return;
     }
     final effective = _effectiveTenantCompanyIds();
-    if (effective.tenantId.trim().isEmpty ||
-        effective.companyId.trim().isEmpty) {
+    if (effective == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1993,6 +1994,9 @@ class _RemoteComplianceEventsSectionState
             ),
           ),
         ),
+      );
+      debugPrint(
+        '[CHIRON_REMOTE][RESET_SKIP_SCOPE] reason=missing_explicit_tenant_company_scope',
       );
       return;
     }
@@ -2899,8 +2903,8 @@ class _RemoteComplianceEventsSectionState
                 snapshot.data ??
                 RemoteComplianceEventsResponse(
                   ok: false,
-                  tenantId: effective.tenantId,
-                  companyId: effective.companyId,
+                  tenantId: effective?.tenantId ?? '',
+                  companyId: effective?.companyId ?? '',
                   limit: 10,
                   count: 0,
                   malformedCount: 0,

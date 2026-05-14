@@ -18749,7 +18749,50 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return '';
   }
 
-  Map<String, String> _selectedCancelScopeQuery() {
+  bool _isUnsafeDefaultCancelScope({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final fallback = kTenantId.trim().toLowerCase();
+    final tenant = tenantId.trim().toLowerCase();
+    final company = companyId.trim().toLowerCase();
+    return tenant.isNotEmpty &&
+        company.isNotEmpty &&
+        tenant == fallback &&
+        company == fallback;
+  }
+
+  Map<String, String> _scopeQueryFromTenantCompany({
+    required String tenantId,
+    required String companyId,
+  }) {
+    return <String, String>{
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+    };
+  }
+
+  Map<String, String>? _strictActiveCustomerBookingScopeQuery() {
+    final strictScope = _strictActiveLocalScopeIds();
+    if (strictScope == null) return null;
+    final tenantId = strictScope.tenantId.trim();
+    final companyId = strictScope.companyId.trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return null;
+    if (_isUnsafeDefaultCancelScope(tenantId: tenantId, companyId: companyId)) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE][SKIP] reason=unsafe_default_scope source=strict_active_scope tenant=$tenantId company=$companyId',
+      );
+      return null;
+    }
+    return _scopeQueryFromTenantCompany(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+  }
+
+  Map<String, String>? _selectedCancelScopeQuery() {
     final storedScopeSource = <String, dynamic>{
       'record': _view.record,
       'booking': _view.booking,
@@ -18778,15 +18821,22 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         ]);
     if (tenantFromStoredBooking.isNotEmpty &&
         companyFromStoredBooking.isNotEmpty) {
-      debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=booking_scope',
-      );
-      return <String, String>{
-        'tenant_id': tenantFromStoredBooking,
-        'company_id': companyFromStoredBooking,
-        'tenantId': tenantFromStoredBooking,
-        'companyId': companyFromStoredBooking,
-      };
+      if (_isUnsafeDefaultCancelScope(
+        tenantId: tenantFromStoredBooking,
+        companyId: companyFromStoredBooking,
+      )) {
+        debugPrint(
+          '[CUSTOMER_BOOKING][CANCEL_SCOPE][SKIP] reason=unsafe_default_scope source=stored_booking_scope tenant=$tenantFromStoredBooking company=$companyFromStoredBooking',
+        );
+      } else {
+        debugPrint(
+          '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromStoredBooking company=$companyFromStoredBooking source=booking_scope',
+        );
+        return _scopeQueryFromTenantCompany(
+          tenantId: tenantFromStoredBooking,
+          companyId: companyFromStoredBooking,
+        );
+      }
     }
     final scopeSource = <String, dynamic>{
       ..._view.source,
@@ -18858,23 +18908,34 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       'data.record.payload.company',
     ]);
     if (tenantFromBooking.isNotEmpty && companyFromBooking.isNotEmpty) {
-      debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_scope',
-      );
-      return <String, String>{
-        'tenant_id': tenantFromBooking,
-        'company_id': companyFromBooking,
-        'tenantId': tenantFromBooking,
-        'companyId': companyFromBooking,
-      };
+      if (_isUnsafeDefaultCancelScope(
+        tenantId: tenantFromBooking,
+        companyId: companyFromBooking,
+      )) {
+        debugPrint(
+          '[CUSTOMER_BOOKING][CANCEL_SCOPE][SKIP] reason=unsafe_default_scope source=booking_scope tenant=$tenantFromBooking company=$companyFromBooking',
+        );
+      } else {
+        debugPrint(
+          '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$tenantFromBooking company=$companyFromBooking source=booking_scope',
+        );
+        return _scopeQueryFromTenantCompany(
+          tenantId: tenantFromBooking,
+          companyId: companyFromBooking,
+        );
+      }
     }
-    final fallbackScope = _activeBookingScopeQuery();
-    final fallbackTenant = (fallbackScope['tenant_id'] ?? '').trim();
-    final fallbackCompany = (fallbackScope['company_id'] ?? '').trim();
+    final strictScope = _strictActiveCustomerBookingScopeQuery();
+    if (strictScope != null) {
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=${strictScope['tenant_id']} company=${strictScope['company_id']} source=strict_active_scope',
+      );
+      return strictScope;
+    }
     debugPrint(
-      '[CUSTOMER_BOOKING][CANCEL_SCOPE] tenant=$fallbackTenant company=$fallbackCompany source=active_scope_fallback',
+      '[CUSTOMER_BOOKING][CANCEL_SCOPE][SKIP] reason=missing_strict_scope',
     );
-    return fallbackScope;
+    return null;
   }
 
   bool get _canCancelBooking {
@@ -18985,6 +19046,27 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _refreshError = null;
     });
     final scope = _selectedCancelScopeQuery();
+    if (scope == null) {
+      if (mounted) {
+        setState(() => _cancelling = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Bedrijfscontext ontbreekt. Deze boeking kan niet veilig geannuleerd worden.',
+                en: 'Company context is missing. This booking cannot be cancelled safely.',
+                fr: 'Le contexte entreprise est manquant. Cette réservation ne peut pas être annulée en toute sécurité.',
+                es: 'Falta el contexto de empresa. Esta reserva no se puede cancelar de forma segura.',
+              ),
+            ),
+          ),
+        );
+      }
+      debugPrint(
+        '[CUSTOMER_BOOKING][CANCEL_SCOPE][WARN] reason=missing_strict_scope booking=${_safeRefPreview(bookingId)}',
+      );
+      return;
+    }
     final aliases = _customerBookingDeleteAliases(
       bookingId: bookingId,
       publicBookingReference: _view.publicBookingReference,
