@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -693,6 +695,7 @@ Future<void> showDriverDocumentEditorSheet(
                                   }
                                 }
 
+                                late final DriverDocument targetDoc;
                                 if (existing == null) {
                                   final doc = DriverDocumentsStore.buildNew(
                                     tenantId: tenant,
@@ -708,6 +711,7 @@ Future<void> showDriverDocumentEditorSheet(
                                   );
                                   await DriverDocumentsStore.instance
                                       .addDocument(doc);
+                                  targetDoc = doc;
                                 } else {
                                   final doc = DriverDocumentsStore.mergeEdit(
                                     existing: existing,
@@ -720,9 +724,53 @@ Future<void> showDriverDocumentEditorSheet(
                                   );
                                   await DriverDocumentsStore.instance
                                       .updateDocument(doc);
+                                  targetDoc = doc;
                                 }
                                 if (!ctx.mounted) return;
                                 Navigator.pop(ctx);
+                                debugPrint(
+                                  '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_START] hasScope=${targetDoc.tenantId.trim().isNotEmpty && targetDoc.companyId.trim().isNotEmpty && targetDoc.driverId.trim().isNotEmpty}',
+                                );
+                                final companySessionToken =
+                                    (activeCompanySessionNotifier
+                                                .value
+                                                ?.companySessionToken ??
+                                            '')
+                                        .trim();
+                                if (companySessionToken.isEmpty) {
+                                  debugPrint(
+                                    '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_company_session_token',
+                                  );
+                                  return;
+                                }
+                                if (targetDoc.tenantId.trim().isEmpty ||
+                                    targetDoc.companyId.trim().isEmpty ||
+                                    targetDoc.driverId.trim().isEmpty) {
+                                  debugPrint(
+                                    '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_SKIP] reason=missing_scope',
+                                  );
+                                  return;
+                                }
+                                unawaited(
+                                  DriverDocumentsStore.instance
+                                      .syncDocumentUpsertToBackend(
+                                        doc: targetDoc,
+                                        bookingBaseUrl:
+                                            appConfig.bookingBaseUrl,
+                                        companySessionToken:
+                                            companySessionToken,
+                                      )
+                                      .then((_) {
+                                        debugPrint(
+                                          '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=true',
+                                        );
+                                      })
+                                      .catchError((_) {
+                                        debugPrint(
+                                          '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=false',
+                                        );
+                                      }),
+                                );
                               },
                               child: Text(
                                 t(

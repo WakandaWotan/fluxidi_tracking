@@ -11795,7 +11795,43 @@ class CompanyDriverManagementPage extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+      final companySessionToken =
+          (activeCompanySessionNotifier.value?.companySessionToken ?? '')
+              .trim();
+      final tenantId = doc.tenantId.trim();
+      final companyId = doc.companyId.trim();
+      final driverId = doc.driverId.trim();
+      final documentId = doc.documentId.trim();
+      final hasBackendDeleteScope =
+          companySessionToken.isNotEmpty &&
+          tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          driverId.isNotEmpty &&
+          documentId.isNotEmpty;
+      if (!hasBackendDeleteScope) {
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_BACKEND_SKIP] reason=missing_token_or_scope',
+        );
+        await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+        return;
+      }
+      debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_START] requested=true');
+      final removed = await DriverDocumentsStore.instance
+          .deleteDocumentInBackendThenLocal(
+            bookingBaseUrl: kBookingBaseUrl,
+            companySessionToken: companySessionToken,
+            tenantId: tenantId,
+            companyId: companyId,
+            driverId: driverId,
+            documentId: documentId,
+          );
+      if (!removed) {
+        debugPrint(
+          '[DRIVER_DOCS][UI_DELETE_BACKEND_SKIP] reason=backend_delete_failed_local_fallback',
+        );
+        await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+      }
+      debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_DONE] ok=$removed');
     }
   }
 

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
@@ -51,7 +53,46 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   @override
   void initState() {
     super.initState();
-    DriverDocumentsStore.instance.load();
+    unawaited(_loadAndRefreshDocsBestEffort());
+  }
+
+  Future<void> _loadAndRefreshDocsBestEffort() async {
+    await DriverDocumentsStore.instance.load();
+    debugPrint('[DRIVER_DOCS][UI_REFRESH_START] source=driver_page_init');
+    final session = activeDriverSessionNotifier.value;
+    if (session == null) {
+      debugPrint(
+        '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_driver_session',
+      );
+      return;
+    }
+    final tenantId = (session.tenantId ?? '').trim();
+    final companyId = (session.companyId ?? '').trim();
+    final driverId = session.driverId.trim();
+    final companySessionToken =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (companySessionToken.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_company_session_token',
+      );
+      return;
+    }
+    if (tenantId.isEmpty || companyId.isEmpty || driverId.isEmpty) {
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_SKIP] reason=missing_scope');
+      return;
+    }
+    try {
+      await DriverDocumentsStore.instance.refreshDriverDocumentsFromBackend(
+        bookingBaseUrl: appConfig.bookingBaseUrl,
+        companySessionToken: companySessionToken,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+      );
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=true');
+    } catch (_) {
+      debugPrint('[DRIVER_DOCS][UI_REFRESH_DONE] ok=false');
+    }
   }
 
   AppLanguage get _lang => appConfig.currentLanguage;
