@@ -6713,6 +6713,46 @@ async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
   return { matched: false, mode: "legacy_contact_mismatch" };
 }
 
+function _logCustomerBookingIndexUpsert({
+  bookingId,
+  rec,
+  result = null,
+  error = null,
+} = {}) {
+  const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(rec));
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  const contacts = _bookingCustomerContacts(rec);
+  const customerIdPresent = bookingCustomerIds.length > 0;
+  const emailPresent = Array.isArray(contacts?.emails) && contacts.emails.length > 0;
+  const phonePresent = Array.isArray(contacts?.phones) && contacts.phones.length > 0;
+  const ok = !!(result?.ok === true && !error);
+  const skipped = !!(result?.skipped === true);
+  const reason = safeStr(result?.reason, 140) || (error
+    ? "exception"
+    : (ok ? "ok" : (skipped ? "skipped" : "unknown")));
+  const payload = {
+    event: "customer_booking_index_upsert",
+    booking_id_preview: _bookingIntentMask(bookingId),
+    tenant: scopeMask.tenant || "-",
+    company: scopeMask.company || "-",
+    ok,
+    skipped,
+    reason,
+    customer_id_present: customerIdPresent,
+    email_present: emailPresent,
+    phone_present: phonePresent,
+  };
+  if (ok) {
+    const count = Number(result?.count);
+    if (Number.isFinite(count)) {
+      payload.count = Math.max(0, Math.trunc(count));
+    }
+    console.info(payload);
+    return;
+  }
+  console.warn(payload);
+}
+
 function _toMsOrZero(value) {
   const ms = Date.parse(safeStr(value, 80));
   return Number.isFinite(ms) ? ms : 0;
@@ -18531,19 +18571,23 @@ async function handleBooking(payload, env, request) {
             JSON.stringify(provisionalRecord),
           );
           try {
-            await upsertCustomerScopedBookingIndexForBooking(
+            const indexResult = await upsertCustomerScopedBookingIndexForBooking(
               env,
               canonicalBookingId,
               provisionalRecord,
             );
+            _logCustomerBookingIndexUpsert({
+              bookingId: canonicalBookingId,
+              rec: provisionalRecord,
+              result: indexResult,
+            });
           } catch (customerIndexErr) {
-            const scopeMask = _bookingIntentScopeMask(
-              resolveBookingTenantScopeFromRecord(provisionalRecord),
-            );
+            _logCustomerBookingIndexUpsert({
+              bookingId: canonicalBookingId,
+              rec: provisionalRecord,
+              error: customerIndexErr,
+            });
             const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
-            console.log(
-              `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
-            );
             if (linkedCustomerId) {
               console.log(
                 `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
@@ -19032,19 +19076,23 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       );
       bookingPersisted = true;
       try {
-        await upsertCustomerScopedBookingIndexForBooking(
+        const indexResult = await upsertCustomerScopedBookingIndexForBooking(
           env,
           canonicalBookingId,
           provisionalRecord,
         );
+        _logCustomerBookingIndexUpsert({
+          bookingId: canonicalBookingId,
+          rec: provisionalRecord,
+          result: indexResult,
+        });
       } catch (customerIndexErr) {
-        const scopeMask = _bookingIntentScopeMask(
-          resolveBookingTenantScopeFromRecord(provisionalRecord),
-        );
+        _logCustomerBookingIndexUpsert({
+          bookingId: canonicalBookingId,
+          rec: provisionalRecord,
+          error: customerIndexErr,
+        });
         const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
-        console.log(
-          `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
-        );
         if (linkedCustomerId) {
           console.log(
             `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(canonicalBookingId)} reason=${reason}`,
@@ -19353,19 +19401,18 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         booking.bookingId,
         record,
       );
-      if (indexResult?.ok) {
-        const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
-        const bookingCustomerIds = _customerBookingIdsFromRecord(record);
-        console.log(
-          `[CUSTOMER_BOOKING_INDEX][UPSERT][OK] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${_maskPublicDriverLoginValue(bookingCustomerIds[0] || "") || "-"} booking=${_bookingIntentMask(booking.bookingId)} count=${Number(indexResult?.count || 0)}`,
-        );
-      }
+      _logCustomerBookingIndexUpsert({
+        bookingId: booking.bookingId,
+        rec: record,
+        result: indexResult,
+      });
     } catch (customerIndexErr) {
-      const scopeMask = _bookingIntentScopeMask(resolveBookingTenantScopeFromRecord(record));
+      _logCustomerBookingIndexUpsert({
+        bookingId: booking.bookingId,
+        rec: record,
+        error: customerIndexErr,
+      });
       const reason = safeStr(customerIndexErr?.message || customerIndexErr, 140) || "unknown";
-      console.log(
-        `[CUSTOMER_BOOKING_INDEX][UPSERT][WARN] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
-      );
       if (linkedCustomerId) {
         console.log(
           `[CUSTOMER_PHONE_LINK][INDEX_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
