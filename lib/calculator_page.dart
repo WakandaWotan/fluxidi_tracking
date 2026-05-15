@@ -759,9 +759,50 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return _buildQuotePayload(dt);
   }
 
+  Map<String, dynamic>? _quoteAvailabilityMap(Map<String, dynamic> quote) {
+    final raw = quote['availability'];
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
+  bool? _quoteAvailabilityValue(Map<String, dynamic> quote) {
+    final availability = _quoteAvailabilityMap(quote);
+    if (availability == null) return null;
+    if (availability['checked'] != true) return null;
+    final rawAvailable = availability['available'];
+    if (rawAvailable is bool) return rawAvailable;
+    return null;
+  }
+
+  String _availabilityAvailableMessage() {
+    return _labelFor(
+      nl: 'Voertuig beschikbaar rond dit tijdstip.',
+      en: 'Vehicle available around this time.',
+      fr: 'Véhicule disponible à cet horaire.',
+      es: 'Vehículo disponible en este horario.',
+    );
+  }
+
+  String _availabilityUnavailableMessage() {
+    return _labelFor(
+      nl: 'Geen voertuig beschikbaar op dit tijdstip. Kies een ander tijdstip en bereken opnieuw.',
+      en: 'No vehicle is available at this time. Choose another time and recalculate.',
+      fr: 'Aucun véhicule disponible à cet horaire. Choisissez un autre horaire et recalculez.',
+      es: 'No hay vehículos disponibles en este horario. Elige otro horario y vuelve a calcular.',
+    );
+  }
+
   void _openBookingConfirmation() {
     final quote = _lastQuote;
     if (quote == null) return;
+    final availability = _quoteAvailabilityValue(quote);
+    if (availability == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_availabilityUnavailableMessage())),
+      );
+      return;
+    }
     final dt =
         _pickupDateTime ?? DateTime.now().add(const Duration(minutes: 15));
     final payload = _lastQuoteRequestPayload != null
@@ -1301,6 +1342,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   : 0.0) +
               waitDisplayMin;
     final showTotalMetrics = returnSelected || waitDisplayMin > 0;
+    final availability = _quoteAvailabilityValue(q);
+    final availabilityIsAvailable = availability == true;
+    final availabilityMessage = availability == null
+        ? null
+        : (availability
+              ? _availabilityAvailableMessage()
+              : _availabilityUnavailableMessage());
     final distanceLabel = showTotalMetrics
         ? _labelFor(
             nl: 'Afstand totaal',
@@ -1679,6 +1727,51 @@ class _CalculatorPageState extends State<CalculatorPage> {
               ],
             ),
           ),
+          if (availabilityMessage != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: availabilityIsAvailable
+                    ? const Color(0xFF133126)
+                    : const Color(0xFF3A1D22),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: availabilityIsAvailable
+                      ? const Color(0xFF2F8E62)
+                      : const Color(0xFFAA4E5F),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    availabilityIsAvailable
+                        ? Icons.check_circle_outline
+                        : Icons.warning_amber_rounded,
+                    size: 16,
+                    color: availabilityIsAvailable
+                        ? const Color(0xFF86E0B8)
+                        : const Color(0xFFFFC9C9),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      availabilityMessage,
+                      style: TextStyle(
+                        color: availabilityIsAvailable
+                            ? const Color(0xFFD9FFE6)
+                            : const Color(0xFFFFE2E2),
+                        fontSize: 11.8,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           ...detailsRows.map((e) => _kv(e.key, e.value)),
           const SizedBox(height: 8),
@@ -3205,8 +3298,36 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     }
   }
 
+  bool _quoteAvailabilityBlocksBooking() {
+    final rawAvailability = widget.quote['availability'];
+    final availability = rawAvailability is Map<String, dynamic>
+        ? rawAvailability
+        : (rawAvailability is Map
+              ? Map<String, dynamic>.from(rawAvailability)
+              : null);
+    if (availability == null) return false;
+    if (availability['checked'] != true) return false;
+    return availability['available'] == false;
+  }
+
+  String _availabilityUnavailableMessage() {
+    return _localizedText(
+      nl: 'Geen voertuig beschikbaar op dit tijdstip. Kies een ander tijdstip en bereken opnieuw.',
+      en: 'No vehicle is available at this time. Choose another time and recalculate.',
+      fr: 'Aucun véhicule disponible à cet horaire. Choisissez un autre horaire et recalculez.',
+      es: 'No hay vehículos disponibles en este horario. Elige otro horario y vuelve a calcular.',
+    );
+  }
+
   Future<void> _onConfirmBooking() async {
     FocusScope.of(context).unfocus();
+    if (_quoteAvailabilityBlocksBooking()) {
+      final availabilityMessage = _availabilityUnavailableMessage();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(availabilityMessage)));
+      return;
+    }
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim();
