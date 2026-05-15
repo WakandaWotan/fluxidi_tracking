@@ -22453,20 +22453,51 @@ function _isSubscriptionActive(status) {
   return s === "active" || s === "valid";
 }
 
+function _normalizePartnerPublicReadSource(env) {
+  const raw = String(env?.PARTNER_PUBLIC_READ_SOURCE || "").trim().toLowerCase();
+  if (
+    raw === "v2_first_fallback_v1" ||
+    raw === "v2_only" ||
+    raw === "v1_only"
+  ) {
+    return raw;
+  }
+  return "v2_first_fallback_v1";
+}
+
 async function _loadPartnerDirectory(env) {
   const fallback = PARTNER_DIRECTORY_SEED
     .map(_normalizePartnerEntry)
     .filter((p) => p !== null);
   if (!env?.BOOKING_KV) return fallback;
-  const raw = await env.BOOKING_KV.get(PARTNER_DIRECTORY_KEY, { type: "json" });
-  const incoming = Array.isArray(raw)
-    ? raw
-    : (raw && typeof raw === "object" && Array.isArray(raw.partners) ? raw.partners : null);
-  if (!Array.isArray(incoming)) return fallback;
-  const normalized = incoming
-    .map(_normalizePartnerEntry)
-    .filter((p) => p !== null);
-  return normalized.length > 0 ? normalized : fallback;
+  const readSource = _normalizePartnerPublicReadSource(env);
+  const readDirectoryByKey = async (key) => {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const incoming = Array.isArray(raw)
+      ? raw
+      : (raw && typeof raw === "object" && Array.isArray(raw.partners) ? raw.partners : null);
+    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    const normalized = incoming
+      .map(_normalizePartnerEntry)
+      .filter((p) => p !== null);
+    return { ok: true, normalized };
+  };
+  const readV1 = async () => {
+    const out = await readDirectoryByKey(PARTNER_DIRECTORY_KEY);
+    if (!out.ok) return fallback;
+    return out.normalized.length > 0 ? out.normalized : fallback;
+  };
+  if (readSource === "v1_only") {
+    return readV1();
+  }
+  const outV2 = await readDirectoryByKey(PUBLIC_PARTNER_DIRECTORY_V2_KEY);
+  if (outV2.ok && outV2.normalized.length > 0) {
+    return outV2.normalized;
+  }
+  if (readSource === "v2_only") {
+    return fallback;
+  }
+  return readV1();
 }
 
 function _normalizeNearbyRadiusKm(value) {
@@ -22750,21 +22781,38 @@ async function _loadPartnerBookingRoutes(env) {
     .map(_normalizePartnerBookingRouteEntry)
     .filter((entry) => entry !== null);
   if (!env?.BOOKING_KV) return fallback;
-  const raw = await env.BOOKING_KV.get(PARTNER_BOOKING_ROUTE_KEY, {
-    type: "json",
-  });
-  const incoming = Array.isArray(raw)
-    ? raw
-    : raw &&
-        typeof raw === "object" &&
-        Array.isArray(raw.routes)
-    ? raw.routes
-    : null;
-  if (!Array.isArray(incoming)) return fallback;
-  const normalized = incoming
-    .map(_normalizePartnerBookingRouteEntry)
-    .filter((entry) => entry !== null);
-  return normalized.length > 0 ? normalized : fallback;
+  const readSource = _normalizePartnerPublicReadSource(env);
+  const readRoutesByKey = async (key) => {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const incoming = Array.isArray(raw)
+      ? raw
+      : raw &&
+          typeof raw === "object" &&
+          Array.isArray(raw.routes)
+      ? raw.routes
+      : null;
+    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    const normalized = incoming
+      .map(_normalizePartnerBookingRouteEntry)
+      .filter((entry) => entry !== null);
+    return { ok: true, normalized };
+  };
+  const readV1 = async () => {
+    const out = await readRoutesByKey(PARTNER_BOOKING_ROUTE_KEY);
+    if (!out.ok) return fallback;
+    return out.normalized.length > 0 ? out.normalized : fallback;
+  };
+  if (readSource === "v1_only") {
+    return readV1();
+  }
+  const outV2 = await readRoutesByKey(PUBLIC_PARTNER_BOOKING_ROUTES_V2_KEY);
+  if (outV2.ok && outV2.normalized.length > 0) {
+    return outV2.normalized;
+  }
+  if (readSource === "v2_only") {
+    return fallback;
+  }
+  return readV1();
 }
 
 function _isPartnerBookingRouteActive(entry) {
@@ -23116,15 +23164,35 @@ async function _loadPublicPartnerProfiles(env) {
     .map(_normalizePublicPartnerProfileEntry)
     .filter((p) => p !== null);
   if (!env?.BOOKING_KV) return fallback;
-  const raw = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
-  const incoming = Array.isArray(raw)
-    ? raw
-    : (raw && typeof raw === "object" && Array.isArray(raw.profiles) ? raw.profiles : null);
-  if (!Array.isArray(incoming)) return fallback;
-  const normalized = incoming
-    .map(_normalizePublicPartnerProfileEntry)
-    .filter((p) => p !== null);
-  return normalized;
+  const readSource = _normalizePartnerPublicReadSource(env);
+  const readProfilesByKey = async (key) => {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const incoming = Array.isArray(raw)
+      ? raw
+      : (raw && typeof raw === "object" && Array.isArray(raw.profiles) ? raw.profiles : null);
+    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    const normalized = incoming
+      .map(_normalizePublicPartnerProfileEntry)
+      .filter((p) => p !== null);
+    return { ok: true, normalized };
+  };
+  const readV1 = async () => {
+    const out = await readProfilesByKey(PARTNER_PROFILES_KEY);
+    if (!out.ok) return fallback;
+    return out.normalized;
+  };
+  if (readSource === "v1_only") {
+    return readV1();
+  }
+  const outV2 = await readProfilesByKey(PUBLIC_PARTNER_PROFILES_V2_KEY);
+  if (outV2.ok) {
+    // Preserve legacy semantics: a valid but empty profiles list is accepted.
+    return outV2.normalized;
+  }
+  if (readSource === "v2_only") {
+    return fallback;
+  }
+  return readV1();
 }
 
 async function getPublicPartnerProfileById(env, partnerId) {
