@@ -515,7 +515,7 @@ function _adminTokenFromRequest(request, url) {
   const auth = request.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (m && (m[1] || "").trim()) return m[1].trim();
-  return (url.searchParams.get("admin_token") || "").trim();
+  return "";
 }
 
 async function _allocatorRequest(env, pickupIso, payload) {
@@ -16028,39 +16028,9 @@ async function oauthCallback(request, env) {
   const base = getBaseUrl(request);
   const redirectUri = `${base}/oauth/callback`;
 
-  // Legacy manual flow: keep existing behavior unchanged when no state is provided.
+  // Require signed OAuth state. Legacy no-state callbacks are rejected to avoid token exposure.
   if (!state) {
-    const tokens = await exchangeCodeForTokens({
-      code,
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      redirectUri
-    });
-
-    const refresh = tokens.refresh_token || "";
-
-    return html(`
-      <div style="font-family: ui-sans-serif, system-ui; max-width: 900px; margin: 40px auto; line-height: 1.4;">
-        <h1>✅ OAuth gelukt</h1>
-
-        <h3>1) Refresh token</h3>
-        <p>Kopieer dit naar Cloudflare → Worker → Settings → Variables & Secrets:</p>
-        <pre style="padding:12px; background:#0f0f10; color:#fff; border-radius:12px; overflow:auto;">${escapeHtml(refresh || "(geen refresh_token ontvangen — klik /oauth/start opnieuw en zorg dat prompt=consent gebruikt wordt)")}</pre>
-
-        <h3>2) Cloudflare secrets die je moet zetten</h3>
-        <ul>
-          <li><b>GOOGLE_REFRESH_TOKEN</b> = (bovenstaande waarde)</li>
-          <li><b>GOOGLE_CALENDAR_ID</b> = <code>primary</code> (simpel) of een specifieke calendar id</li>
-        </ul>
-
-        <h3>3) Daarna</h3>
-        <p>Deploy opnieuw en test:</p>
-        <ul>
-          <li><code>POST /availability</code></li>
-          <li><code>POST /book</code></li>
-        </ul>
-      </div>
-    `);
+    return html("<h2>OAuth state ontbreekt of ongeldig</h2><p>Start opnieuw vanuit de beveiligde admin OAuth flow.</p>", 400);
   }
 
   let scopedState = null;

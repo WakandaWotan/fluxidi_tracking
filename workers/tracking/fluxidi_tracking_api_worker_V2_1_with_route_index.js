@@ -53,9 +53,6 @@ function getToken(req, url) {
   const b = getBearerToken(req);
   if (b) return b;
 
-  const q = url.searchParams.get("admin_token")?.trim();
-  if (q) return q;
-
   return "";
 }
 
