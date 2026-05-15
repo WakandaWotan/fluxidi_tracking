@@ -17687,26 +17687,48 @@ async function handleBooking(payload, env, request) {
     );
     const booking_uuid = (crypto?.randomUUID ? crypto.randomUUID() : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`);
     const canonicalBookingId = providedId || await nextHumanBookingId(env, pickup_iso);
-    const publicBookingReference = await allocateAndReservePublicBookingReference(env, {
-      tenant_id: tenantContext.tenant_id,
-      company_id: tenantContext.company_id,
-      pickup_iso,
-      canonical_booking_id: canonicalBookingId,
-      preferred_reference: providedPublicBookingReference || null,
-    });
-    attachPublicBookingReferenceAliases(payload, publicBookingReference);
-    payload.__public_booking_reference = publicBookingReference;
-    const planningReference = await allocateAndReserveDocumentReference(env, {
-      tenant_id: tenantContext.tenant_id,
-      company_id: tenantContext.company_id,
-      sequence_type: "planning",
-      prefix: "PLN",
-      pickup_iso,
-      canonical_booking_id: canonicalBookingId,
-      preferred_reference: providedPlanningReference || null,
-    });
-    attachPlanningReferenceAliases(payload, planningReference);
-    payload.__planning_reference = planningReference;
+    const bookingScopeMask = _bookingIntentScopeMask(idempotencyScope);
+    let publicBookingReference = "";
+    let planningReference = "";
+    let bookingReferencesReserved = false;
+    let allocatorReservationAcquired = false;
+    let bookingPersisted = false;
+    const ensureBookingReferencesReserved = async () => {
+      if (bookingReferencesReserved) return;
+      publicBookingReference = await allocateAndReservePublicBookingReference(env, {
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        pickup_iso,
+        canonical_booking_id: canonicalBookingId,
+        preferred_reference: providedPublicBookingReference || null,
+      });
+      attachPublicBookingReferenceAliases(payload, publicBookingReference);
+      payload.__public_booking_reference = publicBookingReference;
+      planningReference = await allocateAndReserveDocumentReference(env, {
+        tenant_id: tenantContext.tenant_id,
+        company_id: tenantContext.company_id,
+        sequence_type: "planning",
+        prefix: "PLN",
+        pickup_iso,
+        canonical_booking_id: canonicalBookingId,
+        preferred_reference: providedPlanningReference || null,
+      });
+      attachPlanningReferenceAliases(payload, planningReference);
+      payload.__planning_reference = planningReference;
+      bookingReferencesReserved = true;
+    };
+    const releaseAllocatorReservationSafely = async () => {
+      if (!allocatorReservationAcquired || bookingPersisted) return;
+      try {
+        await _allocatorRequest(env, pickup_iso, {
+          action: "release",
+          booking_id: canonicalBookingId,
+          tenantScope: fleetScope,
+        });
+      } catch (_) {
+        // Best-effort rollback; never mask original flow outcome.
+      }
+    };
     const customerPhoneLinkScopeMask = _bookingIntentScopeMask({
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
@@ -17961,6 +17983,9 @@ async function handleBooking(payload, env, request) {
               tenantScope: fleetScope,
             });
             if (!alloc?.allowed) {
+              console.log(
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+              );
               return {
                 ok: false,
                 error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
@@ -17973,6 +17998,7 @@ async function handleBooking(payload, env, request) {
                 },
               };
             }
+            allocatorReservationAcquired = true;
             if (alloc?.assigned_vehicle_id) {
               resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
               resolvedAssignedDriver = alloc?.assigned_driver || null;
@@ -17987,6 +18013,9 @@ async function handleBooking(payload, env, request) {
               tenantScope: fleetScope,
             });
             if (!vehicleCapacity.ok) {
+              console.log(
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+              );
               return {
                 ok: false,
                 error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
@@ -18011,6 +18040,7 @@ async function handleBooking(payload, env, request) {
         // calendar event. Availability has been checked above; creation happens
         // only when Mollie has actually reported "paid".
         if (business_detected && !molliePaidConfirmed) {
+          await ensureBookingReferencesReserved();
           calendarPaymentHandled = true;
           const nowIso = new Date().toISOString();
           const provisionalRecord = {
@@ -18222,6 +18252,7 @@ async function handleBooking(payload, env, request) {
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
           );
+          bookingPersisted = true;
           const pay = await mollieCreatePayment(
             {
               ...payload,
@@ -18571,6 +18602,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tenantScope: fleetScope,
         });
         if (!alloc?.allowed) {
+          console.log(
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+          );
           return {
             ok: false,
             error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
@@ -18583,6 +18617,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             },
           };
         }
+        allocatorReservationAcquired = true;
         if (alloc?.assigned_vehicle_id) {
           resolvedAssignedVehicleId = String(alloc.assigned_vehicle_id);
           resolvedAssignedDriver = alloc?.assigned_driver || null;
@@ -18597,6 +18632,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tenantScope: fleetScope,
         });
         if (!vehicleCapacity.ok) {
+          console.log(
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+          );
           return {
             ok: false,
             error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
@@ -18618,6 +18656,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     }
 
     if ((!calendarConfigured || calendarSyncSuppressed) && business_detected && !molliePaidConfirmed && !calendarPaymentHandled) {
+      await ensureBookingReferencesReserved();
       const pay = await mollieCreatePayment(
         {
           ...payload,
@@ -18825,6 +18864,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         `booking:${canonicalBookingId}`,
         JSON.stringify(provisionalRecord),
       );
+      bookingPersisted = true;
       try {
         await upsertCustomerScopedBookingIndexForBooking(
           env,
@@ -18895,6 +18935,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     // Build booking object used by email templates
     // bookingId already computed earlier (canonicalBookingId) + booking_uuid
+    await ensureBookingReferencesReserved();
 
     const booking = {
       bookingId: canonicalBookingId,
@@ -19135,18 +19176,9 @@ Retour route: ${return_from || to} → ${return_to || from}`,
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
+      bookingPersisted = true;
     } catch (persistErr) {
-      if (availabilityMode === "multi_vehicle") {
-        try {
-          await _allocatorRequest(env, pickup_iso, {
-            action: "release",
-            booking_id: canonicalBookingId,
-            tenantScope: fleetScope,
-          });
-        } catch (_) {
-          // Best-effort rollback; do not mask original persistence error.
-        }
-      }
+      await releaseAllocatorReservationSafely();
       throw persistErr;
     }
     try {
@@ -19332,6 +19364,7 @@ return {
       invoice
     };
   } catch (e) {
+    await releaseAllocatorReservationSafely();
     return { ok: false, error: String(e?.message || e) };
   }
 }
