@@ -1273,6 +1273,20 @@ Future<int> _bootstrapCustomerSessionAndMergeBookings({
         session,
       );
       if (stored == null) continue;
+      final aliases = _customerBookingAliasesFromStored(stored);
+      final hidden = await CustomerBookingsStore.instance
+          .isAnyReferenceAliasHidden(
+            aliases,
+            tenantIdHint: stored.tenantId,
+            companyIdHint: stored.companyId,
+            customerSessionIdHint: session.customerId,
+          );
+      if (hidden) {
+        debugPrint(
+          '[CUSTOMER_BOOTSTRAP][SKIP_HIDDEN] booking=${_safeRefPreview(stored.canonicalBookingId)}',
+        );
+        continue;
+      }
       await CustomerBookingsStore.instance.upsert(stored);
       merged += 1;
     }
@@ -15578,6 +15592,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       for (final booking in _bookings) {
         aliases.addAll(_aliasesForSavedBooking(booking));
       }
+      await CustomerBookingsStore.instance.markHiddenByAnyReferenceAliases(
+        aliases,
+      );
       await CustomerBookingsStore.instance
           .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
             aliases,
@@ -16062,6 +16079,11 @@ _removeLocalCustomerBookingEverywhere({
   final sortedAliases = aliases.toList(growable: false)..sort();
   debugPrint(
     '[CUSTOMER_BOOKING][DELETE_REQ] booking=${_safeRefPreview(bookingForLog)} aliases=${sortedAliases.join(',')}',
+  );
+  final hideMarked = await CustomerBookingsStore.instance
+      .markHiddenByAnyReferenceAliases(aliases);
+  debugPrint(
+    '[CUSTOMER_BOOKING][HIDE_MARK] aliases=${sortedAliases.join(',')} ok=$hideMarked',
   );
   final result = await CustomerBookingsStore.instance
       .removeByAnyReferenceAliasesAcrossKnownCustomerScopesForDisplayOnly(
@@ -16694,6 +16716,13 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     );
     if (confirmed != true) return;
     try {
+      final aliases = <String>{};
+      for (final booking in _bookings) {
+        aliases.addAll(_customerBookingAliasesFromStored(booking));
+      }
+      await CustomerBookingsStore.instance.markHiddenByAnyReferenceAliases(
+        aliases,
+      );
       await CustomerBookingStore.instance.clearLocalTestData();
       if (!mounted) return;
       setState(() {

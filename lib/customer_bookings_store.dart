@@ -956,6 +956,8 @@ class CustomerBookingsStore {
   static final CustomerBookingsStore instance = CustomerBookingsStore._();
 
   static const String _fileName = 'customer_bookings_v1.json';
+  static const String _hiddenAliasesFileName =
+      'customer_bookings_hidden_aliases_v1.json';
   static const String _stateDirName = 'customer_state';
 
   List<StoredCustomerBooking>? _cache;
@@ -1021,6 +1023,28 @@ class CustomerBookingsStore {
       '[LOCAL_SCOPE][CUSTOMER_BOOKINGS_PATH] scope=customer_session path=${file.path}',
     );
     return file;
+  }
+
+  Future<File> _scopedHiddenAliasesFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final scopedFile = await _scopedFile(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    return File(
+      '${scopedFile.parent.path}${Platform.pathSeparator}$_hiddenAliasesFileName',
+    );
+  }
+
+  Future<File> _customerSessionHiddenAliasesFile({
+    required String customerId,
+  }) async {
+    final scopedFile = await _customerSessionScopedFile(customerId: customerId);
+    return File(
+      '${scopedFile.parent.path}${Platform.pathSeparator}$_hiddenAliasesFileName',
+    );
   }
 
   Future<File?> _file() async {
@@ -1385,6 +1409,157 @@ class CustomerBookingsStore {
         await swapFile.delete();
       }
     }
+  }
+
+  Future<Set<String>> _readHiddenAliasesFromFile(File file) async {
+    if (!await file.exists()) return <String>{};
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) return <String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <String>{};
+      final aliases = <String>{};
+      for (final entry in decoded) {
+        if (entry is String) {
+          final normalized = _normalizedReference(entry);
+          if (normalized.isNotEmpty) aliases.add(normalized);
+          continue;
+        }
+        if (entry is Map) {
+          final alias = _normalizedReference((entry['alias'] ?? '').toString());
+          if (alias.isNotEmpty) aliases.add(alias);
+        }
+      }
+      return aliases;
+    } catch (err) {
+      debugPrint('[CUSTOMER_BOOKINGS][HIDDEN_LOAD_ERROR] $err');
+      return <String>{};
+    }
+  }
+
+  Future<void> _writeHiddenAliasesToFile(File file, Set<String> aliases) async {
+    final normalized = aliases.toList(growable: false)..sort();
+    final payload = normalized
+        .map((alias) => <String, dynamic>{'alias': alias})
+        .toList(growable: false);
+    await _enqueueWrite(() async {
+      try {
+        await _atomicWriteJsonArray(file: file, payload: payload);
+      } catch (err) {
+        debugPrint('[CUSTOMER_BOOKINGS][HIDDEN_SAVE_ERROR] $err');
+      }
+    });
+  }
+
+  Future<List<File>> _hiddenAliasesTargets({
+    String? tenantIdHint,
+    String? companyIdHint,
+    String? customerSessionIdHint,
+    required bool includeActiveScope,
+    required bool includeCacheScope,
+    required bool includeValidSessionFallback,
+  }) async {
+    final filesByPath = <String, File>{};
+    Future<void> addScoped(String tenantId, String companyId) async {
+      final tenant = tenantId.trim();
+      final company = companyId.trim();
+      if (tenant.isEmpty || company.isEmpty) return;
+      final file = await _scopedHiddenAliasesFile(
+        tenantId: tenant,
+        companyId: company,
+      );
+      filesByPath[file.path] = file;
+    }
+
+    Future<void> addSession(String customerId) async {
+      final normalized = customerId.trim();
+      if (normalized.isEmpty) return;
+      final file = await _customerSessionHiddenAliasesFile(
+        customerId: normalized,
+      );
+      filesByPath[file.path] = file;
+    }
+
+    await addScoped(tenantIdHint ?? '', companyIdHint ?? '');
+    await addSession(customerSessionIdHint ?? '');
+
+    if (includeActiveScope) {
+      final activeScope = _activeLocalScope();
+      if (activeScope != null) {
+        await addScoped(activeScope.tenantId, activeScope.companyId);
+      }
+    }
+
+    if (includeCacheScope) {
+      final key = _cacheScopeKey.trim();
+      if (key.startsWith('customer_session::')) {
+        final customerId = key.substring('customer_session::'.length).trim();
+        await addSession(customerId);
+      } else if (key.contains('::')) {
+        final parts = key.split('::');
+        if (parts.length == 2) {
+          await addScoped(parts[0], parts[1]);
+        }
+      }
+    }
+
+    if (includeValidSessionFallback) {
+      final customerId = await _activeValidCustomerSessionId();
+      await addSession(customerId);
+    }
+
+    return filesByPath.values.toList(growable: false);
+  }
+
+  Future<bool> markHiddenByAnyReferenceAliases(Set<String> aliases) async {
+    final normalizedAliases = _normalizedReferenceSet(aliases);
+    if (normalizedAliases.isEmpty) return false;
+    final targets = await _hiddenAliasesTargets(
+      includeActiveScope: true,
+      includeCacheScope: true,
+      includeValidSessionFallback: true,
+    );
+    if (targets.isEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][HIDDEN_MARK][SKIP] reason=missing_tenant_company_scope',
+      );
+      return false;
+    }
+    var wroteAny = false;
+    for (final file in targets) {
+      final current = await _readHiddenAliasesFromFile(file);
+      final merged = <String>{...current, ...normalizedAliases};
+      if (merged.length == current.length) continue;
+      await _writeHiddenAliasesToFile(file, merged);
+      wroteAny = true;
+    }
+    return wroteAny || targets.isNotEmpty;
+  }
+
+  Future<bool> isAnyReferenceAliasHidden(
+    Set<String> aliases, {
+    String? tenantIdHint,
+    String? companyIdHint,
+    String? customerSessionIdHint,
+  }) async {
+    final normalizedAliases = _normalizedReferenceSet(aliases);
+    if (normalizedAliases.isEmpty) return false;
+    final targets = await _hiddenAliasesTargets(
+      tenantIdHint: tenantIdHint,
+      companyIdHint: companyIdHint,
+      customerSessionIdHint: customerSessionIdHint,
+      includeActiveScope: true,
+      includeCacheScope: true,
+      includeValidSessionFallback: true,
+    );
+    for (final file in targets) {
+      final current = await _readHiddenAliasesFromFile(file);
+      if (current.isEmpty) continue;
+      if (current.any(normalizedAliases.contains)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   int _findIndex(
