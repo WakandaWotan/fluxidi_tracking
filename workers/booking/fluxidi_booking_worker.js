@@ -14142,10 +14142,16 @@ GET /oauth/callback
         const postcode = String(url.searchParams.get("postcode") || "").trim();
         const latRaw = url.searchParams.get("lat");
         const lngRaw = url.searchParams.get("lng");
-        const hasGeoInput = latRaw != null || lngRaw != null;
-        const lat = _safePublicNumber(latRaw, { min: -90, max: 90 });
-        const lng = _safePublicNumber(lngRaw, { min: -180, max: 180 });
+        const hasAnyGeoParam = latRaw != null || lngRaw != null;
+        const hasExplicitLat = String(latRaw || "").trim().length > 0;
+        const hasExplicitLng = String(lngRaw || "").trim().length > 0;
+        const hasGeoInput = hasExplicitLat && hasExplicitLng;
+        const lat = hasGeoInput ? _safePublicNumber(latRaw, { min: -90, max: 90 }) : null;
+        const lng = hasGeoInput ? _safePublicNumber(lngRaw, { min: -180, max: 180 }) : null;
         const radiusKm = _normalizeNearbyRadiusKm(url.searchParams.get("radius_km"));
+        if (!hasGeoInput && hasAnyGeoParam) {
+          return json({ ok: false, error: "valid lat and lng are required" }, 400);
+        }
         if (hasGeoInput && (lat == null || lng == null)) {
           return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
@@ -22373,6 +22379,38 @@ function _haversineDistanceKm(lat1, lng1, lat2, lng2) {
   return 6371 * c;
 }
 
+function _isCanonicalPublicPartnerId(partnerId) {
+  return _safePublicText(partnerId, 120).startsWith("company:");
+}
+
+function _publicPartnerDedupeKey(entry) {
+  const tenantId = sanitizeTenantString(entry?.routeTenantId, 80);
+  const companyId = sanitizeTenantString(entry?.routeCompanyId, 80);
+  if (tenantId && companyId) return `scope:${tenantId}:${companyId}`;
+  const companyName = sanitizeTenantString(
+    entry?.p?.company_name ?? entry?.p?.companyName,
+    160,
+  )
+    .toLowerCase()
+    .trim();
+  if (companyName) return `company:${companyName}`;
+  const partnerId = _safePublicText(entry?.p?.partner_id ?? entry?.p?.partnerId, 120);
+  return `partner:${partnerId || "unknown"}`;
+}
+
+function _preferPublicPartnerCandidate(currentEntry, nextEntry) {
+  if (!currentEntry) return nextEntry;
+  if (!nextEntry) return currentEntry;
+  const currentCanonical = _isCanonicalPublicPartnerId(
+    currentEntry?.p?.partner_id ?? currentEntry?.p?.partnerId,
+  );
+  const nextCanonical = _isCanonicalPublicPartnerId(
+    nextEntry?.p?.partner_id ?? nextEntry?.p?.partnerId,
+  );
+  if (nextCanonical && !currentCanonical) return nextEntry;
+  return currentEntry;
+}
+
 async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
@@ -22380,6 +22418,12 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
   const normalizedQueryRadiusKm = _normalizeNearbyRadiusKm(radiusKm);
   const partners = await _loadPartnerDirectory(env);
   const profiles = await _loadPublicPartnerProfiles(env);
+  const routes = await _loadPartnerBookingRoutes(env);
+  const routeByPartnerId = new Map(
+    routes
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => [entry.partner_id, entry]),
+  );
   const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
   const publicMediaByPartnerId = new Map(
     visibleProfiles
@@ -22417,28 +22461,47 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         ];
       }),
   );
-  return partners
+  const matchedPartners = partners
     .map((p, idx) => ({ p, idx }))
     .filter(({ p }) => p.is_active === true)
     .filter(({ p }) => _isSubscriptionActive(p.subscription_status))
     .map(({ p, idx }) => {
       const profileCoverage = coverageByPartnerId.get(p.partner_id) || {};
+      const routeEntry = routeByPartnerId.get(p.partner_id) || null;
+      const directoryPostcodes = Array.isArray(p.supported_postcodes)
+        ? p.supported_postcodes
+        : [];
+      const directoryPrimaryPostcode = _normalizePostcode(
+        p.primary_postcode ?? p.primaryPostcode,
+      );
+      const profilePrimaryPostcode = _normalizePostcode(
+        profileCoverage.primary_postcode ?? profileCoverage.primaryPostcode,
+      );
       const supportedSet = new Set(
-        Array.isArray(p.supported_postcodes) ? p.supported_postcodes : [],
+        directoryPostcodes
+          .map(_normalizePostcode)
+          .filter((code) => !!code),
       );
       const profilePostcodes = Array.isArray(profileCoverage.postcodes)
         ? profileCoverage.postcodes
         : [];
-      for (const code of profilePostcodes) supportedSet.add(code);
+      if (directoryPrimaryPostcode) supportedSet.add(directoryPrimaryPostcode);
+      if (profilePrimaryPostcode) supportedSet.add(profilePrimaryPostcode);
+      for (const code of profilePostcodes) {
+        const normalized = _normalizePostcode(code);
+        if (normalized) supportedSet.add(normalized);
+      }
       const supportedPostcodes = Array.from(supportedSet);
       const primaryPostcode = _normalizePostcode(
-        p.primary_postcode || profileCoverage.primary_postcode,
+        directoryPrimaryPostcode || profilePrimaryPostcode,
       );
       return {
         p,
         idx,
         supportedPostcodes,
         primaryPostcode,
+        routeTenantId: sanitizeTenantString(routeEntry?.tenant_id ?? routeEntry?.tenantId, 80),
+        routeCompanyId: sanitizeTenantString(routeEntry?.company_id ?? routeEntry?.companyId, 80),
         coverageLat: _safePublicNumber(profileCoverage.lat, { min: -90, max: 90 }),
         coverageLng: _safePublicNumber(profileCoverage.lng, { min: -180, max: 180 }),
         coverageRadiusKm: _normalizeNearbyRadiusKm(profileCoverage.service_radius_km),
@@ -22483,7 +22546,22 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       const bRank = b.primaryPostcode && b.primaryPostcode === needle ? 0 : 1;
       if (aRank !== bRank) return aRank - bRank;
       return a.idx - b.idx;
-    })
+    });
+  const dedupedByKey = new Map();
+  const dedupeOrder = [];
+  for (const entry of matchedPartners) {
+    const dedupeKey = _publicPartnerDedupeKey(entry);
+    if (!dedupedByKey.has(dedupeKey)) {
+      dedupedByKey.set(dedupeKey, entry);
+      dedupeOrder.push(dedupeKey);
+      continue;
+    }
+    const currentEntry = dedupedByKey.get(dedupeKey);
+    dedupedByKey.set(dedupeKey, _preferPublicPartnerCandidate(currentEntry, entry));
+  }
+  return dedupeOrder
+    .map((dedupeKey) => dedupedByKey.get(dedupeKey))
+    .filter((entry) => !!entry)
     .map((entry) => {
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
