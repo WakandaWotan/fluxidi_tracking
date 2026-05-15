@@ -9263,10 +9263,6 @@ async function handleCompanyBootstrap(request, env) {
       entry.public_display_name ?? entry.publicDisplayName,
       160,
     );
-    const employeeNumber = sanitizeTenantString(
-      entry.employee_number ?? entry.employeeNumber,
-      80,
-    );
     const phone = sanitizeTenantString(entry.phone, 64);
     const assignedVehicleId = sanitizeTenantString(
       entry.assigned_vehicle_id ?? entry.assignedVehicleId,
@@ -9296,7 +9292,15 @@ async function handleCompanyBootstrap(request, env) {
         entry.profile_photo_url ??
         entry.profilePhotoUrl,
     );
-    const rawLoginCode = sanitizeTenantString(
+    const storedDriverCodeLast4 = sanitizeTenantString(
+      entry.driver_code_last4 ?? entry.driverCodeLast4,
+      12,
+    );
+    const storedLoginCodeLast4 = sanitizeTenantString(
+      entry.login_code_last4 ?? entry.loginCodeLast4,
+      12,
+    );
+    const legacyLoginSecret = sanitizeTenantString(
       entry.driver_code ??
         entry.driverCode ??
         entry.login_code ??
@@ -9307,10 +9311,17 @@ async function handleCompanyBootstrap(request, env) {
         entry.chauffeurCode,
       80,
     );
+    const legacyDerivedLast4 = _driverCodeLast4(legacyLoginSecret);
+    const driverCodeLast4 = storedDriverCodeLast4 || legacyDerivedLast4;
+    const loginCodeLast4 = storedLoginCodeLast4 || driverCodeLast4;
+    const explicitHasLoginCode = _coerceBoolean(
+      entry.has_login_code ?? entry.hasLoginCode,
+      false,
+    );
     const hasLoginCode =
-      rawLoginCode.length > 0 ||
+      explicitHasLoginCode ||
+      legacyLoginSecret.length > 0 ||
       sanitizeTenantString(entry.driver_code_hash ?? entry.driverCodeHash, 200).length > 0;
-    const driverCodeLast4 = rawLoginCode.length >= 4 ? rawLoginCode.slice(-4) : "";
     drivers.push({
       driver_id: driverId,
       driverId: driverId,
@@ -9324,12 +9335,6 @@ async function handleCompanyBootstrap(request, env) {
         ? {
             public_display_name: publicDisplayName,
             publicDisplayName: publicDisplayName,
-          }
-        : {}),
-      ...(employeeNumber
-        ? {
-            employee_number: employeeNumber,
-            employeeNumber: employeeNumber,
           }
         : {}),
       ...(phone ? { phone } : {}),
@@ -9367,10 +9372,12 @@ async function handleCompanyBootstrap(request, env) {
         : {}),
       has_login_code: hasLoginCode,
       hasLoginCode: hasLoginCode,
-      ...(driverCodeLast4
+      ...((driverCodeLast4 || loginCodeLast4)
         ? {
             driver_code_last4: driverCodeLast4,
             driverCodeLast4: driverCodeLast4,
+            login_code_last4: loginCodeLast4,
+            loginCodeLast4: loginCodeLast4,
           }
         : {}),
     });
