@@ -3135,6 +3135,17 @@ function _driverCodeLast4(value) {
   return text.length <= 4 ? text : text.slice(-4);
 }
 
+function _allowDriverLoginPlaintextFallback(env) {
+  const raw = sanitizeTenantString(
+    env?.DRIVER_LOGIN_ALLOW_PLAINTEXT_FALLBACK,
+    40,
+  )
+    .trim()
+    .toLowerCase();
+  if (raw === "false" || raw === "0") return false;
+  return true;
+}
+
 function _driverLoginHashCandidates(normalizedCode, salt) {
   const code = _normalizeDriverLoginCode(normalizedCode);
   if (!code) return [];
@@ -3144,7 +3155,7 @@ function _driverLoginHashCandidates(normalizedCode, salt) {
   return out;
 }
 
-async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
+async function _driverRecordMatchesLoginCode(driverRecord, enteredCode, env = null) {
   const normalizedEntered = _normalizeDriverLoginCode(enteredCode);
   if (!normalizedEntered) return { matched: false, mode: "none" };
   const hash = sanitizeTenantString(
@@ -3164,22 +3175,28 @@ async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
       if (_constantTimeEquals(hash, computed)) return { matched: true, mode: "hash" };
     }
   }
-  const codeCandidates = [
-    driverRecord?.driver_code,
-    driverRecord?.driverCode,
-    driverRecord?.login_code,
-    driverRecord?.loginCode,
-    driverRecord?.employee_number,
-    driverRecord?.employeeNumber,
-    driverRecord?.driver_id,
-    driverRecord?.driverId,
-    driverRecord?.id,
-  ]
-    .map(_normalizeDriverLoginCode)
-    .filter((value) => !!value);
-  for (const candidate of codeCandidates) {
-    if (_constantTimeEquals(candidate, normalizedEntered)) {
-      return { matched: true, mode: "plaintext" };
+  if (_allowDriverLoginPlaintextFallback(env)) {
+    const codeCandidates = [
+      { matched_field: "driver_code", value: driverRecord?.driver_code },
+      { matched_field: "driver_code", value: driverRecord?.driverCode },
+      { matched_field: "login_code", value: driverRecord?.login_code },
+      { matched_field: "login_code", value: driverRecord?.loginCode },
+      { matched_field: "employee_number", value: driverRecord?.employee_number },
+      { matched_field: "employee_number", value: driverRecord?.employeeNumber },
+    ]
+      .map((entry) => ({
+        matched_field: entry.matched_field,
+        value: _normalizeDriverLoginCode(entry.value),
+      }))
+      .filter((entry) => !!entry.value);
+    for (const candidate of codeCandidates) {
+      if (_constantTimeEquals(candidate.value, normalizedEntered)) {
+        return {
+          matched: true,
+          mode: "plaintext",
+          matched_field: candidate.matched_field,
+        };
+      }
     }
   }
   return { matched: false, mode: "none" };
@@ -8910,13 +8927,15 @@ async function handlePublicDriverLogin(body, env) {
   const entries = Object.values(driverIndex?.drivers || {});
   let match = null;
   let matchMode = "none";
+  let matchField = "";
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     if (entry.is_active !== true) continue;
-    const matchResult = await _driverRecordMatchesLoginCode(entry, driverCode);
+    const matchResult = await _driverRecordMatchesLoginCode(entry, driverCode, env);
     if (matchResult?.matched) {
       match = entry;
       matchMode = matchResult.mode || "none";
+      matchField = sanitizeTenantString(matchResult.matched_field, 64);
       break;
     }
   }
@@ -8937,6 +8956,7 @@ async function handlePublicDriverLogin(body, env) {
       company: _maskPublicDriverLoginValue(scope.company_id),
       driver: _maskPublicDriverLoginValue(driverId),
       reason: "legacy_plaintext_match",
+      matched_field: matchField || "unknown",
     }));
   }
   const driverName = sanitizeTenantString(
