@@ -8527,6 +8527,150 @@ async function handleAdminCompanyDriverLoginCodeRotate(request, url, env) {
   );
 }
 
+async function _revokeScopedDriverSessionsInKv(env, { tenantId = "", companyId = "", driverId = "" } = {}) {
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const tenant = sanitizeTenantString(tenantId, 80);
+  const company = sanitizeTenantString(companyId, 80);
+  const driver = sanitizeTenantString(driverId, 96);
+  if (!tenant || !company || !driver) {
+    return {
+      ok: true,
+      scanned_count: 0,
+      revoked_count: 0,
+      malformed_count: 0,
+      skipped_count: 0,
+      scan_complete: true,
+    };
+  }
+
+  let cursor = undefined;
+  let scannedCount = 0;
+  let revokedCount = 0;
+  let malformedCount = 0;
+  let skippedCount = 0;
+  let scanComplete = true;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: PUBLIC_DRIVER_SESSION_KEY_PREFIX,
+      limit: 1000,
+      cursor,
+    });
+    for (const item of listed?.keys || []) {
+      const key = sanitizeTenantString(item?.name, 260);
+      if (!key || !key.startsWith(PUBLIC_DRIVER_SESSION_KEY_PREFIX)) continue;
+      scannedCount += 1;
+      try {
+        const record = await env.BOOKING_KV.get(key, { type: "json" });
+        if (!record || typeof record !== "object" || Array.isArray(record)) {
+          malformedCount += 1;
+          continue;
+        }
+        const role = sanitizeTenantString(record.role, 24).toLowerCase();
+        const recTenant = sanitizeTenantString(record.tenant_id ?? record.tenantId, 80);
+        const recCompany = sanitizeTenantString(record.company_id ?? record.companyId, 80);
+        const recDriver = sanitizeTenantString(record.driver_id ?? record.driverId, 96);
+        if (role !== "driver" || !recTenant || !recCompany || !recDriver) {
+          malformedCount += 1;
+          continue;
+        }
+        if (recTenant !== tenant || recCompany !== company || recDriver !== driver) {
+          skippedCount += 1;
+          continue;
+        }
+        await env.BOOKING_KV.delete(key);
+        revokedCount += 1;
+      } catch (_) {
+        malformedCount += 1;
+      }
+    }
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) {
+      scanComplete = false;
+      break;
+    }
+  } while (cursor);
+
+  return {
+    ok: true,
+    scanned_count: scannedCount,
+    revoked_count: revokedCount,
+    malformed_count: malformedCount,
+    skipped_count: skippedCount,
+    scan_complete: scanComplete,
+  };
+}
+
+async function handleAdminCompanyDriverSessionsRevoke(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId ?? body.id,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const existingDriver = existing?.drivers?.[driverId] || null;
+  if (!existingDriver || typeof existingDriver !== "object") {
+    return json({ ok: false, error: "driver_not_found" }, 404);
+  }
+
+  let revokeResult = null;
+  try {
+    revokeResult = await _revokeScopedDriverSessionsInKv(env, {
+      tenantId,
+      companyId,
+      driverId,
+    });
+  } catch (err) {
+    return json(
+      {
+        ok: false,
+        error: "driver_session_revoke_failed",
+        reason: sanitizeTenantString(err?.message ?? err, 140) || "unknown",
+      },
+      500,
+    );
+  }
+
+  console.info(JSON.stringify({
+    event: "driver_sessions_revoked",
+    tenant: _maskPublicDriverLoginValue(tenantId),
+    company: _maskPublicDriverLoginValue(companyId),
+    driver: _maskPublicDriverLoginValue(driverId),
+    revoked_count: Number(revokeResult?.revoked_count || 0),
+    scanned_count: Number(revokeResult?.scanned_count || 0),
+  }));
+
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      revoked_count: Number(revokeResult?.revoked_count || 0),
+      scanned_count: Number(revokeResult?.scanned_count || 0),
+    },
+    200,
+  );
+}
+
 async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
   _requireAdmin(request, url, env);
@@ -14204,6 +14348,13 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyDriverLoginCodeRotate(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/sessions/revoke") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriverSessionsRevoke(request, url, env);
       }
 
       if (url.pathname === "/admin/company/driver-link-code/create") {
