@@ -6637,42 +6637,116 @@ function _customerBookingIdsFromRecord(rec) {
   return Array.from(ids);
 }
 
+function _applyCustomerIdentityToBookingRecord(rec, customerId, { phoneHash = "", emailHash = "" } = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return rec;
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  const normalizedPhoneHash = sanitizeTenantString(phoneHash, 200).toLowerCase();
+  const normalizedEmailHash = sanitizeTenantString(emailHash, 200).toLowerCase();
+  if (!normalizedCustomerId) return rec;
+  rec.customer_id = normalizedCustomerId;
+  rec.customerId = normalizedCustomerId;
+  if (normalizedPhoneHash) {
+    rec.phone_hash = normalizedPhoneHash;
+    rec.phoneHash = normalizedPhoneHash;
+  }
+  if (normalizedEmailHash) {
+    rec.email_hash = normalizedEmailHash;
+    rec.emailHash = normalizedEmailHash;
+  }
+  if (rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)) {
+    rec.booking.customer_id = normalizedCustomerId;
+    rec.booking.customerId = normalizedCustomerId;
+    if (normalizedPhoneHash) {
+      rec.booking.phone_hash = normalizedPhoneHash;
+      rec.booking.phoneHash = normalizedPhoneHash;
+    }
+    if (normalizedEmailHash) {
+      rec.booking.email_hash = normalizedEmailHash;
+      rec.booking.emailHash = normalizedEmailHash;
+    }
+    if (rec.booking.customer && typeof rec.booking.customer === "object" && !Array.isArray(rec.booking.customer)) {
+      rec.booking.customer.customer_id = normalizedCustomerId;
+      rec.booking.customer.customerId = normalizedCustomerId;
+      if (normalizedPhoneHash) {
+        rec.booking.customer.phone_hash = normalizedPhoneHash;
+        rec.booking.customer.phoneHash = normalizedPhoneHash;
+      }
+      if (normalizedEmailHash) {
+        rec.booking.customer.email_hash = normalizedEmailHash;
+        rec.booking.customer.emailHash = normalizedEmailHash;
+      }
+    }
+  }
+  if (rec.customer && typeof rec.customer === "object" && !Array.isArray(rec.customer)) {
+    rec.customer.customer_id = normalizedCustomerId;
+    rec.customer.customerId = normalizedCustomerId;
+    if (normalizedPhoneHash) {
+      rec.customer.phone_hash = normalizedPhoneHash;
+      rec.customer.phoneHash = normalizedPhoneHash;
+    }
+    if (normalizedEmailHash) {
+      rec.customer.email_hash = normalizedEmailHash;
+      rec.customer.emailHash = normalizedEmailHash;
+    }
+  }
+  return rec;
+}
+
 function _enrichBookingRecordWithLinkedCustomer(rec, linkedCustomerId, linkedPhoneHash) {
   if (!rec || typeof rec !== "object" || Array.isArray(rec)) return rec;
   const customerId = _normalizeCustomerIdentityId(linkedCustomerId);
   const phoneHash = sanitizeTenantString(linkedPhoneHash, 200).toLowerCase();
   if (!customerId) return rec;
-  rec.customer_id = customerId;
-  rec.customerId = customerId;
-  if (phoneHash) {
-    rec.phone_hash = phoneHash;
-    rec.phoneHash = phoneHash;
+  return _applyCustomerIdentityToBookingRecord(rec, customerId, { phoneHash });
+}
+
+async function _ensureFallbackScopedCustomerIdentityForBookingRecord({ bookingId, rec } = {}) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return { ok: false, skipped: true, reason: "invalid_record" };
   }
-  if (rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)) {
-    rec.booking.customer_id = customerId;
-    rec.booking.customerId = customerId;
-    if (phoneHash) {
-      rec.booking.phone_hash = phoneHash;
-      rec.booking.phoneHash = phoneHash;
-    }
-    if (rec.booking.customer && typeof rec.booking.customer === "object" && !Array.isArray(rec.booking.customer)) {
-      rec.booking.customer.customer_id = customerId;
-      rec.booking.customer.customerId = customerId;
-      if (phoneHash) {
-        rec.booking.customer.phone_hash = phoneHash;
-        rec.booking.customer.phoneHash = phoneHash;
-      }
-    }
+  if (_customerBookingIdsFromRecord(rec).length > 0) {
+    return { ok: false, skipped: true, reason: "customer_id_already_present" };
   }
-  if (rec.customer && typeof rec.customer === "object" && !Array.isArray(rec.customer)) {
-    rec.customer.customer_id = customerId;
-    rec.customer.customerId = customerId;
-    if (phoneHash) {
-      rec.customer.phone_hash = phoneHash;
-      rec.customer.phoneHash = phoneHash;
-    }
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const tenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(recordScope?.company_id, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, skipped: true, reason: "missing_scope" };
   }
-  return rec;
+  const contacts = _bookingCustomerContacts(rec);
+  const phoneSource = Array.isArray(contacts?.phones)
+    ? contacts.phones.find((value) => _looksLikeE164Phone(value))
+    : "";
+  const emailSource = Array.isArray(contacts?.emails) ? contacts.emails[0] : "";
+  const source = phoneSource ? "phone" : (emailSource ? "email" : "");
+  const identityValue = phoneSource || emailSource || "";
+  if (!source || !identityValue) {
+    return { ok: false, skipped: true, reason: "missing_contact_identity" };
+  }
+  const stableFingerprint = `tenant:${tenantId}|company:${companyId}|${source}:${identityValue}`;
+  const stableHash = sanitizeTenantString(await _sha256Hex(stableFingerprint), 200).toLowerCase();
+  const shortHash = safeStr(stableHash, 48).slice(0, 24);
+  const fallbackCustomerId = _normalizeCustomerIdentityId(`cust_${shortHash}`);
+  if (!fallbackCustomerId) {
+    return { ok: false, skipped: true, reason: "fallback_customer_id_invalid" };
+  }
+  let phoneHash = "";
+  let emailHash = "";
+  if (source === "phone") {
+    phoneHash = sanitizeTenantString(await _sha256Hex(identityValue), 200).toLowerCase();
+  } else {
+    emailHash = sanitizeTenantString(await _sha256Hex(identityValue), 200).toLowerCase();
+  }
+  _applyCustomerIdentityToBookingRecord(rec, fallbackCustomerId, { phoneHash, emailHash });
+  const scopeMask = _bookingIntentScopeMask({ tenant_id: tenantId, company_id: companyId, hasScope: true });
+  console.info({
+    event: "customer_id_fallback_derived",
+    booking_id_preview: _bookingIntentMask(bookingId),
+    tenant: scopeMask.tenant || "-",
+    company: scopeMask.company || "-",
+    source,
+  });
+  return { ok: true, source, customer_id: fallbackCustomerId };
 }
 
 async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
@@ -18454,6 +18528,10 @@ async function handleBooking(payload, env, request) {
             trip: null,
           };
           _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
+          await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+            bookingId: canonicalBookingId,
+            rec: provisionalRecord,
+          });
           await env.BOOKING_KV.put(
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
@@ -19070,6 +19148,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         trip: null,
       };
       _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
+      await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+        bookingId: canonicalBookingId,
+        rec: provisionalRecord,
+      });
       await env.BOOKING_KV.put(
         `booking:${canonicalBookingId}`,
         JSON.stringify(provisionalRecord),
@@ -19387,6 +19469,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       trip: null
     };
     _enrichBookingRecordWithLinkedCustomer(record, linkedCustomerId, linkedPhoneHash);
+    await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+      bookingId: booking.bookingId,
+      rec: record,
+    });
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
