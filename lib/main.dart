@@ -10909,6 +10909,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
   static const Color _panelBg = Color(0xFF101113);
   static const Color _subPanelBg = Color(0xFF15120A);
   static const Color _gold = Color(0xFFE5B641);
+  static final Set<String> _avatarPrecacheQueuedUrls = <String>{};
 
   String _t({
     required String nl,
@@ -12106,17 +12107,48 @@ class CompanyDriverManagementPage extends StatelessWidget {
       return lower.startsWith('https://') || lower.startsWith('http://');
     }
 
+    bool isPreferredFluxidiMediaUrl(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.contains('/public/media/') ||
+          lower.contains('public-media/') ||
+          lower.contains('/public-media/');
+    }
+
+    final candidates = <String>[];
     final profilePhotoPath = driver.profilePhotoPath?.trim() ?? '';
-    if (isHttpUrl(profilePhotoPath)) return profilePhotoPath;
+    if (isHttpUrl(profilePhotoPath)) candidates.add(profilePhotoPath);
     final publicPortraitUrl = driver.publicPortraitUrl?.trim() ?? '';
-    if (isHttpUrl(publicPortraitUrl)) return publicPortraitUrl;
-    return null;
+    if (isHttpUrl(publicPortraitUrl)) candidates.add(publicPortraitUrl);
+    if (candidates.isEmpty) return null;
+    for (final candidate in candidates) {
+      if (isPreferredFluxidiMediaUrl(candidate)) return candidate;
+    }
+    return candidates.first;
   }
 
-  Widget _driverCardAvatar(DriverProfile driver) {
-    final photoPath = _driverCardPhotoPath(driver);
-    final networkUrl = _driverCardNetworkPhotoUrl(driver);
-    Widget initialsFallback() => Center(
+  void _queuePrecacheDriverAvatars(
+    BuildContext context,
+    List<DriverProfile> drivers,
+  ) {
+    final urls = <String>[];
+    for (final driver in drivers) {
+      final url = _driverCardNetworkPhotoUrl(driver);
+      if (url == null || url.isEmpty) continue;
+      if (_avatarPrecacheQueuedUrls.add(url)) {
+        urls.add(url);
+      }
+    }
+    if (urls.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      for (final url in urls) {
+        precacheImage(NetworkImage(url), context).catchError((_) {});
+      }
+    });
+  }
+
+  Widget _driverCardInitialsFallback(DriverProfile driver) {
+    return Center(
       child: Text(
         _driverCardInitials(driver),
         style: const TextStyle(
@@ -12126,6 +12158,45 @@ class CompanyDriverManagementPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _driverCardNetworkAvatarImage(
+    DriverProfile driver,
+    String networkUrl,
+  ) {
+    final initialsFallback = _driverCardInitialsFallback(driver);
+    return Image.network(
+      networkUrl,
+      fit: BoxFit.cover,
+      cacheWidth: 160,
+      cacheHeight: 160,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded || frame != null) return child;
+        return initialsFallback;
+      },
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return initialsFallback;
+      },
+      errorBuilder: (_, __, ___) => initialsFallback,
+    );
+  }
+
+  Widget _driverCardLocalAvatarImage(DriverProfile driver, String photoPath) {
+    final initialsFallback = _driverCardInitialsFallback(driver);
+    return Image.file(
+      File(photoPath),
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.low,
+      errorBuilder: (_, __, ___) => initialsFallback,
+    );
+  }
+
+  Widget _driverCardAvatar(DriverProfile driver) {
+    final photoPath = _driverCardPhotoPath(driver);
+    final networkUrl = _driverCardNetworkPhotoUrl(driver);
     return Container(
       width: 52,
       height: 52,
@@ -12136,18 +12207,10 @@ class CompanyDriverManagementPage extends StatelessWidget {
       ),
       child: ClipOval(
         child: photoPath != null
-            ? Image.file(
-                File(photoPath),
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => initialsFallback(),
-              )
+            ? _driverCardLocalAvatarImage(driver, photoPath)
             : (networkUrl != null
-                  ? Image.network(
-                      networkUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => initialsFallback(),
-                    )
-                  : initialsFallback()),
+                  ? _driverCardNetworkAvatarImage(driver, networkUrl)
+                  : _driverCardInitialsFallback(driver)),
       ),
     );
   }
@@ -12611,6 +12674,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                         fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
                   )
                   .toList(growable: false);
+              _queuePrecacheDriverAvatars(context, visible);
               if (visible.isEmpty) {
                 return Center(
                   child: Padding(
