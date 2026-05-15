@@ -15009,7 +15009,20 @@ GET /oauth/callback
           pathParts[3] === "pdf" &&
           request.method === "GET"
         ) {
-          return await handleBookingInvoicePdfGet(request, url, env, bookingId);
+          const adminAuthorized = hasValidAdminToken(request, url, env);
+          let invoiceTenantScope = null;
+          if (adminAuthorized) {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            invoiceTenantScope = scopedRoute.scope;
+          }
+          return await handleBookingInvoicePdfGet(
+            request,
+            url,
+            env,
+            bookingId,
+            invoiceTenantScope,
+          );
         }
 
         if (
@@ -15019,7 +15032,19 @@ GET /oauth/callback
           request.method === "POST"
         ) {
           const body = await safeJson(request);
-          const out = await handleManualReceiptEmail(request, url, env, bookingId, body);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const out = await handleManualReceiptEmail(
+            request,
+            url,
+            env,
+            bookingId,
+            body,
+            tenantScope,
+          );
+          if (out?.error === "missing_tenant_scope") return json(out, 400);
+          if (out?.error === "forbidden") return json(out, 403);
           if (out?.ok && out?.status === "already_sent") return json(out, 200);
           if (out?.ok) return json(out, 200);
           if (out?.error === "invoice_artifact_not_persisted") {
@@ -23774,7 +23799,7 @@ async function _driverSessionCanAccessBookingInvoice(request, rec, env) {
   }
 }
 
-async function handleBookingInvoicePdfGet(request, url, env, bookingId) {
+async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantScope = null) {
   let loaded = null;
   try {
     loaded = await loadBookingRecord(env, bookingId);
@@ -23786,6 +23811,14 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId) {
     return json({ ok: false, error: "booking_not_found" }, 404);
   }
   const adminAuthorized = hasValidAdminToken(request, url, env);
+  if (adminAuthorized) {
+    if (!tenantScope?.hasScope) {
+      return json(missingTenantScopeError(), 400);
+    }
+    if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+      return json({ ok: false, error: "forbidden" }, 403);
+    }
+  }
   let allowed = !!adminAuthorized;
   // Customer contact proof (email/phone knowledge) is intentionally insufficient
   // for private financial artifacts. Customer access will be re-enabled via a
@@ -24288,9 +24321,19 @@ async function updateBookingPaymentAuthoritative(
   };
 }
 
-async function handleManualReceiptEmail(request, url, env, bookingId, body = {}) {
+async function handleManualReceiptEmail(
+  request,
+  url,
+  env,
+  bookingId,
+  body = {},
+  tenantScope = null,
+) {
   try {
     _requireAdmin(request, url, env);
+    if (!tenantScope?.hasScope) {
+      return missingTenantScopeError();
+    }
     const manual = body?.manual === true;
     const sourceRaw = safeStr(body?.source || "manual_unknown");
     const source = sanitizeTenantString(sourceRaw || "manual_unknown", 80) || "manual_unknown";
@@ -24308,6 +24351,9 @@ async function handleManualReceiptEmail(request, url, env, bookingId, body = {})
     }
 
     const { key, rec } = await loadBookingRecord(env, bookingId);
+    if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+      return { ok: false, error: "forbidden" };
+    }
     const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
     const bookingLanguageRaw = safeStr(
       booking?.language || booking?.lang || rec?.language || rec?.lang || "nl",
