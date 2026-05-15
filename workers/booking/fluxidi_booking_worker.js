@@ -1634,7 +1634,7 @@ async function loadCommunicationTemplates(
   env,
   scopeOrTenant = null,
   companyIdArg = null,
-  { allowTenantLegacyFallback = true } = {},
+  { allowTenantLegacyFallback = false } = {},
 ) {
   if (!env?.BOOKING_KV) return normalizeCommunicationTemplates(DEFAULT_COMMUNICATION_TEMPLATES);
   const scope =
@@ -12378,7 +12378,10 @@ function maybeNormalizeCommunicationProfile(raw) {
 
 async function resolveTenantCommunicationProfile(env, tenantId = null, companyId = null) {
   let businessProfile = null;
-  let communicationTemplates = null;
+  let communicationTemplates = normalizeCommunicationTemplates(DEFAULT_COMMUNICATION_TEMPLATES);
+  const normalizedTenantId = sanitizeTenantString(tenantId, 80);
+  const normalizedCompanyId = sanitizeTenantString(companyId, 80);
+  const hasScopedCommunicationScope = !!(normalizedTenantId && normalizedCompanyId);
   try {
     businessProfile = await loadBusinessProfile(env, {
       tenant_id: tenantId,
@@ -12387,13 +12390,20 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
   } catch (_) {
     businessProfile = null;
   }
-  try {
-    communicationTemplates = await loadCommunicationTemplates(env, {
-      tenant_id: tenantId,
-      company_id: companyId,
-    });
-  } catch (_) {
-    communicationTemplates = null;
+  if (hasScopedCommunicationScope) {
+    try {
+      communicationTemplates = await loadCommunicationTemplates(
+        env,
+        {
+          tenant_id: normalizedTenantId,
+          company_id: normalizedCompanyId,
+        },
+        null,
+        { allowTenantLegacyFallback: false },
+      );
+    } catch (_) {
+      communicationTemplates = normalizeCommunicationTemplates(DEFAULT_COMMUNICATION_TEMPLATES);
+    }
   }
 
   const business = businessProfile && typeof businessProfile === "object"
@@ -12416,8 +12426,8 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
   ].filter(Boolean);
 
   const mapped = {
-    tenantId: sanitizeTenantString(tenantId, 80),
-    companyId: sanitizeTenantString(companyId, 80),
+    tenantId: normalizedTenantId,
+    companyId: normalizedCompanyId,
     brandName: business?.companyName,
     legalName: business?.legalName || business?.companyName,
     bookingEmail: business?.bookingEmail || business?.bookingsEmail || business?.reservationEmail || business?.reservationsEmail || business?.dispatchEmail,
@@ -14755,7 +14765,7 @@ GET /oauth/callback
         });
         return json({
           ok: true,
-          key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
+          key: scopedKey,
           communication_templates: templates,
         }, 200);
       }
@@ -14784,7 +14794,7 @@ GET /oauth/callback
         );
         return json({
           ok: true,
-          key: scopedKey || TENANT_COMMUNICATION_TEMPLATES_KEY,
+          key: scopedKey,
           communication_templates: templates,
         }, 200);
       }
@@ -23964,7 +23974,29 @@ async function updateBookingPaymentAuthoritative(
     let shouldLogInvoiceCustomerErrors = false;
     try {
       const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
-      const profile = await resolveTenantCommunicationProfile(env);
+      const commTenantId = safeStr(
+        rec?.tenant_id ??
+          rec?.tenantId ??
+          booking?.tenant_id ??
+          booking?.tenantId ??
+          tenantScope?.tenant_id ??
+          tenantScope?.tenantId,
+        80,
+      );
+      const commCompanyId = safeStr(
+        rec?.company_id ??
+          rec?.companyId ??
+          booking?.company_id ??
+          booking?.companyId ??
+          tenantScope?.company_id ??
+          tenantScope?.companyId,
+        80,
+      );
+      const profile = await resolveTenantCommunicationProfile(
+        env,
+        commTenantId,
+        commCompanyId,
+      );
       const adminInvoiceEmail = pickFirstValidEmail(
         profile.invoiceEmail,
         profile.billingEmail,
