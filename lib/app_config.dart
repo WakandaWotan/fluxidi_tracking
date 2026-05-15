@@ -883,6 +883,9 @@ class DriverProfile {
   final String id;
   final String fullName;
   final String employeeNumber;
+  final bool hasLoginCode;
+  final String? driverCodeLast4;
+  final String? loginCodeLast4;
   final String phone;
   final String taxiDriverCardNumber;
   final String taxiDriverCardExpiry;
@@ -902,6 +905,9 @@ class DriverProfile {
     required this.id,
     required this.fullName,
     required this.employeeNumber,
+    this.hasLoginCode = false,
+    this.driverCodeLast4,
+    this.loginCodeLast4,
     required this.phone,
     this.taxiDriverCardNumber = '',
     this.taxiDriverCardExpiry = '',
@@ -918,6 +924,9 @@ class DriverProfile {
     String? id,
     String? fullName,
     String? employeeNumber,
+    bool? hasLoginCode,
+    Object? driverCodeLast4 = _driverProfileUnset,
+    Object? loginCodeLast4 = _driverProfileUnset,
     String? phone,
     String? taxiDriverCardNumber,
     String? taxiDriverCardExpiry,
@@ -933,6 +942,13 @@ class DriverProfile {
       id: id ?? this.id,
       fullName: fullName ?? this.fullName,
       employeeNumber: employeeNumber ?? this.employeeNumber,
+      hasLoginCode: hasLoginCode ?? this.hasLoginCode,
+      driverCodeLast4: identical(driverCodeLast4, _driverProfileUnset)
+          ? this.driverCodeLast4
+          : driverCodeLast4 as String?,
+      loginCodeLast4: identical(loginCodeLast4, _driverProfileUnset)
+          ? this.loginCodeLast4
+          : loginCodeLast4 as String?,
       phone: phone ?? this.phone,
       taxiDriverCardNumber: taxiDriverCardNumber ?? this.taxiDriverCardNumber,
       taxiDriverCardExpiry: taxiDriverCardExpiry ?? this.taxiDriverCardExpiry,
@@ -1274,11 +1290,9 @@ void updateDriver(String id, DriverProfile updated) {
 }
 
 DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
-  final fallbackCode = driver.id.trim();
   final code = driver.employeeNumber.trim();
   if (code.isNotEmpty) return driver;
-  if (fallbackCode.isEmpty) return driver;
-  return driver.copyWith(employeeNumber: fallbackCode);
+  return driver.copyWith(employeeNumber: '');
 }
 
 void deleteDriver(String id) {
@@ -1580,6 +1594,11 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'id': d.id,
     'fullName': d.fullName,
     'employeeNumber': d.employeeNumber,
+    'hasLoginCode': d.hasLoginCode,
+    if ((d.driverCodeLast4 ?? '').trim().isNotEmpty)
+      'driverCodeLast4': d.driverCodeLast4!.trim(),
+    if ((d.loginCodeLast4 ?? '').trim().isNotEmpty)
+      'loginCodeLast4': d.loginCodeLast4!.trim(),
     'phone': d.phone,
     'taxiDriverCardNumber': d.taxiDriverCardNumber,
     'taxiDriverCardExpiry': d.taxiDriverCardExpiry,
@@ -1705,12 +1724,37 @@ DriverProfile _decodeDriver(
       .trim();
   final resolvedEmployeeNumber = employeeNumber.isNotEmpty
       ? employeeNumber
-      : id.trim();
+      : fallback.employeeNumber.trim();
+  final hasLoginCode = () {
+    final raw = m['hasLoginCode'] ?? m['has_login_code'];
+    if (raw is bool) return raw;
+    final text = (raw ?? '').toString().trim().toLowerCase();
+    if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
+    return fallback.hasLoginCode;
+  }();
+  final driverCodeLast4 = () {
+    final text = (m['driverCodeLast4'] ?? m['driver_code_last4'] ?? '')
+        .toString()
+        .trim();
+    if (text.isEmpty) return fallback.driverCodeLast4;
+    return text;
+  }();
+  final loginCodeLast4 = () {
+    final text = (m['loginCodeLast4'] ?? m['login_code_last4'] ?? '')
+        .toString()
+        .trim();
+    if (text.isEmpty) return fallback.loginCodeLast4;
+    return text;
+  }();
 
   return fallback.copyWith(
     id: id,
     fullName: (m['fullName'] ?? fallback.fullName).toString(),
     employeeNumber: resolvedEmployeeNumber,
+    hasLoginCode: hasLoginCode,
+    driverCodeLast4: driverCodeLast4,
+    loginCodeLast4: loginCodeLast4,
     phone: (m['phone'] ?? fallback.phone).toString(),
     taxiDriverCardNumber:
         (m['taxiDriverCardNumber'] ?? fallback.taxiDriverCardNumber).toString(),
@@ -2075,7 +2119,6 @@ Map<String, dynamic> _encodeDriverForBackendIndexPayload(
   }
 
   final driverId = driver.id.trim();
-  final driverCode = driver.employeeNumber.trim();
   final normalizedPhone = normalizedDriverPhoneForBackend(driver.phone);
   final safePublicDriverPhotoUrl = normalizedPublicDriverPhotoUrl(
     driver.publicPortraitUrl,
@@ -2095,14 +2138,6 @@ Map<String, dynamic> _encodeDriverForBackendIndexPayload(
     'full_name': driver.fullName.trim(),
     'fullName': driver.fullName.trim(),
     'name': driver.fullName.trim(),
-    'employee_number': driverCode,
-    'employeeNumber': driverCode,
-    'driver_code': driverCode,
-    'driverCode': driverCode,
-    'login_code': driverCode,
-    'loginCode': driverCode,
-    'chauffeur_code': driverCode,
-    'chauffeurCode': driverCode,
     if (normalizedPhone != null) 'phone': normalizedPhone,
     'is_active': isActiveOverride ?? driver.isActive,
     'isActive': isActiveOverride ?? driver.isActive,
@@ -2237,6 +2272,60 @@ Future<bool> syncDriverIndexEntryToBackend(
     return response.statusCode >= 200 && response.statusCode < 300;
   } catch (_) {
     return false;
+  }
+}
+
+Future<Map<String, dynamic>?> rotateDriverLoginCode({
+  required String driverId,
+  String? tenantId,
+  String? companyId,
+}) async {
+  try {
+    final normalizedDriverId = driverId.trim();
+    if (normalizedDriverId.isEmpty) return null;
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final endpoint = _withAdminTenantCompanyScope(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/company/drivers/login-code/rotate',
+      ),
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
+    );
+    final payload = <String, dynamic>{
+      ...scope,
+      'driver_id': normalizedDriverId,
+      'driverId': normalizedDriverId,
+    };
+    final response = await http
+        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['ok'] != true) return null;
+    final loginCode = (map['login_code'] ?? map['loginCode'] ?? '')
+        .toString()
+        .trim();
+    final driverCodeLast4 =
+        (map['driver_code_last4'] ?? map['driverCodeLast4'] ?? '')
+            .toString()
+            .trim();
+    final loginCodeLast4 =
+        (map['login_code_last4'] ?? map['loginCodeLast4'] ?? '')
+            .toString()
+            .trim();
+    return <String, dynamic>{
+      'ok': true,
+      'login_code': loginCode,
+      'driver_code_last4': driverCodeLast4,
+      'login_code_last4': loginCodeLast4,
+    };
+  } catch (_) {
+    return null;
   }
 }
 
@@ -3526,6 +3615,13 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           remote.employeeNumber,
           local.employeeNumber,
         ),
+        hasLoginCode: remote.hasLoginCode || local.hasLoginCode,
+        driverCodeLast4: ((remote.driverCodeLast4 ?? '').trim().isNotEmpty)
+            ? remote.driverCodeLast4
+            : local.driverCodeLast4,
+        loginCodeLast4: ((remote.loginCodeLast4 ?? '').trim().isNotEmpty)
+            ? remote.loginCodeLast4
+            : local.loginCodeLast4,
         phone: pickTextPreferRemote(remote.phone, local.phone),
         taxiDriverCardNumber: pickTextPreferRemote(
           remote.taxiDriverCardNumber,
@@ -3737,8 +3833,25 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           employeeNumber: textAny(<dynamic>[
             map['employee_number'],
             map['employeeNumber'],
-            driverId,
           ]),
+          hasLoginCode: boolAny(<dynamic>[
+            map['has_login_code'],
+            map['hasLoginCode'],
+          ], false),
+          driverCodeLast4: () {
+            final value = textAny(<dynamic>[
+              map['driver_code_last4'],
+              map['driverCodeLast4'],
+            ]);
+            return value.isEmpty ? null : value;
+          }(),
+          loginCodeLast4: () {
+            final value = textAny(<dynamic>[
+              map['login_code_last4'],
+              map['loginCodeLast4'],
+            ]);
+            return value.isEmpty ? null : value;
+          }(),
           phone: textAny(<dynamic>[map['phone'], '']),
           taxiDriverCardNumber: textAny(<dynamic>[
             map['taxi_driver_card_number'],

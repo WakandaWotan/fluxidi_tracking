@@ -10936,6 +10936,149 @@ class CompanyDriverManagementPage extends StatelessWidget {
     return trimmed;
   }
 
+  String _driverCodeLast4(DriverProfile driver) {
+    final explicitDriverLast4 = (driver.driverCodeLast4 ?? '').trim();
+    if (explicitDriverLast4.isNotEmpty) return explicitDriverLast4;
+    final explicitLoginLast4 = (driver.loginCodeLast4 ?? '').trim();
+    if (explicitLoginLast4.isNotEmpty) return explicitLoginLast4;
+    final legacy = driver.employeeNumber.trim();
+    if (legacy.length >= 4) return legacy.substring(legacy.length - 4);
+    return '';
+  }
+
+  bool _driverHasLoginCode(DriverProfile driver) {
+    if (driver.hasLoginCode) return true;
+    return _driverCodeLast4(driver).isNotEmpty;
+  }
+
+  String _driverCodeStatusLabel(DriverProfile driver) {
+    final last4 = _driverCodeLast4(driver);
+    if (_driverHasLoginCode(driver)) {
+      final suffix = last4.isEmpty ? '' : ' • ****$last4';
+      return _t(
+        nl: 'Code ingesteld$suffix',
+        en: 'Code set$suffix',
+        fr: 'Code defini$suffix',
+        es: 'Codigo configurado$suffix',
+      );
+    }
+    return _t(
+      nl: 'Geen chauffeurcode ingesteld',
+      en: 'No driver code set',
+      fr: 'Aucun code chauffeur defini',
+      es: 'No hay codigo de conductor configurado',
+    );
+  }
+
+  Future<void> _showGeneratedDriverCodeDialog(
+    BuildContext context, {
+    required String loginCode,
+    required String driverName,
+  }) async {
+    final trimmedCode = loginCode.trim();
+    if (trimmedCode.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t(
+            nl: 'Nieuwe chauffeurcode',
+            en: 'New driver code',
+            fr: 'Nouveau code chauffeur',
+            es: 'Nuevo codigo de conductor',
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(
+                nl: 'Bewaar deze code nu. Ze wordt niet opnieuw getoond.',
+                en: 'Store this code now. It will not be shown again.',
+                fr: 'Conservez ce code maintenant. Il ne sera plus affiche.',
+                es: 'Guarda este codigo ahora. No se mostrara de nuevo.',
+              ),
+              style: TextStyle(
+                color: Colors.orangeAccent.withOpacity(0.95),
+                fontSize: 12.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              driverName.trim().isEmpty
+                  ? _t(
+                      nl: 'Chauffeur',
+                      en: 'Driver',
+                      fr: 'Chauffeur',
+                      es: 'Conductor',
+                    )
+                  : _displayDriverName(driverName),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.86),
+                fontSize: 12.8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F1322),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _gold.withOpacity(0.38)),
+              ),
+              child: SelectableText(
+                trimmedCode,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  letterSpacing: 0.4,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: trimmedCode));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _t(
+                      nl: 'Chauffeurcode gekopieerd.',
+                      en: 'Driver code copied.',
+                      fr: 'Code chauffeur copie.',
+                      es: 'Codigo de conductor copiado.',
+                    ),
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.copy_outlined, size: 16),
+            label: Text(
+              _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _driverField(
     TextEditingController ctrl,
     String label, {
@@ -11107,11 +11250,6 @@ class CompanyDriverManagementPage extends StatelessWidget {
     DriverProfile existing,
   ) async {
     final nameCtrl = TextEditingController(text: existing.fullName);
-    final idCtrl = TextEditingController(
-      text: existing.employeeNumber.trim().isEmpty
-          ? existing.id
-          : existing.employeeNumber,
-    );
     final phoneCtrl = TextEditingController(text: existing.phone);
     final taxiCardNumberCtrl = TextEditingController(
       text: existing.taxiDriverCardNumber,
@@ -11526,13 +11664,26 @@ class CompanyDriverManagementPage extends StatelessWidget {
                     nameCtrl,
                     _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
                   ),
-                  _driverField(
-                    idCtrl,
-                    _t(
-                      nl: 'Chauffeurcode',
-                      en: 'Driver code',
-                      fr: 'Code chauffeur',
-                      es: 'Código de conductor',
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F1322),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _gold.withOpacity(0.30)),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Chauffeurcode beheer: gebruik "Nieuwe chauffeurcode genereren".',
+                        en: 'Driver code management: use "Generate new driver code".',
+                        fr: 'Gestion du code chauffeur : utilisez "Generer un nouveau code chauffeur".',
+                        es: 'Gestion del codigo de conductor: usa "Generar nuevo codigo de conductor".',
+                      ),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.78),
+                        fontSize: 11.8,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   _driverField(
@@ -11593,9 +11744,6 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           onPressed: () {
                             final updated = existing.copyWith(
                               fullName: nameCtrl.text.trim(),
-                              employeeNumber: idCtrl.text.trim().isEmpty
-                                  ? existing.id.trim()
-                                  : idCtrl.text.trim(),
                               phone: phoneCtrl.text.trim(),
                               taxiDriverCardNumber: taxiCardNumberCtrl.text
                                   .trim(),
@@ -11719,6 +11867,63 @@ class CompanyDriverManagementPage extends StatelessWidget {
       return (tenantId: resolved, companyId: resolved);
     }
     return (tenantId: kTenantId, companyId: kTenantId);
+  }
+
+  Future<void> _rotateDriverCode(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final scope = _activeCompanyScopeForDriverDelete(driver);
+    final rotated = await rotateDriverLoginCode(
+      driverId: driver.id,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    final ok = rotated != null && rotated['ok'] == true;
+    if (!ok) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Nieuwe chauffeurcode kon niet worden gegenereerd.',
+              en: 'Could not generate a new driver code.',
+              fr: 'Impossible de generer un nouveau code chauffeur.',
+              es: 'No se pudo generar un nuevo codigo de conductor.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final loginCode = (rotated['login_code'] ?? '').toString().trim();
+    final driverCodeLast4 = (rotated['driver_code_last4'] ?? '')
+        .toString()
+        .trim();
+    final loginCodeLast4 = (rotated['login_code_last4'] ?? '')
+        .toString()
+        .trim();
+    final last4 = driverCodeLast4.isNotEmpty
+        ? driverCodeLast4
+        : (loginCodeLast4.isNotEmpty
+              ? loginCodeLast4
+              : (loginCode.length >= 4
+                    ? loginCode.substring(loginCode.length - 4)
+                    : ''));
+    updateDriver(
+      driver.id,
+      driver.copyWith(
+        hasLoginCode: true,
+        driverCodeLast4: last4.isEmpty ? null : last4,
+        loginCodeLast4: last4.isEmpty ? null : last4,
+      ),
+    );
+    if (!context.mounted) return;
+    await _showGeneratedDriverCodeDialog(
+      context,
+      loginCode: loginCode,
+      driverName: driver.fullName,
+    );
   }
 
   Future<void> _deleteDriverFromBackendAndLocal(
@@ -12693,9 +12898,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                   fr: 'Code chauffeur',
                                   es: 'Código de conductor',
                                 ),
-                                d.employeeNumber.trim().isEmpty
-                                    ? d.id
-                                    : d.employeeNumber,
+                                _driverCodeStatusLabel(d),
                                 icon: Icons.badge_outlined,
                               ),
                               _line(
@@ -12875,35 +13078,80 @@ class CompanyDriverManagementPage extends StatelessWidget {
                               const SizedBox(height: 8),
                               Align(
                                 alignment: Alignment.centerRight,
-                                child: OutlinedButton.icon(
-                                  onPressed: () =>
-                                      _openEditDriverDialog(context, d),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    side: BorderSide(
-                                      color: Colors.white.withOpacity(0.24),
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.end,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      onPressed: () =>
+                                          _rotateDriverCode(context, d),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: _gold.withOpacity(
+                                          0.98,
+                                        ),
+                                        side: BorderSide(
+                                          color: _gold.withOpacity(0.34),
+                                        ),
+                                        backgroundColor: const Color(
+                                          0xFF16120A,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.key_outlined,
+                                        size: 16,
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Nieuwe chauffeurcode genereren',
+                                          en: 'Generate new driver code',
+                                          fr: 'Generer un nouveau code chauffeur',
+                                          es: 'Generar nuevo codigo de conductor',
+                                        ),
+                                      ),
                                     ),
-                                    backgroundColor: _panelBg,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(999),
+                                    OutlinedButton.icon(
+                                      onPressed: () =>
+                                          _openEditDriverDialog(context, d),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        side: BorderSide(
+                                          color: Colors.white.withOpacity(0.24),
+                                        ),
+                                        backgroundColor: _panelBg,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 16,
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Bewerken',
+                                          en: 'Edit',
+                                          fr: 'Modifier',
+                                          es: 'Editar',
+                                        ),
+                                      ),
                                     ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                  ),
-                                  icon: const Icon(
-                                    Icons.edit_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _t(
-                                      nl: 'Bewerken',
-                                      en: 'Edit',
-                                      fr: 'Modifier',
-                                      es: 'Editar',
-                                    ),
-                                  ),
+                                  ],
                                 ),
                               ),
                             ],
