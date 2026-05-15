@@ -13947,28 +13947,16 @@ GET /oauth/callback
         console.log(
           `[DRIVER_BOOKINGS][REQ] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)}`,
         );
-        const items = await listBookingsAuthoritative(env, {
+        const items = await listDriverBookingsAuthoritative(env, {
           limit,
           includeHistory,
           tenantScope,
-        });
-        const filtered = items.filter((item) => {
-          const assignedDriverId = bookingAssignedDriverId(item);
-          const assignedVehicleId = bookingAssignedVehicleId(item);
-          if (assignedDriverId && assignedDriverId === session.driver_id) return true;
-          if (
-            session.assigned_vehicle_id &&
-            assignedVehicleId &&
-            assignedVehicleId === session.assigned_vehicle_id
-          ) {
-            return true;
-          }
-          return false;
+          driverSession: session,
         });
         console.log(
-          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${filtered.length}`,
+          `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${items.length}`,
         );
-        return json({ ok: true, items: filtered, count: filtered.length }, 200);
+        return json({ ok: true, items, count: items.length }, 200);
       }
 
       if (url.pathname === "/company/bootstrap") {
@@ -15732,6 +15720,8 @@ function bookingAssignedVehicleId(rec) {
 
 function bookingAssignedDriverId(rec) {
   return _bookingMutationReadPath(rec, [
+    ["assigned_driver_id"],
+    ["assignedDriverId"],
     ["assigned_driver", "driver_id"],
     ["assigned_driver", "driverId"],
     ["assigned_driver", "id"],
@@ -15746,6 +15736,8 @@ function bookingAssignedDriverId(rec) {
     ["booking", "assignedDriver", "driver_id"],
     ["booking", "assignedDriver", "driverId"],
     ["booking", "assignedDriver", "id"],
+    ["booking", "assigned_driver_id"],
+    ["booking", "assignedDriverId"],
     ["booking", "driver_id"],
     ["booking", "driverId"],
     ["record", "booking", "assigned_driver", "driver_id"],
@@ -15754,6 +15746,8 @@ function bookingAssignedDriverId(rec) {
     ["record", "booking", "assignedDriver", "driver_id"],
     ["record", "booking", "assignedDriver", "driverId"],
     ["record", "booking", "assignedDriver", "id"],
+    ["record", "booking", "assigned_driver_id"],
+    ["record", "booking", "assignedDriverId"],
     ["record", "booking", "driver_id"],
     ["record", "booking", "driverId"],
   ]);
@@ -22045,23 +22039,8 @@ function _flattenBookingForRidesList(bookingId, rec) {
     rec?.paymentSource ??
     _pick(rec, ["booking", "payment_source"], null) ??
     _pick(rec, ["booking", "paymentSource"], null);
-  const assignedDriverId =
-    _pick(rec, ["assigned_driver", "driver_id"], null) ??
-    _pick(rec, ["assigned_driver", "driverId"], null) ??
-    _pick(rec, ["assigned_driver", "id"], null) ??
-    _pick(rec, ["assignedDriver", "driver_id"], null) ??
-    _pick(rec, ["assignedDriver", "driverId"], null) ??
-    _pick(rec, ["assignedDriver", "id"], null) ??
-    _pick(rec, ["driver_id"], null) ??
-    _pick(rec, ["driverId"], null) ??
-    _pick(rec, ["booking", "assigned_driver", "driver_id"], null) ??
-    _pick(rec, ["booking", "assigned_driver", "driverId"], null) ??
-    _pick(rec, ["booking", "assigned_driver", "id"], null) ??
-    _pick(rec, ["booking", "assignedDriver", "driver_id"], null) ??
-    _pick(rec, ["booking", "assignedDriver", "driverId"], null) ??
-    _pick(rec, ["booking", "assignedDriver", "id"], null) ??
-    _pick(rec, ["booking", "driver_id"], null) ??
-    _pick(rec, ["booking", "driverId"], null);
+  const assignedDriverId = bookingAssignedDriverId(rec);
+  const assignedVehicleId = bookingAssignedVehicleId(rec);
 
   return {
     booking_id: bookingId,
@@ -22071,9 +22050,8 @@ function _flattenBookingForRidesList(bookingId, rec) {
     tier,
     pax,
     bags,
-    assigned_vehicle_id:
-      _pick(rec, ["assigned_vehicle_id"], null) ??
-      _pick(rec, ["booking", "assigned_vehicle_id"], null),
+    assigned_vehicle_id: assignedVehicleId || null,
+    assignedVehicleId: assignedVehicleId || null,
     ...(assignedDriverId
       ? { assigned_driver_id: assignedDriverId, assignedDriverId: assignedDriverId }
       : {}),
@@ -23649,6 +23627,67 @@ async function listBookingsAuthoritative(
         const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
         // For "available rides", require a valid pickup datetime.
         // Historical/debug records with missing/invalid pickup should stay out of operational list.
+        if (!Number.isFinite(pickupTs)) continue;
+        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+      }
+      out.push(row);
+    }
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  out.sort((a, b) => {
+    const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
+    const tb = b.pickup_iso ? Date.parse(b.pickup_iso) : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
+
+  return out.slice(0, lim);
+}
+
+async function listDriverBookingsAuthoritative(
+  env,
+  { limit = 50, includeHistory = false, tenantScope = null, driverSession = null } = {},
+) {
+  if (!tenantScope?.hasScope) return [];
+  if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const sessionDriverId = _scopeText(driverSession?.driver_id, 96);
+  const sessionVehicleId = _scopeText(driverSession?.assigned_vehicle_id, 128);
+  if (!sessionDriverId && !sessionVehicleId) return [];
+
+  const nowMs = Date.now();
+  const actionableGraceMs = 6 * 60 * 60 * 1000;
+  const cutoffMs = nowMs - actionableGraceMs;
+  const out = [];
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const k of listed?.keys || []) {
+      const name = String(k?.name || "");
+      if (!name.startsWith("booking:")) continue;
+      const bookingId = name.slice("booking:".length);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(name, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+      const assignedDriverId = bookingAssignedDriverId(rec);
+      const assignedVehicleId = bookingAssignedVehicleId(rec);
+      const driverMatch = !!(sessionDriverId && assignedDriverId && sessionDriverId === assignedDriverId);
+      const vehicleMatch = !!(sessionVehicleId && assignedVehicleId && sessionVehicleId === assignedVehicleId);
+      if (!driverMatch && !vehicleMatch) continue;
+      const row = _flattenBookingForRidesList(bookingId, rec);
+      if (
+        !includeHistory &&
+        (row.status === "COMPLETED" || row.status === "CANCELLED")
+      ) continue;
+      if (!includeHistory) {
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
         if (!Number.isFinite(pickupTs)) continue;
         if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
       }
