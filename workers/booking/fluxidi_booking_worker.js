@@ -22465,6 +22465,37 @@ function _normalizePartnerPublicReadSource(env) {
   return "v2_first_fallback_v1";
 }
 
+function _allowPartnerPublicSeedFallback(env, { loader = "" } = {}) {
+  const rawValue = String(env?.PARTNER_PUBLIC_ALLOW_SEED_FALLBACK || "").trim();
+  const normalized = rawValue.toLowerCase();
+  if (!normalized) return true;
+  if (
+    normalized === "true" ||
+    normalized === "1" ||
+    normalized === "yes" ||
+    normalized === "on" ||
+    normalized === "enabled"
+  ) {
+    return true;
+  }
+  if (
+    normalized === "false" ||
+    normalized === "0" ||
+    normalized === "no" ||
+    normalized === "off" ||
+    normalized === "disabled"
+  ) {
+    return false;
+  }
+  console.warn({
+    event: "partner_public_seed_fallback_config",
+    loader: String(loader || "").trim(),
+    value: normalized,
+    reason: "unknown_value_default_true",
+  });
+  return true;
+}
+
 function _logPartnerPublicReaderSource({
   loader,
   mode,
@@ -22495,7 +22526,18 @@ async function _loadPartnerDirectory(env) {
     .map(_normalizePartnerEntry)
     .filter((p) => p !== null);
   const readSource = _normalizePartnerPublicReadSource(env);
+  const allowSeedFallback = _allowPartnerPublicSeedFallback(env, { loader: "directory" });
   if (!env?.BOOKING_KV) {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "directory",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "directory",
       mode: readSource,
@@ -22525,6 +22567,17 @@ async function _loadPartnerDirectory(env) {
   const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readDirectoryByKey(PARTNER_DIRECTORY_KEY);
     if (!out.ok) {
+      if (!allowSeedFallback) {
+        _logPartnerPublicReaderSource({
+          loader: "directory",
+          mode: readSource,
+          source: "disabled_seed",
+          reason: "seed_disabled",
+          level: "warn",
+          v2_count: v2Count,
+        });
+        return [];
+      }
       _logPartnerPublicReaderSource({
         loader: "directory",
         mode: readSource,
@@ -22546,6 +22599,18 @@ async function _loadPartnerDirectory(env) {
         v1_count: out.count,
       });
       return out.normalized;
+    }
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "directory",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+        v2_count: v2Count,
+        v1_count: out.count,
+      });
+      return [];
     }
     _logPartnerPublicReaderSource({
       loader: "directory",
@@ -22574,6 +22639,17 @@ async function _loadPartnerDirectory(env) {
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "directory",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+        v2_count: outV2.count,
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "directory",
       mode: readSource,
@@ -22868,7 +22944,18 @@ async function _loadPartnerBookingRoutes(env) {
     .map(_normalizePartnerBookingRouteEntry)
     .filter((entry) => entry !== null);
   const readSource = _normalizePartnerPublicReadSource(env);
+  const allowSeedFallback = _allowPartnerPublicSeedFallback(env, { loader: "booking_routes" });
   if (!env?.BOOKING_KV) {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "booking_routes",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "booking_routes",
       mode: readSource,
@@ -22902,6 +22989,17 @@ async function _loadPartnerBookingRoutes(env) {
   const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readRoutesByKey(PARTNER_BOOKING_ROUTE_KEY);
     if (!out.ok) {
+      if (!allowSeedFallback) {
+        _logPartnerPublicReaderSource({
+          loader: "booking_routes",
+          mode: readSource,
+          source: "disabled_seed",
+          reason: "seed_disabled",
+          level: "warn",
+          v2_count: v2Count,
+        });
+        return [];
+      }
       _logPartnerPublicReaderSource({
         loader: "booking_routes",
         mode: readSource,
@@ -22923,6 +23021,18 @@ async function _loadPartnerBookingRoutes(env) {
         v1_count: out.count,
       });
       return out.normalized;
+    }
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "booking_routes",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+        v2_count: v2Count,
+        v1_count: out.count,
+      });
+      return [];
     }
     _logPartnerPublicReaderSource({
       loader: "booking_routes",
@@ -22951,6 +23061,17 @@ async function _loadPartnerBookingRoutes(env) {
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "booking_routes",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+        v2_count: outV2.count,
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "booking_routes",
       mode: readSource,
@@ -23313,7 +23434,18 @@ async function _loadPublicPartnerProfiles(env) {
     .map(_normalizePublicPartnerProfileEntry)
     .filter((p) => p !== null);
   const readSource = _normalizePartnerPublicReadSource(env);
+  const allowSeedFallback = _allowPartnerPublicSeedFallback(env, { loader: "profiles" });
   if (!env?.BOOKING_KV) {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "profiles",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "profiles",
       mode: readSource,
@@ -23343,6 +23475,17 @@ async function _loadPublicPartnerProfiles(env) {
   const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readProfilesByKey(PARTNER_PROFILES_KEY);
     if (!out.ok) {
+      if (!allowSeedFallback) {
+        _logPartnerPublicReaderSource({
+          loader: "profiles",
+          mode: readSource,
+          source: "disabled_seed",
+          reason: "seed_disabled",
+          level: "warn",
+          v2_count: v2Count,
+        });
+        return [];
+      }
       _logPartnerPublicReaderSource({
         loader: "profiles",
         mode: readSource,
@@ -23381,6 +23524,17 @@ async function _loadPublicPartnerProfiles(env) {
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    if (!allowSeedFallback) {
+      _logPartnerPublicReaderSource({
+        loader: "profiles",
+        mode: readSource,
+        source: "disabled_seed",
+        reason: "seed_disabled",
+        level: "warn",
+        v2_count: outV2.count,
+      });
+      return [];
+    }
     _logPartnerPublicReaderSource({
       loader: "profiles",
       mode: readSource,
