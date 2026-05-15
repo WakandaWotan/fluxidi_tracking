@@ -22685,8 +22685,77 @@ function _haversineDistanceKm(lat1, lng1, lat2, lng2) {
   return 6371 * c;
 }
 
-function _isCanonicalPublicPartnerId(partnerId) {
-  return _safePublicText(partnerId, 120).startsWith("company:");
+function _publicPartnerIdPreview(value) {
+  const safe = _safePublicText(value, 120);
+  if (!safe) return "";
+  if (safe.length <= 48) return safe;
+  return `${safe.slice(0, 48)}...`;
+}
+
+function _isCanonicalPublicPartnerId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  if (!raw.startsWith("company:")) return false;
+  const parts = raw.split(":");
+  if (parts.length !== 3) return false;
+  const tenantId = _safePublicText(parts[1], 80);
+  const companyId = _safePublicText(parts[2], 80);
+  if (!tenantId || !companyId) return false;
+  return true;
+}
+
+function _allowLegacyPublicPartnerIdLookup(env, { surface = "" } = {}) {
+  const rawValue = String(env?.PARTNER_PUBLIC_ALLOW_LEGACY_ID_LOOKUP || "").trim();
+  const normalized = rawValue.toLowerCase();
+  if (!normalized) return true;
+  if (
+    normalized === "true" ||
+    normalized === "1" ||
+    normalized === "yes" ||
+    normalized === "on" ||
+    normalized === "enabled"
+  ) {
+    return true;
+  }
+  if (
+    normalized === "false" ||
+    normalized === "0" ||
+    normalized === "no" ||
+    normalized === "off" ||
+    normalized === "disabled"
+  ) {
+    return false;
+  }
+  console.warn({
+    event: "partner_public_legacy_lookup_config",
+    surface: String(surface || "").trim(),
+    reason: "unknown_value_default_true",
+  });
+  return true;
+}
+
+function _logPublicPartnerIdLookupPolicy({
+  surface = "",
+  partnerId = "",
+  canonical = false,
+  action = "allow",
+  reason = "canonical",
+} = {}) {
+  const payload = {
+    event: "partner_public_id_lookup_policy",
+    surface: String(surface || "").trim(),
+    canonical: canonical === true,
+    action: String(action || "").trim(),
+    reason: String(reason || "").trim(),
+  };
+  const preview = _publicPartnerIdPreview(partnerId);
+  if (preview) payload.partner_id_preview = preview;
+  payload.partner_id_type = canonical ? "canonical" : "non_canonical";
+  if (action === "block") {
+    console.warn(payload);
+    return;
+  }
+  console.info(payload);
 }
 
 function _publicPartnerDedupeKey(entry) {
@@ -23095,6 +23164,27 @@ async function resolvePublicPartnerBookingScope(env, partnerId) {
   const requestedPartnerId = _safePublicText(partnerId, 120);
   if (!requestedPartnerId) {
     return { ok: false, error: "public_partner_id is required", status: 400 };
+  }
+  const canonical = _isCanonicalPublicPartnerId(requestedPartnerId);
+  if (!canonical) {
+    const allowLegacyLookup = _allowLegacyPublicPartnerIdLookup(env, { surface: "quote_route" });
+    if (!allowLegacyLookup) {
+      _logPublicPartnerIdLookupPolicy({
+        surface: "quote_route",
+        partnerId: requestedPartnerId,
+        canonical: false,
+        action: "block",
+        reason: "legacy_disabled",
+      });
+      return { ok: false, error: "public partner not found", status: 404 };
+    }
+    _logPublicPartnerIdLookupPolicy({
+      surface: "quote_route",
+      partnerId: requestedPartnerId,
+      canonical: false,
+      action: "allow",
+      reason: "legacy_allowed",
+    });
   }
   const routes = await _loadPartnerBookingRoutes(env);
   const match = routes.find((entry) => entry.partner_id === requestedPartnerId);
@@ -23551,6 +23641,27 @@ async function _loadPublicPartnerProfiles(env) {
 async function getPublicPartnerProfileById(env, partnerId) {
   const needle = _safePublicText(partnerId, 120);
   if (!needle) return null;
+  const canonical = _isCanonicalPublicPartnerId(needle);
+  if (!canonical) {
+    const allowLegacyLookup = _allowLegacyPublicPartnerIdLookup(env, { surface: "profile" });
+    if (!allowLegacyLookup) {
+      _logPublicPartnerIdLookupPolicy({
+        surface: "profile",
+        partnerId: needle,
+        canonical: false,
+        action: "block",
+        reason: "legacy_disabled",
+      });
+      return null;
+    }
+    _logPublicPartnerIdLookupPolicy({
+      surface: "profile",
+      partnerId: needle,
+      canonical: false,
+      action: "allow",
+      reason: "legacy_allowed",
+    });
+  }
   const profiles = await _loadPublicPartnerProfiles(env);
   const profile = profiles.find((p) => p.partner_id === needle);
   if (!profile) return null;
