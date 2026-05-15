@@ -2046,6 +2046,14 @@ function _globalCustomerProfileKey(customerId) {
   return `${CUSTOMER_GLOBAL_PROFILE_KEY_PREFIX}${safeCustomerId}${CUSTOMER_GLOBAL_PROFILE_KEY_SUFFIX}`;
 }
 
+function customerProfileScopedKey(tenantId, companyId, customerId) {
+  const normalizedTenantId = sanitizeTenantString(tenantId, 80);
+  const normalizedCompanyId = sanitizeTenantString(companyId, 80);
+  const normalizedCustomerId = _normalizeCustomerIdentityId(customerId);
+  if (!normalizedTenantId || !normalizedCompanyId || !normalizedCustomerId) return "";
+  return `customer:profile:v1:tenant:${normalizedTenantId}:company:${normalizedCompanyId}:customer:${normalizedCustomerId}`;
+}
+
 function _globalCustomerScopeLinksKey(customerId) {
   const safeCustomerId = _normalizeCustomerIdentityId(customerId);
   if (!safeCustomerId) return "";
@@ -6527,11 +6535,21 @@ async function handlePublicCustomerProfileGet(request, env) {
   if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
   const session = await _loadCustomerSessionFromRequest(request, env);
   if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const tenantId = sanitizeTenantString(session.tenant_id, 80);
+  const companyId = sanitizeTenantString(session.company_id, 80);
   const customerId = _normalizeCustomerIdentityId(session.customer_id);
-  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
-  const profileKey = _globalCustomerProfileKey(customerId);
-  if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
-  const stored = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  if (!tenantId || !companyId || !customerId) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const scopedProfileKey = customerProfileScopedKey(tenantId, companyId, customerId);
+  if (!scopedProfileKey) return json({ ok: false, error: "unauthorized" }, 401);
+  let stored = await env.BOOKING_KV.get(scopedProfileKey, { type: "json" });
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    const legacyProfileKey = _globalCustomerProfileKey(customerId);
+    if (legacyProfileKey) {
+      stored = await env.BOOKING_KV.get(legacyProfileKey, { type: "json" });
+    }
+  }
   const profile = _projectPublicCustomerProfileResponse(customerId, stored);
   return json({ ok: true, profile }, 200);
 }
@@ -6543,11 +6561,21 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   }
   const session = await _loadCustomerSessionFromRequest(request, env);
   if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const tenantId = sanitizeTenantString(session.tenant_id, 80);
+  const companyId = sanitizeTenantString(session.company_id, 80);
   const customerId = _normalizeCustomerIdentityId(session.customer_id);
-  if (!customerId) return json({ ok: false, error: "unauthorized" }, 401);
-  const profileKey = _globalCustomerProfileKey(customerId);
+  if (!tenantId || !companyId || !customerId) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const profileKey = customerProfileScopedKey(tenantId, companyId, customerId);
   if (!profileKey) return json({ ok: false, error: "unauthorized" }, 401);
-  const existingRaw = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  let existingRaw = await env.BOOKING_KV.get(profileKey, { type: "json" });
+  if (!existingRaw || typeof existingRaw !== "object" || Array.isArray(existingRaw)) {
+    const legacyProfileKey = _globalCustomerProfileKey(customerId);
+    if (legacyProfileKey) {
+      existingRaw = await env.BOOKING_KV.get(legacyProfileKey, { type: "json" });
+    }
+  }
   const existing = _projectPublicCustomerProfileResponse(customerId, existingRaw);
   const incoming = _sanitizePublicCustomerProfilePayload(body);
   const sessionPhone = _customerSessionPreferredPhoneE164(session);
