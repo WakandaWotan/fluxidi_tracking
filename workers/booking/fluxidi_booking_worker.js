@@ -14654,10 +14654,26 @@ GET /oauth/callback
         const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
         if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
 
-        const scopeCompanyId = sanitizeTenantString(explicitScope.company_id, 120);
+        const canonicalPartnerId = _canonicalPublicPartnerIdFromScope(explicitScope);
+        if (!canonicalPartnerId) {
+          return json({ ok: false, error: "invalid_partner_scope" }, 400);
+        }
+        const incomingPartnerAlias = _safePublicText(
+          incoming.partner_id ?? incoming.partnerId,
+          120,
+        );
         const normalizedProfile = _normalizePublicPartnerProfileEntry({
           ...incoming,
-          partner_id: incoming.partner_id ?? incoming.partnerId ?? scopeCompanyId,
+          partner_id: canonicalPartnerId,
+          partnerId: canonicalPartnerId,
+          ...(incomingPartnerAlias && incomingPartnerAlias !== canonicalPartnerId
+            ? {
+                legacy_partner_id: incomingPartnerAlias,
+                legacyPartnerId: incomingPartnerAlias,
+                public_partner_alias: incomingPartnerAlias,
+                publicPartnerAlias: incomingPartnerAlias,
+              }
+            : {}),
           company_name: incoming.company_name ?? incoming.companyName,
         });
         if (!normalizedProfile) {
@@ -22506,6 +22522,17 @@ function _extractRequestedPublicPartnerId({ url, body = null } = {}) {
   );
 }
 
+function _canonicalPublicPartnerIdFromScope(scope) {
+  const tenantId = _sanitizePublicMediaSegment(
+    sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80),
+  );
+  const companyId = _sanitizePublicMediaSegment(
+    sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80),
+  );
+  if (!tenantId || !companyId) return "";
+  return `company:${tenantId}:${companyId}`;
+}
+
 function _normalizePartnerBookingRouteEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
@@ -22839,6 +22866,13 @@ function _normalizePublicBookingCapabilities(raw, profileEnabled) {
 function _normalizePublicPartnerProfileEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
+  const legacyPartnerAlias = _safePublicText(
+    raw.legacy_partner_id ??
+      raw.legacyPartnerId ??
+      raw.public_partner_alias ??
+      raw.publicPartnerAlias,
+    120,
+  );
   const companyName = _safePublicText(raw.company_name ?? raw.companyName, 160);
   const profileEnabled = _safePublicBool(raw.profile_enabled ?? raw.profileEnabled, false);
   const isActive = raw.is_active === true;
@@ -22848,6 +22882,14 @@ function _normalizePublicPartnerProfileEntry(raw) {
   return {
     partner_id: partnerId,
     company_name: companyName,
+    ...(legacyPartnerAlias && legacyPartnerAlias !== partnerId
+      ? {
+          legacy_partner_id: legacyPartnerAlias,
+          legacyPartnerId: legacyPartnerAlias,
+          public_partner_alias: legacyPartnerAlias,
+          publicPartnerAlias: legacyPartnerAlias,
+        }
+      : {}),
     profile_enabled: profileEnabled,
     is_active: isActive,
     subscription_status: subscriptionStatus,
