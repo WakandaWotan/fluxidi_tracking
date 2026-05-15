@@ -793,6 +793,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
+  String _bookCtaUnavailableLabel() {
+    return _labelFor(
+      nl: 'Kies ander tijdstip',
+      en: 'Choose another time',
+      fr: 'Choisissez un autre horaire',
+      es: 'Elige otro horario',
+    );
+  }
+
   void _openBookingConfirmation() {
     final quote = _lastQuote;
     if (quote == null) return;
@@ -2479,43 +2488,66 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   children: [
                     _quoteBox(_lastQuote!),
                     const SizedBox(height: 8),
-                    GestureDetector(
-                      onTap: _openBookingConfirmation,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: accent.withOpacity(0.55)),
-                          color: Colors.black,
-                          boxShadow: [
-                            BoxShadow(
-                              color: accent.withOpacity(0.12),
-                              blurRadius: 14,
-                              spreadRadius: 1,
-                            ),
-                          ],
-                        ),
-                        alignment: Alignment.center,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              _s.calculatorBookNowLabel.of(_lang),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
+                    Builder(
+                      builder: (_) {
+                        final quoteUnavailable =
+                            _quoteAvailabilityValue(_lastQuote!) == false;
+                        final ctaLabel = quoteUnavailable
+                            ? _bookCtaUnavailableLabel()
+                            : _s.calculatorBookNowLabel.of(_lang);
+                        return GestureDetector(
+                          onTap: _openBookingConfirmation,
+                          child: Opacity(
+                            opacity: quoteUnavailable ? 0.62 : 1,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: quoteUnavailable
+                                      ? Colors.white.withOpacity(0.22)
+                                      : accent.withOpacity(0.55),
+                                ),
+                                color: Colors.black,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: quoteUnavailable
+                                        ? Colors.black.withOpacity(0.08)
+                                        : accent.withOpacity(0.12),
+                                    blurRadius: 14,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      ctaLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(
+                                    Icons.arrow_forward_rounded,
+                                    color: Color(0xFFE5B641),
+                                    size: 18,
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 6),
-                            const Icon(
-                              Icons.arrow_forward_rounded,
-                              color: Color(0xFFE5B641),
-                              size: 18,
-                            ),
-                          ],
-                        ),
-                      ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
