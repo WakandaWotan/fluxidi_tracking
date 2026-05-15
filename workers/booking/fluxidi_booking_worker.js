@@ -15007,17 +15007,16 @@ GET /oauth/callback
         ) {
           _requireAdmin(request, url, env);
           const body = await safeJson(request);
-          const tenantScope = extractBookingTenantScope({ request, url, body });
-          if (!tenantScope.hasScope) {
-            return json(missingTenantScopeError(), 400);
-          }
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
           const fleetScope = normalizeFleetTenantScope(tenantScope);
           const vehicleId = String(body?.vehicle_id || body?.assigned_vehicle_id || "").trim();
           if (!vehicleId) {
             return json({ ok: false, error: "vehicle_id is required", booking_id: bookingId }, 400);
           }
           const { key, rec } = await loadBookingRecord(env, bookingId);
-          if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+          if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
             return json({ ok: false, error: "forbidden" }, 403);
           }
           const scopedVehicles = await _loadVehicleInventory(env, { scope: fleetScope });
@@ -15046,10 +15045,9 @@ GET /oauth/callback
         ) {
           _requireAdmin(request, url, env);
           const body = await safeJson(request);
-          const tenantScope = extractBookingTenantScope({ request, url, body });
-          if (!tenantScope.hasScope) {
-            return json(missingTenantScopeError(), 400);
-          }
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
           const { rec } = await loadBookingRecord(env, bookingId);
           const ownershipBlock = await enforceDriverOwnershipForMutation({
             request,
@@ -15482,6 +15480,17 @@ function bookingMatchesRequestedTenantScope(rec, requestedScope) {
     return false;
   }
   return true;
+}
+
+function bookingMatchesRequiredTenantCompanyScope(rec, requestedScope) {
+  const requestedTenant = _scopeText(requestedScope?.tenant_id);
+  const requestedCompany = _scopeText(requestedScope?.company_id);
+  if (!requestedTenant || !requestedCompany) return false;
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const recordTenant = _scopeText(recordScope?.tenant_id);
+  const recordCompany = _scopeText(recordScope?.company_id);
+  if (!recordTenant || !recordCompany) return false;
+  return requestedTenant === recordTenant && requestedCompany === recordCompany;
 }
 
 function _normalizeCustomerEmail(value) {
@@ -21659,8 +21668,12 @@ async function trackingStart(body, env, requestedScope = null) {
   try {
     const booking_id = requireStr(body?.booking_id || body?.bookingId, "booking_id");
     const { key, rec } = await loadBookingRecord(env, booking_id);
-    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
-    if (scopeBlock) return scopeBlock;
+    if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
+      if (!requestedScope?.tenant_id || !requestedScope?.company_id) {
+        return missingTenantScopeError();
+      }
+      return { ok: false, error: "forbidden" };
+    }
 
     const trip_id = crypto?.randomUUID ? crypto.randomUUID() : `trip_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     rec.trip = {
@@ -21710,8 +21723,12 @@ async function trackingPing(body, env, requestedScope = null) {
       throw new Error("booking_id is required");
     }
     const { key, rec } = loaded;
-    const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
-    if (scopeBlock) return scopeBlock;
+    if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
+      if (!requestedScope?.tenant_id || !requestedScope?.company_id) {
+        return missingTenantScopeError();
+      }
+      return { ok: false, error: "forbidden" };
+    }
 
     rec.tracking_last = {
       lat,
@@ -23797,7 +23814,7 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
     return { ok: false, error: "Invalid status" };
   }
   const { key, rec } = await loadBookingRecord(env, bookingId);
-  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
   const nowIso = new Date().toISOString();
@@ -23861,7 +23878,7 @@ async function updateBookingPaymentAuthoritative(
     return missingTenantScopeError();
   }
   const { key, rec } = await loadBookingRecord(env, bookingId);
-  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
   const asText = (value) => String(value ?? "").trim();
@@ -24570,7 +24587,7 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
   const key = `booking:${bookingId}`;
   const rec = await env.BOOKING_KV.get(key, { type: "json" });
   if (!rec) return { ok: false, error: "Booking not found" };
-  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
   await cleanupBookingCalendarEvents(env, rec, tenantScope);
