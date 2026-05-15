@@ -14809,6 +14809,69 @@ GET /oauth/callback
           PARTNER_BOOKING_ROUTE_KEY,
           JSON.stringify({ routes: nextRoutes }),
         );
+        const rawProfilesV2 = await env.BOOKING_KV.get(PUBLIC_PARTNER_PROFILES_V2_KEY, {
+          type: "json",
+        });
+        const currentProfilesV2 =
+          rawProfilesV2 && typeof rawProfilesV2 === "object" && Array.isArray(rawProfilesV2.profiles)
+            ? rawProfilesV2.profiles
+            : (Array.isArray(rawProfilesV2) ? rawProfilesV2 : []);
+        const existingProfilesV2 = currentProfilesV2
+          .map(_normalizePublicPartnerProfileEntry)
+          .filter((p) => p !== null);
+        const nextProfilesV2 = existingProfilesV2
+          .filter((p) => p.partner_id !== normalizedProfile.partner_id)
+          .concat([normalizedProfile]);
+        await env.BOOKING_KV.put(
+          PUBLIC_PARTNER_PROFILES_V2_KEY,
+          JSON.stringify({
+            version: 2,
+            updated_at: partnerScopedUpdatedAt,
+            profiles: nextProfilesV2,
+          }),
+        );
+        const rawDirectoryV2 = await env.BOOKING_KV.get(PUBLIC_PARTNER_DIRECTORY_V2_KEY, {
+          type: "json",
+        });
+        const currentDirectoryV2 =
+          rawDirectoryV2 && typeof rawDirectoryV2 === "object" && Array.isArray(rawDirectoryV2.partners)
+            ? rawDirectoryV2.partners
+            : (Array.isArray(rawDirectoryV2) ? rawDirectoryV2 : []);
+        const existingDirectoryV2 = currentDirectoryV2
+          .map(_normalizePartnerEntry)
+          .filter((p) => p !== null);
+        const nextDirectoryV2 = existingDirectoryV2
+          .filter((p) => p.partner_id !== normalizedDirectoryEntry.partner_id)
+          .concat([normalizedDirectoryEntry]);
+        await env.BOOKING_KV.put(
+          PUBLIC_PARTNER_DIRECTORY_V2_KEY,
+          JSON.stringify({
+            version: 2,
+            updated_at: partnerScopedUpdatedAt,
+            partners: nextDirectoryV2,
+          }),
+        );
+        const rawRoutesV2 = await env.BOOKING_KV.get(PUBLIC_PARTNER_BOOKING_ROUTES_V2_KEY, {
+          type: "json",
+        });
+        const currentRoutesV2 =
+          rawRoutesV2 && typeof rawRoutesV2 === "object" && Array.isArray(rawRoutesV2.routes)
+            ? rawRoutesV2.routes
+            : (Array.isArray(rawRoutesV2) ? rawRoutesV2 : []);
+        const existingRoutesV2 = currentRoutesV2
+          .map(_normalizePartnerBookingRouteEntry)
+          .filter((entry) => entry !== null);
+        const nextRoutesV2 = existingRoutesV2
+          .filter((entry) => entry.partner_id !== partnerRouteEntry.partner_id)
+          .concat([partnerRouteEntry]);
+        await env.BOOKING_KV.put(
+          PUBLIC_PARTNER_BOOKING_ROUTES_V2_KEY,
+          JSON.stringify({
+            version: 2,
+            updated_at: partnerScopedUpdatedAt,
+            routes: nextRoutesV2,
+          }),
+        );
 
         return json({
           ok: true,
@@ -22227,6 +22290,9 @@ const VEHICLE_INVENTORY_KEY = "fleet:vehicles:v1";
 const PARTNER_DIRECTORY_KEY = "partners:directory:v1";
 const PARTNER_PROFILES_KEY = "partners:profiles:v1";
 const PARTNER_BOOKING_ROUTE_KEY = "partners:booking-routes:v1";
+const PUBLIC_PARTNER_DIRECTORY_V2_KEY = "public:partners:directory:v2";
+const PUBLIC_PARTNER_PROFILES_V2_KEY = "public:partners:profiles:v2";
+const PUBLIC_PARTNER_BOOKING_ROUTES_V2_KEY = "public:partners:booking-routes:v2";
 const PARTNER_DIRECTORY_SEED = [
   {
     partner_id: "partner_fluxidi_antwerp",
