@@ -22465,39 +22465,126 @@ function _normalizePartnerPublicReadSource(env) {
   return "v2_first_fallback_v1";
 }
 
+function _logPartnerPublicReaderSource({
+  loader,
+  mode,
+  source,
+  reason = "selected",
+  level = "info",
+  v2_count = null,
+  v1_count = null,
+} = {}) {
+  const payload = {
+    event: "partner_public_reader_source",
+    loader: String(loader || "").trim(),
+    mode: String(mode || "").trim(),
+    source: String(source || "").trim(),
+    reason: String(reason || "selected").trim(),
+  };
+  if (Number.isFinite(v2_count)) payload.v2_count = Math.max(0, Math.trunc(v2_count));
+  if (Number.isFinite(v1_count)) payload.v1_count = Math.max(0, Math.trunc(v1_count));
+  if (level === "warn") {
+    console.warn(payload);
+    return;
+  }
+  console.info(payload);
+}
+
 async function _loadPartnerDirectory(env) {
   const fallback = PARTNER_DIRECTORY_SEED
     .map(_normalizePartnerEntry)
     .filter((p) => p !== null);
-  if (!env?.BOOKING_KV) return fallback;
   const readSource = _normalizePartnerPublicReadSource(env);
+  if (!env?.BOOKING_KV) {
+    _logPartnerPublicReaderSource({
+      loader: "directory",
+      mode: readSource,
+      source: "seed",
+      reason: "missing",
+      level: "warn",
+    });
+    return fallback;
+  }
   const readDirectoryByKey = async (key) => {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (raw == null) return { ok: false, reason: "missing", normalized: [], count: 0 };
     const incoming = Array.isArray(raw)
       ? raw
       : (raw && typeof raw === "object" && Array.isArray(raw.partners) ? raw.partners : null);
-    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    if (!Array.isArray(incoming)) return { ok: false, reason: "malformed", normalized: [], count: 0 };
     const normalized = incoming
       .map(_normalizePartnerEntry)
       .filter((p) => p !== null);
-    return { ok: true, normalized };
+    return {
+      ok: true,
+      reason: normalized.length > 0 ? "selected" : "empty",
+      normalized,
+      count: normalized.length,
+    };
   };
-  const readV1 = async () => {
+  const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readDirectoryByKey(PARTNER_DIRECTORY_KEY);
-    if (!out.ok) return fallback;
-    return out.normalized.length > 0 ? out.normalized : fallback;
+    if (!out.ok) {
+      _logPartnerPublicReaderSource({
+        loader: "directory",
+        mode: readSource,
+        source: "seed",
+        reason: out.reason || "malformed",
+        level: "warn",
+        v2_count: v2Count,
+      });
+      return fallback;
+    }
+    if (out.normalized.length > 0) {
+      _logPartnerPublicReaderSource({
+        loader: "directory",
+        mode: readSource,
+        source: "v1",
+        reason: fallbackReason,
+        level: fallbackReason === "selected" ? "info" : "warn",
+        v2_count: v2Count,
+        v1_count: out.count,
+      });
+      return out.normalized;
+    }
+    _logPartnerPublicReaderSource({
+      loader: "directory",
+      mode: readSource,
+      source: "seed",
+      reason: out.reason || "empty",
+      level: "warn",
+      v2_count: v2Count,
+      v1_count: out.count,
+    });
+    return fallback;
   };
   if (readSource === "v1_only") {
     return readV1();
   }
   const outV2 = await readDirectoryByKey(PUBLIC_PARTNER_DIRECTORY_V2_KEY);
   if (outV2.ok && outV2.normalized.length > 0) {
+    _logPartnerPublicReaderSource({
+      loader: "directory",
+      mode: readSource,
+      source: "v2",
+      reason: "selected",
+      level: "info",
+      v2_count: outV2.count,
+    });
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    _logPartnerPublicReaderSource({
+      loader: "directory",
+      mode: readSource,
+      source: "seed",
+      reason: outV2.reason || "malformed",
+      level: "warn",
+      v2_count: outV2.count,
+    });
     return fallback;
   }
-  return readV1();
+  return readV1({ fallbackReason: outV2.reason || "malformed", v2Count: outV2.count });
 }
 
 function _normalizeNearbyRadiusKm(value) {
@@ -22780,10 +22867,20 @@ async function _loadPartnerBookingRoutes(env) {
   const fallback = PARTNER_BOOKING_ROUTE_SEED
     .map(_normalizePartnerBookingRouteEntry)
     .filter((entry) => entry !== null);
-  if (!env?.BOOKING_KV) return fallback;
   const readSource = _normalizePartnerPublicReadSource(env);
+  if (!env?.BOOKING_KV) {
+    _logPartnerPublicReaderSource({
+      loader: "booking_routes",
+      mode: readSource,
+      source: "seed",
+      reason: "missing",
+      level: "warn",
+    });
+    return fallback;
+  }
   const readRoutesByKey = async (key) => {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (raw == null) return { ok: false, reason: "missing", normalized: [], count: 0 };
     const incoming = Array.isArray(raw)
       ? raw
       : raw &&
@@ -22791,28 +22888,80 @@ async function _loadPartnerBookingRoutes(env) {
           Array.isArray(raw.routes)
       ? raw.routes
       : null;
-    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    if (!Array.isArray(incoming)) return { ok: false, reason: "malformed", normalized: [], count: 0 };
     const normalized = incoming
       .map(_normalizePartnerBookingRouteEntry)
       .filter((entry) => entry !== null);
-    return { ok: true, normalized };
+    return {
+      ok: true,
+      reason: normalized.length > 0 ? "selected" : "empty",
+      normalized,
+      count: normalized.length,
+    };
   };
-  const readV1 = async () => {
+  const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readRoutesByKey(PARTNER_BOOKING_ROUTE_KEY);
-    if (!out.ok) return fallback;
-    return out.normalized.length > 0 ? out.normalized : fallback;
+    if (!out.ok) {
+      _logPartnerPublicReaderSource({
+        loader: "booking_routes",
+        mode: readSource,
+        source: "seed",
+        reason: out.reason || "malformed",
+        level: "warn",
+        v2_count: v2Count,
+      });
+      return fallback;
+    }
+    if (out.normalized.length > 0) {
+      _logPartnerPublicReaderSource({
+        loader: "booking_routes",
+        mode: readSource,
+        source: "v1",
+        reason: fallbackReason,
+        level: fallbackReason === "selected" ? "info" : "warn",
+        v2_count: v2Count,
+        v1_count: out.count,
+      });
+      return out.normalized;
+    }
+    _logPartnerPublicReaderSource({
+      loader: "booking_routes",
+      mode: readSource,
+      source: "seed",
+      reason: out.reason || "empty",
+      level: "warn",
+      v2_count: v2Count,
+      v1_count: out.count,
+    });
+    return fallback;
   };
   if (readSource === "v1_only") {
     return readV1();
   }
   const outV2 = await readRoutesByKey(PUBLIC_PARTNER_BOOKING_ROUTES_V2_KEY);
   if (outV2.ok && outV2.normalized.length > 0) {
+    _logPartnerPublicReaderSource({
+      loader: "booking_routes",
+      mode: readSource,
+      source: "v2",
+      reason: "selected",
+      level: "info",
+      v2_count: outV2.count,
+    });
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    _logPartnerPublicReaderSource({
+      loader: "booking_routes",
+      mode: readSource,
+      source: "seed",
+      reason: outV2.reason || "malformed",
+      level: "warn",
+      v2_count: outV2.count,
+    });
     return fallback;
   }
-  return readV1();
+  return readV1({ fallbackReason: outV2.reason || "malformed", v2Count: outV2.count });
 }
 
 function _isPartnerBookingRouteActive(entry) {
@@ -23163,22 +23312,56 @@ async function _loadPublicPartnerProfiles(env) {
   const fallback = PARTNER_PROFILES_SEED
     .map(_normalizePublicPartnerProfileEntry)
     .filter((p) => p !== null);
-  if (!env?.BOOKING_KV) return fallback;
   const readSource = _normalizePartnerPublicReadSource(env);
+  if (!env?.BOOKING_KV) {
+    _logPartnerPublicReaderSource({
+      loader: "profiles",
+      mode: readSource,
+      source: "seed",
+      reason: "missing",
+      level: "warn",
+    });
+    return fallback;
+  }
   const readProfilesByKey = async (key) => {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (raw == null) return { ok: false, reason: "missing", normalized: [], count: 0 };
     const incoming = Array.isArray(raw)
       ? raw
       : (raw && typeof raw === "object" && Array.isArray(raw.profiles) ? raw.profiles : null);
-    if (!Array.isArray(incoming)) return { ok: false, normalized: [] };
+    if (!Array.isArray(incoming)) return { ok: false, reason: "malformed", normalized: [], count: 0 };
     const normalized = incoming
       .map(_normalizePublicPartnerProfileEntry)
       .filter((p) => p !== null);
-    return { ok: true, normalized };
+    return {
+      ok: true,
+      reason: normalized.length > 0 ? "selected" : "empty",
+      normalized,
+      count: normalized.length,
+    };
   };
-  const readV1 = async () => {
+  const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
     const out = await readProfilesByKey(PARTNER_PROFILES_KEY);
-    if (!out.ok) return fallback;
+    if (!out.ok) {
+      _logPartnerPublicReaderSource({
+        loader: "profiles",
+        mode: readSource,
+        source: "seed",
+        reason: out.reason || "malformed",
+        level: "warn",
+        v2_count: v2Count,
+      });
+      return fallback;
+    }
+    _logPartnerPublicReaderSource({
+      loader: "profiles",
+      mode: readSource,
+      source: "v1",
+      reason: fallbackReason,
+      level: fallbackReason === "selected" ? "info" : "warn",
+      v2_count: v2Count,
+      v1_count: out.count,
+    });
     return out.normalized;
   };
   if (readSource === "v1_only") {
@@ -23187,12 +23370,28 @@ async function _loadPublicPartnerProfiles(env) {
   const outV2 = await readProfilesByKey(PUBLIC_PARTNER_PROFILES_V2_KEY);
   if (outV2.ok) {
     // Preserve legacy semantics: a valid but empty profiles list is accepted.
+    _logPartnerPublicReaderSource({
+      loader: "profiles",
+      mode: readSource,
+      source: "v2",
+      reason: "selected",
+      level: "info",
+      v2_count: outV2.count,
+    });
     return outV2.normalized;
   }
   if (readSource === "v2_only") {
+    _logPartnerPublicReaderSource({
+      loader: "profiles",
+      mode: readSource,
+      source: "seed",
+      reason: outV2.reason || "malformed",
+      level: "warn",
+      v2_count: outV2.count,
+    });
     return fallback;
   }
-  return readV1();
+  return readV1({ fallbackReason: outV2.reason || "malformed", v2Count: outV2.count });
 }
 
 async function getPublicPartnerProfileById(env, partnerId) {
