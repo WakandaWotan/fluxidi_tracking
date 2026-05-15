@@ -1457,6 +1457,17 @@ function communicationTemplatesScopedKeyForScope(scope) {
   return `tenant:${tenantId}:company:${companyId}:communication_templates:v1`;
 }
 
+function buildScopedPartnerKeys(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return {
+    profileKey: `tenant:${tenantId}:company:${companyId}:partner:profile:v1`,
+    directoryProjectionKey: `tenant:${tenantId}:company:${companyId}:partner:directory_projection:v1`,
+    bookingRouteKey: `tenant:${tenantId}:company:${companyId}:partner:booking_route:v1`,
+  };
+}
+
 function resolveAdminExplicitTenantCompanyScope({ request, url, body = null } = {}) {
   const resolved = resolveAdminSettingsScope({ request, url, body });
   const tenantExplicit = sanitizeTenantString(
@@ -14659,6 +14670,10 @@ GET /oauth/callback
         if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
         const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
         if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
+        const scopedPartnerKeys = buildScopedPartnerKeys(explicitScope);
+        if (!scopedPartnerKeys) {
+          return json({ ok: false, error: "missing_tenant_scope" }, 400);
+        }
 
         const canonicalPartnerId = _canonicalPublicPartnerIdFromScope(explicitScope);
         if (!canonicalPartnerId) {
@@ -14745,6 +14760,37 @@ GET /oauth/callback
         if (!partnerRouteEntry) {
           return json({ ok: false, error: "invalid partner booking route projection" }, 400);
         }
+        const partnerScopedUpdatedAt = new Date().toISOString();
+        await env.BOOKING_KV.put(
+          scopedPartnerKeys.profileKey,
+          JSON.stringify({
+            version: 1,
+            updated_at: partnerScopedUpdatedAt,
+            tenant_id: explicitScope.tenant_id,
+            company_id: explicitScope.company_id,
+            partner_profile: normalizedProfile,
+          }),
+        );
+        await env.BOOKING_KV.put(
+          scopedPartnerKeys.directoryProjectionKey,
+          JSON.stringify({
+            version: 1,
+            updated_at: partnerScopedUpdatedAt,
+            tenant_id: explicitScope.tenant_id,
+            company_id: explicitScope.company_id,
+            directory_entry: normalizedDirectoryEntry,
+          }),
+        );
+        await env.BOOKING_KV.put(
+          scopedPartnerKeys.bookingRouteKey,
+          JSON.stringify({
+            version: 1,
+            updated_at: partnerScopedUpdatedAt,
+            tenant_id: explicitScope.tenant_id,
+            company_id: explicitScope.company_id,
+            booking_route: partnerRouteEntry,
+          }),
+        );
         const rawRoutes = await env.BOOKING_KV.get(PARTNER_BOOKING_ROUTE_KEY, {
           type: "json",
         });
