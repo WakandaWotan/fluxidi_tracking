@@ -7761,6 +7761,70 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   const retEx = returnQuote ? moneyNumber(returnQuote.price_ex_vat) : 0;
   const retVat = returnQuote ? moneyNumber(returnQuote.price_vat) : 0;
   const retIncl = returnQuote ? moneyNumber(returnQuote.price_incl_vat) : 0;
+  const availabilityMode = _availabilityMode(env);
+  const quoteScopeMask = _bookingIntentScopeMask({
+    tenant_id: quoteScope?.tenant_id,
+    company_id: quoteScope?.company_id,
+  });
+  let availability = {
+    checked: false,
+    available: null,
+    advisory: true,
+    reason: "availability_check_skipped",
+  };
+  try {
+    const pickupIsoForAvailability =
+      safeStr(body?.pickup_iso || body?.pickupIso) ||
+      brusselsIsoFromDateTime(body?.date, body?.time);
+    const pickupMsForAvailability = Date.parse(pickupIsoForAvailability);
+    if (quoteScope?.hasScope && Number.isFinite(pickupMsForAvailability)) {
+      const fleetScope = normalizeFleetTenantScope(quoteScope);
+      const quoteServiceMin = Math.max(
+        30,
+        Math.round(
+          Math.max(0, Number(duration_route_min || 0)) +
+            Math.max(0, Number(wait_min || 0)) +
+            Math.max(0, getStopHandlingMin(stop_count, env)) +
+            Math.max(0, getPostBufferMin(env)),
+        ),
+      );
+      console.log(
+        `[QUOTE][AVAILABILITY][CHECK] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} mode=${availabilityMode} service_min=${quoteServiceMin}`,
+      );
+      const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
+        pickupMs: pickupMsForAvailability,
+        serviceMin: quoteServiceMin,
+        tier,
+        pax,
+        bags,
+        tenantScope: fleetScope,
+      });
+      const available = vehicleCapacity?.ok === true;
+      availability = {
+        checked: true,
+        available,
+        advisory: true,
+        reason: available
+          ? "vehicle_capacity_ok"
+          : (safeStr(vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
+        availability_mode: availabilityMode,
+        vehicle_capacity:
+          vehicleCapacity && typeof vehicleCapacity === "object"
+            ? vehicleCapacity
+            : null,
+      };
+    }
+  } catch (_) {
+    availability = {
+      checked: false,
+      available: null,
+      advisory: true,
+      reason: "availability_check_skipped",
+    };
+  }
+  console.log(
+    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"}`,
+  );
 
   return {
     status: 200,
@@ -7806,7 +7870,8 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       total_price_incl_vat: round2(mainIncl + retIncl),
 
       return: returnQuote,
-      breakdown: mainPricing.breakdown
+      breakdown: mainPricing.breakdown,
+      availability,
     },
   };
 }
