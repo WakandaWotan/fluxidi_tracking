@@ -3112,6 +3112,29 @@ function _generateDriverLoginSalt() {
     .slice(0, 80);
 }
 
+function _generateSecureDriverLoginCode(length = 24) {
+  const normalizedLength = Math.max(20, Math.min(64, Math.round(Number(length) || 24)));
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  if (crypto?.getRandomValues) {
+    const values = new Uint8Array(normalizedLength);
+    crypto.getRandomValues(values);
+    let out = "";
+    for (const value of values) {
+      out += alphabet[value % alphabet.length];
+    }
+    return out;
+  }
+  const fallback = _generateOpaqueToken(48, "dlc_").replace(/[^A-Za-z0-9]/g, "");
+  if (fallback.length >= normalizedLength) return fallback.slice(0, normalizedLength);
+  return `${fallback}${"X".repeat(normalizedLength - fallback.length)}`.slice(0, normalizedLength);
+}
+
+function _driverCodeLast4(value) {
+  const text = sanitizeTenantString(value, 120);
+  if (!text) return "";
+  return text.length <= 4 ? text : text.slice(-4);
+}
+
 function _driverLoginHashCandidates(normalizedCode, salt) {
   const code = _normalizeDriverLoginCode(normalizedCode);
   if (!code) return [];
@@ -3123,7 +3146,7 @@ function _driverLoginHashCandidates(normalizedCode, salt) {
 
 async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
   const normalizedEntered = _normalizeDriverLoginCode(enteredCode);
-  if (!normalizedEntered) return false;
+  if (!normalizedEntered) return { matched: false, mode: "none" };
   const hash = sanitizeTenantString(
     driverRecord?.driver_code_hash ??
       driverRecord?.driverCodeHash,
@@ -3138,7 +3161,7 @@ async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
     const hashCandidates = _driverLoginHashCandidates(normalizedEntered, salt);
     for (const candidate of hashCandidates) {
       const computed = (await _sha256Hex(candidate)).toLowerCase();
-      if (_constantTimeEquals(hash, computed)) return true;
+      if (_constantTimeEquals(hash, computed)) return { matched: true, mode: "hash" };
     }
   }
   const codeCandidates = [
@@ -3155,9 +3178,11 @@ async function _driverRecordMatchesLoginCode(driverRecord, enteredCode) {
     .map(_normalizeDriverLoginCode)
     .filter((value) => !!value);
   for (const candidate of codeCandidates) {
-    if (_constantTimeEquals(candidate, normalizedEntered)) return true;
+    if (_constantTimeEquals(candidate, normalizedEntered)) {
+      return { matched: true, mode: "plaintext" };
+    }
   }
-  return false;
+  return { matched: false, mode: "none" };
 }
 
 function _normalizeDriverPhone(value) {
@@ -8406,6 +8431,102 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
   );
 }
 
+async function handleAdminCompanyDriverLoginCodeRotate(request, url, env) {
+  const body = await readAdminCompanyLinkBody(request.clone());
+  _requireAdmin(request, url, env);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
+    return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
+  }
+  const driverId = sanitizeTenantString(
+    body.driver_id ?? body.driverId ?? body.id,
+    96,
+  );
+  if (!_isSafeCompanyLinkScopePart(driverId)) {
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const existingDriver = existing?.drivers?.[driverId] || null;
+  if (!existingDriver || typeof existingDriver !== "object") {
+    return json({ ok: false, error: "driver_not_found" }, 404);
+  }
+
+  const nextLoginCode = _generateSecureDriverLoginCode(24);
+  const normalizedLoginCode = _normalizeDriverLoginCode(nextLoginCode);
+  if (!normalizedLoginCode) {
+    return json({ ok: false, error: "driver_login_code_generation_failed" }, 500);
+  }
+  const nextDriverCodeSalt = _generateDriverLoginSalt();
+  const nextDriverCodeHash = (await _sha256Hex(
+    `${nextDriverCodeSalt}:${normalizedLoginCode}`,
+  )).toLowerCase();
+  const codeLast4 = _driverCodeLast4(nextLoginCode);
+  const nowIso = new Date().toISOString();
+
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  nextDrivers[driverId] = {
+    ...existingDriver,
+    driver_id: driverId,
+    driverId: driverId,
+    driver_code: "",
+    driverCode: "",
+    login_code: "",
+    loginCode: "",
+    employee_number: "",
+    employeeNumber: "",
+    driver_code_hash: nextDriverCodeHash,
+    driverCodeHash: nextDriverCodeHash,
+    driver_code_salt: nextDriverCodeSalt,
+    driverCodeSalt: nextDriverCodeSalt,
+    has_login_code: true,
+    hasLoginCode: true,
+    driver_code_last4: codeLast4,
+    driverCodeLast4: codeLast4,
+    login_code_last4: codeLast4,
+    loginCodeLast4: codeLast4,
+    rotated_at: nowIso,
+    rotatedAt: nowIso,
+    login_code_rotated_at: nowIso,
+    loginCodeRotatedAt: nowIso,
+    updated_at: nowIso,
+    updatedAt: nowIso,
+  };
+  await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  console.info(JSON.stringify({
+    event: "driver_login_code_rotated",
+    tenant: _maskPublicDriverLoginValue(tenantId),
+    company: _maskPublicDriverLoginValue(companyId),
+    driver: _maskPublicDriverLoginValue(driverId),
+    has_login_code: true,
+    driver_code_last4: codeLast4,
+  }));
+  return json(
+    {
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      login_code: nextLoginCode,
+      driver_code_last4: codeLast4,
+      warning: "store_this_code_now",
+    },
+    200,
+  );
+}
+
 async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
   _requireAdmin(request, url, env);
@@ -8644,11 +8765,14 @@ async function handlePublicDriverLogin(body, env) {
   const driverIndex = await _loadDriverIndexRecord(env, scope);
   const entries = Object.values(driverIndex?.drivers || {});
   let match = null;
+  let matchMode = "none";
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     if (entry.is_active !== true) continue;
-    if (await _driverRecordMatchesLoginCode(entry, driverCode)) {
+    const matchResult = await _driverRecordMatchesLoginCode(entry, driverCode);
+    if (matchResult?.matched) {
       match = entry;
+      matchMode = matchResult.mode || "none";
       break;
     }
   }
@@ -8661,6 +8785,15 @@ async function handlePublicDriverLogin(body, env) {
   );
   if (!driverId) {
     return _publicDriverLoginFail("driver_id_missing");
+  }
+  if (matchMode === "plaintext") {
+    console.warn(JSON.stringify({
+      event: "driver_login_plaintext_fallback_used",
+      tenant: _maskPublicDriverLoginValue(scope.tenant_id),
+      company: _maskPublicDriverLoginValue(scope.company_id),
+      driver: _maskPublicDriverLoginValue(driverId),
+      reason: "legacy_plaintext_match",
+    }));
   }
   const driverName = sanitizeTenantString(
     match.display_name ?? match.displayName ?? match.driver_name ?? match.driverName,
@@ -14064,6 +14197,13 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminCompanyDriversIndexDelete(request, url, env);
+      }
+
+      if (url.pathname === "/admin/company/drivers/login-code/rotate") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminCompanyDriverLoginCodeRotate(request, url, env);
       }
 
       if (url.pathname === "/admin/company/driver-link-code/create") {
