@@ -1794,6 +1794,311 @@ async function _collectTripKpiPendingDiagnostics(env, scope) {
   return out;
 }
 
+function _tripKpiMask(value) {
+  const text = safeStr(value, 220);
+  if (!text) return null;
+  if (text.length <= 10) return text;
+  return `${text.slice(0, 3)}...${text.slice(-3)}`;
+}
+
+async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
+  const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+  const out = {
+    unpaid_completed_trip_contributors: [],
+    pending_booking_markers: [],
+    missing_amount_contributors: [],
+    scope_mismatch_summary: { count: 0 },
+  };
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const debugCounters = (await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedDashboardTripDebugKey(normalizedScope),
+  )) ?? {};
+  out.scope_mismatch_summary.count = Number.isFinite(Number(debugCounters.scope_mismatch))
+    ? Math.max(0, Math.round(Number(debugCounters.scope_mismatch)))
+    : 0;
+
+  const contribPrefix = `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_contrib:`;
+  let contribCursor = undefined;
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({ prefix: contribPrefix, limit: 1000, cursor: contribCursor });
+    for (const keyMeta of page?.keys || []) {
+      const key = safeStr(keyMeta?.name, 260);
+      if (!key) continue;
+      const contrib = _readDashboardContribShape(
+        await kvGetJson(env.FLUXIDI_TRACKING, key),
+        null,
+      );
+      if (!contrib?.trip_id) continue;
+      const trip = await kvGetJson(env.FLUXIDI_TRACKING, scopedTripKey(normalizedScope, contrib.trip_id));
+      const tripStatus = normalizeDashboardTripLifecycleStatus(trip?.status ?? trip?.lifecycle_status);
+      const paymentStatus = normalizeCompliancePaymentStatus(trip?.payment_status ?? trip?.paymentStatus);
+
+      if (
+        contrib.completed_rides_count > 0 &&
+        contrib.unpaid_completed_rides_count > 0 &&
+        out.unpaid_completed_trip_contributors.length < safeLimit
+      ) {
+        out.unpaid_completed_trip_contributors.push({
+          reason: "completed_unpaid",
+          source_key_type: "trip_kpi_contrib",
+          contrib_key_preview: _tripKpiMask(key),
+          trip_id_preview: _tripKpiMask(contrib.trip_id),
+          booking_id_preview: _tripKpiMask(trip?.booking_id ?? trip?.bookingId),
+          status: tripStatus || "unknown",
+          payment_status: paymentStatus || "unknown",
+          amount_cents: Number.isFinite(Number(trip?.payment_amount))
+            ? Math.round(Number(trip.payment_amount) * 100)
+            : Number.isFinite(Number(trip?.paymentAmount))
+            ? Math.round(Number(trip.paymentAmount) * 100)
+            : null,
+          contribution_shape: {
+            completed_rides_count: contrib.completed_rides_count,
+            unpaid_completed_rides_count: contrib.unpaid_completed_rides_count,
+            monthly_paid_rides_count: contrib.monthly_paid_rides_count,
+            monthly_income_cents: contrib.monthly_income_cents,
+            paid_month: contrib.paid_month,
+          },
+        });
+      }
+
+      const missingAmountHit =
+        (contrib.monthly_missing_amount_count || 0) > 0 ||
+        (contrib.monthly_paid_rides_count > 0 && contrib.monthly_income_cents <= 0);
+      if (
+        missingAmountHit &&
+        (!month || !contrib.paid_month || contrib.paid_month === month) &&
+        out.missing_amount_contributors.length < safeLimit
+      ) {
+        out.missing_amount_contributors.push({
+          reason: "missing_amount",
+          source_key_type: "trip_kpi_contrib",
+          contrib_key_preview: _tripKpiMask(key),
+          trip_id_preview: _tripKpiMask(contrib.trip_id),
+          booking_id_preview: _tripKpiMask(trip?.booking_id ?? trip?.bookingId),
+          status: tripStatus || "unknown",
+          payment_status: paymentStatus || "unknown",
+          amount_cents: Number.isFinite(Number(trip?.payment_amount))
+            ? Math.round(Number(trip.payment_amount) * 100)
+            : Number.isFinite(Number(trip?.paymentAmount))
+            ? Math.round(Number(trip.paymentAmount) * 100)
+            : null,
+          month: contrib.paid_month || null,
+          contribution_shape: {
+            monthly_paid_rides_count: contrib.monthly_paid_rides_count,
+            monthly_income_cents: contrib.monthly_income_cents,
+            monthly_missing_amount_count: contrib.monthly_missing_amount_count,
+          },
+        });
+      }
+    }
+    contribCursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+  } while (contribCursor);
+
+  const pendingPrefix = scopedDashboardTripPendingBookingPrefix(normalizedScope);
+  let pendingCursor = undefined;
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({ prefix: pendingPrefix, limit: 1000, cursor: pendingCursor });
+    for (const keyMeta of page?.keys || []) {
+      if (out.pending_booking_markers.length >= safeLimit) break;
+      const key = safeStr(keyMeta?.name, 260);
+      if (!key) continue;
+      const marker = await kvGetJson(env.FLUXIDI_TRACKING, key);
+      if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
+      const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
+      const completed = marker?.completed === true;
+      const reason =
+        marker?.terminal === true && !completed
+          ? "pending_marker_terminal_not_completed"
+          : (paid && !completed ? "paid_booking_not_completed" : "pending_paid_booking_no_trip");
+      out.pending_booking_markers.push({
+        reason,
+        source_key_type: "pending_booking_marker",
+        marker_key_preview: _tripKpiMask(key),
+        booking_id_preview: _tripKpiMask(marker?.booking_id),
+        trip_id_preview: _tripKpiMask(marker?.trip_id),
+        status: safeStr(marker?.status, 40) || null,
+        payment_status: normalizeCompliancePaymentStatus(marker?.payment_status) || null,
+        amount_cents: Number.isFinite(Number(marker?.payment_amount_cents))
+          ? Math.max(0, Math.round(Number(marker.payment_amount_cents)))
+          : null,
+        month: _dashboardTripMonthFromIso(marker?.paid_at ?? null),
+        contribution_shape: {
+          completed: completed === true,
+          terminal: marker?.terminal === true,
+          marker_reason: safeStr(marker?.reason, 64) || null,
+        },
+      });
+    }
+    pendingCursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+  } while (pendingCursor);
+
+  return out;
+}
+
+function _coerceReconcileDryRun(value, fallback = true) {
+  if (value == null) return fallback;
+  const token = safeStr(value, 16).toLowerCase();
+  if (!token) return fallback;
+  if (token === "0" || token === "false" || token === "no") return false;
+  if (token === "1" || token === "true" || token === "yes") return true;
+  return fallback;
+}
+
+async function handleDashboardTripKpisReconcile(req, url, env, origin) {
+  requireAdmin(req, url, env);
+  const body = req.method === "POST" ? await readJson(req) : {};
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, {
+    returnResponse: true,
+    origin,
+  });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = normalizeScopedKeyScope(requiredScope);
+  const dryRun =
+    _coerceReconcileDryRun(url.searchParams.get("dry_run"), true) &&
+    _coerceReconcileDryRun(body?.dry_run, true);
+  const limitRaw = safeStr(url.searchParams.get("limit"), 16) || safeStr(body?.limit, 16);
+  const limit = Math.max(1, Math.min(500, Number(limitRaw) || 100));
+
+  const pendingPrefix = scopedDashboardTripPendingBookingPrefix(scope);
+  const actions = [];
+  const summary = {
+    scanned_markers: 0,
+    resolved_to_trip_materialized: 0,
+    cleared_terminal_marker: 0,
+    unresolved_pending: 0,
+  };
+  const expected_deltas = {
+    completed_rides_count: 0,
+    unpaid_completed_rides_count: 0,
+    monthly_paid_rides_count: 0,
+    monthly_income_cents: 0,
+  };
+
+  let cursor = undefined;
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({ prefix: pendingPrefix, limit: 1000, cursor });
+    for (const keyMeta of page?.keys || []) {
+      if (summary.scanned_markers >= limit) break;
+      summary.scanned_markers += 1;
+      const markerKey = safeStr(keyMeta?.name, 260);
+      if (!markerKey) continue;
+      const marker = await kvGetJson(env.FLUXIDI_TRACKING, markerKey);
+      if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
+
+      const bookingId = safeStr(marker?.booking_id, 160);
+      const tripId = safeStr(marker?.trip_id, 160) || (bookingId ? `planned_${bookingId}` : "");
+      const tripStorageKey = tripId ? scopedTripKey(scope, tripId) : "";
+      const trip = tripStorageKey ? await kvGetJson(env.FLUXIDI_TRACKING, tripStorageKey) : null;
+      const markerPaid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
+      const markerCompleted = marker?.completed === true;
+      const markerTerminal = marker?.terminal === true;
+
+      if (trip && recordMatchesTenantCompanyScope(trip, scope)) {
+        const projectedTrip = { ...trip };
+        if (markerPaid) {
+          projectedTrip.payment_status = "paid";
+          projectedTrip.paymentStatus = "paid";
+          const paidAt = safeStr(marker?.paid_at, 64);
+          if (paidAt) {
+            projectedTrip.paid_at = paidAt;
+            projectedTrip.paidAt = paidAt;
+          }
+          const cents = Number(marker?.payment_amount_cents);
+          if (Number.isFinite(cents)) {
+            const amount = Math.round(cents) / 100;
+            projectedTrip.payment_amount = amount;
+            projectedTrip.paymentAmount = amount;
+          }
+        }
+
+        const contribKey = scopedDashboardTripContribKey(scope, tripId);
+        const prev = _readDashboardContribShape(await kvGetJson(env.FLUXIDI_TRACKING, contribKey), tripId);
+        const next = _readDashboardContribShape(deriveDashboardTripKpiContribution(projectedTrip), tripId);
+        expected_deltas.completed_rides_count += next.completed_rides_count - prev.completed_rides_count;
+        expected_deltas.unpaid_completed_rides_count += next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count;
+        expected_deltas.monthly_paid_rides_count += next.monthly_paid_rides_count - prev.monthly_paid_rides_count;
+        expected_deltas.monthly_income_cents += next.monthly_income_cents - prev.monthly_income_cents;
+
+        summary.resolved_to_trip_materialized += 1;
+        actions.push({
+          action: "resolved_to_trip_materialized",
+          dry_run: dryRun,
+          marker_key_preview: _tripKpiMask(markerKey),
+          booking_id_preview: _tripKpiMask(bookingId),
+          trip_id_preview: _tripKpiMask(tripId),
+          expected_delta: {
+            completed_rides_count: next.completed_rides_count - prev.completed_rides_count,
+            unpaid_completed_rides_count: next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count,
+            monthly_paid_rides_count: next.monthly_paid_rides_count - prev.monthly_paid_rides_count,
+            monthly_income_cents: next.monthly_income_cents - prev.monthly_income_cents,
+          },
+        });
+
+        if (!dryRun) {
+          await kvPutJson(env.FLUXIDI_TRACKING, tripStorageKey, projectedTrip, TTL_TRIP);
+          await materializeTripDashboardKpisBestEffort(
+            env,
+            scope,
+            projectedTrip,
+            "trip_kpi_reconcile_pending_marker",
+          );
+          await kvDel(env.FLUXIDI_TRACKING, markerKey);
+        }
+        continue;
+      }
+
+      if (markerTerminal && !markerCompleted) {
+        summary.cleared_terminal_marker += 1;
+        actions.push({
+          action: "cleared_terminal_marker",
+          dry_run: dryRun,
+          marker_key_preview: _tripKpiMask(markerKey),
+          booking_id_preview: _tripKpiMask(bookingId),
+          trip_id_preview: _tripKpiMask(tripId),
+          reason: "pending_marker_terminal_not_completed",
+        });
+        if (!dryRun) {
+          await kvDel(env.FLUXIDI_TRACKING, markerKey);
+        }
+        continue;
+      }
+
+      summary.unresolved_pending += 1;
+      actions.push({
+        action: "unresolved_pending",
+        dry_run: dryRun,
+        marker_key_preview: _tripKpiMask(markerKey),
+        booking_id_preview: _tripKpiMask(bookingId),
+        trip_id_preview: _tripKpiMask(tripId),
+        reason: markerPaid ? "pending_paid_booking_no_trip" : "trip_missing",
+      });
+    }
+    if (summary.scanned_markers >= limit) break;
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+  } while (cursor);
+
+  return withCors(
+    json(
+      {
+        ok: true,
+        dry_run: dryRun,
+        tenant_id: scope.tenant_id,
+        company_id: scope.company_id,
+        generated_at: nowIso(),
+        summary,
+        expected_deltas,
+        actions,
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
+}
+
 async function handleDashboardTripKpis(req, url, env, origin) {
   requireAdmin(req, url, env);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, {
@@ -1805,6 +2110,12 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthRaw = safeStr(url.searchParams.get("month"), 16);
   const defaultMonth = new Date().toISOString().slice(0, 7);
   const selectedMonth = monthRaw ? _normalizeDashboardMonth(monthRaw) : defaultMonth;
+  const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
+  const debugEnabled = debugRaw === "1" || debugRaw === "true";
+  const debugLimit = Math.max(
+    1,
+    Math.min(200, Number(safeStr(url.searchParams.get("debug_limit"), 16) || "50") || 50),
+  );
   if (!selectedMonth) {
     return withCors(
       json({ ok: false, error: "month must be YYYY-MM" }, { status: 400 }),
@@ -1859,47 +2170,55 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const missingAmountDebugCount = Number.isFinite(Number(debugCounters.missing_amount))
     ? Math.max(0, Math.round(Number(debugCounters.missing_amount)))
     : 0;
+  const payload = {
+    ok: true,
+    tenant_id: normalizedScope.tenant_id,
+    company_id: normalizedScope.company_id,
+    month: selectedMonth,
+    generated_at: nowIso(),
+    currency: "EUR",
+    completed_rides_count: completed,
+    unpaid_completed_rides_count: unpaid,
+    monthly_paid_rides_count: monthPaid,
+    monthly_income_eur: monthIncomeCents / 100,
+    monthly_income_cents: monthIncomeCents,
+    monthly_paid_bookings_count: monthBookingPaidCount,
+    monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
+    monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,
+    monthly_cancelled_paid_bookings_cents: monthCancelledPaidCents,
+    monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
+    diagnostics: {
+      trip_missing: pendingDiagnostics.trip_missing,
+      trip_missing_active: pendingDiagnostics.trip_missing,
+      paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
+      paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed,
+      completed_but_unpaid: unpaid,
+      completed_paid_contributed: monthPaid,
+      scope_mismatch: scopeMismatchCount,
+      scope_mismatch_historical: scopeMismatchCount,
+      missing_amount: Math.max(monthMissingAmount, missingAmountDebugCount),
+      missing_amount_historical: missingAmountDebugCount,
+    },
+    completeness: {
+      level: "forward_aggregate",
+      notes: [
+        "Aggregates are maintained from KPI materialization time forward.",
+        "Historical retained trips may require a rebuild/backfill endpoint.",
+      ],
+    },
+  };
+  if (debugEnabled) {
+    payload.debug_enabled = true;
+    payload.debug_limit = debugLimit;
+    payload.debug_details = await _collectTripKpiDebugDetails(
+      env,
+      normalizedScope,
+      selectedMonth,
+      debugLimit,
+    );
+  }
   return withCors(
-    json(
-      {
-        ok: true,
-        tenant_id: normalizedScope.tenant_id,
-        company_id: normalizedScope.company_id,
-        month: selectedMonth,
-        generated_at: nowIso(),
-        currency: "EUR",
-        completed_rides_count: completed,
-        unpaid_completed_rides_count: unpaid,
-        monthly_paid_rides_count: monthPaid,
-        monthly_income_eur: monthIncomeCents / 100,
-        monthly_income_cents: monthIncomeCents,
-        monthly_paid_bookings_count: monthBookingPaidCount,
-        monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
-        monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,
-        monthly_cancelled_paid_bookings_cents: monthCancelledPaidCents,
-        monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
-        diagnostics: {
-          trip_missing: pendingDiagnostics.trip_missing,
-          trip_missing_active: pendingDiagnostics.trip_missing,
-          paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
-          paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed,
-          completed_but_unpaid: unpaid,
-          completed_paid_contributed: monthPaid,
-          scope_mismatch: scopeMismatchCount,
-          scope_mismatch_historical: scopeMismatchCount,
-          missing_amount: Math.max(monthMissingAmount, missingAmountDebugCount),
-          missing_amount_historical: missingAmountDebugCount,
-        },
-        completeness: {
-          level: "forward_aggregate",
-          notes: [
-            "Aggregates are maintained from KPI materialization time forward.",
-            "Historical retained trips may require a rebuild/backfill endpoint.",
-          ],
-        },
-      },
-      { status: 200 },
-    ),
+    json(payload, { status: 200 }),
     origin,
   );
 }
@@ -3321,6 +3640,9 @@ export default {
 
       // direct trips
       if (req.method === "GET" && url.pathname === "/admin/dashboard/trip-kpis") return await handleDashboardTripKpis(req, url, env, origin);
+      if ((req.method === "POST" || req.method === "GET") && url.pathname === "/admin/dashboard/trip-kpis/reconcile") {
+        return await handleDashboardTripKpisReconcile(req, url, env, origin);
+      }
       if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trips/archive") return await handleArchiveTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/start-direct") return await handleStartDirectTrip(req, url, env, origin);

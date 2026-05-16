@@ -21385,7 +21385,15 @@ async function _trackingSyncBumpDebugCounterBestEffort(env, scope, field, delta 
   });
 }
 
-async function _trackingSyncUpsertPendingBookingMarkerBestEffort(env, scope, bookingId, rec, reason, source) {
+async function _trackingSyncUpsertPendingBookingMarkerBestEffort(
+  env,
+  scope,
+  bookingId,
+  rec,
+  reason,
+  source,
+  tripId = "",
+) {
   const key = _trackingSyncScopedPendingBookingKey(scope, bookingId);
   if (!key) return;
   const nowIso = new Date().toISOString();
@@ -21396,6 +21404,24 @@ async function _trackingSyncUpsertPendingBookingMarkerBestEffort(env, scope, boo
     rec?.status ?? rec?.stage ?? rec?.lifecycle_status ?? rec?.lifecycleStatus ??
       rec?.booking?.status ?? rec?.booking?.stage ?? rec?.booking?.lifecycle_status ?? rec?.booking?.lifecycleStatus,
   );
+  const statusToken = safeStr(
+    rec?.status ?? rec?.stage ?? rec?.booking?.status ?? rec?.booking?.stage,
+    64,
+  );
+  const lifecycleToken = safeStr(
+    rec?.lifecycle_status ?? rec?.lifecycleStatus ??
+      rec?.booking?.lifecycle_status ?? rec?.booking?.lifecycleStatus,
+    64,
+  );
+  const bookingStatusToken = safeStr(
+    rec?.booking_status ?? rec?.bookingStatus ??
+      rec?.booking?.booking_status ?? rec?.booking?.bookingStatus,
+    64,
+  );
+  const terminal =
+    _trackingSyncNormalizeTripLifecycleStatus(statusToken) === "cancelled" ||
+    _trackingSyncNormalizeTripLifecycleStatus(lifecycleToken) === "cancelled" ||
+    _trackingSyncNormalizeTripLifecycleStatus(bookingStatusToken) === "cancelled";
   const paymentAmountCents =
     _trackingSyncAmountCents(rec?.payment_amount ?? rec?.paymentAmount) ??
     _trackingSyncAmountCents(rec?.price_incl_vat ?? rec?.booking?.price_incl_vat) ??
@@ -21403,7 +21429,12 @@ async function _trackingSyncUpsertPendingBookingMarkerBestEffort(env, scope, boo
     0;
   await _trackingSyncPutJson(env, key, {
     booking_id: safeStr(bookingId, 160),
+    trip_id: safeStr(tripId, 160) || null,
     reason: safeStr(reason, 64) || "trip_missing",
+    status: statusToken || null,
+    lifecycle_status: lifecycleToken || null,
+    booking_status: bookingStatusToken || null,
+    terminal,
     payment_status: paymentStatus || null,
     paid_at: safeStr(rec?.paid_at ?? rec?.paidAt ?? rec?.booking?.paid_at ?? rec?.booking?.paidAt, 64) || null,
     payment_amount_cents: paymentAmountCents,
@@ -21560,6 +21591,7 @@ async function syncScopedTrackingTripKpiBestEffort({
         rec,
         "trip_missing",
         source,
+        tripId,
       );
       console.log(
         `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${safeStr(resolvedBookingId)} trip=${safeStr(tripId)}`,
