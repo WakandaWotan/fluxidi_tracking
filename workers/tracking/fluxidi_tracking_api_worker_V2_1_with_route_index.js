@@ -1801,6 +1801,77 @@ function _tripKpiMask(value) {
   return `${text.slice(0, 3)}...${text.slice(-3)}`;
 }
 
+function _tripKpiNormalizeToken(value) {
+  return String(value ?? "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+}
+
+const TRIP_KPI_TERMINAL_BOOKING_STATUS_SET = new Set([
+  "cancelled",
+  "canceled",
+  "deleted",
+  "archived",
+  "closed",
+  "failed",
+  "expired",
+  "declined",
+  "completed",
+  "complete",
+  "done",
+  "finished",
+]);
+
+function _tripKpiHasVisiblePaymentArtifact(trip, bookingMap = null) {
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    trip?.payment_status ?? trip?.paymentStatus,
+  );
+  if (paymentStatus === "pending" || paymentStatus === "failed") return true;
+  const paymentMethod = normalizeComplianceText(trip?.payment_method ?? trip?.paymentMethod, "");
+  const paymentSource = normalizeComplianceText(trip?.payment_source ?? trip?.paymentSource, "");
+  if (paymentMethod && paymentMethod !== "unknown") return true;
+  if (paymentSource && paymentSource !== "unknown") return true;
+  const paymentId = safeStr(
+    trip?.payment_id ??
+      trip?.paymentId ??
+      trip?.mollie_payment_id ??
+      trip?.molliePaymentId ??
+      trip?.mollie?.payment_id ??
+      trip?.mollie?.id,
+    160,
+  );
+  if (paymentId) return true;
+  const receiptRef = safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128);
+  if (receiptRef) return true;
+  const bookingStatus = _tripKpiNormalizeToken(
+    trip?.booking_details?.booking_status ??
+      bookingMap?.booking_status ??
+      bookingMap?.bookingStatus,
+  );
+  if (bookingStatus.includes("payment")) return true;
+  return false;
+}
+
+function _tripKpiClassifyUnpaidCompleted(trip, bookingMap = null) {
+  if (!trip || typeof trip !== "object") return "unpaid_completed_tracking_only";
+  const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+  if (!bookingId || !bookingMap || typeof bookingMap !== "object") {
+    return "unpaid_completed_tracking_only";
+  }
+  const tripStatus = normalizeDashboardTripLifecycleStatus(
+    trip?.status ?? trip?.lifecycle_status,
+  );
+  const bookingStatus = _tripKpiNormalizeToken(
+    trip?.booking_details?.booking_status ??
+      bookingMap?.booking_status ??
+      bookingMap?.bookingStatus,
+  );
+  const terminal = tripStatus === "cancelled" || TRIP_KPI_TERMINAL_BOOKING_STATUS_SET.has(bookingStatus);
+  if (terminal) return "unpaid_completed_stale_unactionable";
+  if (!_tripKpiHasVisiblePaymentArtifact(trip, bookingMap)) {
+    return "unpaid_completed_missing_visible_payment_artifact";
+  }
+  return "unpaid_completed_actionable";
+}
+
 async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
   const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
   const out = {
@@ -1833,6 +1904,12 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
       const trip = await kvGetJson(env.FLUXIDI_TRACKING, scopedTripKey(normalizedScope, contrib.trip_id));
       const tripStatus = normalizeDashboardTripLifecycleStatus(trip?.status ?? trip?.lifecycle_status);
       const paymentStatus = normalizeCompliancePaymentStatus(trip?.payment_status ?? trip?.paymentStatus);
+      const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+      const bookingMapResolved = bookingId
+        ? await getScopedOrLegacyBookingMapForScope(env, normalizedScope, bookingId)
+        : null;
+      const bookingMap = bookingMapResolved?.map || null;
+      const unpaidClassification = _tripKpiClassifyUnpaidCompleted(trip, bookingMap);
 
       if (
         contrib.completed_rides_count > 0 &&
@@ -1840,11 +1917,11 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
         out.unpaid_completed_trip_contributors.length < safeLimit
       ) {
         out.unpaid_completed_trip_contributors.push({
-          reason: "completed_unpaid",
+          reason: unpaidClassification,
           source_key_type: "trip_kpi_contrib",
           contrib_key_preview: _tripKpiMask(key),
           trip_id_preview: _tripKpiMask(contrib.trip_id),
-          booking_id_preview: _tripKpiMask(trip?.booking_id ?? trip?.bookingId),
+          booking_id_preview: _tripKpiMask(bookingId),
           status: tripStatus || "unknown",
           payment_status: paymentStatus || "unknown",
           amount_cents: Number.isFinite(Number(trip?.payment_amount))
@@ -1935,6 +2012,55 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
     if (page?.list_complete !== false) break;
   } while (pendingCursor);
 
+  return out;
+}
+
+async function _collectActionableUnpaidCompletedStats(env, scope) {
+  const out = {
+    actionable_count: 0,
+    tracking_only: 0,
+    stale_unactionable: 0,
+    missing_visible_payment_artifact: 0,
+    total_scanned_unpaid_completed: 0,
+  };
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const contribPrefix = `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_contrib:`;
+  let cursor = undefined;
+  const maxScan = 5000;
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({ prefix: contribPrefix, limit: 1000, cursor });
+    for (const keyMeta of page?.keys || []) {
+      if (out.total_scanned_unpaid_completed >= maxScan) break;
+      const key = safeStr(keyMeta?.name, 280);
+      if (!key) continue;
+      const contrib = _readDashboardContribShape(
+        await kvGetJson(env.FLUXIDI_TRACKING, key),
+        null,
+      );
+      if (!contrib?.trip_id) continue;
+      if (!(contrib.completed_rides_count === 1 && contrib.unpaid_completed_rides_count === 1)) {
+        continue;
+      }
+      out.total_scanned_unpaid_completed += 1;
+      const tripResolved = await getScopedOrLegacyTripForScope(env, normalizedScope, contrib.trip_id);
+      const trip = tripResolved?.trip || null;
+      const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+      const bookingMapResolved = bookingId
+        ? await getScopedOrLegacyBookingMapForScope(env, normalizedScope, bookingId)
+        : null;
+      const bookingMap = bookingMapResolved?.map || null;
+      const classification = _tripKpiClassifyUnpaidCompleted(trip, bookingMap);
+      if (classification === "unpaid_completed_actionable") out.actionable_count += 1;
+      else if (classification === "unpaid_completed_tracking_only") out.tracking_only += 1;
+      else if (classification === "unpaid_completed_stale_unactionable") out.stale_unactionable += 1;
+      else if (classification === "unpaid_completed_missing_visible_payment_artifact") {
+        out.missing_visible_payment_artifact += 1;
+      }
+    }
+    if (out.total_scanned_unpaid_completed >= maxScan) break;
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+  } while (cursor);
   return out;
 }
 
@@ -2169,6 +2295,7 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
         bookingMap?.payment_status ?? bookingMap?.paymentStatus,
       ) === "paid";
       const paidProof = tripPaymentStatus === "paid" || markerPaid || bookingMapPaid;
+      const classification = _tripKpiClassifyUnpaidCompleted(trip, bookingMap);
 
       const actionBase = {
         dry_run: dryRun,
@@ -2189,19 +2316,28 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
         },
       };
 
-      if (tripStatus === "cancelled") {
+      if (classification === "unpaid_completed_stale_unactionable") {
         summary.unpaid_completed_terminal_or_cancelled += 1;
         actions.push({
-          action: "unpaid_completed_terminal_or_cancelled",
+          action: "unpaid_completed_stale_unactionable",
           ...actionBase,
         });
         continue;
       }
 
-      if (!bookingId || (!bookingMap && !marker && tripPaymentStatus !== "paid")) {
+      if (classification === "unpaid_completed_tracking_only") {
         summary.unpaid_completed_missing_booking += 1;
         actions.push({
-          action: "unpaid_completed_missing_booking",
+          action: "unpaid_completed_tracking_only",
+          ...actionBase,
+        });
+        continue;
+      }
+
+      if (classification === "unpaid_completed_missing_visible_payment_artifact") {
+        summary.unpaid_completed_missing_amount += 1;
+        actions.push({
+          action: "unpaid_completed_missing_visible_payment_artifact",
           ...actionBase,
         });
         continue;
@@ -2210,7 +2346,7 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
       if (!paidProof) {
         summary.unpaid_completed_still_unpaid += 1;
         actions.push({
-          action: "unpaid_completed_still_unpaid",
+          action: "unpaid_completed_actionable",
           ...actionBase,
         });
         continue;
@@ -2340,12 +2476,17 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     scopedDashboardTripDebugKey(normalizedScope),
   )) ?? {};
   const pendingDiagnostics = await _collectTripKpiPendingDiagnostics(env, normalizedScope);
+  const unpaidActionableStats = await _collectActionableUnpaidCompletedStats(
+    env,
+    normalizedScope,
+  );
   const completed = Number.isFinite(Number(global.completed_rides_count))
     ? Math.max(0, Math.round(Number(global.completed_rides_count)))
     : 0;
-  const unpaid = Number.isFinite(Number(global.unpaid_completed_rides_count))
+  const unpaidRaw = Number.isFinite(Number(global.unpaid_completed_rides_count))
     ? Math.max(0, Math.round(Number(global.unpaid_completed_rides_count)))
     : 0;
+  const unpaid = Math.max(0, Math.round(Number(unpaidActionableStats.actionable_count) || 0));
   const monthPaid = Number.isFinite(Number(month.monthly_paid_rides_count))
     ? Math.max(0, Math.round(Number(month.monthly_paid_rides_count)))
     : 0;
@@ -2378,6 +2519,7 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     generated_at: nowIso(),
     currency: "EUR",
     completed_rides_count: completed,
+    unpaid_completed_rides_count_raw: unpaidRaw,
     unpaid_completed_rides_count: unpaid,
     monthly_paid_rides_count: monthPaid,
     monthly_income_eur: monthIncomeCents / 100,
@@ -2393,6 +2535,12 @@ async function handleDashboardTripKpis(req, url, env, origin) {
       paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
       paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed,
       completed_but_unpaid: unpaid,
+      completed_but_unpaid_raw: unpaidRaw,
+      unpaid_completed_actionable: unpaidActionableStats.actionable_count,
+      unpaid_completed_stale_unactionable: unpaidActionableStats.stale_unactionable,
+      unpaid_completed_tracking_only: unpaidActionableStats.tracking_only,
+      unpaid_completed_missing_visible_payment_artifact:
+        unpaidActionableStats.missing_visible_payment_artifact,
       completed_paid_contributed: monthPaid,
       scope_mismatch: scopeMismatchCount,
       scope_mismatch_historical: scopeMismatchCount,
