@@ -835,6 +835,14 @@ export class FleetAllocatorDO {
           typeof etaEvaluation?.route_response_has_duration === "boolean"
             ? etaEvaluation.route_response_has_duration
             : null,
+        route_used_coordinate_direct:
+          typeof etaEvaluation?.route_used_coordinate_direct === "boolean"
+            ? etaEvaluation.route_used_coordinate_direct
+            : null,
+        route_used_geocode_fallback:
+          typeof etaEvaluation?.route_used_geocode_fallback === "boolean"
+            ? etaEvaluation.route_used_geocode_fallback
+            : null,
       });
     }
 
@@ -8203,6 +8211,14 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         route_response_has_duration:
           typeof vehicleCapacity?.route_response_has_duration === "boolean"
             ? vehicleCapacity.route_response_has_duration
+            : null,
+        route_used_coordinate_direct:
+          typeof vehicleCapacity?.route_used_coordinate_direct === "boolean"
+            ? vehicleCapacity.route_used_coordinate_direct
+            : null,
+        route_used_geocode_fallback:
+          typeof vehicleCapacity?.route_used_geocode_fallback === "boolean"
+            ? vehicleCapacity.route_used_geocode_fallback
             : null,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
@@ -18877,6 +18893,14 @@ async function handleBooking(payload, env, request) {
                     typeof alloc?.route_response_has_duration === "boolean"
                       ? alloc.route_response_has_duration
                       : null,
+                  route_used_coordinate_direct:
+                    typeof alloc?.route_used_coordinate_direct === "boolean"
+                      ? alloc.route_used_coordinate_direct
+                      : null,
+                  route_used_geocode_fallback:
+                    typeof alloc?.route_used_geocode_fallback === "boolean"
+                      ? alloc.route_used_geocode_fallback
+                      : null,
                 },
               };
             }
@@ -19562,6 +19586,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
               route_response_has_duration:
                 typeof alloc?.route_response_has_duration === "boolean"
                   ? alloc.route_response_has_duration
+                  : null,
+              route_used_coordinate_direct:
+                typeof alloc?.route_used_coordinate_direct === "boolean"
+                  ? alloc.route_used_coordinate_direct
+                  : null,
+              route_used_geocode_fallback:
+                typeof alloc?.route_used_geocode_fallback === "boolean"
+                  ? alloc.route_used_geocode_fallback
                   : null,
             },
           };
@@ -24965,6 +24997,7 @@ function _sanitizeRouteErrorMessage(value, maxLen = 180) {
 
 function _allocatorRoutePointDiagnostics(point) {
   const raw = point && typeof point === "object" ? point : {};
+  const resolvedCoords = _allocatorResolvePointCoordinates(raw);
   const latCandidates = [
     raw?.lat,
     raw?.latitude,
@@ -24978,16 +25011,37 @@ function _allocatorRoutePointDiagnostics(point) {
   ];
   const latOk = latCandidates.some((value) => Number.isFinite(Number(value)));
   const lngOk = lngCandidates.some((value) => Number.isFinite(Number(value)));
-  const lat = Number(raw?.lat);
-  const lng = Number(raw?.lng);
-  const preview = Number.isFinite(lat) && Number.isFinite(lng)
-    ? `${lat.toFixed(3)},${lng.toFixed(3)}`
+  const preview = resolvedCoords
+    ? `${resolvedCoords.lat.toFixed(3)},${resolvedCoords.lng.toFixed(3)}`
     : "";
   return {
     lat_ok: latOk,
     lng_ok: lngOk,
     latlng_preview: preview || null,
   };
+}
+
+function _allocatorResolvePointCoordinates(point) {
+  const raw = point && typeof point === "object" ? point : {};
+  const latCandidates = [
+    raw?.lat,
+    raw?.latitude,
+    Array.isArray(raw?.coordinates) ? raw.coordinates[1] : undefined,
+  ];
+  const lngCandidates = [
+    raw?.lng,
+    raw?.lon,
+    raw?.longitude,
+    Array.isArray(raw?.coordinates) ? raw.coordinates[0] : undefined,
+  ];
+  const lat = latCandidates.find((value) => Number.isFinite(Number(value)));
+  const lng = lngCandidates.find((value) => Number.isFinite(Number(value)));
+  const latN = Number(lat);
+  const lngN = Number(lng);
+  if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return null;
+  if (latN < -90 || latN > 90) return null;
+  if (lngN < -180 || lngN > 180) return null;
+  return { lat: latN, lng: lngN };
 }
 
 function _allocatorOriginRequiredHorizonSeconds(env) {
@@ -25027,6 +25081,9 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
   const pickupHasLocation = _isUsableLocationPoint(toPoint);
   const originDiag = _allocatorRoutePointDiagnostics(fromPoint);
   const pickupDiag = _allocatorRoutePointDiagnostics(toPoint);
+  const originCoords = _allocatorResolvePointCoordinates(fromPoint);
+  const pickupCoords = _allocatorResolvePointCoordinates(toPoint);
+  const canUseCoordinateDirect = !!(originCoords && pickupCoords);
   const fromText = _pointToRouteText(fromPoint);
   const toText = _pointToRouteText(toPoint);
   if (!fromText || !toText) {
@@ -25054,19 +25111,29 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       route_response_has_routes: false,
       route_response_routes_count: 0,
       route_response_has_duration: false,
+      route_used_coordinate_direct: false,
+      route_used_geocode_fallback: false,
     };
   }
   try {
-    const out = await routeFromTextsWithStopsDetailed({
-      fromText,
-      toText,
-      stopsTexts: [],
-      token: env.MAPBOX_TOKEN,
-    });
-    const routeDiag = out?.route?._diagnostics && typeof out.route._diagnostics === "object"
-      ? out.route._diagnostics
+    const routeResolved = canUseCoordinateDirect
+      ? await directionsMulti(
+          [
+            { lat: originCoords.lat, lng: originCoords.lng },
+            { lat: pickupCoords.lat, lng: pickupCoords.lng },
+          ],
+          env.MAPBOX_TOKEN,
+        )
+      : (await routeFromTextsWithStopsDetailed({
+          fromText,
+          toText,
+          stopsTexts: [],
+          token: env.MAPBOX_TOKEN,
+        })).route;
+    const effectiveRouteDiag = routeResolved?._diagnostics && typeof routeResolved._diagnostics === "object"
+      ? routeResolved._diagnostics
       : {};
-    const secRaw = Number(out?.route?.duration);
+    const secRaw = Number(routeResolved?.duration);
     const sec = Number.isFinite(secRaw) ? secRaw : 0;
     if (!Number.isFinite(sec) || sec <= 0) {
       return {
@@ -25077,10 +25144,10 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
         pickup_has_location: pickupHasLocation,
         origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
         pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
-        route_http_status: Number(routeDiag?.route_http_status) || 200,
-        route_error_message: _sanitizeRouteErrorMessage(routeDiag?.route_error_message, 180) || null,
-        route_error_code: safeStr(routeDiag?.route_error_code, 80) || "no_route",
-        route_profile: safeStr(routeDiag?.route_profile, 80) || "mapbox/driving",
+        route_http_status: Number(effectiveRouteDiag?.route_http_status) || 200,
+        route_error_message: _sanitizeRouteErrorMessage(effectiveRouteDiag?.route_error_message, 180) || null,
+        route_error_code: safeStr(effectiveRouteDiag?.route_error_code, 80) || "no_route",
+        route_profile: safeStr(effectiveRouteDiag?.route_profile, 80) || "mapbox/driving",
         route_origin_lat_ok: originDiag.lat_ok,
         route_origin_lng_ok: originDiag.lng_ok,
         route_pickup_lat_ok: pickupDiag.lat_ok,
@@ -25088,9 +25155,11 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
         route_origin_latlng_preview: originDiag.latlng_preview,
         route_pickup_latlng_preview: pickupDiag.latlng_preview,
         route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
-        route_response_has_routes: routeDiag?.route_response_has_routes === true,
-        route_response_routes_count: Number(routeDiag?.route_response_routes_count || 0),
-        route_response_has_duration: routeDiag?.route_response_has_duration === true,
+        route_response_has_routes: effectiveRouteDiag?.route_response_has_routes === true,
+        route_response_routes_count: Number(effectiveRouteDiag?.route_response_routes_count || 0),
+        route_response_has_duration: effectiveRouteDiag?.route_response_has_duration === true,
+        route_used_coordinate_direct: canUseCoordinateDirect,
+        route_used_geocode_fallback: !canUseCoordinateDirect,
       };
     }
     return {
@@ -25101,10 +25170,10 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       pickup_has_location: pickupHasLocation,
       origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
       pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
-      route_http_status: Number(routeDiag?.route_http_status) || 200,
-      route_error_message: _sanitizeRouteErrorMessage(routeDiag?.route_error_message, 180) || null,
-      route_error_code: safeStr(routeDiag?.route_error_code, 80) || null,
-      route_profile: safeStr(routeDiag?.route_profile, 80) || "mapbox/driving",
+      route_http_status: Number(effectiveRouteDiag?.route_http_status) || 200,
+      route_error_message: _sanitizeRouteErrorMessage(effectiveRouteDiag?.route_error_message, 180) || null,
+      route_error_code: safeStr(effectiveRouteDiag?.route_error_code, 80) || null,
+      route_profile: safeStr(effectiveRouteDiag?.route_profile, 80) || "mapbox/driving",
       route_origin_lat_ok: originDiag.lat_ok,
       route_origin_lng_ok: originDiag.lng_ok,
       route_pickup_lat_ok: pickupDiag.lat_ok,
@@ -25112,9 +25181,11 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       route_origin_latlng_preview: originDiag.latlng_preview,
       route_pickup_latlng_preview: pickupDiag.latlng_preview,
       route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
-      route_response_has_routes: routeDiag?.route_response_has_routes === true,
-      route_response_routes_count: Number(routeDiag?.route_response_routes_count || 0),
-      route_response_has_duration: routeDiag?.route_response_has_duration === true,
+      route_response_has_routes: effectiveRouteDiag?.route_response_has_routes === true,
+      route_response_routes_count: Number(effectiveRouteDiag?.route_response_routes_count || 0),
+      route_response_has_duration: effectiveRouteDiag?.route_response_has_duration === true,
+      route_used_coordinate_direct: canUseCoordinateDirect,
+      route_used_geocode_fallback: !canUseCoordinateDirect,
     };
   } catch (e) {
     const msg = safeStr(e?.message || e, 160).toLowerCase();
@@ -25145,6 +25216,8 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       route_response_has_routes: e?.route_response_has_routes === true,
       route_response_routes_count: Number(e?.route_response_routes_count || 0),
       route_response_has_duration: false,
+      route_used_coordinate_direct: canUseCoordinateDirect,
+      route_used_geocode_fallback: !canUseCoordinateDirect,
     };
   }
 }
@@ -25550,6 +25623,14 @@ async function _vehicleCapacityGateForRequest(env, req) {
         typeof evaluation?.route_response_has_duration === "boolean"
           ? evaluation.route_response_has_duration
           : null,
+      route_used_coordinate_direct:
+        typeof evaluation?.route_used_coordinate_direct === "boolean"
+          ? evaluation.route_used_coordinate_direct
+          : null,
+      route_used_geocode_fallback:
+        typeof evaluation?.route_used_geocode_fallback === "boolean"
+          ? evaluation.route_used_geocode_fallback
+          : null,
     };
   }
 
@@ -25618,6 +25699,14 @@ async function _vehicleCapacityGateForRequest(env, req) {
     route_response_has_duration:
       typeof evaluation?.route_response_has_duration === "boolean"
         ? evaluation.route_response_has_duration
+        : null,
+    route_used_coordinate_direct:
+      typeof evaluation?.route_used_coordinate_direct === "boolean"
+        ? evaluation.route_used_coordinate_direct
+        : null,
+    route_used_geocode_fallback:
+      typeof evaluation?.route_used_geocode_fallback === "boolean"
+        ? evaluation.route_used_geocode_fallback
         : null,
     vehicle_id: assignment?.vehicle_id || null,
     assigned_driver: assignment?.assigned_driver || null,
@@ -25723,6 +25812,8 @@ async function _evaluateFleetAvailability(env, req) {
       route_response_has_routes: null,
       route_response_routes_count: null,
       route_response_has_duration: null,
+      route_used_coordinate_direct: null,
+      route_used_geocode_fallback: null,
     };
   }
   if (pickupMs <= nowMs) {
@@ -25973,6 +26064,14 @@ async function _evaluateFleetAvailability(env, req) {
               typeof travel?.route_response_has_duration === "boolean"
                 ? travel.route_response_has_duration
                 : null,
+            route_used_coordinate_direct:
+              typeof travel?.route_used_coordinate_direct === "boolean"
+                ? travel.route_used_coordinate_direct
+                : null,
+            route_used_geocode_fallback:
+              typeof travel?.route_used_geocode_fallback === "boolean"
+                ? travel.route_used_geocode_fallback
+                : null,
           });
           continue;
         }
@@ -26027,6 +26126,14 @@ async function _evaluateFleetAvailability(env, req) {
               typeof travel?.route_response_has_duration === "boolean"
                 ? travel.route_response_has_duration
                 : null,
+            route_used_coordinate_direct:
+              typeof travel?.route_used_coordinate_direct === "boolean"
+                ? travel.route_used_coordinate_direct
+                : null,
+            route_used_geocode_fallback:
+              typeof travel?.route_used_geocode_fallback === "boolean"
+                ? travel.route_used_geocode_fallback
+                : null,
           });
           continue;
         }
@@ -26079,6 +26186,14 @@ async function _evaluateFleetAvailability(env, req) {
             typeof travel?.route_response_has_duration === "boolean"
               ? travel.route_response_has_duration
               : null,
+          route_used_coordinate_direct:
+            typeof travel?.route_used_coordinate_direct === "boolean"
+              ? travel.route_used_coordinate_direct
+              : null,
+          route_used_geocode_fallback:
+            typeof travel?.route_used_geocode_fallback === "boolean"
+              ? travel.route_used_geocode_fallback
+              : null,
         };
         break;
       }
@@ -26118,6 +26233,8 @@ async function _evaluateFleetAvailability(env, req) {
           route_response_has_routes: false,
           route_response_routes_count: 0,
           route_response_has_duration: false,
+          route_used_coordinate_direct: null,
+          route_used_geocode_fallback: null,
         });
         continue;
       }
@@ -26169,6 +26286,14 @@ async function _evaluateFleetAvailability(env, req) {
           route_response_has_duration:
             typeof travel?.route_response_has_duration === "boolean"
               ? travel.route_response_has_duration
+              : null,
+          route_used_coordinate_direct:
+            typeof travel?.route_used_coordinate_direct === "boolean"
+              ? travel.route_used_coordinate_direct
+              : null,
+          route_used_geocode_fallback:
+            typeof travel?.route_used_geocode_fallback === "boolean"
+              ? travel.route_used_geocode_fallback
               : null,
         });
         continue;
@@ -26225,6 +26350,14 @@ async function _evaluateFleetAvailability(env, req) {
             typeof travel?.route_response_has_duration === "boolean"
               ? travel.route_response_has_duration
               : null,
+          route_used_coordinate_direct:
+            typeof travel?.route_used_coordinate_direct === "boolean"
+              ? travel.route_used_coordinate_direct
+              : null,
+          route_used_geocode_fallback:
+            typeof travel?.route_used_geocode_fallback === "boolean"
+              ? travel.route_used_geocode_fallback
+              : null,
         });
         continue;
       }
@@ -26276,6 +26409,14 @@ async function _evaluateFleetAvailability(env, req) {
         route_response_has_duration:
           typeof travel?.route_response_has_duration === "boolean"
             ? travel.route_response_has_duration
+            : null,
+        route_used_coordinate_direct:
+          typeof travel?.route_used_coordinate_direct === "boolean"
+            ? travel.route_used_coordinate_direct
+            : null,
+        route_used_geocode_fallback:
+          typeof travel?.route_used_geocode_fallback === "boolean"
+            ? travel.route_used_geocode_fallback
             : null,
       };
       break;
@@ -26345,6 +26486,10 @@ async function _evaluateFleetAvailability(env, req) {
       topEtaFailure?.route_response_routes_count ?? nextVehicle?.route_response_routes_count ?? null,
     route_response_has_duration:
       topEtaFailure?.route_response_has_duration ?? nextVehicle?.route_response_has_duration ?? null,
+    route_used_coordinate_direct:
+      topEtaFailure?.route_used_coordinate_direct ?? nextVehicle?.route_used_coordinate_direct ?? null,
+    route_used_geocode_fallback:
+      topEtaFailure?.route_used_geocode_fallback ?? nextVehicle?.route_used_geocode_fallback ?? null,
   };
 }
 
