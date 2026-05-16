@@ -1760,6 +1760,8 @@ async function _collectTripKpiPendingDiagnostics(env, scope) {
   const out = {
     trip_missing: 0,
     paid_but_not_completed: 0,
+    trip_missing_active: 0,
+    paid_but_not_completed_active: 0,
   };
   try {
     if (!env?.FLUXIDI_TRACKING || typeof env.FLUXIDI_TRACKING.list !== "function") {
@@ -1783,6 +1785,11 @@ async function _collectTripKpiPendingDiagnostics(env, scope) {
         const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
         const completed = marker?.completed === true;
         if (paid && !completed) out.paid_but_not_completed += 1;
+        const classification = await _classifyTripKpiPendingMarker(env, scope, marker);
+        if (classification?.active === true) {
+          if (reason === "trip_missing") out.trip_missing_active += 1;
+          if (paid && !completed) out.paid_but_not_completed_active += 1;
+        }
       }
       if (scanned >= maxScan) break;
       cursor = page?.cursor;
@@ -1870,6 +1877,125 @@ function _tripKpiClassifyUnpaidCompleted(trip, bookingMap = null) {
     return "unpaid_completed_missing_visible_payment_artifact";
   }
   return "unpaid_completed_actionable";
+}
+
+async function _classifyTripKpiPendingMarker(env, scope, marker) {
+  const bookingId = safeStr(marker?.booking_id, 160);
+  const markerTripId = safeStr(marker?.trip_id, 160);
+  const tripId = markerTripId || (bookingId ? `planned_${bookingId}` : "");
+  const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
+  const completed = marker?.completed === true;
+  const amountCents = Number.isFinite(Number(marker?.payment_amount_cents))
+    ? Math.max(0, Math.round(Number(marker.payment_amount_cents)))
+    : 0;
+  const statusToken = _tripKpiNormalizeToken(
+    marker?.status ?? marker?.lifecycle_status ?? marker?.booking_status,
+  );
+  const terminal =
+    marker?.terminal === true ||
+    TRIP_KPI_TERMINAL_BOOKING_STATUS_SET.has(statusToken);
+  let trip = null;
+  let bookingMap = null;
+  if (tripId) {
+    try {
+      const resolved = await getScopedOrLegacyTripForScope(env, scope, tripId);
+      trip = resolved?.trip || null;
+    } catch (_) {
+      trip = null;
+    }
+  }
+  if (bookingId) {
+    try {
+      const resolved = await getScopedOrLegacyBookingMapForScope(env, scope, bookingId);
+      bookingMap = resolved?.map || null;
+    } catch (_) {
+      bookingMap = null;
+    }
+  }
+  const hasTrip = !!(trip && recordMatchesTenantCompanyScope(trip, scope));
+  const hasBookingMap = !!(bookingMap && recordMatchesTenantCompanyScope(bookingMap, scope));
+  if (hasTrip) {
+    return {
+      classification: "pending_marker_resolvable_to_trip",
+      active: true,
+      clearable: false,
+      bookingId,
+      tripId,
+      hasTrip,
+      hasBookingMap,
+      amountCents,
+      paid,
+      completed,
+    };
+  }
+  if (terminal) {
+    return {
+      classification: "pending_marker_terminal_or_cancelled",
+      active: false,
+      clearable: true,
+      bookingId,
+      tripId,
+      hasTrip,
+      hasBookingMap,
+      amountCents,
+      paid,
+      completed,
+    };
+  }
+  if (!bookingId) {
+    return {
+      classification: "pending_marker_tracking_only_orphan",
+      active: false,
+      clearable: true,
+      bookingId,
+      tripId,
+      hasTrip,
+      hasBookingMap,
+      amountCents,
+      paid,
+      completed,
+    };
+  }
+  if (!hasBookingMap && !hasTrip) {
+    return {
+      classification: "pending_marker_missing_booking",
+      active: false,
+      clearable: true,
+      bookingId,
+      tripId,
+      hasTrip,
+      hasBookingMap,
+      amountCents,
+      paid,
+      completed,
+    };
+  }
+  if (paid && amountCents <= 0) {
+    return {
+      classification: "pending_marker_zero_amount_stale",
+      active: false,
+      clearable: true,
+      bookingId,
+      tripId,
+      hasTrip,
+      hasBookingMap,
+      amountCents,
+      paid,
+      completed,
+    };
+  }
+  return {
+    classification: "pending_marker_waiting_for_trip",
+    active: true,
+    clearable: false,
+    bookingId,
+    tripId,
+    hasTrip,
+    hasBookingMap,
+    amountCents,
+    paid,
+    completed,
+  };
 }
 
 async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
@@ -1983,18 +2109,18 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
       if (!key) continue;
       const marker = await kvGetJson(env.FLUXIDI_TRACKING, key);
       if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
-      const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
-      const completed = marker?.completed === true;
-      const reason =
-        marker?.terminal === true && !completed
-          ? "pending_marker_terminal_not_completed"
-          : (paid && !completed ? "paid_booking_not_completed" : "pending_paid_booking_no_trip");
+      const markerClass = await _classifyTripKpiPendingMarker(env, normalizedScope, marker);
+      const paid = markerClass?.paid === true;
+      const completed = markerClass?.completed === true;
+      const reason = markerClass?.classification || "pending_marker_waiting_for_trip";
       out.pending_booking_markers.push({
         reason,
         source_key_type: "pending_booking_marker",
         marker_key_preview: _tripKpiMask(key),
-        booking_id_preview: _tripKpiMask(marker?.booking_id),
-        trip_id_preview: _tripKpiMask(marker?.trip_id),
+        booking_id_preview: _tripKpiMask(markerClass?.bookingId ?? marker?.booking_id),
+        trip_id_preview: _tripKpiMask(markerClass?.tripId ?? marker?.trip_id),
+        active: markerClass?.active === true,
+        clearable: markerClass?.clearable === true,
         status: safeStr(marker?.status, 40) || null,
         payment_status: normalizeCompliancePaymentStatus(marker?.payment_status) || null,
         amount_cents: Number.isFinite(Number(marker?.payment_amount_cents))
@@ -2135,13 +2261,12 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
       const marker = await kvGetJson(env.FLUXIDI_TRACKING, markerKey);
       if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
 
-      const bookingId = safeStr(marker?.booking_id, 160);
-      const tripId = safeStr(marker?.trip_id, 160) || (bookingId ? `planned_${bookingId}` : "");
+      const markerClass = await _classifyTripKpiPendingMarker(env, scope, marker);
+      const bookingId = markerClass?.bookingId || safeStr(marker?.booking_id, 160);
+      const tripId = markerClass?.tripId || safeStr(marker?.trip_id, 160) || (bookingId ? `planned_${bookingId}` : "");
       const tripStorageKey = tripId ? scopedTripKey(scope, tripId) : "";
       const trip = tripStorageKey ? await kvGetJson(env.FLUXIDI_TRACKING, tripStorageKey) : null;
-      const markerPaid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
-      const markerCompleted = marker?.completed === true;
-      const markerTerminal = marker?.terminal === true;
+      const markerPaid = markerClass?.paid === true;
 
       if (trip && recordMatchesTenantCompanyScope(trip, scope)) {
         const projectedTrip = { ...trip };
@@ -2176,6 +2301,8 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
           marker_key_preview: _tripKpiMask(markerKey),
           booking_id_preview: _tripKpiMask(bookingId),
           trip_id_preview: _tripKpiMask(tripId),
+          marker_classification: markerClass?.classification || "pending_marker_resolvable_to_trip",
+          marker_clearable: markerClass?.clearable === true,
           expected_delta: {
             completed_rides_count: next.completed_rides_count - prev.completed_rides_count,
             unpaid_completed_rides_count: next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count,
@@ -2197,15 +2324,17 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
         continue;
       }
 
-      if (markerTerminal && !markerCompleted) {
+      if (markerClass?.clearable === true) {
         summary.cleared_terminal_marker += 1;
         actions.push({
-          action: "cleared_terminal_marker",
+          action: markerClass?.classification || "pending_marker_terminal_or_cancelled",
           dry_run: dryRun,
           marker_key_preview: _tripKpiMask(markerKey),
           booking_id_preview: _tripKpiMask(bookingId),
           trip_id_preview: _tripKpiMask(tripId),
-          reason: "pending_marker_terminal_not_completed",
+          marker_classification: markerClass?.classification || null,
+          marker_clearable: true,
+          reason: markerClass?.classification || "pending_marker_terminal_or_cancelled",
         });
         if (!dryRun) {
           await kvDel(env.FLUXIDI_TRACKING, markerKey);
@@ -2215,11 +2344,13 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
 
       summary.unresolved_pending += 1;
       actions.push({
-        action: "unresolved_pending",
+        action: markerClass?.classification || "unresolved_pending",
         dry_run: dryRun,
         marker_key_preview: _tripKpiMask(markerKey),
         booking_id_preview: _tripKpiMask(bookingId),
         trip_id_preview: _tripKpiMask(tripId),
+        marker_classification: markerClass?.classification || null,
+        marker_clearable: markerClass?.clearable === true,
         reason: markerPaid ? "pending_paid_booking_no_trip" : "trip_missing",
       });
     }
@@ -2531,9 +2662,9 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
     diagnostics: {
       trip_missing: pendingDiagnostics.trip_missing,
-      trip_missing_active: pendingDiagnostics.trip_missing,
+      trip_missing_active: pendingDiagnostics.trip_missing_active,
       paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
-      paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed,
+      paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed_active,
       completed_but_unpaid: unpaid,
       completed_but_unpaid_raw: unpaidRaw,
       unpaid_completed_actionable: unpaidActionableStats.actionable_count,
