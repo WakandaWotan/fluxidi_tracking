@@ -8956,6 +8956,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             color: Colors.white.withOpacity(active ? 1.0 : 0.78),
             fontWeight: FontWeight.w800,
             fontSize: 14.3,
+            shadows: hasImageBackground
+                ? [
+                    Shadow(
+                      color: Colors.black.withOpacity(0.62),
+                      blurRadius: 6,
+                      offset: const Offset(0, 1.2),
+                    ),
+                  ]
+                : null,
           ),
         ),
         const SizedBox(height: 4),
@@ -8966,6 +8975,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           style: TextStyle(
             color: Colors.white.withOpacity(active ? 0.64 : 0.5),
             fontSize: 11.4,
+            shadows: hasImageBackground
+                ? [
+                    Shadow(
+                      color: Colors.black.withOpacity(0.54),
+                      blurRadius: 5,
+                      offset: const Offset(0, 1.1),
+                    ),
+                  ]
+                : null,
           ),
         ),
         const Spacer(),
@@ -9018,13 +9036,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
                       colors: [
-                        Colors.black.withOpacity(0.16),
-                        Colors.black.withOpacity(0.26),
-                        Colors.black.withOpacity(0.56),
+                        Colors.black.withOpacity(0.62),
+                        Colors.black.withOpacity(0.40),
+                        Colors.black.withOpacity(0.24),
+                        Colors.black.withOpacity(0.10),
                       ],
+                      stops: const [0.0, 0.42, 0.72, 1.0],
                     ),
                   ),
                 ),
