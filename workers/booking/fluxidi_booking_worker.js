@@ -15057,11 +15057,30 @@ GET /oauth/callback
         if (!partnerId) {
           return json({ ok: false, error: "partner_id is required" }, 400);
         }
-        const profile = await getPublicPartnerProfileById(env, partnerId);
-        if (!profile) {
+        const profileResult = await getPublicPartnerProfileById(env, partnerId);
+        if (!profileResult?.profile) {
           return json({ ok: false, error: "partner profile not found" }, 404);
         }
-        return json({ ok: true, profile }, 200);
+        const profile = profileResult.profile;
+        const drivers = Array.isArray(profile.drivers) ? profile.drivers : [];
+        const publicDriverPortraitsCount = drivers.reduce((count, row) => {
+          if (!row || typeof row !== "object") return count;
+          const portraitUrl = _safePublicHttpsUrl(row.portrait_url ?? row.portraitUrl, 600);
+          return portraitUrl ? count + 1 : count;
+        }, 0);
+        return json(
+          {
+            ok: true,
+            profile,
+            profiles_source: sanitizeTenantString(profileResult.meta?.profiles_source, 48) || "unknown",
+            projection_updated_at: sanitizeTenantString(
+              profileResult.meta?.projection_updated_at,
+              80,
+            ),
+            public_driver_portraits_count: publicDriverPortraitsCount,
+          },
+          200,
+        );
       }
 
       // POST /bookings/availability-check (alias for existing /availability)
@@ -15457,8 +15476,9 @@ GET /oauth/callback
         if (!mediaTypeValidation.ok) {
           return json({ ok: false, error: mediaTypeValidation.error }, 400);
         }
+        const normalizedMediaType = mediaTypeValidation.media_type;
         const entityIdValidation = _validatePublicMediaEntityId(
-          mediaType,
+          normalizedMediaType,
           form.get("entity_id"),
         );
         if (!entityIdValidation.ok) {
@@ -15491,7 +15511,7 @@ GET /oauth/callback
         const objectKey = _buildPublicCompanyMediaKey({
           tenantId,
           companyId,
-          mediaType,
+          mediaType: normalizedMediaType,
           entityId: entityIdValidation.entity_id,
           ext: detected.ext,
         });
@@ -15506,7 +15526,7 @@ GET /oauth/callback
           `${url.origin}/public/media/${_encodePublicMediaKeyForUrl(objectKey)}?v=${uploadedAt}`;
         return json({
           ok: true,
-          media_type: mediaType,
+          media_type: normalizedMediaType,
           entity_id: entityIdValidation.entity_id || "",
           key: objectKey,
           url: mediaUrl,
@@ -25068,20 +25088,34 @@ function _sanitizePublicMediaSegment(value) {
 }
 
 function _validateCompanyMediaType(mediaType) {
+  const normalizedMediaType = String(mediaType || "").trim().toLowerCase();
+  if (normalizedMediaType === "driver_portrait") {
+    return { ok: true, media_type: "driver_photo" };
+  }
   if (
-    mediaType === "company_logo" ||
-    mediaType === "company_hero" ||
-    mediaType === "vehicle_photo"
+    normalizedMediaType === "company_logo" ||
+    normalizedMediaType === "company_hero" ||
+    normalizedMediaType === "vehicle_photo" ||
+    normalizedMediaType === "driver_photo"
   ) {
-    return { ok: true };
+    return { ok: true, media_type: normalizedMediaType };
   }
   return { ok: false, error: "unsupported media_type" };
 }
 
 function _validatePublicMediaEntityId(mediaType, entityIdRaw) {
-  if (mediaType !== "vehicle_photo") return { ok: true, entity_id: "" };
+  if (mediaType !== "vehicle_photo" && mediaType !== "driver_photo") {
+    return { ok: true, entity_id: "" };
+  }
   const raw = sanitizeTenantString(entityIdRaw, 120);
-  if (!raw) return { ok: false, error: "entity_id is required for vehicle_photo" };
+  if (!raw) {
+    return {
+      ok: false,
+      error: mediaType === "driver_photo"
+        ? "entity_id is required for driver_photo"
+        : "entity_id is required for vehicle_photo",
+    };
+  }
   if (raw.includes("/") || raw.includes("\\") || raw.includes("..")) {
     return { ok: false, error: "invalid entity_id" };
   }
@@ -25107,6 +25141,11 @@ function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId,
     const entitySeg = _sanitizePublicMediaSegment(entityId);
     if (!entitySeg) throw new Error("invalid vehicle entity scope");
     return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/photo.${safeExt}`;
+  }
+  if (mediaType === "driver_photo") {
+    const entitySeg = _sanitizePublicMediaSegment(entityId);
+    if (!entitySeg) throw new Error("invalid driver entity scope");
+    return `public-media/${tenantSeg}/${companySeg}/drivers/${entitySeg}/portrait.${safeExt}`;
   }
   throw new Error("unsupported media type");
 }
@@ -25293,6 +25332,13 @@ function _normalizePublicPartnerProfileEntry(raw) {
   const isActive = raw.is_active === true;
   const subscriptionStatus = _safePublicText(raw.subscription_status ?? raw.subscriptionStatus, 32)
     .toLowerCase();
+  const publishedAt = _safePublicText(
+    raw.published_at ??
+      raw.publishedAt ??
+      raw.public_partner_profile_published_at ??
+      raw.publicPartnerProfilePublishedAt,
+    80,
+  );
   if (!partnerId || !companyName) return null;
   return {
     partner_id: partnerId,
@@ -25308,6 +25354,7 @@ function _normalizePublicPartnerProfileEntry(raw) {
     profile_enabled: profileEnabled,
     is_active: isActive,
     subscription_status: subscriptionStatus,
+    ...(publishedAt ? { published_at: publishedAt } : {}),
     tagline: _safePublicText(raw.tagline, 180),
     about_short: _safePublicText(raw.about_short ?? raw.aboutShort, 400),
     about_long: _safePublicText(raw.about_long ?? raw.aboutLong, 2000),
@@ -25336,12 +25383,20 @@ function _isPublicPartnerProfileVisible(profile) {
   return _isSubscriptionActive(profile.subscription_status);
 }
 
-async function _loadPublicPartnerProfiles(env) {
+async function _loadPublicPartnerProfilesWithMeta(env) {
   const fallback = PARTNER_PROFILES_SEED
     .map(_normalizePublicPartnerProfileEntry)
     .filter((p) => p !== null);
   const readSource = _normalizePartnerPublicReadSource(env);
   const allowSeedFallback = _allowPartnerPublicSeedFallback(env, { loader: "profiles" });
+  const withMeta = (profiles, profilesSource, projectionUpdatedAt = "") => ({
+    profiles,
+    meta: {
+      profiles_source: sanitizeTenantString(profilesSource, 48),
+      projection_updated_at: sanitizeTenantString(projectionUpdatedAt, 80),
+      read_mode: sanitizeTenantString(readSource, 48),
+    },
+  });
   if (!env?.BOOKING_KV) {
     if (!allowSeedFallback) {
       _logPartnerPublicReaderSource({
@@ -25351,7 +25406,7 @@ async function _loadPublicPartnerProfiles(env) {
         reason: "seed_disabled",
         level: "warn",
       });
-      return [];
+      return withMeta([], "disabled_seed");
     }
     _logPartnerPublicReaderSource({
       loader: "profiles",
@@ -25360,15 +25415,31 @@ async function _loadPublicPartnerProfiles(env) {
       reason: "missing",
       level: "warn",
     });
-    return fallback;
+    return withMeta(fallback, "seed");
   }
   const readProfilesByKey = async (key) => {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
-    if (raw == null) return { ok: false, reason: "missing", normalized: [], count: 0 };
+    if (raw == null) {
+      return {
+        ok: false,
+        reason: "missing",
+        normalized: [],
+        count: 0,
+        updated_at: "",
+      };
+    }
     const incoming = Array.isArray(raw)
       ? raw
       : (raw && typeof raw === "object" && Array.isArray(raw.profiles) ? raw.profiles : null);
-    if (!Array.isArray(incoming)) return { ok: false, reason: "malformed", normalized: [], count: 0 };
+    if (!Array.isArray(incoming)) {
+      return {
+        ok: false,
+        reason: "malformed",
+        normalized: [],
+        count: 0,
+        updated_at: sanitizeTenantString(raw?.updated_at ?? raw?.updatedAt, 80),
+      };
+    }
     const normalized = incoming
       .map(_normalizePublicPartnerProfileEntry)
       .filter((p) => p !== null);
@@ -25377,6 +25448,7 @@ async function _loadPublicPartnerProfiles(env) {
       reason: normalized.length > 0 ? "selected" : "empty",
       normalized,
       count: normalized.length,
+      updated_at: sanitizeTenantString(raw?.updated_at ?? raw?.updatedAt, 80),
     };
   };
   const readV1 = async ({ fallbackReason = "selected", v2Count = null } = {}) => {
@@ -25391,7 +25463,7 @@ async function _loadPublicPartnerProfiles(env) {
           level: "warn",
           v2_count: v2Count,
         });
-        return [];
+        return withMeta([], "disabled_seed");
       }
       _logPartnerPublicReaderSource({
         loader: "profiles",
@@ -25401,7 +25473,7 @@ async function _loadPublicPartnerProfiles(env) {
         level: "warn",
         v2_count: v2Count,
       });
-      return fallback;
+      return withMeta(fallback, "seed");
     }
     _logPartnerPublicReaderSource({
       loader: "profiles",
@@ -25412,7 +25484,7 @@ async function _loadPublicPartnerProfiles(env) {
       v2_count: v2Count,
       v1_count: out.count,
     });
-    return out.normalized;
+    return withMeta(out.normalized, "v1", out.updated_at);
   };
   if (readSource === "v1_only") {
     return readV1();
@@ -25428,7 +25500,7 @@ async function _loadPublicPartnerProfiles(env) {
       level: "info",
       v2_count: outV2.count,
     });
-    return outV2.normalized;
+    return withMeta(outV2.normalized, "v2", outV2.updated_at);
   }
   if (readSource === "v2_only") {
     if (!allowSeedFallback) {
@@ -25440,7 +25512,7 @@ async function _loadPublicPartnerProfiles(env) {
         level: "warn",
         v2_count: outV2.count,
       });
-      return [];
+      return withMeta([], "disabled_seed");
     }
     _logPartnerPublicReaderSource({
       loader: "profiles",
@@ -25450,9 +25522,14 @@ async function _loadPublicPartnerProfiles(env) {
       level: "warn",
       v2_count: outV2.count,
     });
-    return fallback;
+    return withMeta(fallback, "seed");
   }
   return readV1({ fallbackReason: outV2.reason || "malformed", v2Count: outV2.count });
+}
+
+async function _loadPublicPartnerProfiles(env) {
+  const out = await _loadPublicPartnerProfilesWithMeta(env);
+  return Array.isArray(out?.profiles) ? out.profiles : [];
 }
 
 async function getPublicPartnerProfileById(env, partnerId) {
@@ -25479,16 +25556,18 @@ async function getPublicPartnerProfileById(env, partnerId) {
       reason: "legacy_allowed",
     });
   }
-  const profiles = await _loadPublicPartnerProfiles(env);
+  const profileRead = await _loadPublicPartnerProfilesWithMeta(env);
+  const profiles = Array.isArray(profileRead?.profiles) ? profileRead.profiles : [];
   const profile = profiles.find((p) => p.partner_id === needle);
   if (!profile) return null;
   if (!_isPublicPartnerProfileVisible(profile)) return null;
-  return {
+  const normalizedProfile = {
     partner_id: profile.partner_id,
     company_name: profile.company_name,
     profile_enabled: true,
     is_active: true,
     subscription_status: profile.subscription_status,
+    ...(profile.published_at ? { published_at: profile.published_at } : {}),
     tagline: profile.tagline,
     about_short: profile.about_short,
     about_long: profile.about_long,
@@ -25501,6 +25580,13 @@ async function getPublicPartnerProfileById(env, partnerId) {
     drivers: profile.drivers,
     trust: profile.trust,
     booking_capabilities: profile.booking_capabilities,
+  };
+  return {
+    profile: normalizedProfile,
+    meta: {
+      profiles_source: sanitizeTenantString(profileRead?.meta?.profiles_source, 48),
+      projection_updated_at: sanitizeTenantString(profileRead?.meta?.projection_updated_at, 80),
+    },
   };
 }
 
