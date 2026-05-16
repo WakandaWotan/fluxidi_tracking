@@ -11269,12 +11269,21 @@ class CompanyDriverManagementPage extends StatelessWidget {
     var publicPhotoEnabled = existing.publicPhotoEnabled;
     var publicPhotoUploading = false;
     var active = existing.isActive;
+    bool isHttpsPublicUrl(String value) {
+      final normalized = value.trim().toLowerCase();
+      return normalized.startsWith('https://');
+    }
 
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final hasInternalPhoto = _driverPhotoExists(profilePhotoPath);
+          final hasPublicPortraitUrl = isHttpsPublicUrl(
+            publicPortraitUrlCtrl.text.trim(),
+          );
+          final hasUsablePublicPhotoSource =
+              hasInternalPhoto || hasPublicPortraitUrl;
           return AlertDialog(
             insetPadding: const EdgeInsets.symmetric(
               horizontal: 16,
@@ -11563,11 +11572,12 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           dense: true,
                           value:
                               publicProfileEnabled &&
-                              hasInternalPhoto &&
+                              hasUsablePublicPhotoSource &&
                               publicPhotoEnabled,
                           activeColor: _gold,
                           onChanged:
-                              (!publicProfileEnabled || !hasInternalPhoto)
+                              (!publicProfileEnabled ||
+                                  !hasUsablePublicPhotoSource)
                               ? null
                               : (v) => setDialogState(
                                   () => publicPhotoEnabled = v,
@@ -11581,13 +11591,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             ),
                             style: const TextStyle(fontSize: 13),
                           ),
-                          subtitle: (!hasInternalPhoto)
+                          subtitle: (!hasUsablePublicPhotoSource)
                               ? Text(
                                   _t(
-                                    nl: 'Voeg eerst een interne pasfoto toe.',
-                                    en: 'Add an internal profile photo first.',
-                                    fr: 'Ajoutez d’abord une photo interne.',
-                                    es: 'Añade primero una foto interna.',
+                                    nl: 'Voeg eerst een interne pasfoto toe of upload een publieke chauffeursfoto.',
+                                    en: 'Add an internal profile photo or upload a public chauffeur photo first.',
+                                    fr: 'Ajoutez d’abord une photo interne ou téléversez une photo publique du chauffeur.',
+                                    es: 'Primero añade una foto interna o sube una foto pública del conductor.',
                                   ),
                                   style: TextStyle(
                                     color: Colors.white.withOpacity(0.62),
@@ -11672,7 +11682,39 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                           publicPhotoEnabled = true;
                                         }
                                       });
+                                      final uploadedDriver = existing.copyWith(
+                                        publicPortraitUrl: url,
+                                        publicProfileEnabled:
+                                            publicProfileEnabled,
+                                        publicPhotoEnabled: publicProfileEnabled
+                                            ? true
+                                            : existing.publicPhotoEnabled,
+                                      );
+                                      updateDriver(existing.id, uploadedDriver);
+                                      final persisted =
+                                          await syncDriverIndexEntryToBackend(
+                                            uploadedDriver,
+                                            tenantId: scope.tenantId,
+                                            companyId: scope.companyId,
+                                          );
                                       if (!context.mounted) return;
+                                      if (!persisted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              _t(
+                                                nl: 'Publieke URL geüpload maar nog niet duurzaam opgeslagen. Probeer opnieuw op te slaan.',
+                                                en: 'Public URL uploaded but not durably saved yet. Please try saving again.',
+                                                fr: 'URL publique téléversée mais pas encore enregistrée durablement. Veuillez réessayer.',
+                                                es: 'La URL pública se subió, pero aún no se guardó de forma duradera. Inténtalo de nuevo.',
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
                                       ScaffoldMessenger.of(
                                         context,
                                       ).showSnackBar(
@@ -11888,7 +11930,10 @@ class CompanyDriverManagementPage extends StatelessWidget {
                               publicProfileEnabled: publicProfileEnabled,
                               publicPhotoEnabled:
                                   publicProfileEnabled &&
-                                  hasInternalPhoto &&
+                                  (hasInternalPhoto ||
+                                      isHttpsPublicUrl(
+                                        publicPortraitUrlCtrl.text.trim(),
+                                      )) &&
                                   publicPhotoEnabled,
                               publicDisplayName:
                                   publicDisplayNameCtrl.text.trim().isEmpty
@@ -19692,7 +19737,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       debugPrint(
         '[CUSTOMER_BOOKING][CANCEL_LOCAL_UPDATE] booking=${_safeRefPreview(bookingId)} removed=${localResult.removed} remaining=${localResult.remaining}',
       );
-      if (!mounted) return;
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
