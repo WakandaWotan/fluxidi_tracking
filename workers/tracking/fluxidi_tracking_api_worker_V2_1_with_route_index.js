@@ -1778,7 +1778,7 @@ async function _collectTripKpiPendingDiagnostics(env, scope) {
         if (!key) continue;
         const marker = await kvGetJson(env.FLUXIDI_TRACKING, key);
         if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
-        const reason = safeStr(marker?.reason, 64).toLowerCase();
+        const reason = (safeStr(marker?.reason, 64) ?? "").toLowerCase();
         if (reason === "trip_missing") out.trip_missing += 1;
         const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
         const completed = marker?.completed === true;
@@ -1940,7 +1940,7 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
 
 function _coerceReconcileDryRun(value, fallback = true) {
   if (value == null) return fallback;
-  const token = safeStr(value, 16).toLowerCase();
+  const token = (safeStr(value, 16) ?? "").toLowerCase();
   if (!token) return fallback;
   if (token === "0" || token === "false" || token === "no") return false;
   if (token === "1" || token === "true" || token === "yes") return true;
@@ -2110,7 +2110,7 @@ async function handleDashboardTripKpis(req, url, env, origin) {
   const monthRaw = safeStr(url.searchParams.get("month"), 16);
   const defaultMonth = new Date().toISOString().slice(0, 7);
   const selectedMonth = monthRaw ? _normalizeDashboardMonth(monthRaw) : defaultMonth;
-  const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
+  const debugRaw = (safeStr(url.searchParams.get("debug"), 16) ?? "").toLowerCase();
   const debugEnabled = debugRaw === "1" || debugRaw === "true";
   const debugLimit = Math.max(
     1,
