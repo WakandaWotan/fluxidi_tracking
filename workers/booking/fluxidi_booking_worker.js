@@ -792,6 +792,23 @@ export class FleetAllocatorDO {
         origin_age_seconds: Number.isFinite(Number(etaEvaluation?.origin_age_seconds))
           ? Number(etaEvaluation.origin_age_seconds)
           : null,
+        origin_candidate_count: Number.isFinite(Number(etaEvaluation?.origin_candidate_count))
+          ? Number(etaEvaluation.origin_candidate_count)
+          : null,
+        origin_candidate_sources_tried: safeStr(etaEvaluation?.origin_candidate_sources_tried, 240) || null,
+        origin_candidate_resolution_summary:
+          safeStr(etaEvaluation?.origin_candidate_resolution_summary, 240) || null,
+        origin_geocode_attempted:
+          typeof etaEvaluation?.origin_geocode_attempted === "boolean"
+            ? etaEvaluation.origin_geocode_attempted
+            : null,
+        origin_geocode_success:
+          typeof etaEvaluation?.origin_geocode_success === "boolean"
+            ? etaEvaluation.origin_geocode_success
+            : null,
+        origin_geocode_source: safeStr(etaEvaluation?.origin_geocode_source, 80) || null,
+        origin_geocode_error_code: safeStr(etaEvaluation?.origin_geocode_error_code, 80) || null,
+        origin_geocode_error_message: safeStr(etaEvaluation?.origin_geocode_error_message, 180) || null,
         earliest_available_at_ms: Number.isFinite(Number(etaEvaluation?.earliest_available_at_ms))
           ? Number(etaEvaluation.earliest_available_at_ms)
           : null,
@@ -811,6 +828,10 @@ export class FleetAllocatorDO {
           typeof etaEvaluation?.route_origin_lng_ok === "boolean"
             ? etaEvaluation.route_origin_lng_ok
             : null,
+        route_origin_coords_usable:
+          typeof etaEvaluation?.route_origin_coords_usable === "boolean"
+            ? etaEvaluation.route_origin_coords_usable
+            : null,
         route_pickup_lat_ok:
           typeof etaEvaluation?.route_pickup_lat_ok === "boolean"
             ? etaEvaluation.route_pickup_lat_ok
@@ -819,8 +840,24 @@ export class FleetAllocatorDO {
           typeof etaEvaluation?.route_pickup_lng_ok === "boolean"
             ? etaEvaluation.route_pickup_lng_ok
             : null,
+        route_pickup_coords_usable:
+          typeof etaEvaluation?.route_pickup_coords_usable === "boolean"
+            ? etaEvaluation.route_pickup_coords_usable
+            : null,
         route_origin_latlng_preview: safeStr(etaEvaluation?.route_origin_latlng_preview, 64) || null,
+        route_origin_lnglat_preview: safeStr(etaEvaluation?.route_origin_lnglat_preview, 64) || null,
+        route_origin_coordinate_source: safeStr(etaEvaluation?.route_origin_coordinate_source, 64) || null,
+        route_origin_coords_belgium_like:
+          typeof etaEvaluation?.route_origin_coords_belgium_like === "boolean"
+            ? etaEvaluation.route_origin_coords_belgium_like
+            : null,
         route_pickup_latlng_preview: safeStr(etaEvaluation?.route_pickup_latlng_preview, 64) || null,
+        route_pickup_lnglat_preview: safeStr(etaEvaluation?.route_pickup_lnglat_preview, 64) || null,
+        route_pickup_coordinate_source: safeStr(etaEvaluation?.route_pickup_coordinate_source, 64) || null,
+        route_pickup_coords_belgium_like:
+          typeof etaEvaluation?.route_pickup_coords_belgium_like === "boolean"
+            ? etaEvaluation.route_pickup_coords_belgium_like
+            : null,
         route_duration_seconds_raw: Number.isFinite(Number(etaEvaluation?.route_duration_seconds_raw))
           ? Number(etaEvaluation.route_duration_seconds_raw)
           : null,
@@ -857,6 +894,16 @@ export class FleetAllocatorDO {
           Number.isFinite(Number(etaEvaluation?.route_retry_duration_seconds_raw))
             ? Number(etaEvaluation.route_retry_duration_seconds_raw)
             : null,
+        route_retry_radius_used: safeStr(etaEvaluation?.route_retry_radius_used, 32) || null,
+        route_retry_snap_penalty_seconds:
+          Number.isFinite(Number(etaEvaluation?.route_retry_snap_penalty_seconds))
+            ? Number(etaEvaluation.route_retry_snap_penalty_seconds)
+            : 0,
+        route_retry_attempts_count:
+          Number.isFinite(Number(etaEvaluation?.route_retry_attempts_count))
+            ? Number(etaEvaluation.route_retry_attempts_count)
+            : null,
+        route_retry_attempts_summary: safeStr(etaEvaluation?.route_retry_attempts_summary, 180) || null,
       });
     }
 
@@ -7954,6 +8001,9 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
 
   const route = routeOut.route;
   const legs = routeOut.legs || [];
+  const routeResolvedPickupCoords = _allocatorResolvePointCoordinates({
+    resolved_waypoint: routeOut?.resolved_from_point,
+  });
 
   const distance_km = round1(route.distance / 1000);
   const duration_route_min = Math.round(route.duration / 60);
@@ -8099,6 +8149,14 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           origin_address_preview: null,
           pickup_address_preview: null,
           origin_age_seconds: null,
+          origin_candidate_count: null,
+          origin_candidate_sources_tried: null,
+          origin_candidate_resolution_summary: null,
+          origin_geocode_attempted: null,
+          origin_geocode_success: null,
+          origin_geocode_source: null,
+          origin_geocode_error_code: null,
+          origin_geocode_error_message: null,
           earliest_available_at_ms: null,
           earliest_available_at: null,
           route_failure_reason: "missing_pickup_time",
@@ -8110,6 +8168,8 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           route_origin_lng_ok: null,
           route_pickup_lat_ok: null,
           route_pickup_lng_ok: null,
+          route_origin_coords_usable: null,
+          route_pickup_coords_usable: null,
           route_origin_latlng_preview: null,
           route_pickup_latlng_preview: null,
           route_duration_seconds_raw: null,
@@ -8140,8 +8200,18 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         from: body?.from,
         pickup_from: body?.from,
         pickup_address: body?.from,
-        pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
-        pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
+        pickup_lat:
+          body?.pickup_lat ??
+          body?.pickupLat ??
+          body?.from_lat ??
+          body?.fromLat ??
+          (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lat : null),
+        pickup_lng:
+          body?.pickup_lng ??
+          body?.pickupLng ??
+          body?.from_lng ??
+          body?.fromLng ??
+          (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lng : null),
         tenantScope: fleetScope,
       });
       const available = vehicleCapacity?.ok === true;
@@ -8183,6 +8253,23 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         origin_age_seconds: Number.isFinite(Number(vehicleCapacity?.origin_age_seconds))
           ? Number(vehicleCapacity.origin_age_seconds)
           : null,
+        origin_candidate_count: Number.isFinite(Number(vehicleCapacity?.origin_candidate_count))
+          ? Number(vehicleCapacity.origin_candidate_count)
+          : null,
+        origin_candidate_sources_tried: safeStr(vehicleCapacity?.origin_candidate_sources_tried, 240) || null,
+        origin_candidate_resolution_summary:
+          safeStr(vehicleCapacity?.origin_candidate_resolution_summary, 240) || null,
+        origin_geocode_attempted:
+          typeof vehicleCapacity?.origin_geocode_attempted === "boolean"
+            ? vehicleCapacity.origin_geocode_attempted
+            : null,
+        origin_geocode_success:
+          typeof vehicleCapacity?.origin_geocode_success === "boolean"
+            ? vehicleCapacity.origin_geocode_success
+            : null,
+        origin_geocode_source: safeStr(vehicleCapacity?.origin_geocode_source, 80) || null,
+        origin_geocode_error_code: safeStr(vehicleCapacity?.origin_geocode_error_code, 80) || null,
+        origin_geocode_error_message: safeStr(vehicleCapacity?.origin_geocode_error_message, 180) || null,
         earliest_available_at_ms: Number.isFinite(Number(vehicleCapacity?.earliest_available_at_ms))
           ? Number(vehicleCapacity.earliest_available_at_ms)
           : null,
@@ -8202,6 +8289,10 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           typeof vehicleCapacity?.route_origin_lng_ok === "boolean"
             ? vehicleCapacity.route_origin_lng_ok
             : null,
+        route_origin_coords_usable:
+          typeof vehicleCapacity?.route_origin_coords_usable === "boolean"
+            ? vehicleCapacity.route_origin_coords_usable
+            : null,
         route_pickup_lat_ok:
           typeof vehicleCapacity?.route_pickup_lat_ok === "boolean"
             ? vehicleCapacity.route_pickup_lat_ok
@@ -8210,8 +8301,24 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           typeof vehicleCapacity?.route_pickup_lng_ok === "boolean"
             ? vehicleCapacity.route_pickup_lng_ok
             : null,
+        route_pickup_coords_usable:
+          typeof vehicleCapacity?.route_pickup_coords_usable === "boolean"
+            ? vehicleCapacity.route_pickup_coords_usable
+            : null,
         route_origin_latlng_preview: safeStr(vehicleCapacity?.route_origin_latlng_preview, 64) || null,
+        route_origin_lnglat_preview: safeStr(vehicleCapacity?.route_origin_lnglat_preview, 64) || null,
+        route_origin_coordinate_source: safeStr(vehicleCapacity?.route_origin_coordinate_source, 64) || null,
+        route_origin_coords_belgium_like:
+          typeof vehicleCapacity?.route_origin_coords_belgium_like === "boolean"
+            ? vehicleCapacity.route_origin_coords_belgium_like
+            : null,
         route_pickup_latlng_preview: safeStr(vehicleCapacity?.route_pickup_latlng_preview, 64) || null,
+        route_pickup_lnglat_preview: safeStr(vehicleCapacity?.route_pickup_lnglat_preview, 64) || null,
+        route_pickup_coordinate_source: safeStr(vehicleCapacity?.route_pickup_coordinate_source, 64) || null,
+        route_pickup_coords_belgium_like:
+          typeof vehicleCapacity?.route_pickup_coords_belgium_like === "boolean"
+            ? vehicleCapacity.route_pickup_coords_belgium_like
+            : null,
         route_duration_seconds_raw: Number.isFinite(Number(vehicleCapacity?.route_duration_seconds_raw))
           ? Number(vehicleCapacity.route_duration_seconds_raw)
           : null,
@@ -8248,6 +8355,16 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           Number.isFinite(Number(vehicleCapacity?.route_retry_duration_seconds_raw))
             ? Number(vehicleCapacity.route_retry_duration_seconds_raw)
             : null,
+        route_retry_radius_used: safeStr(vehicleCapacity?.route_retry_radius_used, 32) || null,
+        route_retry_snap_penalty_seconds:
+          Number.isFinite(Number(vehicleCapacity?.route_retry_snap_penalty_seconds))
+            ? Number(vehicleCapacity.route_retry_snap_penalty_seconds)
+            : 0,
+        route_retry_attempts_count:
+          Number.isFinite(Number(vehicleCapacity?.route_retry_attempts_count))
+            ? Number(vehicleCapacity.route_retry_attempts_count)
+            : null,
+        route_retry_attempts_summary: safeStr(vehicleCapacity?.route_retry_attempts_summary, 180) || null,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
             ? vehicleCapacity
@@ -8264,7 +8381,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     };
   }
   console.log(
-    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} route_retry_reason=${safeStr(availability.route_retry_reason, 64) || "-"} route_retry_used=${availability.route_retry_used === true ? "true" : availability.route_retry_used === false ? "false" : "null"} route_retry_success=${availability.route_retry_success === true ? "true" : availability.route_retry_success === false ? "false" : "null"} route_retry_http_status=${Number.isFinite(Number(availability.route_retry_http_status)) ? Number(availability.route_retry_http_status) : -1} route_retry_error_code=${safeStr(availability.route_retry_error_code, 64) || "-"} route_retry_error_message=${safeStr(availability.route_retry_error_message, 64) || "-"} route_retry_duration_seconds_raw=${Number.isFinite(Number(availability.route_retry_duration_seconds_raw)) ? Number(availability.route_retry_duration_seconds_raw) : -1} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
+    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_origin_coords_usable=${availability.route_origin_coords_usable === true ? "true" : availability.route_origin_coords_usable === false ? "false" : "null"} route_origin_coordinate_source=${safeStr(availability.route_origin_coordinate_source, 48) || "-"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_pickup_coords_usable=${availability.route_pickup_coords_usable === true ? "true" : availability.route_pickup_coords_usable === false ? "false" : "null"} route_pickup_coordinate_source=${safeStr(availability.route_pickup_coordinate_source, 48) || "-"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} route_retry_reason=${safeStr(availability.route_retry_reason, 64) || "-"} route_retry_used=${availability.route_retry_used === true ? "true" : availability.route_retry_used === false ? "false" : "null"} route_retry_success=${availability.route_retry_success === true ? "true" : availability.route_retry_success === false ? "false" : "null"} route_retry_http_status=${Number.isFinite(Number(availability.route_retry_http_status)) ? Number(availability.route_retry_http_status) : -1} route_retry_error_code=${safeStr(availability.route_retry_error_code, 64) || "-"} route_retry_error_message=${safeStr(availability.route_retry_error_message, 64) || "-"} route_retry_duration_seconds_raw=${Number.isFinite(Number(availability.route_retry_duration_seconds_raw)) ? Number(availability.route_retry_duration_seconds_raw) : -1} route_retry_attempts_count=${Number.isFinite(Number(availability.route_retry_attempts_count)) ? Number(availability.route_retry_attempts_count) : -1} route_retry_attempts_summary=${safeStr(availability.route_retry_attempts_summary, 96) || "-"} route_retry_radius_used=${safeStr(availability.route_retry_radius_used, 32) || "-"} route_retry_snap_penalty_seconds=${Number.isFinite(Number(availability.route_retry_snap_penalty_seconds)) ? Number(availability.route_retry_snap_penalty_seconds) : -1} route_origin_latlng_preview=${safeStr(availability.route_origin_latlng_preview, 32) || "-"} route_pickup_latlng_preview=${safeStr(availability.route_pickup_latlng_preview, 32) || "-"} route_origin_lnglat_preview=${safeStr(availability.route_origin_lnglat_preview, 32) || "-"} route_pickup_lnglat_preview=${safeStr(availability.route_pickup_lnglat_preview, 32) || "-"} route_origin_coords_belgium_like=${availability.route_origin_coords_belgium_like === true ? "true" : availability.route_origin_coords_belgium_like === false ? "false" : "null"} route_pickup_coords_belgium_like=${availability.route_pickup_coords_belgium_like === true ? "true" : availability.route_pickup_coords_belgium_like === false ? "false" : "null"} origin_candidate_count=${Number.isFinite(Number(availability.origin_candidate_count)) ? Number(availability.origin_candidate_count) : -1} origin_candidate_sources_tried=${safeStr(availability.origin_candidate_sources_tried, 96) || "-"} origin_candidate_resolution_summary=${safeStr(availability.origin_candidate_resolution_summary, 96) || "-"} origin_geocode_attempted=${availability.origin_geocode_attempted === true ? "true" : availability.origin_geocode_attempted === false ? "false" : "null"} origin_geocode_success=${availability.origin_geocode_success === true ? "true" : availability.origin_geocode_success === false ? "false" : "null"} origin_geocode_source=${safeStr(availability.origin_geocode_source, 48) || "-"} origin_geocode_error_code=${safeStr(availability.origin_geocode_error_code, 48) || "-"} origin_geocode_error_message=${safeStr(availability.origin_geocode_error_message, 64) || "-"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
   );
 
   return {
@@ -18886,6 +19003,23 @@ async function handleBooking(payload, env, request) {
                   origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
                   pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
                   origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
+                  origin_candidate_count: Number.isFinite(Number(alloc?.origin_candidate_count))
+                    ? Number(alloc.origin_candidate_count)
+                    : null,
+                  origin_candidate_sources_tried: safeStr(alloc?.origin_candidate_sources_tried, 240) || null,
+                  origin_candidate_resolution_summary:
+                    safeStr(alloc?.origin_candidate_resolution_summary, 240) || null,
+                  origin_geocode_attempted:
+                    typeof alloc?.origin_geocode_attempted === "boolean"
+                      ? alloc.origin_geocode_attempted
+                      : null,
+                  origin_geocode_success:
+                    typeof alloc?.origin_geocode_success === "boolean"
+                      ? alloc.origin_geocode_success
+                      : null,
+                  origin_geocode_source: safeStr(alloc?.origin_geocode_source, 80) || null,
+                  origin_geocode_error_code: safeStr(alloc?.origin_geocode_error_code, 80) || null,
+                  origin_geocode_error_message: safeStr(alloc?.origin_geocode_error_message, 180) || null,
                   earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
                     ? Number(alloc.earliest_available_at_ms)
                     : null,
@@ -18901,12 +19035,32 @@ async function handleBooking(payload, env, request) {
                     typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
                   route_origin_lng_ok:
                     typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
+                  route_origin_coords_usable:
+                    typeof alloc?.route_origin_coords_usable === "boolean"
+                      ? alloc.route_origin_coords_usable
+                      : null,
                   route_pickup_lat_ok:
                     typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
                   route_pickup_lng_ok:
                     typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
+                  route_pickup_coords_usable:
+                    typeof alloc?.route_pickup_coords_usable === "boolean"
+                      ? alloc.route_pickup_coords_usable
+                      : null,
                   route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
+                  route_origin_lnglat_preview: safeStr(alloc?.route_origin_lnglat_preview, 64) || null,
+                  route_origin_coordinate_source: safeStr(alloc?.route_origin_coordinate_source, 64) || null,
+                  route_origin_coords_belgium_like:
+                    typeof alloc?.route_origin_coords_belgium_like === "boolean"
+                      ? alloc.route_origin_coords_belgium_like
+                      : null,
                   route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
+                  route_pickup_lnglat_preview: safeStr(alloc?.route_pickup_lnglat_preview, 64) || null,
+                  route_pickup_coordinate_source: safeStr(alloc?.route_pickup_coordinate_source, 64) || null,
+                  route_pickup_coords_belgium_like:
+                    typeof alloc?.route_pickup_coords_belgium_like === "boolean"
+                      ? alloc.route_pickup_coords_belgium_like
+                      : null,
                   route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
                     ? Number(alloc.route_duration_seconds_raw)
                     : null,
@@ -18943,6 +19097,16 @@ async function handleBooking(payload, env, request) {
                     Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
                       ? Number(alloc.route_retry_duration_seconds_raw)
                       : null,
+                  route_retry_radius_used: safeStr(alloc?.route_retry_radius_used, 32) || null,
+                  route_retry_snap_penalty_seconds:
+                    Number.isFinite(Number(alloc?.route_retry_snap_penalty_seconds))
+                      ? Number(alloc.route_retry_snap_penalty_seconds)
+                      : 0,
+                  route_retry_attempts_count:
+                    Number.isFinite(Number(alloc?.route_retry_attempts_count))
+                      ? Number(alloc.route_retry_attempts_count)
+                      : null,
+                  route_retry_attempts_summary: safeStr(alloc?.route_retry_attempts_summary, 180) || null,
                 },
               };
             }
@@ -19594,6 +19758,23 @@ Retour route: ${return_from || to} → ${return_to || from}`,
               origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
               pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
               origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
+              origin_candidate_count: Number.isFinite(Number(alloc?.origin_candidate_count))
+                ? Number(alloc.origin_candidate_count)
+                : null,
+              origin_candidate_sources_tried: safeStr(alloc?.origin_candidate_sources_tried, 240) || null,
+              origin_candidate_resolution_summary:
+                safeStr(alloc?.origin_candidate_resolution_summary, 240) || null,
+              origin_geocode_attempted:
+                typeof alloc?.origin_geocode_attempted === "boolean"
+                  ? alloc.origin_geocode_attempted
+                  : null,
+              origin_geocode_success:
+                typeof alloc?.origin_geocode_success === "boolean"
+                  ? alloc.origin_geocode_success
+                  : null,
+              origin_geocode_source: safeStr(alloc?.origin_geocode_source, 80) || null,
+              origin_geocode_error_code: safeStr(alloc?.origin_geocode_error_code, 80) || null,
+              origin_geocode_error_message: safeStr(alloc?.origin_geocode_error_message, 180) || null,
               earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
                 ? Number(alloc.earliest_available_at_ms)
                 : null,
@@ -19609,12 +19790,32 @@ Retour route: ${return_from || to} → ${return_to || from}`,
                 typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
               route_origin_lng_ok:
                 typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
+              route_origin_coords_usable:
+                typeof alloc?.route_origin_coords_usable === "boolean"
+                  ? alloc.route_origin_coords_usable
+                  : null,
               route_pickup_lat_ok:
                 typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
               route_pickup_lng_ok:
                 typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
+              route_pickup_coords_usable:
+                typeof alloc?.route_pickup_coords_usable === "boolean"
+                  ? alloc.route_pickup_coords_usable
+                  : null,
               route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
+              route_origin_lnglat_preview: safeStr(alloc?.route_origin_lnglat_preview, 64) || null,
+              route_origin_coordinate_source: safeStr(alloc?.route_origin_coordinate_source, 64) || null,
+              route_origin_coords_belgium_like:
+                typeof alloc?.route_origin_coords_belgium_like === "boolean"
+                  ? alloc.route_origin_coords_belgium_like
+                  : null,
               route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
+              route_pickup_lnglat_preview: safeStr(alloc?.route_pickup_lnglat_preview, 64) || null,
+              route_pickup_coordinate_source: safeStr(alloc?.route_pickup_coordinate_source, 64) || null,
+              route_pickup_coords_belgium_like:
+                typeof alloc?.route_pickup_coords_belgium_like === "boolean"
+                  ? alloc.route_pickup_coords_belgium_like
+                  : null,
               route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
                 ? Number(alloc.route_duration_seconds_raw)
                 : null,
@@ -19651,6 +19852,16 @@ Retour route: ${return_from || to} → ${return_to || from}`,
                 Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
                   ? Number(alloc.route_retry_duration_seconds_raw)
                   : null,
+              route_retry_radius_used: safeStr(alloc?.route_retry_radius_used, 32) || null,
+              route_retry_snap_penalty_seconds:
+                Number.isFinite(Number(alloc?.route_retry_snap_penalty_seconds))
+                  ? Number(alloc.route_retry_snap_penalty_seconds)
+                  : 0,
+              route_retry_attempts_count:
+                Number.isFinite(Number(alloc?.route_retry_attempts_count))
+                  ? Number(alloc.route_retry_attempts_count)
+                  : null,
+              route_retry_attempts_summary: safeStr(alloc?.route_retry_attempts_summary, 180) || null,
             },
           };
         }
@@ -21683,6 +21894,12 @@ async function routeFromTextsWithStopsDetailed({
     route,
     legs: legsOut,
     waypointNames,
+    resolved_from_point: from && typeof from === "object"
+      ? { lat: Number(from.lat), lng: Number(from.lng) }
+      : null,
+    resolved_to_point: to && typeof to === "object"
+      ? { lat: Number(to.lat), lng: Number(to.lng) }
+      : null,
     fromSource: fromPoint ? "coordinates" : "text",
     toSource: toPoint ? "coordinates" : "text"
   };
@@ -25026,7 +25243,7 @@ function _isUsableLocationPoint(point) {
   if (!point || typeof point !== "object") return false;
   const lat = Number(point.lat);
   const lng = Number(point.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return true;
+  if (_allocatorIsUsableCoordinatePair(lat, lng)) return true;
   return !!safeStr(point.address, 240);
 }
 
@@ -25034,7 +25251,7 @@ function _pointToRouteText(point) {
   if (!_isUsableLocationPoint(point)) return "";
   const lat = Number(point.lat);
   const lng = Number(point.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return `${lat},${lng}`;
+  if (_allocatorIsUsableCoordinatePair(lat, lng)) return `${lat},${lng}`;
   return safeStr(point.address, 240);
 }
 
@@ -25056,6 +25273,30 @@ function _sanitizeRouteErrorMessage(value, maxLen = 180) {
   return `${noToken.slice(0, Math.max(0, maxLen - 3))}...`;
 }
 
+function _allocatorIsUsableCoordinatePair(lat, lng) {
+  const latN = Number(lat);
+  const lngN = Number(lng);
+  if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return false;
+  if (latN < -90 || latN > 90) return false;
+  if (lngN < -180 || lngN > 180) return false;
+  if (Math.abs(latN) < 0.0001 && Math.abs(lngN) < 0.0001) return false;
+  return true;
+}
+
+function _allocatorIsNearZeroCoordinatePair(lat, lng) {
+  const latN = Number(lat);
+  const lngN = Number(lng);
+  if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return false;
+  return Math.abs(latN) < 0.0001 && Math.abs(lngN) < 0.0001;
+}
+
+function _allocatorCoordinateCandidateToNumber(value) {
+  if (value == null) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function _allocatorRoutePointDiagnostics(point) {
   const raw = point && typeof point === "object" ? point : {};
   const resolvedCoords = _allocatorResolvePointCoordinates(raw);
@@ -25070,39 +25311,108 @@ function _allocatorRoutePointDiagnostics(point) {
     raw?.longitude,
     Array.isArray(raw?.coordinates) ? raw.coordinates[0] : undefined,
   ];
-  const latOk = latCandidates.some((value) => Number.isFinite(Number(value)));
-  const lngOk = lngCandidates.some((value) => Number.isFinite(Number(value)));
-  const preview = resolvedCoords
-    ? `${resolvedCoords.lat.toFixed(3)},${resolvedCoords.lng.toFixed(3)}`
+  const latOk = latCandidates.some((value) => _allocatorCoordinateCandidateToNumber(value) != null);
+  const lngOk = lngCandidates.some((value) => _allocatorCoordinateCandidateToNumber(value) != null);
+  const coordsUsable = resolvedCoords?.usable === true;
+  const preview = coordsUsable
+    ? `${resolvedCoords.lat.toFixed(4)},${resolvedCoords.lng.toFixed(4)}`
     : "";
   return {
     lat_ok: latOk,
     lng_ok: lngOk,
+    coords_usable: coordsUsable,
     latlng_preview: preview || null,
+    lnglat_preview: coordsUsable ? `${resolvedCoords.lng.toFixed(4)},${resolvedCoords.lat.toFixed(4)}` : null,
+    coordinate_source: safeStr(resolvedCoords?.source, 64) || "unavailable",
+    coords_belgium_like: _allocatorCoordsBelgiumLike(
+      resolvedCoords?.lat,
+      resolvedCoords?.lng,
+    ),
   };
 }
 
 function _allocatorResolvePointCoordinates(point) {
   const raw = point && typeof point === "object" ? point : {};
-  const latCandidates = [
-    raw?.lat,
-    raw?.latitude,
-    Array.isArray(raw?.coordinates) ? raw.coordinates[1] : undefined,
+  const explicitSource = safeStr(raw?.coordinate_source, 64) || "";
+  let sawNearZero = false;
+  let sawAnyFinitePair = false;
+  const candidates = [
+    {
+      source: explicitSource || "lat_lng",
+      lat: raw?.lat,
+      lng: raw?.lng,
+    },
+    {
+      source: "lat_lng",
+      lat: raw?.lat,
+      lng: raw?.lng,
+    },
+    {
+      source: "latitude_longitude",
+      lat: raw?.latitude,
+      lng: raw?.longitude,
+    },
+    {
+      source: "lat_lon",
+      lat: raw?.lat,
+      lng: raw?.lon,
+    },
+    {
+      source: "coordinates_array",
+      lat: Array.isArray(raw?.coordinates) ? raw.coordinates[1] : undefined,
+      lng: Array.isArray(raw?.coordinates) ? raw.coordinates[0] : undefined,
+    },
+    {
+      source: "nested_location",
+      lat: raw?.location?.lat ?? raw?.location?.latitude,
+      lng: raw?.location?.lng ?? raw?.location?.lon ?? raw?.location?.longitude,
+    },
+    {
+      source: "nested_coordinates",
+      lat: Array.isArray(raw?.location?.coordinates) ? raw.location.coordinates[1] : undefined,
+      lng: Array.isArray(raw?.location?.coordinates) ? raw.location.coordinates[0] : undefined,
+    },
+    {
+      source: "resolved_waypoint",
+      lat: raw?.resolved_waypoint?.lat ?? raw?.resolved_waypoint?.latitude,
+      lng: raw?.resolved_waypoint?.lng ?? raw?.resolved_waypoint?.lon ?? raw?.resolved_waypoint?.longitude,
+    },
+    {
+      source: "resolved_waypoint",
+      lat: Array.isArray(raw?.resolved_waypoint?.coordinates)
+        ? raw.resolved_waypoint.coordinates[1]
+        : undefined,
+      lng: Array.isArray(raw?.resolved_waypoint?.coordinates)
+        ? raw.resolved_waypoint.coordinates[0]
+        : undefined,
+    },
   ];
-  const lngCandidates = [
-    raw?.lng,
-    raw?.lon,
-    raw?.longitude,
-    Array.isArray(raw?.coordinates) ? raw.coordinates[0] : undefined,
-  ];
-  const lat = latCandidates.find((value) => Number.isFinite(Number(value)));
-  const lng = lngCandidates.find((value) => Number.isFinite(Number(value)));
+  for (const candidate of candidates) {
+    const latN = _allocatorCoordinateCandidateToNumber(candidate?.lat);
+    const lngN = _allocatorCoordinateCandidateToNumber(candidate?.lng);
+    if (latN == null || lngN == null) continue;
+    sawAnyFinitePair = true;
+    if (_allocatorIsNearZeroCoordinatePair(latN, lngN)) {
+      sawNearZero = true;
+      continue;
+    }
+    if (!_allocatorIsUsableCoordinatePair(latN, lngN)) continue;
+    return { lat: latN, lng: lngN, source: candidate.source, usable: true };
+  }
+  if (sawNearZero && !sawAnyFinitePair) {
+    return { lat: null, lng: null, source: "invalid_zero_zero", usable: false };
+  }
+  if (sawNearZero) {
+    return { lat: null, lng: null, source: "invalid_zero_zero", usable: false };
+  }
+  return { lat: null, lng: null, source: "unavailable", usable: false };
+}
+
+function _allocatorCoordsBelgiumLike(lat, lng) {
   const latN = Number(lat);
   const lngN = Number(lng);
   if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return null;
-  if (latN < -90 || latN > 90) return null;
-  if (lngN < -180 || lngN > 180) return null;
-  return { lat: latN, lng: lngN };
+  return latN >= 49 && latN <= 52 && lngN >= 2 && lngN <= 7;
 }
 
 function _allocatorOriginRequiredHorizonSeconds(env) {
@@ -25142,8 +25452,10 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
   const pickupHasLocation = _isUsableLocationPoint(toPoint);
   const originDiag = _allocatorRoutePointDiagnostics(fromPoint);
   const pickupDiag = _allocatorRoutePointDiagnostics(toPoint);
-  const originCoords = _allocatorResolvePointCoordinates(fromPoint);
-  const pickupCoords = _allocatorResolvePointCoordinates(toPoint);
+  const originCoordsResolved = _allocatorResolvePointCoordinates(fromPoint);
+  const pickupCoordsResolved = _allocatorResolvePointCoordinates(toPoint);
+  const originCoords = originCoordsResolved?.usable === true ? originCoordsResolved : null;
+  const pickupCoords = pickupCoordsResolved?.usable === true ? pickupCoordsResolved : null;
   const canUseCoordinateDirect = !!(originCoords && pickupCoords);
   const fromText = _pointToRouteText(fromPoint);
   const toText = _pointToRouteText(toPoint);
@@ -25155,6 +25467,10 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
     route_retry_error_code: null,
     route_retry_error_message: null,
     route_retry_duration_seconds_raw: null,
+    route_retry_radius_used: null,
+    route_retry_snap_penalty_seconds: 0,
+    route_retry_attempts_count: 0,
+    route_retry_attempts_summary: null,
   };
   if (!fromText || !toText) {
     return {
@@ -25175,8 +25491,16 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       route_origin_lng_ok: originDiag.lng_ok,
       route_pickup_lat_ok: pickupDiag.lat_ok,
       route_pickup_lng_ok: pickupDiag.lng_ok,
+      route_origin_coords_usable: originDiag.coords_usable,
+      route_pickup_coords_usable: pickupDiag.coords_usable,
       route_origin_latlng_preview: originDiag.latlng_preview,
+      route_origin_lnglat_preview: originDiag.lnglat_preview,
+      route_origin_coordinate_source: originDiag.coordinate_source,
+      route_origin_coords_belgium_like: originDiag.coords_belgium_like,
       route_pickup_latlng_preview: pickupDiag.latlng_preview,
+      route_pickup_lnglat_preview: pickupDiag.lnglat_preview,
+      route_pickup_coordinate_source: pickupDiag.coordinate_source,
+      route_pickup_coords_belgium_like: pickupDiag.coords_belgium_like,
       route_duration_seconds_raw: null,
       route_response_has_routes: false,
       route_response_routes_count: 0,
@@ -25195,8 +25519,16 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
     route_origin_lng_ok: originDiag.lng_ok,
     route_pickup_lat_ok: pickupDiag.lat_ok,
     route_pickup_lng_ok: pickupDiag.lng_ok,
+    route_origin_coords_usable: originDiag.coords_usable,
+    route_pickup_coords_usable: pickupDiag.coords_usable,
     route_origin_latlng_preview: originDiag.latlng_preview,
+    route_origin_lnglat_preview: originDiag.lnglat_preview,
+    route_origin_coordinate_source: originDiag.coordinate_source,
+    route_origin_coords_belgium_like: originDiag.coords_belgium_like,
     route_pickup_latlng_preview: pickupDiag.latlng_preview,
+    route_pickup_lnglat_preview: pickupDiag.lnglat_preview,
+    route_pickup_coordinate_source: pickupDiag.coordinate_source,
+    route_pickup_coords_belgium_like: pickupDiag.coords_belgium_like,
     route_profile: "mapbox/driving",
     route_used_coordinate_direct: canUseCoordinateDirect,
     route_used_geocode_fallback: !canUseCoordinateDirect,
@@ -25237,111 +25569,167 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
     route_response_routes_count: Number(errorObj?.route_response_routes_count || 0),
     route_response_has_duration: false,
   });
+  const _routeFailureReasonFromDiag = (diag = {}) => {
+    const msg = safeStr(diag?.route_error_message, 180).toLowerCase();
+    if (msg.includes("timeout") || msg.includes("abort")) return "timeout";
+    if (safeStr(diag?.route_error_code, 80).toLowerCase() === "no_route") return "no_route";
+    return "route_error";
+  };
   try {
-    const routeResolved = canUseCoordinateDirect
-      ? await directionsMulti(
-          [
-            { lat: originCoords.lat, lng: originCoords.lng },
-            { lat: pickupCoords.lat, lng: pickupCoords.lng },
-          ],
-          env.MAPBOX_TOKEN,
-        )
-      : (await routeFromTextsWithStopsDetailed({
-          fromText,
-          toText,
-          stopsTexts: [],
-          token: env.MAPBOX_TOKEN,
-        })).route;
-    const primaryDiag = _routeDiagFromResolved(routeResolved);
-    const sec = Number(primaryDiag.route_duration_seconds_raw || 0);
-    if (!Number.isFinite(sec) || sec <= 0) {
-      return _formatTravelResult({
-        ok: false,
-        reason_code: "origin_eta_not_feasible",
-        route_failure_reason: "no_route",
-        ...primaryDiag,
-      });
-    }
-    return _formatTravelResult({
-      ok: true,
-      travel_seconds: Math.round(sec),
-      route_failure_reason: null,
-      ...primaryDiag,
-    });
-  } catch (e) {
-    const primaryDiag = _routeDiagFromError(e);
-    const primaryNoSegment = _isNoSegment(primaryDiag.route_error_code, primaryDiag.route_error_message);
-    if (canUseCoordinateDirect && primaryNoSegment) {
-      const retryRadiuses = "50;50";
-      try {
-        const retryRoute = await directionsMulti(
-          [
-            { lat: originCoords.lat, lng: originCoords.lng },
-            { lat: pickupCoords.lat, lng: pickupCoords.lng },
-          ],
-          env.MAPBOX_TOKEN,
-          { radiuses: retryRadiuses },
-        );
-        const retryDiag = _routeDiagFromResolved(retryRoute);
-        const retrySec = Number(retryDiag.route_duration_seconds_raw || 0);
-        if (Number.isFinite(retrySec) && retrySec > 0) {
-          return _formatTravelResult({
-            ok: true,
-            travel_seconds: Math.round(retrySec),
-            route_failure_reason: null,
-            ...retryDiag,
-            route_retry_reason: "nosegment_retry_with_radiuses",
-            route_retry_used: true,
-            route_retry_success: true,
-            route_retry_http_status: retryDiag.route_http_status,
-            route_retry_error_code: null,
-            route_retry_error_message: null,
-            route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
-          });
-        }
+    if (!canUseCoordinateDirect) {
+      const routeResolved = (await routeFromTextsWithStopsDetailed({
+        fromText,
+        toText,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      })).route;
+      const diag = _routeDiagFromResolved(routeResolved);
+      const sec = Number(diag.route_duration_seconds_raw || 0);
+      if (!Number.isFinite(sec) || sec <= 0) {
         return _formatTravelResult({
           ok: false,
           reason_code: "origin_eta_not_feasible",
           route_failure_reason: "no_route",
-          ...retryDiag,
-          route_retry_reason: "nosegment_retry_with_radiuses",
-          route_retry_used: true,
-          route_retry_success: false,
-          route_retry_http_status: retryDiag.route_http_status,
-          route_retry_error_code: safeStr(retryDiag.route_error_code, 80) || "no_route",
-          route_retry_error_message: _sanitizeRouteErrorMessage(retryDiag.route_error_message, 180) || "no_route",
-          route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
+          ...diag,
+          route_retry_attempts_count: 1,
+          route_retry_attempts_summary: "geocode:no_route",
         });
-      } catch (retryErr) {
-        const retryDiag = _routeDiagFromError(retryErr);
-        const msgRetry = safeStr(retryErr?.message || retryErr, 160).toLowerCase();
-        const retryReason = msgRetry.includes("timeout") || msgRetry.includes("abort")
-          ? "timeout"
-          : (_isNoSegment(retryDiag.route_error_code, retryDiag.route_error_message) ? "no_route" : "route_error");
+      }
+      return _formatTravelResult({
+        ok: true,
+        travel_seconds: Math.round(sec),
+        route_failure_reason: null,
+        ...diag,
+        route_retry_attempts_count: 1,
+        route_retry_attempts_summary: "geocode:ok",
+      });
+    }
+    const attempts = [
+      { label: "direct", radiuses: "", snap_penalty_seconds: 0 },
+      { label: "50", radiuses: "50;50", snap_penalty_seconds: 0 },
+      { label: "200", radiuses: "200;200", snap_penalty_seconds: 60 },
+      { label: "500", radiuses: "500;500", snap_penalty_seconds: 120 },
+    ];
+    const attemptSummary = [];
+    let lastDiag = null;
+    let lastStep = null;
+    for (let idx = 0; idx < attempts.length; idx += 1) {
+      const step = attempts[idx];
+      lastStep = step;
+      try {
+        const route = await directionsMulti(
+          [
+            { lat: originCoords.lat, lng: originCoords.lng },
+            { lat: pickupCoords.lat, lng: pickupCoords.lng },
+          ],
+          env.MAPBOX_TOKEN,
+          step.radiuses ? { radiuses: step.radiuses } : {},
+        );
+        const diag = _routeDiagFromResolved(route);
+        lastDiag = diag;
+        const secRaw = Number(diag.route_duration_seconds_raw || 0);
+        const isValid =
+          Number(diag.route_http_status || 0) >= 200 &&
+          Number(diag.route_http_status || 0) < 300 &&
+          Number(diag.route_response_routes_count || 0) > 0 &&
+          diag.route_response_has_duration === true &&
+          Number.isFinite(secRaw) &&
+          secRaw > 0;
+        if (!isValid) {
+          attemptSummary.push(`${step.label}:no_route`);
+          const shouldRetry =
+            idx < attempts.length - 1 &&
+            _isNoSegment(diag.route_error_code, diag.route_error_message);
+          if (shouldRetry) continue;
+          return _formatTravelResult({
+            ok: false,
+            reason_code: "origin_eta_not_feasible",
+            route_failure_reason: _routeFailureReasonFromDiag(diag),
+            ...diag,
+            route_retry_reason: idx > 0 ? "nosegment_progressive_retry" : null,
+            route_retry_used: idx > 0,
+            route_retry_success: false,
+            route_retry_http_status: diag.route_http_status,
+            route_retry_error_code: safeStr(diag.route_error_code, 80) || "no_route",
+            route_retry_error_message: _sanitizeRouteErrorMessage(diag.route_error_message, 180) || "no_route",
+            route_retry_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
+            route_retry_radius_used: step.radiuses || null,
+            route_retry_snap_penalty_seconds: 0,
+            route_retry_attempts_count: idx + 1,
+            route_retry_attempts_summary: attemptSummary.join(","),
+          });
+        }
+        attemptSummary.push(`${step.label}:ok`);
+        const travelSeconds = Math.round(secRaw) + Math.max(0, Number(step.snap_penalty_seconds || 0));
+        return _formatTravelResult({
+          ok: true,
+          travel_seconds: travelSeconds,
+          route_failure_reason: null,
+          ...diag,
+          route_retry_reason: idx > 0 ? "nosegment_progressive_retry" : null,
+          route_retry_used: idx > 0,
+          route_retry_success: idx > 0 ? true : false,
+          route_retry_http_status: idx > 0 ? diag.route_http_status : null,
+          route_retry_error_code: idx > 0 ? null : null,
+          route_retry_error_message: idx > 0 ? null : null,
+          route_retry_duration_seconds_raw: idx > 0 ? secRaw : null,
+          route_retry_radius_used: idx > 0 ? (step.radiuses || null) : null,
+          route_retry_snap_penalty_seconds: Math.max(0, Number(step.snap_penalty_seconds || 0)),
+          route_retry_attempts_count: idx + 1,
+          route_retry_attempts_summary: attemptSummary.join(","),
+        });
+      } catch (attemptErr) {
+        const errDiag = _routeDiagFromError(attemptErr);
+        lastDiag = errDiag;
+        const code = safeStr(errDiag.route_error_code, 32) || "route_error";
+        attemptSummary.push(`${step.label}:${code}`);
+        const shouldRetry = idx < attempts.length - 1 && _isNoSegment(code, errDiag.route_error_message);
+        if (shouldRetry) continue;
         return _formatTravelResult({
           ok: false,
           reason_code: "origin_eta_not_feasible",
-          route_failure_reason: retryReason,
-          ...retryDiag,
-          route_retry_reason: "nosegment_retry_with_radiuses",
-          route_retry_used: true,
+          route_failure_reason: _routeFailureReasonFromDiag(errDiag),
+          ...errDiag,
+          route_retry_reason: idx > 0 ? "nosegment_progressive_retry" : null,
+          route_retry_used: idx > 0,
           route_retry_success: false,
-          route_retry_http_status: retryDiag.route_http_status,
-          route_retry_error_code: retryDiag.route_error_code,
-          route_retry_error_message: retryDiag.route_error_message,
-          route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
+          route_retry_http_status: errDiag.route_http_status,
+          route_retry_error_code: errDiag.route_error_code,
+          route_retry_error_message: errDiag.route_error_message,
+          route_retry_duration_seconds_raw: null,
+          route_retry_radius_used: step.radiuses || null,
+          route_retry_snap_penalty_seconds: 0,
+          route_retry_attempts_count: idx + 1,
+          route_retry_attempts_summary: attemptSummary.join(","),
         });
       }
     }
-    const msg = safeStr(e?.message || e, 160).toLowerCase();
-    const routeFailureReason = msg.includes("timeout") || msg.includes("abort")
-      ? "timeout"
-      : (safeStr(e?.route_error_code, 80) === "no_route" ? "no_route" : "route_error");
     return _formatTravelResult({
       ok: false,
       reason_code: "origin_eta_not_feasible",
-      route_failure_reason: routeFailureReason,
-      ...primaryDiag,
+      route_failure_reason: _routeFailureReasonFromDiag(lastDiag || {}),
+      ...(lastDiag || {}),
+      route_retry_reason: "nosegment_progressive_retry",
+      route_retry_used: true,
+      route_retry_success: false,
+      route_retry_http_status: lastDiag?.route_http_status ?? null,
+      route_retry_error_code: lastDiag?.route_error_code ?? null,
+      route_retry_error_message: lastDiag?.route_error_message ?? null,
+      route_retry_duration_seconds_raw: null,
+      route_retry_radius_used: lastStep?.radiuses || null,
+      route_retry_snap_penalty_seconds: 0,
+      route_retry_attempts_count: attempts.length,
+      route_retry_attempts_summary: attemptSummary.join(","),
+    });
+  } catch (e) {
+    const diag = _routeDiagFromError(e);
+    return _formatTravelResult({
+      ok: false,
+      reason_code: "origin_eta_not_feasible",
+      route_failure_reason: _routeFailureReasonFromDiag(diag),
+      ...diag,
+      route_retry_attempts_count: 1,
+      route_retry_attempts_summary: "unexpected_error",
     });
   }
 }
@@ -25560,19 +25948,174 @@ async function _readTrackingOriginForVehicle(env, vehicleId) {
   return null;
 }
 
+function _allocatorMapboxCountryHint(value) {
+  const raw = safeStr(value, 16).trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(raw)) return raw;
+  return "";
+}
+
+function _allocatorExtractGeocodePoint(feature) {
+  const f = feature && typeof feature === "object" ? feature : {};
+  const routable = Array.isArray(f?.properties?.coordinates?.routable_points)
+    ? f.properties.coordinates.routable_points
+    : [];
+  const defaultRoutable = routable.find((rp) => {
+    const name = safeStr(rp?.name, 40).toLowerCase();
+    return rp?.default === true || name === "default";
+  });
+  const firstRoutable = routable[0] || null;
+  const routablePick = defaultRoutable || firstRoutable;
+  const routableLat = Number(routablePick?.latitude);
+  const routableLng = Number(routablePick?.longitude);
+  if (_allocatorIsUsableCoordinatePair(routableLat, routableLng)) {
+    return {
+      lat: routableLat,
+      lng: routableLng,
+      coordinate_source: "geocoded_routable_point",
+      geocode_source: defaultRoutable ? "routable_points_default" : "routable_points_first",
+    };
+  }
+  const coordLat = Number(f?.properties?.coordinates?.latitude);
+  const coordLng = Number(f?.properties?.coordinates?.longitude);
+  if (_allocatorIsUsableCoordinatePair(coordLat, coordLng)) {
+    return {
+      lat: coordLat,
+      lng: coordLng,
+      coordinate_source: "geocoded_coordinates",
+      geocode_source: "properties_coordinates",
+    };
+  }
+  const geomLng = Array.isArray(f?.geometry?.coordinates) ? Number(f.geometry.coordinates[0]) : Number.NaN;
+  const geomLat = Array.isArray(f?.geometry?.coordinates) ? Number(f.geometry.coordinates[1]) : Number.NaN;
+  if (_allocatorIsUsableCoordinatePair(geomLat, geomLng)) {
+    return {
+      lat: geomLat,
+      lng: geomLng,
+      coordinate_source: "geocoded_coordinates",
+      geocode_source: "geometry_coordinates",
+    };
+  }
+  return null;
+}
+
+async function _allocatorForwardGeocodeOriginPoint(env, addressText, options = {}) {
+  const token = safeStr(env?.MAPBOX_TOKEN, 400);
+  const text = safeStr(addressText, 240).trim();
+  if (!token || !text) {
+    return {
+      ok: false,
+      origin_geocode_attempted: false,
+      origin_geocode_success: false,
+      origin_geocode_source: null,
+      origin_geocode_error_code: token ? "missing_geocode_query" : "missing_mapbox_token",
+      origin_geocode_error_message: token ? "missing_geocode_query" : "missing_mapbox_token",
+      point: null,
+    };
+  }
+  const countryHint = _allocatorMapboxCountryHint(options?.countryCode || options?.country);
+  const query = encodeURIComponent(text);
+  const countryPart = countryHint ? `&country=${encodeURIComponent(countryHint)}` : "";
+  const lang = safeStr(options?.language, 8).trim() || "nl";
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?limit=1&autocomplete=false&language=${encodeURIComponent(lang)}${countryPart}&access_token=${token}`;
+  try {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    const features = Array.isArray(body?.features) ? body.features : [];
+    if (!res.ok) {
+      return {
+        ok: false,
+        origin_geocode_attempted: true,
+        origin_geocode_success: false,
+        origin_geocode_source: null,
+        origin_geocode_error_code: safeStr(body?.message, 80) || `http_${res.status}`,
+        origin_geocode_error_message:
+          _sanitizeRouteErrorMessage(body?.message || `geocode_http_${res.status}`, 180) || "geocode_failed",
+        point: null,
+      };
+    }
+    if (features.length === 0) {
+      return {
+        ok: false,
+        origin_geocode_attempted: true,
+        origin_geocode_success: false,
+        origin_geocode_source: null,
+        origin_geocode_error_code: "geocode_no_features",
+        origin_geocode_error_message: "geocode_no_features",
+        point: null,
+      };
+    }
+    const extracted = _allocatorExtractGeocodePoint(features[0]);
+    if (!extracted || !_allocatorIsUsableCoordinatePair(extracted.lat, extracted.lng)) {
+      return {
+        ok: false,
+        origin_geocode_attempted: true,
+        origin_geocode_success: false,
+        origin_geocode_source: null,
+        origin_geocode_error_code: "geocode_invalid_coordinates",
+        origin_geocode_error_message: "geocode_invalid_coordinates",
+        point: null,
+      };
+    }
+    return {
+      ok: true,
+      origin_geocode_attempted: true,
+      origin_geocode_success: true,
+      origin_geocode_source: extracted.geocode_source,
+      origin_geocode_error_code: null,
+      origin_geocode_error_message: null,
+      point: {
+        lat: extracted.lat,
+        lng: extracted.lng,
+        address: text,
+        coordinate_source: extracted.coordinate_source,
+      },
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      origin_geocode_attempted: true,
+      origin_geocode_success: false,
+      origin_geocode_source: null,
+      origin_geocode_error_code: "geocode_fetch_error",
+      origin_geocode_error_message: _sanitizeRouteErrorMessage(e?.message || e, 180) || "geocode_fetch_error",
+      point: null,
+    };
+  }
+}
+
 async function _deriveVehicleOrigin(env, vehicle, vehicleDemands, candidatePickupMs, options = {}) {
   const tenantScope = normalizeFleetTenantScope(options?.tenantScope ?? null);
   const allowStale = options?.allowStale === true;
-  const trackingOrigin = await _readTrackingOriginForVehicle(env, vehicle?.vehicle_id);
   const maxOriginAgeSeconds = _allocatorOriginMaxAgeSeconds(env);
+  let companyCountryHint = "";
+  let companyBusinessProfile = null;
+  const candidateOrigins = [];
+  const originCandidateSourcesTried = [];
+  const originCandidateResolution = [];
+  let originGeocodeAttempted = false;
+  let originGeocodeSuccess = false;
+  let originGeocodeSource = null;
+  let originGeocodeErrorCode = null;
+  let originGeocodeErrorMessage = null;
+
+  const trackingOrigin = await _readTrackingOriginForVehicle(env, vehicle?.vehicle_id);
   if (trackingOrigin && _isUsableLocationPoint(trackingOrigin.point)) {
     const ageSeconds = Number.isFinite(trackingOrigin.at_ms)
       ? Math.max(0, Math.round((candidatePickupMs - trackingOrigin.at_ms) / 1000))
       : 0;
     if (!Number.isFinite(ageSeconds) || ageSeconds <= maxOriginAgeSeconds || allowStale) {
-      return { ...trackingOrigin, age_seconds: Number.isFinite(ageSeconds) ? ageSeconds : null };
+      candidateOrigins.push({
+        source: "tracking_ping",
+        point: {
+          ...trackingOrigin.point,
+          coordinate_source: "tracking_ping",
+        },
+        at_ms: trackingOrigin.at_ms,
+        age_seconds: Number.isFinite(ageSeconds) ? ageSeconds : null,
+      });
     }
   }
+
   const lastDemand = [...(vehicleDemands || [])]
     .sort((a, b) => Number(a?.pickupAtMs ?? a?.pickupMs ?? 0) - Number(b?.pickupAtMs ?? b?.pickupMs ?? 0))
     .pop();
@@ -25582,58 +26125,180 @@ async function _deriveVehicleOrigin(env, vehicle, vehicleDemands, candidatePicku
       ? Math.max(0, Math.round((candidatePickupMs - timing.dropoffAtMs) / 1000))
       : null;
     if (ageSeconds == null || ageSeconds <= maxOriginAgeSeconds || allowStale) {
-      return {
-        point: lastDemand.dropoffPoint,
+      candidateOrigins.push({
+        point: {
+          ...lastDemand.dropoffPoint,
+          coordinate_source: "last_completed_dropoff_coords",
+        },
         at_ms: Number.isFinite(timing.dropoffAtMs) ? timing.dropoffAtMs : Number.NaN,
         source: "last_completed_dropoff",
         age_seconds: ageSeconds,
-      };
+      });
     }
   }
-  const vehiclePoint = _locationPointFromAny({
+
+  const vehicleCurrentPoint = _locationPointFromAny({
     current_lat: vehicle?.current_lat ?? vehicle?.currentLat,
     current_lng: vehicle?.current_lng ?? vehicle?.currentLng,
     current_address: vehicle?.current_address ?? vehicle?.currentAddress,
+  });
+  if (_isUsableLocationPoint(vehicleCurrentPoint)) {
+    candidateOrigins.push({
+      point: {
+        ...vehicleCurrentPoint,
+        coordinate_source: "vehicle_base_coords",
+      },
+      at_ms: Number.NaN,
+      source: "vehicle_inventory",
+      age_seconds: null,
+    });
+  }
+  const vehicleBasePoint = _locationPointFromAny({
     base_lat: vehicle?.base_lat ?? vehicle?.baseLat,
     base_lng: vehicle?.base_lng ?? vehicle?.baseLng,
     base_address: vehicle?.base_address ?? vehicle?.baseAddress,
   });
-  if (_isUsableLocationPoint(vehiclePoint)) {
-    return { point: vehiclePoint, at_ms: Number.NaN, source: "vehicle_inventory" };
+  if (_isUsableLocationPoint(vehicleBasePoint)) {
+    candidateOrigins.push({
+      point: {
+        ...vehicleBasePoint,
+        coordinate_source: "vehicle_base_coords",
+      },
+      at_ms: Number.NaN,
+      source: "vehicle_inventory",
+      age_seconds: null,
+    });
   }
+
   if (tenantScope?.hasScope) {
     try {
-      const businessProfile = await loadBusinessProfile(env, tenantScope, {
+      companyBusinessProfile = await loadBusinessProfile(env, tenantScope, {
         allowTenantLegacyFallback: false,
       });
+      companyCountryHint =
+        _allocatorMapboxCountryHint(
+          companyBusinessProfile?.country_code ?? companyBusinessProfile?.countryCode,
+        ) ||
+        _allocatorMapboxCountryHint(companyBusinessProfile?.country);
       const companyBaseAddress = [
-        safeStr(businessProfile?.address, 240),
-        safeStr(businessProfile?.postcode, 40),
-        safeStr(businessProfile?.city, 120),
-        safeStr(businessProfile?.country, 80),
+        safeStr(companyBusinessProfile?.address, 240),
+        safeStr(companyBusinessProfile?.postcode, 40),
+        safeStr(companyBusinessProfile?.city, 120),
+        safeStr(companyBusinessProfile?.country, 80),
       ].filter((part) => part.length > 0).join(", ");
       const companyBasePoint = _locationPointFromAny({
         lat:
-          Number(businessProfile?.base_lat ?? businessProfile?.baseLat ?? Number.NaN),
+          Number(companyBusinessProfile?.base_lat ?? companyBusinessProfile?.baseLat ?? Number.NaN),
         lng:
-          Number(businessProfile?.base_lng ?? businessProfile?.baseLng ?? Number.NaN),
+          Number(companyBusinessProfile?.base_lng ?? companyBusinessProfile?.baseLng ?? Number.NaN),
         address:
-          safeStr(businessProfile?.base_address ?? businessProfile?.baseAddress, 240) ||
+          safeStr(companyBusinessProfile?.base_address ?? companyBusinessProfile?.baseAddress, 240) ||
           companyBaseAddress,
       });
       if (_isUsableLocationPoint(companyBasePoint)) {
-        return {
-          point: companyBasePoint,
+        candidateOrigins.push({
+          point: {
+            ...companyBasePoint,
+            coordinate_source: "company_business_base_coords",
+          },
           at_ms: Number.NaN,
           source: "company_business_base",
           age_seconds: null,
-        };
+        });
       }
     } catch (_) {
       // Best-effort fallback only.
     }
   }
-  return null;
+
+  for (const candidate of candidateOrigins) {
+    originCandidateSourcesTried.push(candidate.source || "unavailable");
+    const resolved = _allocatorResolvePointCoordinates(candidate.point);
+    if (resolved?.usable === true) {
+      originCandidateResolution.push(`${candidate.source}:coords`);
+      return {
+        point: {
+          ...candidate.point,
+          lat: resolved.lat,
+          lng: resolved.lng,
+          coordinate_source: safeStr(resolved.source, 64) || "unavailable",
+        },
+        at_ms: candidate.at_ms,
+        source: candidate.source,
+        age_seconds: candidate.age_seconds,
+        has_location: true,
+        origin_candidate_count: candidateOrigins.length,
+        origin_candidate_sources_tried: originCandidateSourcesTried.join(","),
+        origin_candidate_resolution_summary: originCandidateResolution.join(","),
+        origin_geocode_attempted: originGeocodeAttempted,
+        origin_geocode_success: originGeocodeSuccess,
+        origin_geocode_source: originGeocodeSource,
+        origin_geocode_error_code: originGeocodeErrorCode,
+        origin_geocode_error_message: originGeocodeErrorMessage,
+      };
+    }
+    const addressText = safeStr(candidate?.point?.address, 240).trim();
+    if (!addressText) {
+      originCandidateResolution.push(`${candidate.source}:no_address`);
+      continue;
+    }
+    const geocoded = await _allocatorForwardGeocodeOriginPoint(env, addressText, {
+      countryCode: companyCountryHint,
+      language: "nl",
+    });
+    if (geocoded.origin_geocode_attempted) originGeocodeAttempted = true;
+    if (geocoded.origin_geocode_success === true) {
+      originGeocodeSuccess = true;
+      originGeocodeSource = safeStr(geocoded.origin_geocode_source, 64) || null;
+      originGeocodeErrorCode = null;
+      originGeocodeErrorMessage = null;
+      originCandidateResolution.push(`${candidate.source}:geocoded_ok`);
+      return {
+        point: {
+          ...candidate.point,
+          lat: geocoded?.point?.lat,
+          lng: geocoded?.point?.lng,
+          coordinate_source: safeStr(geocoded?.point?.coordinate_source, 64) || "geocoded_coordinates",
+        },
+        at_ms: candidate.at_ms,
+        source: candidate.source,
+        age_seconds: candidate.age_seconds,
+        has_location: true,
+        origin_candidate_count: candidateOrigins.length,
+        origin_candidate_sources_tried: originCandidateSourcesTried.join(","),
+        origin_candidate_resolution_summary: originCandidateResolution.join(","),
+        origin_geocode_attempted: originGeocodeAttempted,
+        origin_geocode_success: originGeocodeSuccess,
+        origin_geocode_source: originGeocodeSource,
+        origin_geocode_error_code: null,
+        origin_geocode_error_message: null,
+      };
+    }
+    originGeocodeSuccess = false;
+    originGeocodeSource = safeStr(geocoded.origin_geocode_source, 64) || null;
+    originGeocodeErrorCode = safeStr(geocoded.origin_geocode_error_code, 80) || "geocode_failed";
+    originGeocodeErrorMessage =
+      _sanitizeRouteErrorMessage(geocoded.origin_geocode_error_message, 180) || "geocode_failed";
+    originCandidateResolution.push(
+      `${candidate.source}:geocode_${safeStr(originGeocodeErrorCode, 32) || "failed"}`,
+    );
+  }
+
+  return {
+    point: null,
+    at_ms: Number.NaN,
+    source: "unavailable",
+    age_seconds: null,
+    has_location: false,
+    origin_candidate_count: candidateOrigins.length,
+    origin_candidate_sources_tried: originCandidateSourcesTried.join(","),
+    origin_candidate_resolution_summary: originCandidateResolution.join(","),
+    origin_geocode_attempted: originGeocodeAttempted,
+    origin_geocode_success: originGeocodeSuccess,
+    origin_geocode_source: originGeocodeSource,
+    origin_geocode_error_code: originGeocodeErrorCode,
+    origin_geocode_error_message: originGeocodeErrorMessage,
+  };
 }
 
 function _availabilityMode(env) {
@@ -25712,6 +26377,23 @@ async function _vehicleCapacityGateForRequest(env, req) {
       origin_age_seconds: Number.isFinite(Number(evaluation?.origin_age_seconds))
         ? Number(evaluation.origin_age_seconds)
         : null,
+      origin_candidate_count: Number.isFinite(Number(evaluation?.origin_candidate_count))
+        ? Number(evaluation.origin_candidate_count)
+        : null,
+      origin_candidate_sources_tried: safeStr(evaluation?.origin_candidate_sources_tried, 240) || null,
+      origin_candidate_resolution_summary:
+        safeStr(evaluation?.origin_candidate_resolution_summary, 240) || null,
+      origin_geocode_attempted:
+        typeof evaluation?.origin_geocode_attempted === "boolean"
+          ? evaluation.origin_geocode_attempted
+          : null,
+      origin_geocode_success:
+        typeof evaluation?.origin_geocode_success === "boolean"
+          ? evaluation.origin_geocode_success
+          : null,
+      origin_geocode_source: safeStr(evaluation?.origin_geocode_source, 80) || null,
+      origin_geocode_error_code: safeStr(evaluation?.origin_geocode_error_code, 80) || null,
+      origin_geocode_error_message: safeStr(evaluation?.origin_geocode_error_message, 180) || null,
       earliest_available_at_ms: Number.isFinite(Number(evaluation?.earliest_available_at_ms))
         ? Number(evaluation.earliest_available_at_ms)
         : null,
@@ -25727,12 +26409,32 @@ async function _vehicleCapacityGateForRequest(env, req) {
         typeof evaluation?.route_origin_lat_ok === "boolean" ? evaluation.route_origin_lat_ok : null,
       route_origin_lng_ok:
         typeof evaluation?.route_origin_lng_ok === "boolean" ? evaluation.route_origin_lng_ok : null,
+      route_origin_coords_usable:
+        typeof evaluation?.route_origin_coords_usable === "boolean"
+          ? evaluation.route_origin_coords_usable
+          : null,
       route_pickup_lat_ok:
         typeof evaluation?.route_pickup_lat_ok === "boolean" ? evaluation.route_pickup_lat_ok : null,
       route_pickup_lng_ok:
         typeof evaluation?.route_pickup_lng_ok === "boolean" ? evaluation.route_pickup_lng_ok : null,
+      route_pickup_coords_usable:
+        typeof evaluation?.route_pickup_coords_usable === "boolean"
+          ? evaluation.route_pickup_coords_usable
+          : null,
       route_origin_latlng_preview: safeStr(evaluation?.route_origin_latlng_preview, 64) || null,
+      route_origin_lnglat_preview: safeStr(evaluation?.route_origin_lnglat_preview, 64) || null,
+      route_origin_coordinate_source: safeStr(evaluation?.route_origin_coordinate_source, 64) || null,
+      route_origin_coords_belgium_like:
+        typeof evaluation?.route_origin_coords_belgium_like === "boolean"
+          ? evaluation.route_origin_coords_belgium_like
+          : null,
       route_pickup_latlng_preview: safeStr(evaluation?.route_pickup_latlng_preview, 64) || null,
+      route_pickup_lnglat_preview: safeStr(evaluation?.route_pickup_lnglat_preview, 64) || null,
+      route_pickup_coordinate_source: safeStr(evaluation?.route_pickup_coordinate_source, 64) || null,
+      route_pickup_coords_belgium_like:
+        typeof evaluation?.route_pickup_coords_belgium_like === "boolean"
+          ? evaluation.route_pickup_coords_belgium_like
+          : null,
       route_duration_seconds_raw: Number.isFinite(Number(evaluation?.route_duration_seconds_raw))
         ? Number(evaluation.route_duration_seconds_raw)
         : null,
@@ -25769,6 +26471,16 @@ async function _vehicleCapacityGateForRequest(env, req) {
         Number.isFinite(Number(evaluation?.route_retry_duration_seconds_raw))
           ? Number(evaluation.route_retry_duration_seconds_raw)
           : null,
+      route_retry_radius_used: safeStr(evaluation?.route_retry_radius_used, 32) || null,
+      route_retry_snap_penalty_seconds:
+        Number.isFinite(Number(evaluation?.route_retry_snap_penalty_seconds))
+          ? Number(evaluation.route_retry_snap_penalty_seconds)
+          : 0,
+      route_retry_attempts_count:
+        Number.isFinite(Number(evaluation?.route_retry_attempts_count))
+          ? Number(evaluation.route_retry_attempts_count)
+          : null,
+      route_retry_attempts_summary: safeStr(evaluation?.route_retry_attempts_summary, 180) || null,
     };
   }
 
@@ -25803,6 +26515,23 @@ async function _vehicleCapacityGateForRequest(env, req) {
     origin_age_seconds: Number.isFinite(Number(evaluation?.origin_age_seconds))
       ? Number(evaluation.origin_age_seconds)
       : null,
+    origin_candidate_count: Number.isFinite(Number(evaluation?.origin_candidate_count))
+      ? Number(evaluation.origin_candidate_count)
+      : null,
+    origin_candidate_sources_tried: safeStr(evaluation?.origin_candidate_sources_tried, 240) || null,
+    origin_candidate_resolution_summary:
+      safeStr(evaluation?.origin_candidate_resolution_summary, 240) || null,
+    origin_geocode_attempted:
+      typeof evaluation?.origin_geocode_attempted === "boolean"
+        ? evaluation.origin_geocode_attempted
+        : null,
+    origin_geocode_success:
+      typeof evaluation?.origin_geocode_success === "boolean"
+        ? evaluation.origin_geocode_success
+        : null,
+    origin_geocode_source: safeStr(evaluation?.origin_geocode_source, 80) || null,
+    origin_geocode_error_code: safeStr(evaluation?.origin_geocode_error_code, 80) || null,
+    origin_geocode_error_message: safeStr(evaluation?.origin_geocode_error_message, 180) || null,
     earliest_available_at_ms: Number.isFinite(Number(evaluation?.earliest_available_at_ms))
       ? Number(evaluation.earliest_available_at_ms)
       : null,
@@ -25818,12 +26547,32 @@ async function _vehicleCapacityGateForRequest(env, req) {
       typeof evaluation?.route_origin_lat_ok === "boolean" ? evaluation.route_origin_lat_ok : null,
     route_origin_lng_ok:
       typeof evaluation?.route_origin_lng_ok === "boolean" ? evaluation.route_origin_lng_ok : null,
+    route_origin_coords_usable:
+      typeof evaluation?.route_origin_coords_usable === "boolean"
+        ? evaluation.route_origin_coords_usable
+        : null,
     route_pickup_lat_ok:
       typeof evaluation?.route_pickup_lat_ok === "boolean" ? evaluation.route_pickup_lat_ok : null,
     route_pickup_lng_ok:
       typeof evaluation?.route_pickup_lng_ok === "boolean" ? evaluation.route_pickup_lng_ok : null,
+    route_pickup_coords_usable:
+      typeof evaluation?.route_pickup_coords_usable === "boolean"
+        ? evaluation.route_pickup_coords_usable
+        : null,
     route_origin_latlng_preview: safeStr(evaluation?.route_origin_latlng_preview, 64) || null,
+    route_origin_lnglat_preview: safeStr(evaluation?.route_origin_lnglat_preview, 64) || null,
+    route_origin_coordinate_source: safeStr(evaluation?.route_origin_coordinate_source, 64) || null,
+    route_origin_coords_belgium_like:
+      typeof evaluation?.route_origin_coords_belgium_like === "boolean"
+        ? evaluation.route_origin_coords_belgium_like
+        : null,
     route_pickup_latlng_preview: safeStr(evaluation?.route_pickup_latlng_preview, 64) || null,
+    route_pickup_lnglat_preview: safeStr(evaluation?.route_pickup_lnglat_preview, 64) || null,
+    route_pickup_coordinate_source: safeStr(evaluation?.route_pickup_coordinate_source, 64) || null,
+    route_pickup_coords_belgium_like:
+      typeof evaluation?.route_pickup_coords_belgium_like === "boolean"
+        ? evaluation.route_pickup_coords_belgium_like
+        : null,
     route_duration_seconds_raw: Number.isFinite(Number(evaluation?.route_duration_seconds_raw))
       ? Number(evaluation.route_duration_seconds_raw)
       : null,
@@ -25860,6 +26609,16 @@ async function _vehicleCapacityGateForRequest(env, req) {
       Number.isFinite(Number(evaluation?.route_retry_duration_seconds_raw))
         ? Number(evaluation.route_retry_duration_seconds_raw)
         : null,
+    route_retry_radius_used: safeStr(evaluation?.route_retry_radius_used, 32) || null,
+    route_retry_snap_penalty_seconds:
+      Number.isFinite(Number(evaluation?.route_retry_snap_penalty_seconds))
+        ? Number(evaluation.route_retry_snap_penalty_seconds)
+        : 0,
+    route_retry_attempts_count:
+      Number.isFinite(Number(evaluation?.route_retry_attempts_count))
+        ? Number(evaluation.route_retry_attempts_count)
+        : null,
+    route_retry_attempts_summary: safeStr(evaluation?.route_retry_attempts_summary, 180) || null,
     vehicle_id: assignment?.vehicle_id || null,
     assigned_driver: assignment?.assigned_driver || null,
   };
@@ -25958,6 +26717,8 @@ async function _evaluateFleetAvailability(env, req) {
       route_origin_lng_ok: null,
       route_pickup_lat_ok: null,
       route_pickup_lng_ok: null,
+      route_origin_coords_usable: null,
+      route_pickup_coords_usable: null,
       route_origin_latlng_preview: null,
       route_pickup_latlng_preview: null,
       route_duration_seconds_raw: null,
@@ -26012,6 +26773,8 @@ async function _evaluateFleetAvailability(env, req) {
       route_origin_lng_ok: null,
       route_pickup_lat_ok: null,
       route_pickup_lng_ok: null,
+      route_origin_coords_usable: null,
+      route_pickup_coords_usable: null,
       route_origin_latlng_preview: null,
       route_pickup_latlng_preview: null,
       route_duration_seconds_raw: null,
@@ -26064,6 +26827,8 @@ async function _evaluateFleetAvailability(env, req) {
       route_origin_lng_ok: null,
       route_pickup_lat_ok: null,
       route_pickup_lng_ok: null,
+      route_origin_coords_usable: null,
+      route_pickup_coords_usable: null,
       route_origin_latlng_preview: null,
       route_pickup_latlng_preview: null,
       route_duration_seconds_raw: null,
@@ -26238,6 +27003,7 @@ async function _evaluateFleetAvailability(env, req) {
               Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
                 ? Number(travel.route_retry_duration_seconds_raw)
                 : null,
+            ...travel,
           });
           continue;
         }
@@ -26314,6 +27080,7 @@ async function _evaluateFleetAvailability(env, req) {
               Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
                 ? Number(travel.route_retry_duration_seconds_raw)
                 : null,
+            ...travel,
           });
           continue;
         }
@@ -26388,6 +27155,7 @@ async function _evaluateFleetAvailability(env, req) {
             Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
               ? Number(travel.route_retry_duration_seconds_raw)
               : null,
+          ...travel,
         };
         break;
       }
@@ -26395,7 +27163,7 @@ async function _evaluateFleetAvailability(env, req) {
         tenantScope: fleetScope,
         allowStale: !nearFuture,
       });
-      if (!origin || !_isUsableLocationPoint(origin.point)) {
+      if (!origin || origin.has_location !== true || !_isUsableLocationPoint(origin.point)) {
         etaFailures.push({
           vehicle_id: vehicleId,
           reason_code: "missing_vehicle_origin_location",
@@ -26404,7 +27172,7 @@ async function _evaluateFleetAvailability(env, req) {
           required_seconds: null,
           origin_travel_seconds: null,
           required_buffer_seconds: requiredBufferSeconds,
-          origin_source: null,
+          origin_source: safeStr(origin?.source, 80) || null,
           origin_has_location: false,
           pickup_has_location: _isUsableLocationPoint(pickupPoint),
           origin_address_preview: null,
@@ -26419,16 +27187,33 @@ async function _evaluateFleetAvailability(env, req) {
           route_profile: "mapbox/driving",
           route_origin_lat_ok: false,
           route_origin_lng_ok: false,
+          route_origin_coords_usable: false,
           route_pickup_lat_ok: _isUsableLocationPoint(pickupPoint),
           route_pickup_lng_ok: _isUsableLocationPoint(pickupPoint),
+          route_pickup_coords_usable: _isUsableLocationPoint(pickupPoint),
           route_origin_latlng_preview: null,
           route_pickup_latlng_preview: null,
+          route_origin_coordinate_source: "unavailable",
+          route_pickup_coordinate_source: _isUsableLocationPoint(pickupPoint) ? "lat_lng" : "unavailable",
           route_duration_seconds_raw: null,
           route_response_has_routes: false,
           route_response_routes_count: 0,
           route_response_has_duration: false,
           route_used_coordinate_direct: null,
           route_used_geocode_fallback: null,
+          origin_candidate_count: Number.isFinite(Number(origin?.origin_candidate_count))
+            ? Number(origin.origin_candidate_count)
+            : 0,
+          origin_candidate_sources_tried: safeStr(origin?.origin_candidate_sources_tried, 240) || null,
+          origin_candidate_resolution_summary:
+            safeStr(origin?.origin_candidate_resolution_summary, 240) || null,
+          origin_geocode_attempted:
+            typeof origin?.origin_geocode_attempted === "boolean" ? origin.origin_geocode_attempted : null,
+          origin_geocode_success:
+            typeof origin?.origin_geocode_success === "boolean" ? origin.origin_geocode_success : null,
+          origin_geocode_source: safeStr(origin?.origin_geocode_source, 80) || null,
+          origin_geocode_error_code: safeStr(origin?.origin_geocode_error_code, 80) || null,
+          origin_geocode_error_message: safeStr(origin?.origin_geocode_error_message, 180) || null,
         });
         continue;
       }
@@ -26439,7 +27224,7 @@ async function _evaluateFleetAvailability(env, req) {
           reason_code: "origin_eta_not_feasible",
           block_reason: "origin_eta_not_feasible",
           origin_source: origin.source || null,
-          origin_has_location: _isUsableLocationPoint(origin.point),
+          origin_has_location: origin.has_location === true,
           pickup_has_location: _isUsableLocationPoint(pickupPoint),
           origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
           pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
@@ -26503,6 +27288,20 @@ async function _evaluateFleetAvailability(env, req) {
             Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
               ? Number(travel.route_retry_duration_seconds_raw)
               : null,
+          origin_candidate_count: Number.isFinite(Number(origin?.origin_candidate_count))
+            ? Number(origin.origin_candidate_count)
+            : 0,
+          origin_candidate_sources_tried: safeStr(origin?.origin_candidate_sources_tried, 240) || null,
+          origin_candidate_resolution_summary:
+            safeStr(origin?.origin_candidate_resolution_summary, 240) || null,
+          origin_geocode_attempted:
+            typeof origin?.origin_geocode_attempted === "boolean" ? origin.origin_geocode_attempted : null,
+          origin_geocode_success:
+            typeof origin?.origin_geocode_success === "boolean" ? origin.origin_geocode_success : null,
+          origin_geocode_source: safeStr(origin?.origin_geocode_source, 80) || null,
+          origin_geocode_error_code: safeStr(origin?.origin_geocode_error_code, 80) || null,
+          origin_geocode_error_message: safeStr(origin?.origin_geocode_error_message, 180) || null,
+          ...travel,
         });
         continue;
       }
@@ -26516,7 +27315,7 @@ async function _evaluateFleetAvailability(env, req) {
           reason_code: "vehicle_cannot_reach_pickup_in_time",
           block_reason: "vehicle_cannot_reach_pickup_in_time",
           origin_source: origin.source || null,
-          origin_has_location: _isUsableLocationPoint(origin.point),
+          origin_has_location: origin.has_location === true,
           pickup_has_location: _isUsableLocationPoint(pickupPoint),
           origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
           pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
@@ -26580,6 +27379,20 @@ async function _evaluateFleetAvailability(env, req) {
             Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
               ? Number(travel.route_retry_duration_seconds_raw)
               : null,
+          origin_candidate_count: Number.isFinite(Number(origin?.origin_candidate_count))
+            ? Number(origin.origin_candidate_count)
+            : 0,
+          origin_candidate_sources_tried: safeStr(origin?.origin_candidate_sources_tried, 240) || null,
+          origin_candidate_resolution_summary:
+            safeStr(origin?.origin_candidate_resolution_summary, 240) || null,
+          origin_geocode_attempted:
+            typeof origin?.origin_geocode_attempted === "boolean" ? origin.origin_geocode_attempted : null,
+          origin_geocode_success:
+            typeof origin?.origin_geocode_success === "boolean" ? origin.origin_geocode_success : null,
+          origin_geocode_source: safeStr(origin?.origin_geocode_source, 80) || null,
+          origin_geocode_error_code: safeStr(origin?.origin_geocode_error_code, 80) || null,
+          origin_geocode_error_message: safeStr(origin?.origin_geocode_error_message, 180) || null,
+          ...travel,
         });
         continue;
       }
@@ -26590,7 +27403,7 @@ async function _evaluateFleetAvailability(env, req) {
         reason: "vehicle_capacity_ok",
         block_reason: null,
         origin_source: origin.source || null,
-        origin_has_location: _isUsableLocationPoint(origin.point),
+        origin_has_location: origin.has_location === true,
         pickup_has_location: _isUsableLocationPoint(pickupPoint),
         origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
         pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
@@ -26654,6 +27467,20 @@ async function _evaluateFleetAvailability(env, req) {
           Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
             ? Number(travel.route_retry_duration_seconds_raw)
             : null,
+        origin_candidate_count: Number.isFinite(Number(origin?.origin_candidate_count))
+          ? Number(origin.origin_candidate_count)
+          : 0,
+        origin_candidate_sources_tried: safeStr(origin?.origin_candidate_sources_tried, 240) || null,
+        origin_candidate_resolution_summary:
+          safeStr(origin?.origin_candidate_resolution_summary, 240) || null,
+        origin_geocode_attempted:
+          typeof origin?.origin_geocode_attempted === "boolean" ? origin.origin_geocode_attempted : null,
+        origin_geocode_success:
+          typeof origin?.origin_geocode_success === "boolean" ? origin.origin_geocode_success : null,
+        origin_geocode_source: safeStr(origin?.origin_geocode_source, 80) || null,
+        origin_geocode_error_code: safeStr(origin?.origin_geocode_error_code, 80) || null,
+        origin_geocode_error_message: safeStr(origin?.origin_geocode_error_message, 180) || null,
+        ...travel,
       };
       break;
     }
@@ -26697,6 +27524,22 @@ async function _evaluateFleetAvailability(env, req) {
     origin_address_preview: topEtaFailure?.origin_address_preview ?? nextVehicle?.origin_address_preview ?? null,
     pickup_address_preview: topEtaFailure?.pickup_address_preview ?? nextVehicle?.pickup_address_preview ?? null,
     origin_age_seconds: topEtaFailure?.origin_age_seconds ?? nextVehicle?.origin_age_seconds ?? null,
+    origin_candidate_count:
+      topEtaFailure?.origin_candidate_count ?? nextVehicle?.origin_candidate_count ?? null,
+    origin_candidate_sources_tried:
+      topEtaFailure?.origin_candidate_sources_tried ?? nextVehicle?.origin_candidate_sources_tried ?? null,
+    origin_candidate_resolution_summary:
+      topEtaFailure?.origin_candidate_resolution_summary ?? nextVehicle?.origin_candidate_resolution_summary ?? null,
+    origin_geocode_attempted:
+      topEtaFailure?.origin_geocode_attempted ?? nextVehicle?.origin_geocode_attempted ?? null,
+    origin_geocode_success:
+      topEtaFailure?.origin_geocode_success ?? nextVehicle?.origin_geocode_success ?? null,
+    origin_geocode_source:
+      topEtaFailure?.origin_geocode_source ?? nextVehicle?.origin_geocode_source ?? null,
+    origin_geocode_error_code:
+      topEtaFailure?.origin_geocode_error_code ?? nextVehicle?.origin_geocode_error_code ?? null,
+    origin_geocode_error_message:
+      topEtaFailure?.origin_geocode_error_message ?? nextVehicle?.origin_geocode_error_message ?? null,
     earliest_available_at_ms:
       topEtaFailure?.earliest_available_at_ms ?? nextVehicle?.earliest_available_at_ms ?? null,
     earliest_available_at:
@@ -26708,12 +27551,28 @@ async function _evaluateFleetAvailability(env, req) {
     route_profile: topEtaFailure?.route_profile ?? nextVehicle?.route_profile ?? null,
     route_origin_lat_ok: topEtaFailure?.route_origin_lat_ok ?? nextVehicle?.route_origin_lat_ok ?? null,
     route_origin_lng_ok: topEtaFailure?.route_origin_lng_ok ?? nextVehicle?.route_origin_lng_ok ?? null,
+    route_origin_coords_usable:
+      topEtaFailure?.route_origin_coords_usable ?? nextVehicle?.route_origin_coords_usable ?? null,
     route_pickup_lat_ok: topEtaFailure?.route_pickup_lat_ok ?? nextVehicle?.route_pickup_lat_ok ?? null,
     route_pickup_lng_ok: topEtaFailure?.route_pickup_lng_ok ?? nextVehicle?.route_pickup_lng_ok ?? null,
+    route_pickup_coords_usable:
+      topEtaFailure?.route_pickup_coords_usable ?? nextVehicle?.route_pickup_coords_usable ?? null,
     route_origin_latlng_preview:
       topEtaFailure?.route_origin_latlng_preview ?? nextVehicle?.route_origin_latlng_preview ?? null,
+    route_origin_lnglat_preview:
+      topEtaFailure?.route_origin_lnglat_preview ?? nextVehicle?.route_origin_lnglat_preview ?? null,
+    route_origin_coordinate_source:
+      topEtaFailure?.route_origin_coordinate_source ?? nextVehicle?.route_origin_coordinate_source ?? null,
+    route_origin_coords_belgium_like:
+      topEtaFailure?.route_origin_coords_belgium_like ?? nextVehicle?.route_origin_coords_belgium_like ?? null,
     route_pickup_latlng_preview:
       topEtaFailure?.route_pickup_latlng_preview ?? nextVehicle?.route_pickup_latlng_preview ?? null,
+    route_pickup_lnglat_preview:
+      topEtaFailure?.route_pickup_lnglat_preview ?? nextVehicle?.route_pickup_lnglat_preview ?? null,
+    route_pickup_coordinate_source:
+      topEtaFailure?.route_pickup_coordinate_source ?? nextVehicle?.route_pickup_coordinate_source ?? null,
+    route_pickup_coords_belgium_like:
+      topEtaFailure?.route_pickup_coords_belgium_like ?? nextVehicle?.route_pickup_coords_belgium_like ?? null,
     route_duration_seconds_raw:
       topEtaFailure?.route_duration_seconds_raw ?? nextVehicle?.route_duration_seconds_raw ?? null,
     route_response_has_routes:
@@ -26740,6 +27599,14 @@ async function _evaluateFleetAvailability(env, req) {
       topEtaFailure?.route_retry_error_message ?? nextVehicle?.route_retry_error_message ?? null,
     route_retry_duration_seconds_raw:
       topEtaFailure?.route_retry_duration_seconds_raw ?? nextVehicle?.route_retry_duration_seconds_raw ?? null,
+    route_retry_radius_used:
+      topEtaFailure?.route_retry_radius_used ?? nextVehicle?.route_retry_radius_used ?? null,
+    route_retry_snap_penalty_seconds:
+      topEtaFailure?.route_retry_snap_penalty_seconds ?? nextVehicle?.route_retry_snap_penalty_seconds ?? null,
+    route_retry_attempts_count:
+      topEtaFailure?.route_retry_attempts_count ?? nextVehicle?.route_retry_attempts_count ?? null,
+    route_retry_attempts_summary:
+      topEtaFailure?.route_retry_attempts_summary ?? nextVehicle?.route_retry_attempts_summary ?? null,
   };
 }
 
