@@ -14999,8 +14999,12 @@ GET /oauth/callback
         _requireAdmin(request, url, env);
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
+        const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
+        const debugEnabled = debugRaw === "1" || debugRaw === "true";
         const out = await computeDashboardBookingsKpis(env, {
           tenantScope: scopedRoute.scope,
+          debug: debugEnabled,
+          debugLimit: 50,
         });
         if (!out?.ok) {
           return json(out, out?.error === "tenant_scope_conflict" ? 409 : 400);
@@ -28594,15 +28598,568 @@ function _isDashboardTerminalBookingLifecycle(value) {
   return isTerminalLifecycleStatus(value);
 }
 
-async function computeDashboardBookingsKpis(env, { tenantScope } = {}) {
+const DASHBOARD_BOOKINGS_KPI_NON_ACTIONABLE_BOOKING_STATUS_SET = new Set([
+  "payment_checkout_failed",
+  "payment_failed",
+  "payment_cancelled",
+  "payment_canceled",
+  "payment_expired",
+  "checkout_failed",
+  "checkout_expired",
+  "failed",
+  "expired",
+  "cancelled",
+  "canceled",
+]);
+
+const DASHBOARD_BOOKINGS_KPI_NON_ACTIONABLE_PAYMENT_STATUS_SET = new Set([
+  "payment_checkout_failed",
+  "payment_failed",
+  "failed",
+  "expired",
+  "cancelled",
+  "canceled",
+]);
+
+const DASHBOARD_BOOKINGS_KPI_PENDING_PAYMENT_STATUS_SET = new Set([
+  "payment_initializing",
+  "initializing",
+  "payment_pending",
+  "checkout_created",
+  "pending_payment",
+  "pending",
+  "open",
+  "authorized",
+  "processing",
+]);
+
+const DASHBOARD_BOOKINGS_KPI_PAST_PICKUP_GUARDED_STATUS_SET = new Set([
+  "pending",
+  "booked",
+  "confirmed",
+  "planned",
+  "scheduled",
+  "accepted",
+  "assigned",
+  "awaiting_pickup",
+]);
+
+function _dashboardBoolLike(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const token = String(value).trim().toLowerCase();
+  return token === "1" || token === "true" || token === "yes" || token === "ja" || token === "y";
+}
+
+function _dashboardTimestampMs(...values) {
+  let best = Number.NaN;
+  for (const value of values) {
+    const text = safeStr(value, 80);
+    if (!text) continue;
+    const ts = Date.parse(text);
+    if (!Number.isFinite(ts)) continue;
+    if (!Number.isFinite(best) || ts > best) best = ts;
+  }
+  return best;
+}
+
+function _dashboardPickupTimestampMs(rec) {
+  if (!rec || typeof rec !== "object") return Number.NaN;
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const bookingPayloadObj =
+    bookingObj?.payload && typeof bookingObj.payload === "object" ? bookingObj.payload : {};
+  const quoteObj = rec?.quote && typeof rec.quote === "object" ? rec.quote : {};
+  const bookingQuoteObj = bookingObj?.quote && typeof bookingObj.quote === "object" ? bookingObj.quote : {};
+
+  return _dashboardTimestampMs(
+    rec?.pickup_iso,
+    rec?.pickupIso,
+    rec?.pickup_at,
+    rec?.pickupAt,
+    rec?.pickup_time,
+    rec?.pickupTime,
+    rec?.scheduled_pickup_at,
+    rec?.scheduledPickupAt,
+    rec?.pickupStartIso,
+    bookingObj?.pickup_iso,
+    bookingObj?.pickupIso,
+    bookingObj?.pickup_at,
+    bookingObj?.pickupAt,
+    bookingObj?.pickup_time,
+    bookingObj?.pickupTime,
+    bookingObj?.scheduled_pickup_at,
+    bookingObj?.scheduledPickupAt,
+    bookingObj?.pickupStartIso,
+    payloadObj?.pickup_iso,
+    payloadObj?.pickupIso,
+    payloadObj?.pickup_at,
+    payloadObj?.pickupAt,
+    payloadObj?.pickup_time,
+    payloadObj?.pickupTime,
+    payloadObj?.scheduled_pickup_at,
+    payloadObj?.scheduledPickupAt,
+    bookingPayloadObj?.pickup_iso,
+    bookingPayloadObj?.pickupIso,
+    bookingPayloadObj?.pickup_at,
+    bookingPayloadObj?.pickupAt,
+    bookingPayloadObj?.pickup_time,
+    bookingPayloadObj?.pickupTime,
+    bookingPayloadObj?.scheduled_pickup_at,
+    bookingPayloadObj?.scheduledPickupAt,
+    quoteObj?.pickup_iso,
+    quoteObj?.pickupIso,
+    bookingQuoteObj?.pickup_iso,
+    bookingQuoteObj?.pickupIso,
+  );
+}
+
+function _dashboardCanonicalBookingNumber(value) {
+  const token = safeStr(value, 120);
+  if (!token) return "";
+  if (/^[0-9]{4}-[0-9]{2}-[0-9]{3,}$/i.test(token)) return token;
+  return "";
+}
+
+function _dashboardUuidLikeId(value) {
+  const token = safeStr(value, 160);
+  if (!token) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) return true;
+  if (/^[0-9a-f]{32}$/i.test(token)) return true;
+  return false;
+}
+
+function _dashboardIdentityMeta(rec, recordKeyId = "") {
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+
+  const bookingIdField =
+    safeStr(
+      rec?.id ??
+        rec?.booking_id ??
+        rec?.bookingId ??
+        bookingObj?.id ??
+        bookingObj?.booking_id ??
+        bookingObj?.bookingId,
+      120,
+    ) || "";
+  const publicReference =
+    safeStr(
+      rec?.public_booking_reference ??
+        rec?.publicBookingReference ??
+        rec?.booking_reference ??
+        rec?.bookingReference ??
+        rec?.public_reference ??
+        rec?.publicReference ??
+        bookingObj?.public_booking_reference ??
+        bookingObj?.publicBookingReference ??
+        bookingObj?.booking_reference ??
+        bookingObj?.bookingReference ??
+        bookingObj?.public_reference ??
+        bookingObj?.publicReference ??
+        payloadObj?.public_booking_reference ??
+        payloadObj?.publicBookingReference ??
+        payloadObj?.booking_reference ??
+        payloadObj?.bookingReference ??
+        payloadObj?.public_reference ??
+        payloadObj?.publicReference,
+      160,
+    ) || "";
+  const canonicalFromKey = _dashboardCanonicalBookingNumber(recordKeyId);
+  const canonicalFromField = _dashboardCanonicalBookingNumber(bookingIdField);
+  const hasCanonicalBookingNumber = !!(canonicalFromKey || canonicalFromField);
+  const hasPublicBookingReference = !!publicReference;
+
+  const hasPaymentFlowHints =
+    !!safeStr(rec?.payment_booking_id ?? rec?.paymentBookingId, 80) ||
+    !!safeStr(rec?.checkout_url ?? rec?.checkoutUrl ?? rec?.payment_url ?? rec?.paymentUrl, 120);
+  const hasTrackingShadowHints =
+    (rec?.trip && typeof rec.trip === "object") ||
+    (rec?.tracking_last && typeof rec.tracking_last === "object") ||
+    !!safeStr(rec?.trip_id ?? rec?.tripId, 80);
+  const internalIdLike =
+    _dashboardUuidLikeId(recordKeyId) ||
+    _dashboardUuidLikeId(bookingIdField) ||
+    /^u_[0-9a-z_]+$/i.test(recordKeyId) ||
+    /^u_[0-9a-z_]+$/i.test(bookingIdField);
+
+  let recordShapeHint = "unknown";
+  if (hasCanonicalBookingNumber || hasPublicBookingReference) {
+    recordShapeHint = "canonical_booking";
+  } else if (hasTrackingShadowHints) {
+    recordShapeHint = "tracking_shadow_record";
+  } else if (hasPaymentFlowHints || internalIdLike) {
+    recordShapeHint = "provisional_payment_record";
+  }
+
+  return {
+    record_key_preview: _bookingIntentMask(recordKeyId),
+    booking_id_field_preview: _bookingIntentMask(bookingIdField),
+    public_reference_preview: _bookingIntentMask(publicReference),
+    has_public_booking_reference: hasPublicBookingReference,
+    has_canonical_booking_number: hasCanonicalBookingNumber,
+    record_shape_hint: recordShapeHint,
+    internal_id_like: internalIdLike,
+    canonical_booking_number: canonicalFromKey || canonicalFromField,
+  };
+}
+
+function _dashboardBookingIdentityKey(rec, recordKeyId = "") {
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+
+  const preferredBookingId = safeStr(
+    rec?.booking_id ??
+      rec?.bookingId ??
+      bookingObj?.booking_id ??
+      bookingObj?.bookingId ??
+      payloadObj?.booking_id ??
+      payloadObj?.bookingId,
+    160,
+  );
+  const canonicalFromPreferred = _dashboardCanonicalBookingNumber(preferredBookingId);
+  if (canonicalFromPreferred) return canonicalFromPreferred;
+
+  const recId = safeStr(rec?.id ?? bookingObj?.id, 160);
+  const canonicalFromRecId = _dashboardCanonicalBookingNumber(recId);
+  if (canonicalFromRecId) return canonicalFromRecId;
+
+  const publicReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.public_reference ??
+      rec?.publicReference ??
+      bookingObj?.public_booking_reference ??
+      bookingObj?.publicBookingReference ??
+      bookingObj?.booking_reference ??
+      bookingObj?.bookingReference ??
+      bookingObj?.public_reference ??
+      bookingObj?.publicReference ??
+      payloadObj?.public_booking_reference ??
+      payloadObj?.publicBookingReference ??
+      payloadObj?.booking_reference ??
+      payloadObj?.bookingReference ??
+      payloadObj?.public_reference ??
+      payloadObj?.publicReference,
+    160,
+  );
+  if (publicReference) return `ref:${publicReference.toLowerCase()}`;
+
+  const canonicalFromRecordKey = _dashboardCanonicalBookingNumber(recordKeyId);
+  if (canonicalFromRecordKey) return canonicalFromRecordKey;
+
+  const fallback =
+    safeStr(recordKeyId, 160) ||
+    recId ||
+    preferredBookingId ||
+    publicReference ||
+    "";
+  return fallback ? `key:${fallback.toLowerCase()}` : "";
+}
+
+function _dashboardRecordHasTerminalLifecycle(rec) {
+  return [
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    _pick(rec, ["booking", "status"], null),
+    _pick(rec, ["booking", "stage"], null),
+    _pick(rec, ["booking", "lifecycle_status"], null),
+    _pick(rec, ["booking", "lifecycleStatus"], null),
+    _pick(rec, ["booking", "booking_status"], null),
+    _pick(rec, ["booking", "bookingStatus"], null),
+  ].some((value) => _isDashboardTerminalBookingLifecycle(value));
+}
+
+function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
+  const recordKeyId = safeStr(opts?.recordKeyId, 160) || "";
+  const identityMeta = _dashboardIdentityMeta(rec, recordKeyId);
+  const lifecycleCandidates = [
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    _pick(rec, ["booking", "status"], null),
+    _pick(rec, ["booking", "stage"], null),
+    _pick(rec, ["booking", "lifecycle_status"], null),
+    _pick(rec, ["booking", "lifecycleStatus"], null),
+    _pick(rec, ["booking", "booking_status"], null),
+    _pick(rec, ["booking", "bookingStatus"], null),
+  ];
+  if (lifecycleCandidates.some((value) => _isDashboardTerminalBookingLifecycle(value))) {
+    return { open: false, reason: "excluded_terminal" };
+  }
+
+  const hiddenFlags = [
+    rec?.hidden,
+    rec?.is_hidden,
+    rec?.customer_hidden,
+    rec?.deleted,
+    rec?.archived,
+    _pick(rec, ["booking", "hidden"], null),
+    _pick(rec, ["booking", "is_hidden"], null),
+    _pick(rec, ["booking", "customer_hidden"], null),
+    _pick(rec, ["booking", "deleted"], null),
+    _pick(rec, ["booking", "archived"], null),
+  ];
+  if (hiddenFlags.some((value) => _dashboardBoolLike(value))) {
+    return { open: false, reason: "excluded_hidden" };
+  }
+
+  const bookingStatusCandidates = [
+    rec?.booking_status,
+    rec?.bookingStatus,
+    _pick(rec, ["booking", "booking_status"], null),
+    _pick(rec, ["booking", "bookingStatus"], null),
+  ]
+    .map((value) => _normalizeDashboardBookingLifecycle(value))
+    .filter((value) => !!value);
+  if (bookingStatusCandidates.some((value) => DASHBOARD_BOOKINGS_KPI_NON_ACTIONABLE_BOOKING_STATUS_SET.has(value))) {
+    return { open: false, reason: "excluded_payment_failed" };
+  }
+
+  const paymentStatusCandidates = [
+    rec?.payment_status,
+    rec?.paymentStatus,
+    _pick(rec, ["booking", "payment_status"], null),
+    _pick(rec, ["booking", "paymentStatus"], null),
+  ]
+    .map((value) => _normalizeDashboardBookingLifecycle(value))
+    .filter((value) => !!value);
+  if (paymentStatusCandidates.some((value) => DASHBOARD_BOOKINGS_KPI_NON_ACTIONABLE_PAYMENT_STATUS_SET.has(value))) {
+    return { open: false, reason: "excluded_payment_failed" };
+  }
+
+  const statusCandidates = [
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    _pick(rec, ["booking", "status"], null),
+    _pick(rec, ["booking", "stage"], null),
+    _pick(rec, ["booking", "lifecycle_status"], null),
+    _pick(rec, ["booking", "lifecycleStatus"], null),
+    _pick(rec, ["booking", "booking_status"], null),
+    _pick(rec, ["booking", "bookingStatus"], null),
+  ]
+    .map((value) => _normalizeDashboardBookingLifecycle(value))
+    .filter((value) => !!value);
+
+  const paymentIsPaid = paymentStatusCandidates.some((value) => value === "paid" || value === "settled");
+  const hasPaidAt = !!safeStr(
+    rec?.paid_at ??
+      rec?.paidAt ??
+      _pick(rec, ["booking", "paid_at"], null) ??
+      _pick(rec, ["booking", "paidAt"], null),
+    80,
+  );
+  const hasPendingPaymentLikeStatus =
+    bookingStatusCandidates.some((value) => DASHBOARD_BOOKINGS_KPI_PENDING_PAYMENT_STATUS_SET.has(value)) ||
+    paymentStatusCandidates.some((value) => DASHBOARD_BOOKINGS_KPI_PENDING_PAYMENT_STATUS_SET.has(value));
+  if (hasPendingPaymentLikeStatus && !paymentIsPaid && !hasPaidAt) {
+    const lastKnownActivityMs = _dashboardTimestampMs(
+      rec?.updated_at,
+      rec?.updatedAt,
+      rec?.created_at,
+      rec?.createdAt,
+      _pick(rec, ["booking", "updated_at"], null),
+      _pick(rec, ["booking", "updatedAt"], null),
+      _pick(rec, ["booking", "created_at"], null),
+      _pick(rec, ["booking", "createdAt"], null),
+    );
+    const staleThresholdMs = 60 * 60 * 1000;
+    if (Number.isFinite(lastKnownActivityMs) && Number.isFinite(nowMs)) {
+      if ((nowMs - lastKnownActivityMs) > staleThresholdMs) {
+        return { open: false, reason: "excluded_stale_payment_pending" };
+      }
+    }
+  }
+
+  const rawStatus = _normalizeDashboardBookingLifecycle(rec?.status) ||
+    _normalizeDashboardBookingLifecycle(_pick(rec, ["booking", "status"], null));
+  const stageMissing = !safeStr(rec?.stage ?? _pick(rec, ["booking", "stage"], null), 40);
+  const lifecycleMissing = !safeStr(
+    rec?.lifecycle_status ??
+      rec?.lifecycleStatus ??
+      _pick(rec, ["booking", "lifecycle_status"], null) ??
+      _pick(rec, ["booking", "lifecycleStatus"], null),
+    40,
+  );
+  const bookingStatusMissing = !safeStr(
+    rec?.booking_status ??
+      rec?.bookingStatus ??
+      _pick(rec, ["booking", "booking_status"], null) ??
+      _pick(rec, ["booking", "bookingStatus"], null),
+    64,
+  );
+  const statusOnlyPending = statusCandidates.length > 0 && statusCandidates.every((value) => value === "pending");
+  const paymentStatusPaidOnly = paymentStatusCandidates.some((value) => value === "paid" || value === "settled");
+  const looksNonCanonicalProvisional =
+    identityMeta.has_canonical_booking_number !== true &&
+    identityMeta.has_public_booking_reference !== true &&
+    (identityMeta.record_shape_hint === "provisional_payment_record" ||
+      identityMeta.record_shape_hint === "tracking_shadow_record" ||
+      identityMeta.internal_id_like === true);
+  if (
+    looksNonCanonicalProvisional &&
+    paymentStatusPaidOnly &&
+    statusOnlyPending &&
+    rawStatus === "pending" &&
+    stageMissing &&
+    lifecycleMissing &&
+    bookingStatusMissing
+  ) {
+    return { open: false, reason: "excluded_non_canonical_provisional_record" };
+  }
+
+  const pickupTimestampMs = _dashboardPickupTimestampMs(rec);
+  if (!Number.isFinite(pickupTimestampMs)) {
+    return { open: false, reason: "excluded_missing_pickup_time" };
+  }
+  const stalePastThresholdMs = 24 * 60 * 60 * 1000;
+  const isStalePastPickup =
+    Number.isFinite(nowMs) &&
+    (nowMs - pickupTimestampMs) > stalePastThresholdMs &&
+    statusCandidates.some((value) => DASHBOARD_BOOKINGS_KPI_PAST_PICKUP_GUARDED_STATUS_SET.has(value));
+  if (isStalePastPickup) {
+    return { open: false, reason: "excluded_stale_past_pickup" };
+  }
+
+  return { open: true, reason: "considered_open" };
+}
+
+async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, debugLimit = 50 } = {}) {
   if (!tenantScope?.hasScope) return missingTenantScopeError();
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const debugEnabled = debug === true;
+  const effectiveDebugLimit = Math.max(1, Math.min(200, Number(debugLimit) || 50));
 
+  const nowMs = Date.now();
   let scannedKeys = 0;
   let matchedScope = 0;
   let consideredOpen = 0;
+  let excludedTerminal = 0;
+  let excludedPaymentFailed = 0;
+  let excludedStalePaymentPending = 0;
+  let excludedHidden = 0;
+  let excludedMissingPickupTime = 0;
+  let excludedStalePastPickup = 0;
+  let excludedNonCanonicalProvisionalRecord = 0;
+  let excludedDuplicateIdentity = 0;
+  let excludedTerminalIdentity = 0;
+  let excludedReferenceOnlyProvisionalRecord = 0;
+  let excludedOutOfScope = 0;
+  let excludedInvalidRecord = 0;
   let cursor = undefined;
   let scanComplete = true;
+  const debugConsideredOpen = [];
+  const debugSample = [];
+  const scopedEntries = [];
+  const _debugAddSample = (entry) => {
+    if (!debugEnabled) return;
+    if (debugSample.length >= effectiveDebugLimit) return;
+    debugSample.push(entry);
+  };
+  const _debugSummarizeRecord = (rec, bookingId, reasonCode, includedOpen, extra = {}) => {
+    const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+    const identityMeta = _dashboardIdentityMeta(rec, bookingId);
+    const identityKeyRaw =
+      safeStr(extra?.identityKey, 180) || _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
+    const identityGroupSize = Math.max(1, Number(extra?.identityGroupSize) || 1);
+    return {
+      record_key_preview: identityMeta.record_key_preview,
+      identity_key_preview: _bookingIntentMask(identityKeyRaw),
+      identity_group_size: identityGroupSize,
+      identity_terminal_present: extra?.identityTerminalPresent === true,
+      identity_canonical_record_present: extra?.identityCanonicalRecordPresent === true,
+      identity_reference_only: extra?.identityReferenceOnly === true,
+      identity_has_canonical_booking_number: extra?.identityHasCanonicalBookingNumber === true,
+      booking_id_preview: _bookingIntentMask(bookingId),
+      booking_id_field_preview: identityMeta.booking_id_field_preview,
+      public_reference_preview: identityMeta.public_reference_preview,
+      has_public_booking_reference: identityMeta.has_public_booking_reference === true,
+      has_canonical_booking_number: identityMeta.has_canonical_booking_number === true,
+      record_shape_hint: identityMeta.record_shape_hint,
+      included_open: includedOpen === true,
+      reason_code: reasonCode,
+      status: safeStr(rec?.status, 40) || null,
+      stage: safeStr(rec?.stage, 40) || null,
+      lifecycle_status:
+        safeStr(rec?.lifecycle_status, 40) || safeStr(rec?.lifecycleStatus, 40) || null,
+      booking_status:
+        safeStr(rec?.booking_status, 64) ||
+        safeStr(rec?.bookingStatus, 64) ||
+        safeStr(bookingObj?.booking_status, 64) ||
+        safeStr(bookingObj?.bookingStatus, 64) ||
+        null,
+      payment_status:
+        safeStr(rec?.payment_status, 64) ||
+        safeStr(rec?.paymentStatus, 64) ||
+        safeStr(bookingObj?.payment_status, 64) ||
+        safeStr(bookingObj?.paymentStatus, 64) ||
+        null,
+      paid_at_present: !!safeStr(
+        rec?.paid_at ??
+          rec?.paidAt ??
+          bookingObj?.paid_at ??
+          bookingObj?.paidAt,
+        80,
+      ),
+      pickup_iso:
+        safeStr(
+          bookingObj?.pickupStartIso ??
+            bookingObj?.pickup_iso ??
+            bookingObj?.pickup_at ??
+            bookingObj?.pickup_time ??
+            rec?.pickup_iso ??
+            rec?.pickupIso ??
+            rec?.pickup_at ??
+            rec?.pickupAt ??
+            rec?.pickup_time ??
+            rec?.pickupTime ??
+            rec?.scheduled_pickup_at ??
+            rec?.scheduledPickupAt ??
+            _pick(rec, ["payload", "pickup_iso"], null) ??
+            _pick(rec, ["payload", "pickup_at"], null) ??
+            _pick(rec, ["payload", "pickup_time"], null) ??
+            _pick(rec, ["booking", "payload", "pickup_iso"], null) ??
+            _pick(rec, ["booking", "payload", "pickup_at"], null) ??
+            _pick(rec, ["booking", "payload", "pickup_time"], null) ??
+            _pick(rec, ["quote", "pickup_iso"], null),
+          80,
+        ) || null,
+      created_at:
+        safeStr(
+          rec?.created_at ??
+            rec?.createdAt ??
+            bookingObj?.created_at ??
+            bookingObj?.createdAt,
+          80,
+        ) || null,
+      updated_at:
+        safeStr(
+          rec?.updated_at ??
+            rec?.updatedAt ??
+            bookingObj?.updated_at ??
+            bookingObj?.updatedAt,
+          80,
+        ) || null,
+      terminal_lifecycle:
+        _isDashboardTerminalBookingLifecycle(rec?.status) ||
+        _isDashboardTerminalBookingLifecycle(rec?.stage) ||
+        _isDashboardTerminalBookingLifecycle(rec?.lifecycle_status) ||
+        _isDashboardTerminalBookingLifecycle(rec?.lifecycleStatus),
+    };
+  };
 
   do {
     const page = await env.BOOKING_KV.list({
@@ -28614,14 +29171,75 @@ async function computeDashboardBookingsKpis(env, { tenantScope } = {}) {
       const key = String(item?.name || "");
       if (!key.startsWith("booking:")) continue;
       scannedKeys += 1;
+      const bookingId = key.slice("booking:".length);
       const rec = await env.BOOKING_KV.get(key, { type: "json" });
-      if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
-      matchedScope += 1;
-      if (_isDashboardTerminalBookingLifecycle(_bookingLifecycleValue(rec))) {
+      if (!rec || typeof rec !== "object") {
+        excludedInvalidRecord += 1;
+        _debugAddSample({
+          booking_id_preview: _bookingIntentMask(bookingId),
+          included_open: false,
+          reason_code: "excluded_invalid_record",
+        });
         continue;
       }
-      consideredOpen += 1;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+        excludedOutOfScope += 1;
+        _debugAddSample({
+          booking_id_preview: _bookingIntentMask(bookingId),
+          included_open: false,
+          reason_code: "excluded_out_of_scope",
+        });
+        continue;
+      }
+      matchedScope += 1;
+      const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: bookingId });
+      const identityKey = _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
+      const recordUpdatedMs = _dashboardTimestampMs(
+        rec?.updated_at,
+        rec?.updatedAt,
+        rec?.created_at,
+        rec?.createdAt,
+        _pick(rec, ["booking", "updated_at"], null),
+        _pick(rec, ["booking", "updatedAt"], null),
+        _pick(rec, ["booking", "created_at"], null),
+        _pick(rec, ["booking", "createdAt"], null),
+      );
+      const keyIsCanonical = !!_dashboardCanonicalBookingNumber(bookingId);
+      const identityMeta = _dashboardIdentityMeta(rec, bookingId);
+      const hasTerminalLifecycle = _dashboardRecordHasTerminalLifecycle(rec);
+      scopedEntries.push({
+        rec,
+        bookingId,
+        openCheck,
+        identityKey,
+        keyIsCanonical,
+        identityMeta,
+        recordUpdatedMs,
+        hasTerminalLifecycle,
+      });
+      if (openCheck.open !== true && openCheck.reason === "excluded_terminal") {
+        excludedTerminal += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_payment_failed") {
+        excludedPaymentFailed += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_payment_pending") {
+        excludedStalePaymentPending += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_hidden") {
+        excludedHidden += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_missing_pickup_time") {
+        excludedMissingPickupTime += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_past_pickup") {
+        excludedStalePastPickup += 1;
+      } else if (openCheck.open !== true && openCheck.reason === "excluded_non_canonical_provisional_record") {
+        excludedNonCanonicalProvisionalRecord += 1;
+      }
+      if (openCheck.open !== true) {
+        _debugAddSample(_debugSummarizeRecord(rec, bookingId, openCheck.reason, false, {
+          identityKey,
+          identityGroupSize: 1,
+          identityTerminalPresent: hasTerminalLifecycle,
+          identityCanonicalRecordPresent: keyIsCanonical,
+        }));
+      }
     }
     cursor = page?.cursor;
     if (page?.list_complete !== false) break;
@@ -28631,20 +29249,261 @@ async function computeDashboardBookingsKpis(env, { tenantScope } = {}) {
     }
   } while (cursor);
 
-  return {
+  const identityGroups = new Map();
+  for (const entry of scopedEntries) {
+    const key = safeStr(entry?.identityKey, 180) || safeStr(entry?.bookingId, 160) || "unknown";
+    if (!identityGroups.has(key)) identityGroups.set(key, []);
+    identityGroups.get(key).push(entry);
+  }
+
+  for (const [identityKey, group] of identityGroups.entries()) {
+    if (!Array.isArray(group) || group.length === 0) continue;
+    const identityGroupSize = group.length;
+    const identityTerminalPresent = group.some((entry) => entry?.hasTerminalLifecycle === true);
+    const identityCanonicalRecordPresent = group.some((entry) => entry?.keyIsCanonical === true);
+    const identityHasCanonicalBookingNumber = group.some(
+      (entry) => entry?.identityMeta?.has_canonical_booking_number === true || entry?.keyIsCanonical === true,
+    );
+    const identityReferenceOnly =
+      identityCanonicalRecordPresent !== true &&
+      (safeStr(identityKey, 180).startsWith("ref:") ||
+        group.some((entry) => entry?.identityMeta?.has_public_booking_reference === true));
+
+    if (identityTerminalPresent) {
+      excludedTerminalIdentity += 1;
+      for (const entry of group) {
+        if (entry?.openCheck?.open === true) {
+          excludedDuplicateIdentity += 1;
+          _debugAddSample(_debugSummarizeRecord(
+            entry.rec,
+            entry.bookingId,
+            "excluded_duplicate_terminal_identity",
+            false,
+            {
+              identityKey,
+              identityGroupSize,
+              identityTerminalPresent: true,
+              identityCanonicalRecordPresent,
+              identityReferenceOnly,
+              identityHasCanonicalBookingNumber,
+            },
+          ));
+        }
+      }
+      continue;
+    }
+
+    const openEntries = group.filter((entry) => entry?.openCheck?.open === true);
+    if (!openEntries.length) continue;
+    const openEntriesAreReferenceOnlyProvisional = openEntries.every((entry) => {
+      const rec = entry?.rec || {};
+      const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+      const rawStatus = _normalizeDashboardBookingLifecycle(
+        rec?.status ?? bookingObj?.status,
+      );
+      const statusCandidates = [
+        rec?.status,
+        rec?.stage,
+        rec?.lifecycle_status,
+        rec?.lifecycleStatus,
+        rec?.booking_status,
+        rec?.bookingStatus,
+        bookingObj?.status,
+        bookingObj?.stage,
+        bookingObj?.lifecycle_status,
+        bookingObj?.lifecycleStatus,
+        bookingObj?.booking_status,
+        bookingObj?.bookingStatus,
+      ]
+        .map((value) => _normalizeDashboardBookingLifecycle(value))
+        .filter((value) => !!value);
+      const stageMissing = !safeStr(rec?.stage ?? bookingObj?.stage, 40);
+      const lifecycleMissing = !safeStr(
+        rec?.lifecycle_status ??
+          rec?.lifecycleStatus ??
+          bookingObj?.lifecycle_status ??
+          bookingObj?.lifecycleStatus,
+        40,
+      );
+      const bookingStatusMissing = !safeStr(
+        rec?.booking_status ??
+          rec?.bookingStatus ??
+          bookingObj?.booking_status ??
+          bookingObj?.bookingStatus,
+        64,
+      );
+      const paymentStatusCandidates = [
+        rec?.payment_status,
+        rec?.paymentStatus,
+        bookingObj?.payment_status,
+        bookingObj?.paymentStatus,
+      ]
+        .map((value) => _normalizeDashboardBookingLifecycle(value))
+        .filter((value) => !!value);
+      const paymentStatusPaid = paymentStatusCandidates.some(
+        (value) => value === "paid" || value === "settled",
+      );
+      const statusOnlyPending =
+        statusCandidates.length > 0 &&
+        statusCandidates.every((value) => value === "pending");
+      const bookingIdFieldRaw = safeStr(
+        rec?.id ?? rec?.booking_id ?? rec?.bookingId ?? bookingObj?.id ?? bookingObj?.booking_id ?? bookingObj?.bookingId,
+        160,
+      );
+      const internalOrUuidLike =
+        entry?.identityMeta?.internal_id_like === true ||
+        _dashboardUuidLikeId(entry?.bookingId) ||
+        _dashboardUuidLikeId(bookingIdFieldRaw) ||
+        /^u_[0-9a-z_]+$/i.test(safeStr(entry?.bookingId, 160)) ||
+        /^u_[0-9a-z_]+$/i.test(bookingIdFieldRaw);
+      return (
+        rawStatus === "pending" &&
+        statusOnlyPending &&
+        stageMissing &&
+        lifecycleMissing &&
+        bookingStatusMissing &&
+        paymentStatusPaid &&
+        internalOrUuidLike
+      );
+    });
+    if (
+      identityReferenceOnly === true &&
+      identityHasCanonicalBookingNumber !== true &&
+      identityCanonicalRecordPresent !== true &&
+      openEntriesAreReferenceOnlyProvisional
+    ) {
+      for (const entry of openEntries) {
+        excludedReferenceOnlyProvisionalRecord += 1;
+        _debugAddSample(_debugSummarizeRecord(
+          entry.rec,
+          entry.bookingId,
+          "excluded_reference_only_provisional_record",
+          false,
+          {
+            identityKey,
+            identityGroupSize,
+            identityTerminalPresent: false,
+            identityCanonicalRecordPresent,
+            identityReferenceOnly,
+            identityHasCanonicalBookingNumber,
+          },
+        ));
+      }
+      continue;
+    }
+    openEntries.sort((a, b) => {
+      const keyCanonicalA = a?.keyIsCanonical === true ? 1 : 0;
+      const keyCanonicalB = b?.keyIsCanonical === true ? 1 : 0;
+      if (keyCanonicalA !== keyCanonicalB) return keyCanonicalB - keyCanonicalA;
+      const canonicalMetaA = a?.identityMeta?.has_canonical_booking_number === true ? 1 : 0;
+      const canonicalMetaB = b?.identityMeta?.has_canonical_booking_number === true ? 1 : 0;
+      if (canonicalMetaA !== canonicalMetaB) return canonicalMetaB - canonicalMetaA;
+      const updatedA = Number.isFinite(a?.recordUpdatedMs) ? a.recordUpdatedMs : -1;
+      const updatedB = Number.isFinite(b?.recordUpdatedMs) ? b.recordUpdatedMs : -1;
+      return updatedB - updatedA;
+    });
+    const winner = openEntries[0];
+    consideredOpen += 1;
+    const includedEntry = _debugSummarizeRecord(
+      winner.rec,
+      winner.bookingId,
+      "included_actionable_open",
+      true,
+      {
+        identityKey,
+        identityGroupSize,
+        identityTerminalPresent: false,
+        identityCanonicalRecordPresent,
+        identityReferenceOnly,
+        identityHasCanonicalBookingNumber,
+      },
+    );
+    if (debugEnabled && debugConsideredOpen.length < 500) {
+      debugConsideredOpen.push(includedEntry);
+    }
+    _debugAddSample(includedEntry);
+
+    for (let i = 1; i < openEntries.length; i += 1) {
+      const dup = openEntries[i];
+      excludedDuplicateIdentity += 1;
+      _debugAddSample(_debugSummarizeRecord(
+        dup.rec,
+        dup.bookingId,
+        "excluded_duplicate_identity",
+        false,
+        {
+          identityKey,
+          identityGroupSize,
+          identityTerminalPresent: false,
+          identityCanonicalRecordPresent,
+          identityReferenceOnly,
+          identityHasCanonicalBookingNumber,
+        },
+      ));
+    }
+  }
+
+  const response = {
     ok: true,
     tenant_id: tenantScope.tenant_id,
     company_id: tenantScope.company_id,
     generated_at: new Date().toISOString(),
     open_bookings_count: consideredOpen,
+    considered_open: consideredOpen,
+    excluded_terminal: excludedTerminal,
+    excluded_payment_failed: excludedPaymentFailed,
+    excluded_stale_payment_pending: excludedStalePaymentPending,
+    excluded_hidden: excludedHidden,
+    excluded_missing_pickup_time: excludedMissingPickupTime,
+    excluded_stale_past_pickup: excludedStalePastPickup,
+    excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
+    excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
+    excluded_duplicate_identity: excludedDuplicateIdentity,
+    excluded_terminal_identity: excludedTerminalIdentity,
+    excluded_out_of_scope: excludedOutOfScope,
+    excluded_invalid_record: excludedInvalidRecord,
+    total_scanned: scannedKeys,
     excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
     scan_complete: scanComplete,
     scan_stats: {
       scanned_keys: scannedKeys,
       matched_scope: matchedScope,
       considered_open: consideredOpen,
+      excluded_terminal: excludedTerminal,
+      excluded_payment_failed: excludedPaymentFailed,
+      excluded_stale_payment_pending: excludedStalePaymentPending,
+      excluded_hidden: excludedHidden,
+      excluded_missing_pickup_time: excludedMissingPickupTime,
+      excluded_stale_past_pickup: excludedStalePastPickup,
+      excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
+      excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
+      excluded_duplicate_identity: excludedDuplicateIdentity,
+      excluded_terminal_identity: excludedTerminalIdentity,
+      excluded_out_of_scope: excludedOutOfScope,
+      excluded_invalid_record: excludedInvalidRecord,
     },
   };
+  if (debugEnabled) {
+    response.debug_enabled = true;
+    response.debug_limit = effectiveDebugLimit;
+    response.debug_considered_open = debugConsideredOpen;
+    response.debug_sample = debugSample;
+    response.debug_excluded_summary = {
+      excluded_terminal: excludedTerminal,
+      excluded_payment_failed: excludedPaymentFailed,
+      excluded_stale_payment_pending: excludedStalePaymentPending,
+      excluded_hidden: excludedHidden,
+      excluded_missing_pickup_time: excludedMissingPickupTime,
+      excluded_stale_past_pickup: excludedStalePastPickup,
+      excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
+      excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
+      excluded_duplicate_identity: excludedDuplicateIdentity,
+      excluded_terminal_identity: excludedTerminalIdentity,
+      excluded_out_of_scope: excludedOutOfScope,
+      excluded_invalid_record: excludedInvalidRecord,
+    };
+  }
+  return response;
 }
 
 async function getBookingAuthoritative(bookingId, env, tenantScope = null, preloadedRec = null) {
