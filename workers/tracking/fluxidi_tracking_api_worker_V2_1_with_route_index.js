@@ -1947,6 +1947,20 @@ function _coerceReconcileDryRun(value, fallback = true) {
   return fallback;
 }
 
+function _tripKpiAmountCentsFromTrip(trip) {
+  return (
+    _dashboardTripAmountCents(trip?.payment_amount) ??
+    _dashboardTripAmountCents(trip?.paymentAmount) ??
+    _dashboardTripAmountCents(trip?.final_amount) ??
+    _dashboardTripAmountCents(trip?.finalAmount) ??
+    _dashboardTripAmountCents(trip?.final_total) ??
+    _dashboardTripAmountCents(trip?.finalTotal) ??
+    _dashboardTripAmountCents(trip?.total_eur) ??
+    _dashboardTripAmountCents(trip?.totalEur) ??
+    0
+  );
+}
+
 async function handleDashboardTripKpisReconcile(req, url, env, origin) {
   requireAdmin(req, url, env);
   const body = req.method === "POST" ? await readJson(req) : {};
@@ -1969,6 +1983,13 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
     resolved_to_trip_materialized: 0,
     cleared_terminal_marker: 0,
     unresolved_pending: 0,
+    scanned_unpaid_completed_contribs: 0,
+    unpaid_completed_still_unpaid: 0,
+    unpaid_completed_resolvable_to_paid: 0,
+    unpaid_completed_missing_booking: 0,
+    unpaid_completed_missing_trip: 0,
+    unpaid_completed_terminal_or_cancelled: 0,
+    unpaid_completed_missing_amount: 0,
   };
   const expected_deltas = {
     completed_rides_count: 0,
@@ -2080,6 +2101,185 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
     cursor = page?.cursor;
     if (page?.list_complete !== false) break;
   } while (cursor);
+
+  const contribPrefix = `tenant:${scope.tenant_id}:company:${scope.company_id}:dashboard:trip_kpi_contrib:`;
+  let contribCursor = undefined;
+  do {
+    const page = await env.FLUXIDI_TRACKING.list({ prefix: contribPrefix, limit: 1000, cursor: contribCursor });
+    for (const keyMeta of page?.keys || []) {
+      if (summary.scanned_unpaid_completed_contribs >= limit) break;
+      const contribKeyRaw = safeStr(keyMeta?.name, 280);
+      if (!contribKeyRaw) continue;
+      const contrib = _readDashboardContribShape(
+        await kvGetJson(env.FLUXIDI_TRACKING, contribKeyRaw),
+        null,
+      );
+      if (!contrib?.trip_id) continue;
+      if (
+        !(contrib.completed_rides_count === 1 &&
+          contrib.unpaid_completed_rides_count === 1 &&
+          contrib.monthly_paid_rides_count === 0 &&
+          contrib.monthly_income_cents === 0)
+      ) {
+        continue;
+      }
+      summary.scanned_unpaid_completed_contribs += 1;
+      const tripId = safeStr(contrib.trip_id, 160);
+      let tripResolved = null;
+      let trip = null;
+      try {
+        tripResolved = await getScopedOrLegacyTripForScope(env, scope, tripId);
+        trip = tripResolved?.trip || null;
+      } catch (_) {
+        trip = null;
+      }
+      if (!trip || !recordMatchesTenantCompanyScope(trip, scope)) {
+        summary.unpaid_completed_missing_trip += 1;
+        actions.push({
+          action: "unpaid_completed_missing_trip",
+          dry_run: dryRun,
+          source_key_type: "trip_kpi_contrib",
+          contrib_key_preview: _tripKpiMask(contribKeyRaw),
+          trip_id_preview: _tripKpiMask(tripId),
+          booking_id_preview: null,
+          status: "missing",
+          payment_status: "unknown",
+          amount_cents: null,
+          contribution_shape: {
+            completed_rides_count: contrib.completed_rides_count,
+            unpaid_completed_rides_count: contrib.unpaid_completed_rides_count,
+            monthly_paid_rides_count: contrib.monthly_paid_rides_count,
+            monthly_income_cents: contrib.monthly_income_cents,
+            paid_month: contrib.paid_month,
+          },
+        });
+        continue;
+      }
+
+      const tripStatus = normalizeDashboardTripLifecycleStatus(trip?.status ?? trip?.lifecycle_status);
+      const tripPaymentStatus = normalizeCompliancePaymentStatus(trip?.payment_status ?? trip?.paymentStatus);
+      const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+      const amountCents = _tripKpiAmountCentsFromTrip(trip);
+      const markerKey = bookingId ? scopedDashboardTripPendingBookingKey(scope, bookingId) : "";
+      const marker = markerKey ? await kvGetJson(env.FLUXIDI_TRACKING, markerKey) : null;
+      const markerPaid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
+      const markerPaidAt = safeStr(marker?.paid_at, 64);
+      const bookingMap = bookingId ? (await getScopedOrLegacyBookingMapForScope(env, scope, bookingId))?.map : null;
+      const bookingMapPaid = normalizeCompliancePaymentStatus(
+        bookingMap?.payment_status ?? bookingMap?.paymentStatus,
+      ) === "paid";
+      const paidProof = tripPaymentStatus === "paid" || markerPaid || bookingMapPaid;
+
+      const actionBase = {
+        dry_run: dryRun,
+        source_key_type: "trip_kpi_contrib",
+        contrib_key_preview: _tripKpiMask(contribKeyRaw),
+        trip_id_preview: _tripKpiMask(tripId),
+        booking_id_preview: _tripKpiMask(bookingId),
+        status: tripStatus || "unknown",
+        payment_status: tripPaymentStatus || "unknown",
+        amount_cents: amountCents > 0 ? amountCents : null,
+        month: contrib.paid_month || null,
+        contribution_shape: {
+          completed_rides_count: contrib.completed_rides_count,
+          unpaid_completed_rides_count: contrib.unpaid_completed_rides_count,
+          monthly_paid_rides_count: contrib.monthly_paid_rides_count,
+          monthly_income_cents: contrib.monthly_income_cents,
+          paid_month: contrib.paid_month,
+        },
+      };
+
+      if (tripStatus === "cancelled") {
+        summary.unpaid_completed_terminal_or_cancelled += 1;
+        actions.push({
+          action: "unpaid_completed_terminal_or_cancelled",
+          ...actionBase,
+        });
+        continue;
+      }
+
+      if (!bookingId || (!bookingMap && !marker && tripPaymentStatus !== "paid")) {
+        summary.unpaid_completed_missing_booking += 1;
+        actions.push({
+          action: "unpaid_completed_missing_booking",
+          ...actionBase,
+        });
+        continue;
+      }
+
+      if (!paidProof) {
+        summary.unpaid_completed_still_unpaid += 1;
+        actions.push({
+          action: "unpaid_completed_still_unpaid",
+          ...actionBase,
+        });
+        continue;
+      }
+
+      if (!(amountCents > 0)) {
+        summary.unpaid_completed_missing_amount += 1;
+        actions.push({
+          action: "unpaid_completed_missing_amount",
+          ...actionBase,
+        });
+        continue;
+      }
+
+      const projectedTrip = { ...trip };
+      projectedTrip.payment_status = "paid";
+      projectedTrip.paymentStatus = "paid";
+      if (markerPaidAt && !safeStr(projectedTrip?.paid_at ?? projectedTrip?.paidAt, 64)) {
+        projectedTrip.paid_at = markerPaidAt;
+        projectedTrip.paidAt = markerPaidAt;
+      }
+      if (!Number.isFinite(Number(projectedTrip?.payment_amount)) && !Number.isFinite(Number(projectedTrip?.paymentAmount))) {
+        const amount = Math.round(amountCents) / 100;
+        projectedTrip.payment_amount = amount;
+        projectedTrip.paymentAmount = amount;
+      }
+
+      const prev = _readDashboardContribShape(await kvGetJson(env.FLUXIDI_TRACKING, contribKeyRaw), tripId);
+      const next = _readDashboardContribShape(deriveDashboardTripKpiContribution(projectedTrip), tripId);
+      const deltaCompleted = next.completed_rides_count - prev.completed_rides_count;
+      const deltaUnpaid = next.unpaid_completed_rides_count - prev.unpaid_completed_rides_count;
+      const deltaMonthPaid = next.monthly_paid_rides_count - prev.monthly_paid_rides_count;
+      const deltaIncome = next.monthly_income_cents - prev.monthly_income_cents;
+      expected_deltas.completed_rides_count += deltaCompleted;
+      expected_deltas.unpaid_completed_rides_count += deltaUnpaid;
+      expected_deltas.monthly_paid_rides_count += deltaMonthPaid;
+      expected_deltas.monthly_income_cents += deltaIncome;
+
+      summary.unpaid_completed_resolvable_to_paid += 1;
+      actions.push({
+        action: "unpaid_completed_resolvable_to_paid",
+        ...actionBase,
+        expected_delta: {
+          completed_rides_count: deltaCompleted,
+          unpaid_completed_rides_count: deltaUnpaid,
+          monthly_paid_rides_count: deltaMonthPaid,
+          monthly_income_cents: deltaIncome,
+        },
+      });
+
+      if (!dryRun) {
+        const tripStorageKey =
+          safeStr(tripResolved?.key, 260) || scopedTripKey(scope, tripId);
+        await kvPutJson(env.FLUXIDI_TRACKING, tripStorageKey, projectedTrip, TTL_TRIP);
+        await materializeTripDashboardKpisBestEffort(
+          env,
+          scope,
+          projectedTrip,
+          "trip_kpi_reconcile_unpaid_completed",
+        );
+        if (markerKey && marker) {
+          await kvDel(env.FLUXIDI_TRACKING, markerKey);
+        }
+      }
+    }
+    if (summary.scanned_unpaid_completed_contribs >= limit) break;
+    contribCursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+  } while (contribCursor);
 
   return withCors(
     json(
