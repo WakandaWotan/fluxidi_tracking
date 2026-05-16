@@ -18420,6 +18420,41 @@ function readMollieCheckoutUrlFromPaymentResult(pay) {
 }
 
 async function handleBooking(payload, env, request) {
+  let allocatorReservationAcquired = false;
+  let bookingPersisted = false;
+  let allocatorReleaseBookingId = "";
+  let allocatorReleasePickupIso = "";
+  let allocatorReleaseScope = null;
+  const releaseAllocatorReservationSafely = async () => {
+    if (!allocatorReservationAcquired || bookingPersisted) {
+      console.log(
+        `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=skipped reason=missing_reservation`,
+      );
+      return;
+    }
+    if (!allocatorReleaseBookingId || !allocatorReleasePickupIso) {
+      console.log(
+        `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=skipped reason=missing_reservation`,
+      );
+      return;
+    }
+    try {
+      await _allocatorRequest(env, allocatorReleasePickupIso, {
+        action: "release",
+        booking_id: allocatorReleaseBookingId,
+        tenantScope: allocatorReleaseScope,
+      });
+      console.log(
+        `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=ok reason=released`,
+      );
+    } catch (releaseErr) {
+      const safeReason = safeStr(releaseErr?.message || releaseErr, 120) || "exception";
+      console.log(
+        `[ALLOCATOR][RESERVATION][RELEASE_SAFE] result=failed reason=exception error=${safeReason}`,
+      );
+      // Best-effort rollback; never mask original flow outcome.
+    }
+  };
   try {
     if (!env?.BOOKING_KV) {
       return { ok: false, error: "Missing BOOKING_KV binding" };
@@ -18677,11 +18712,34 @@ async function handleBooking(payload, env, request) {
     const booking_uuid = (crypto?.randomUUID ? crypto.randomUUID() : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`);
     const canonicalBookingId = providedId || await nextHumanBookingId(env, pickup_iso);
     const bookingScopeMask = _bookingIntentScopeMask(idempotencyScope);
+    const _bookingNoVehicleDiagnosticsLog = (availability = {}) => (
+      `origin_source=${safeStr(availability?.origin_source, 64) || "-"} ` +
+      `origin_has_location=${availability?.origin_has_location === true ? "true" : availability?.origin_has_location === false ? "false" : "null"} ` +
+      `pickup_has_location=${availability?.pickup_has_location === true ? "true" : availability?.pickup_has_location === false ? "false" : "null"} ` +
+      `available_seconds=${Number.isFinite(Number(availability?.available_seconds)) ? Number(availability.available_seconds) : -1} ` +
+      `required_seconds=${Number.isFinite(Number(availability?.required_seconds)) ? Number(availability.required_seconds) : -1} ` +
+      `origin_travel_seconds=${Number.isFinite(Number(availability?.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} ` +
+      `required_buffer_seconds=${Number.isFinite(Number(availability?.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} ` +
+      `route_failure_reason=${safeStr(availability?.route_failure_reason, 64) || "-"} ` +
+      `route_http_status=${Number.isFinite(Number(availability?.route_http_status)) ? Number(availability.route_http_status) : -1} ` +
+      `route_error_code=${safeStr(availability?.route_error_code, 64) || "-"} ` +
+      `route_error_message=${safeStr(availability?.route_error_message, 64) || "-"} ` +
+      `route_origin_coords_usable=${availability?.route_origin_coords_usable === true ? "true" : availability?.route_origin_coords_usable === false ? "false" : "null"} ` +
+      `route_origin_coordinate_source=${safeStr(availability?.route_origin_coordinate_source, 64) || "-"} ` +
+      `route_pickup_coords_usable=${availability?.route_pickup_coords_usable === true ? "true" : availability?.route_pickup_coords_usable === false ? "false" : "null"} ` +
+      `route_pickup_coordinate_source=${safeStr(availability?.route_pickup_coordinate_source, 64) || "-"} ` +
+      `route_origin_latlng_preview=${safeStr(availability?.route_origin_latlng_preview, 32) || "-"} ` +
+      `route_pickup_latlng_preview=${safeStr(availability?.route_pickup_latlng_preview, 32) || "-"} ` +
+      `origin_candidate_resolution_summary=${safeStr(availability?.origin_candidate_resolution_summary, 96) || "-"} ` +
+      `origin_geocode_success=${availability?.origin_geocode_success === true ? "true" : availability?.origin_geocode_success === false ? "false" : "null"} ` +
+      `route_retry_attempts_summary=${safeStr(availability?.route_retry_attempts_summary, 96) || "-"}`
+    );
     let publicBookingReference = "";
     let planningReference = "";
     let bookingReferencesReserved = false;
-    let allocatorReservationAcquired = false;
-    let bookingPersisted = false;
+    allocatorReleaseBookingId = canonicalBookingId;
+    allocatorReleasePickupIso = pickup_iso;
+    allocatorReleaseScope = fleetScope;
     const ensureBookingReferencesReserved = async () => {
       if (bookingReferencesReserved) return;
       publicBookingReference = await allocateAndReservePublicBookingReference(env, {
@@ -18706,18 +18764,6 @@ async function handleBooking(payload, env, request) {
       payload.__planning_reference = planningReference;
       bookingReferencesReserved = true;
     };
-    const releaseAllocatorReservationSafely = async () => {
-      if (!allocatorReservationAcquired || bookingPersisted) return;
-      try {
-        await _allocatorRequest(env, pickup_iso, {
-          action: "release",
-          booking_id: canonicalBookingId,
-          tenantScope: fleetScope,
-        });
-      } catch (_) {
-        // Best-effort rollback; never mask original flow outcome.
-      }
-    };
     const customerPhoneLinkScopeMask = _bookingIntentScopeMask({
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
@@ -18729,12 +18775,31 @@ async function handleBooking(payload, env, request) {
 
 
     // Compute server-side quote (source of truth)
+    const fromPoint = readExplicitCoordinatePair(payload, "from");
+    const toPoint = readExplicitCoordinatePair(payload, "to");
     const routeOut = await routeFromTextsWithStopsDetailed({
       fromText: from,
       toText: to,
+      fromPoint,
+      toPoint,
       stopsTexts: stops,
       token: env.MAPBOX_TOKEN
     });
+    const routeResolvedPickupCoords = _allocatorResolvePointCoordinates({
+      resolved_waypoint: routeOut?.resolved_from_point,
+    });
+    const bookingPickupLatForAllocator =
+      payload?.pickup_lat ??
+      payload?.pickupLat ??
+      payload?.from_lat ??
+      payload?.fromLat ??
+      (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lat : null);
+    const bookingPickupLngForAllocator =
+      payload?.pickup_lng ??
+      payload?.pickupLng ??
+      payload?.from_lng ??
+      payload?.fromLng ??
+      (routeResolvedPickupCoords?.usable === true ? routeResolvedPickupCoords.lng : null);
 
     const distance_km = round1((routeOut?.route?.distance || 0) / 1000);
     const duration_route_min = Math.round((routeOut?.route?.duration || 0) / 60);
@@ -18972,13 +19037,17 @@ async function handleBooking(payload, env, request) {
               from,
               pickup_from: from,
               pickup_address: from,
-              pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
-              pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
+              to,
+              dropoff_to: to,
+              dropoff_address: to,
+              pickup_iso,
+              pickup_lat: bookingPickupLatForAllocator,
+              pickup_lng: bookingPickupLngForAllocator,
               tenantScope: fleetScope,
             });
             if (!alloc?.allowed) {
               console.log(
-                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
               );
               return {
                 ok: false,
@@ -19125,13 +19194,17 @@ async function handleBooking(payload, env, request) {
               from,
               pickup_from: from,
               pickup_address: from,
-              pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
-              pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
+              to,
+              dropoff_to: to,
+              dropoff_address: to,
+              pickup_iso,
+              pickup_lat: bookingPickupLatForAllocator,
+              pickup_lng: bookingPickupLngForAllocator,
               tenantScope: fleetScope,
             });
             if (!vehicleCapacity.ok) {
               console.log(
-                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(vehicleCapacity)}`,
               );
               return {
                 ok: false,
@@ -19727,13 +19800,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           from,
           pickup_from: from,
           pickup_address: from,
-          pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
-          pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
+          to,
+          dropoff_to: to,
+          dropoff_address: to,
+          pickup_iso,
+          pickup_lat: bookingPickupLatForAllocator,
+          pickup_lng: bookingPickupLngForAllocator,
           tenantScope: fleetScope,
         });
         if (!alloc?.allowed) {
           console.log(
-            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(alloc)}`,
           );
           return {
             ok: false,
@@ -19880,13 +19957,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           from,
           pickup_from: from,
           pickup_address: from,
-          pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
-          pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
+          to,
+          dropoff_to: to,
+          dropoff_address: to,
+          pickup_iso,
+          pickup_lat: bookingPickupLatForAllocator,
+          pickup_lng: bookingPickupLngForAllocator,
           tenantScope: fleetScope,
         });
         if (!vehicleCapacity.ok) {
           console.log(
-            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(vehicleCapacity?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"} ${_bookingNoVehicleDiagnosticsLog(vehicleCapacity)}`,
           );
           return {
             ok: false,
