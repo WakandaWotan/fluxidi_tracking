@@ -7322,6 +7322,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
   }
 
+  Future<void> _openBusinessBookingsOverview(BuildContext context) async {
+    // Reuse the existing operational bookings navigation flow from the
+    // current cockpit entry point without introducing new backend paths.
+    await _openDriverCockpitView(context);
+  }
+
   ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {
     return (
       bg: profile.isSuspended
@@ -8894,10 +8900,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final hasImageBackground =
         useImageBackground && (backgroundAsset ?? '').trim().isNotEmpty;
     final cardPadding = EdgeInsets.fromLTRB(
-      compact ? 9 : 12,
-      compact ? 9 : 12,
-      compact ? 9 : 12,
-      compact ? 8 : 10,
+      compact ? 8 : 12,
+      compact ? 8 : 12,
+      compact ? 8 : 12,
+      compact ? 6 : 10,
     );
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -8938,7 +8944,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 color: active
                     ? kFluxidiYellow.withOpacity(0.98)
                     : Colors.white.withOpacity(0.60),
-                size: compact ? 24 : 29,
+                size: compact ? 22 : 29,
               ),
             ),
             const Spacer(),
@@ -8957,14 +8963,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   futureBadge!,
                   style: TextStyle(
                     color: kFluxidiYellow.withOpacity(0.95),
-                    fontSize: compact ? 9.8 : 10.3,
+                    fontSize: compact ? 9.5 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
           ],
         ),
-        SizedBox(height: compact ? 6 : 9),
+        SizedBox(height: compact ? 5 : 9),
         Text(
           title,
           maxLines: 1,
@@ -8972,7 +8978,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           style: TextStyle(
             color: Colors.white.withOpacity(active ? 1.0 : 0.78),
             fontWeight: FontWeight.w800,
-            fontSize: compact ? 13.1 : 14.3,
+            fontSize: compact ? 12.5 : 14.3,
             shadows: hasImageBackground
                 ? [
                     Shadow(
@@ -8991,7 +8997,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white.withOpacity(active ? 0.64 : 0.5),
-            fontSize: compact ? 10.5 : 11.4,
+            fontSize: compact ? 10.0 : 11.4,
             shadows: hasImageBackground
                 ? [
                     Shadow(
@@ -9009,12 +9015,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           child: active
               ? Icon(
                   Icons.chevron_right_rounded,
-                  size: compact ? 15 : 17,
+                  size: compact ? 14 : 17,
                   color: kFluxidiYellow.withOpacity(0.9),
                 )
               : Icon(
                   Icons.lock_clock_outlined,
-                  size: compact ? 14 : 15.5,
+                  size: compact ? 13 : 15.5,
                   color: Colors.white.withOpacity(0.44),
                 ),
         ),
@@ -9109,18 +9115,19 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     (screenClass == FluxidiScreenClass.tablet ||
                         screenClass == FluxidiScreenClass.desktop) &&
                     W > H &&
-                    W >= 900 &&
-                    H <= 700;
-                final usesTabletHeader = isTabletPortrait || isTabletLandscape;
+                    W >= 900;
+                final useTabletVisualMode =
+                    isTabletPortrait || isTabletLandscape;
+                final usesTabletHeader = useTabletVisualMode;
                 final businessHeaderHeight = isTabletLandscape
-                    ? clampDouble(H * 0.14, 82.0, 102.0)
+                    ? clampDouble(H * 0.17, 110.0, 150.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
                 const businessHeaderAsset =
                     'assets/fluxidi/zakelijke_tablet_header_foto.png';
                 final businessQuickActionCardHeight = isTabletLandscape
-                    ? clampDouble(H * 0.13, 68.0, 90.0)
+                    ? clampDouble(H * 0.155, 94.0, 124.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.092, 118.0, 132.0)
                     : 132.0;
@@ -9130,7 +9137,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? 14.0
                     : 12.0;
                 final businessBackButtonGap = isTabletLandscape
-                    ? 6.0
+                    ? clampDouble(H * 0.06, 24.0, 52.0)
                     : isTabletPortrait
                     ? 10.0
                     : 14.0;
@@ -9144,7 +9151,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? 8.0
                     : 14.0;
                 final businessQuickActionsGridTopGap = isTabletLandscape
-                    ? 7.0
+                    ? 8.0
                     : 10.0;
                 final headerTitleFontSize = isTabletLandscape ? 15.0 : 19.0;
                 final headerSubtitleFontSize = isTabletLandscape ? 11.0 : 12.5;
@@ -9506,7 +9513,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     SizedBox(height: businessQuickActionsGridTopGap),
                     LayoutBuilder(
                       builder: (context, constraints) {
-                        final quickActionColumns = isTabletLandscape ? 4 : 2;
+                        final quickActionColumns = isTabletLandscape ? 5 : 2;
                         final totalHorizontalSpacing =
                             businessQuickActionSpacing *
                             (quickActionColumns - 1);
@@ -9544,10 +9551,36 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/settings_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
+                            if (isTabletLandscape)
+                              SizedBox(
+                                width: cardWidth,
+                                height: businessQuickActionCardHeight,
+                                child: _quickActionCard(
+                                  icon: Icons.calendar_month_outlined,
+                                  title: _t(
+                                    nl: 'Boekingen',
+                                    en: 'Bookings',
+                                    fr: 'Réservations',
+                                    es: 'Reservas',
+                                  ),
+                                  subtitle: _t(
+                                    nl: 'Alle boekingen',
+                                    en: 'All bookings',
+                                    fr: 'Toutes les réservations',
+                                    es: 'Todas las reservas',
+                                  ),
+                                  onTap: () =>
+                                      _openBusinessBookingsOverview(context),
+                                  backgroundAsset:
+                                      'assets/fluxidi/bookings_background_company.png',
+                                  useImageBackground: useTabletVisualMode,
+                                  compact: isTabletLandscape,
+                                ),
+                              ),
                             SizedBox(
                               width: cardWidth,
                               height: businessQuickActionCardHeight,
@@ -9575,7 +9608,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/plan_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9606,7 +9639,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/vehicles_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9632,7 +9665,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/chiron_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9663,7 +9696,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/drivers_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9687,7 +9720,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 onTap: () => _openDriverCockpitView(context),
                                 backgroundAsset:
                                     'assets/fluxidi/driver_view_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9718,7 +9751,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 },
                                 backgroundAsset:
                                     'assets/fluxidi/demand_radar_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9743,7 +9776,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     _showPublicBookingShareQuickAccess(context),
                                 backgroundAsset:
                                     'assets/fluxidi/share_booking_link_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
@@ -9774,7 +9807,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   ),
                                   backgroundAsset:
                                       'assets/fluxidi/bookings_background_company.png',
-                                  useImageBackground: isTabletPortrait,
+                                  useImageBackground: useTabletVisualMode,
                                   compact: isTabletLandscape,
                                 ),
                               ),
@@ -9804,7 +9837,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 backgroundAsset:
                                     'assets/fluxidi/ai_dispatch_background_company.png',
-                                useImageBackground: isTabletPortrait,
+                                useImageBackground: useTabletVisualMode,
                                 compact: isTabletLandscape,
                               ),
                             ),
