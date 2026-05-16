@@ -9127,7 +9127,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 const businessHeaderAsset =
                     'assets/fluxidi/zakelijke_tablet_header_foto.png';
                 final businessQuickActionCardHeight = isTabletLandscape
-                    ? clampDouble(H * 0.155, 94.0, 124.0)
+                    ? clampDouble(H * 0.21, 150.0, 188.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.092, 118.0, 132.0)
                     : 132.0;
@@ -9137,7 +9137,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ? 14.0
                     : 12.0;
                 final businessBackButtonGap = isTabletLandscape
-                    ? clampDouble(H * 0.06, 24.0, 52.0)
+                    ? clampDouble(H * 0.025, 10.0, 22.0)
                     : isTabletPortrait
                     ? 10.0
                     : 14.0;
@@ -9185,7 +9185,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               businessHeaderAsset,
                               fit: BoxFit.cover,
                               alignment: isTabletLandscape
-                                  ? Alignment.centerRight
+                                  ? const Alignment(0.25, 0.35)
                                   : Alignment.center,
                               errorBuilder: (_, __, ___) => const DecoratedBox(
                                 decoration: BoxDecoration(
