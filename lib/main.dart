@@ -11267,6 +11267,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
     var profilePhotoPath = existing.profilePhotoPath?.trim() ?? '';
     var publicProfileEnabled = existing.publicProfileEnabled;
     var publicPhotoEnabled = existing.publicPhotoEnabled;
+    var publicPhotoUploading = false;
     var active = existing.isActive;
 
     await showDialog<void>(
@@ -11614,6 +11615,123 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           ),
                           enabled: publicProfileEnabled && publicPhotoEnabled,
                         ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed: publicPhotoUploading
+                                ? null
+                                : () async {
+                                    final source = await _askProfilePhotoSource(
+                                      ctx,
+                                    );
+                                    if (source == null) return;
+                                    try {
+                                      final picked = await ImagePicker()
+                                          .pickImage(
+                                            source: source,
+                                            imageQuality: 88,
+                                            maxWidth: 1200,
+                                          );
+                                      if (picked == null) return;
+                                      setDialogState(
+                                        () => publicPhotoUploading = true,
+                                      );
+                                      final scope =
+                                          _activeCompanyScopeForDriverDelete(
+                                            existing,
+                                          );
+                                      final bytes = kIsWeb
+                                          ? await picked.readAsBytes()
+                                          : null;
+                                      final uploaded =
+                                          await uploadPublicPartnerMedia(
+                                            tenantId: scope.tenantId,
+                                            companyId: scope.companyId,
+                                            mediaType: 'driver_photo',
+                                            entityId: existing.id,
+                                            filePath: kIsWeb
+                                                ? null
+                                                : picked.path,
+                                            fileBytes: bytes,
+                                            filename: picked.name,
+                                          );
+                                      final url = (uploaded['url'] ?? '')
+                                          .toString()
+                                          .trim();
+                                      final isHttps = url
+                                          .toLowerCase()
+                                          .startsWith('https://');
+                                      if (!isHttps) {
+                                        throw Exception(
+                                          'Upload did not return a valid HTTPS URL',
+                                        );
+                                      }
+                                      setDialogState(() {
+                                        publicPortraitUrlCtrl.text = url;
+                                        if (publicProfileEnabled) {
+                                          publicPhotoEnabled = true;
+                                        }
+                                      });
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Publieke chauffeursfoto geüpload.',
+                                              en: 'Public chauffeur photo uploaded.',
+                                              fr: 'Photo publique du chauffeur téléchargée.',
+                                              es: 'Foto pública del conductor subida.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    } catch (_) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Upload mislukt. Gebruik JPG, PNG of WEBP.',
+                                              en: 'Upload failed. Please use JPG, PNG, or WEBP.',
+                                              fr: 'Échec du téléchargement. Utilisez JPG, PNG ou WEBP.',
+                                              es: 'La carga falló. Usa JPG, PNG o WEBP.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    } finally {
+                                      setDialogState(
+                                        () => publicPhotoUploading = false,
+                                      );
+                                    }
+                                  },
+                            icon: publicPhotoUploading
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.upload_file_outlined,
+                                    size: 16,
+                                  ),
+                            label: Text(
+                              _t(
+                                nl: 'Publieke chauffeursfoto uploaden',
+                                en: 'Upload public chauffeur photo',
+                                fr: 'Télécharger photo publique du chauffeur',
+                                es: 'Subir foto pública del conductor',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
                         Text(
                           _t(
                             nl: 'Deze URL wordt later gebruikt voor het publieke profiel. De interne pasfoto blijft lokaal.',
@@ -11652,6 +11770,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             en: 'These settings do not publish anything automatically yet. Publishing happens later through the public partner profile.',
                             fr: 'Ces paramètres ne publient encore rien automatiquement. La publication se fera plus tard via le profil partenaire public.',
                             es: 'Estos ajustes aún no publican nada automáticamente. La publicación se hará más adelante mediante el perfil público del socio.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.58),
+                            fontSize: 11.1,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _t(
+                            nl: 'Na upload en opslaan: publiceer het partnerprofiel opnieuw om de publieke pagina te vernieuwen.',
+                            en: 'After upload and save: republish the partner profile to refresh the public page.',
+                            fr: 'Après téléversement et enregistrement : republiez le profil partenaire pour actualiser la page publique.',
+                            es: 'Después de subir y guardar: vuelve a publicar el perfil del socio para actualizar la página pública.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.58),
