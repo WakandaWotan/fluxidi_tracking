@@ -8879,113 +8879,160 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     VoidCallback? onTap,
     bool isFuture = false,
     String? futureBadge,
+    String? backgroundAsset,
+    bool useImageBackground = false,
   }) {
     final active = onTap != null && !isFuture;
+    final hasImageBackground =
+        useImageBackground && (backgroundAsset ?? '').trim().isNotEmpty;
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    (active ? kFluxidiYellow : const Color(0xFF8A8A8A))
+                        .withOpacity(0.28),
+                    const Color(0xFF15120A),
+                  ],
+                ),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: (active ? kFluxidiYellow : Colors.white).withOpacity(
+                    active ? 0.50 : 0.26,
+                  ),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (active ? kFluxidiYellow : Colors.black).withOpacity(
+                      active ? 0.10 : 0.16,
+                    ),
+                    blurRadius: 10,
+                    spreadRadius: 0.2,
+                  ),
+                ],
+              ),
+              child: Icon(
+                icon,
+                color: active
+                    ? kFluxidiYellow.withOpacity(0.98)
+                    : Colors.white.withOpacity(0.60),
+                size: 29,
+              ),
+            ),
+            const Spacer(),
+            if ((futureBadge ?? '').trim().isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF15120A),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.42)),
+                ),
+                child: Text(
+                  futureBadge!,
+                  style: TextStyle(
+                    color: kFluxidiYellow.withOpacity(0.95),
+                    fontSize: 10.3,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 9),
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withOpacity(active ? 1.0 : 0.78),
+            fontWeight: FontWeight.w800,
+            fontSize: 14.3,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withOpacity(active ? 0.64 : 0.5),
+            fontSize: 11.4,
+          ),
+        ),
+        const Spacer(),
+        Align(
+          alignment: Alignment.bottomRight,
+          child: active
+              ? Icon(
+                  Icons.chevron_right_rounded,
+                  size: 17,
+                  color: kFluxidiYellow.withOpacity(0.9),
+                )
+              : Icon(
+                  Icons.lock_clock_outlined,
+                  size: 15.5,
+                  color: Colors.white.withOpacity(0.44),
+                ),
+        ),
+      ],
+    );
+    if (!hasImageBackground) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(15),
+        onTap: active ? onTap : null,
+        child: _panel(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          child: content,
+        ),
+      );
+    }
     return InkWell(
       borderRadius: BorderRadius.circular(15),
       onTap: active ? onTap : null,
       child: _panel(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: EdgeInsets.zero,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.asset(
+                backgroundAsset!,
+                fit: BoxFit.cover,
+                alignment: Alignment.centerRight,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                       colors: [
-                        (active ? kFluxidiYellow : const Color(0xFF8A8A8A))
-                            .withOpacity(0.28),
-                        const Color(0xFF15120A),
+                        Colors.black.withOpacity(0.16),
+                        Colors.black.withOpacity(0.26),
+                        Colors.black.withOpacity(0.56),
                       ],
                     ),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: (active ? kFluxidiYellow : Colors.white)
-                          .withOpacity(active ? 0.50 : 0.26),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: (active ? kFluxidiYellow : Colors.black)
-                            .withOpacity(active ? 0.10 : 0.16),
-                        blurRadius: 10,
-                        spreadRadius: 0.2,
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    icon,
-                    color: active
-                        ? kFluxidiYellow.withOpacity(0.98)
-                        : Colors.white.withOpacity(0.60),
-                    size: 29,
                   ),
                 ),
-                const Spacer(),
-                if ((futureBadge ?? '').trim().isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF15120A),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: kFluxidiYellow.withOpacity(0.42),
-                      ),
-                    ),
-                    child: Text(
-                      futureBadge!,
-                      style: TextStyle(
-                        color: kFluxidiYellow.withOpacity(0.95),
-                        fontSize: 10.3,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 9),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white.withOpacity(active ? 1.0 : 0.78),
-                fontWeight: FontWeight.w800,
-                fontSize: 14.3,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white.withOpacity(active ? 0.64 : 0.5),
-                fontSize: 11.4,
-              ),
-            ),
-            const Spacer(),
-            Align(
-              alignment: Alignment.bottomRight,
-              child: active
-                  ? Icon(
-                      Icons.chevron_right_rounded,
-                      size: 17,
-                      color: kFluxidiYellow.withOpacity(0.9),
-                    )
-                  : Icon(
-                      Icons.lock_clock_outlined,
-                      size: 15.5,
-                      color: Colors.white.withOpacity(0.44),
-                    ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              child: content,
             ),
           ],
         ),
@@ -9429,6 +9476,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/settings_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9456,6 +9506,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/plan_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9483,6 +9536,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/vehicles_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9505,6 +9561,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/chiron_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9532,6 +9591,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/drivers_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9552,6 +9614,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   es: 'Abre la cabina de conductor existente sin cerrar sesión.',
                                 ),
                                 onTap: () => _openDriverCockpitView(context),
+                                backgroundAsset:
+                                    'assets/fluxidi/driver_view_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9579,6 +9644,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                   );
                                 },
+                                backgroundAsset:
+                                    'assets/fluxidi/demand_radar_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                             SizedBox(
@@ -9600,8 +9668,41 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 onTap: () =>
                                     _showPublicBookingShareQuickAccess(context),
+                                backgroundAsset:
+                                    'assets/fluxidi/share_booking_link_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
+                            if (isTabletPortrait)
+                              SizedBox(
+                                width: cardWidth,
+                                height: businessQuickActionCardHeight,
+                                child: _quickActionCard(
+                                  icon: Icons.calendar_month_outlined,
+                                  title: _t(
+                                    nl: 'Boekingen',
+                                    en: 'Bookings',
+                                    fr: 'Réservations',
+                                    es: 'Reservas',
+                                  ),
+                                  subtitle: _t(
+                                    nl: 'Planning & opvolging',
+                                    en: 'Planning & follow-up',
+                                    fr: 'Planification & suivi',
+                                    es: 'Planificación y seguimiento',
+                                  ),
+                                  isFuture: true,
+                                  futureBadge: _t(
+                                    nl: 'Binnenkort',
+                                    en: 'Soon',
+                                    fr: 'Bientôt',
+                                    es: 'Pronto',
+                                  ),
+                                  backgroundAsset:
+                                      'assets/fluxidi/bookings_background_company.png',
+                                  useImageBackground: isTabletPortrait,
+                                ),
+                              ),
                             SizedBox(
                               width: cardWidth,
                               height: businessQuickActionCardHeight,
@@ -9626,6 +9727,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   fr: 'Bientôt',
                                   es: 'Pronto',
                                 ),
+                                backgroundAsset:
+                                    'assets/fluxidi/ai_dispatch_background_company.png',
+                                useImageBackground: isTabletPortrait,
                               ),
                             ),
                           ],
