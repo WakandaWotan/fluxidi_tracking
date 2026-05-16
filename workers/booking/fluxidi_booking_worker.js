@@ -4272,6 +4272,18 @@ async function _loadDriverIndexRecord(env, scope) {
   };
 }
 
+async function _publicMediaDriverExistsInScope(env, scope, driverId) {
+  const normalizedDriverId = sanitizeTenantString(driverId, 96);
+  if (!normalizedDriverId) return false;
+  const index = await _loadDriverIndexRecord(env, scope);
+  const drivers = index?.drivers && typeof index.drivers === "object" ? index.drivers : {};
+  if (drivers[normalizedDriverId]) return true;
+  return Object.values(drivers).some(
+    (entry) =>
+      sanitizeTenantString(entry?.driver_id ?? entry?.driverId, 96) === normalizedDriverId,
+  );
+}
+
 async function _saveDriverIndexRecord(env, scope, doc) {
   const key = _companyDriverIndexKey(scope);
   await env.BOOKING_KV.put(
@@ -15483,6 +15495,16 @@ GET /oauth/callback
         );
         if (!entityIdValidation.ok) {
           return json({ ok: false, error: entityIdValidation.error }, 400);
+        }
+        if (normalizedMediaType === "driver_photo") {
+          const driverExists = await _publicMediaDriverExistsInScope(
+            env,
+            { tenant_id: tenantId, company_id: companyId },
+            entityIdValidation.entity_id,
+          );
+          if (!driverExists) {
+            return json({ ok: false, error: "driver_not_found_for_scope" }, 404);
+          }
         }
         const filePart = form.get("file");
         if (!filePart || typeof filePart.arrayBuffer !== "function") {
