@@ -21292,6 +21292,33 @@ function _trackingSyncIsPlannedBookingRecord(rec) {
   return hasBookingId;
 }
 
+function _trackingSyncCanonicalBookingId(bookingId, rec) {
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payloadObj = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const candidates = [
+    rec?.booking_id,
+    rec?.bookingId,
+    bookingObj?.booking_id,
+    bookingObj?.bookingId,
+    payloadObj?.__booking_id,
+    payloadObj?.booking_id,
+    payloadObj?.bookingId,
+    rec?.id,
+    bookingObj?.id,
+    bookingId,
+  ];
+  for (const value of candidates) {
+    const token = safeStr(value, 160);
+    if (!token) continue;
+    if (/^[0-9]{4}-[0-9]{2}-[0-9]{3,}$/i.test(token)) return token;
+  }
+  for (const value of candidates) {
+    const token = safeStr(value, 160);
+    if (token) return token;
+  }
+  return "";
+}
+
 function _trackingSyncResolveTripId(bookingId, rec) {
   const explicit = safeStr(
     rec?.trip_id ??
@@ -21503,13 +21530,13 @@ async function syncScopedTrackingTripKpiBestEffort({
     }
 
     const resolvedBookingId = safeStr(
-      bookingId ??
-        rec?.booking_id ??
-        rec?.bookingId ??
-        rec?.booking?.booking_id ??
-        rec?.booking?.bookingId,
+      _trackingSyncCanonicalBookingId(bookingId, rec),
       160,
     );
+    if (!resolvedBookingId) {
+      console.log("[TRACKING_KPI_SYNC][SKIP] reason=missing_booking_id");
+      return;
+    }
     await _trackingSyncMaterializeBookingFinanceKpiBestEffort({
       env,
       scope: recordScope,

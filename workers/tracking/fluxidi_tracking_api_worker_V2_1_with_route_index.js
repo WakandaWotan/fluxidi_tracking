@@ -688,10 +688,23 @@ function _readDashboardContribShape(value, fallbackTripId = null) {
 async function _applyPendingBookingPaymentToTripBestEffort(env, scope, trip) {
   try {
     if (!env?.FLUXIDI_TRACKING || !trip || typeof trip !== "object") return trip;
-    const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
-    if (!bookingId) return trip;
-    const markerKey = scopedDashboardTripPendingBookingKey(scope, bookingId);
-    const marker = await kvGetJson(env.FLUXIDI_TRACKING, markerKey);
+    const bookingIdCandidates = [
+      safeStr(trip?.booking_id ?? trip?.bookingId, 160),
+      safeStr(trip?.booking?.booking_id ?? trip?.booking?.bookingId, 160),
+      safeStr(trip?.public_booking_reference ?? trip?.publicBookingReference, 160),
+    ].filter((value) => !!value);
+    if (!bookingIdCandidates.length) return trip;
+    let marker = null;
+    let markerKey = "";
+    for (const bookingId of bookingIdCandidates) {
+      const candidateKey = scopedDashboardTripPendingBookingKey(scope, bookingId);
+      const candidateMarker = await kvGetJson(env.FLUXIDI_TRACKING, candidateKey);
+      if (candidateMarker && typeof candidateMarker === "object" && !Array.isArray(candidateMarker)) {
+        marker = candidateMarker;
+        markerKey = candidateKey;
+        break;
+      }
+    }
     if (!marker || typeof marker !== "object" || Array.isArray(marker)) return trip;
     const markerPayment = normalizeCompliancePaymentStatus(marker?.payment_status);
     if (markerPayment === "paid") {
@@ -711,7 +724,9 @@ async function _applyPendingBookingPaymentToTripBestEffort(env, scope, trip) {
       const currency = safeStr(marker?.currency, 8).toUpperCase();
       if (currency) trip.currency = currency;
     }
-    await kvDel(env.FLUXIDI_TRACKING, markerKey);
+    if (markerKey) {
+      await kvDel(env.FLUXIDI_TRACKING, markerKey);
+    }
     return trip;
   } catch (_) {
     return trip;
@@ -1865,11 +1880,15 @@ async function handleDashboardTripKpis(req, url, env, origin) {
         monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
         diagnostics: {
           trip_missing: pendingDiagnostics.trip_missing,
+          trip_missing_active: pendingDiagnostics.trip_missing,
           paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
+          paid_but_not_completed_active: pendingDiagnostics.paid_but_not_completed,
           completed_but_unpaid: unpaid,
           completed_paid_contributed: monthPaid,
           scope_mismatch: scopeMismatchCount,
+          scope_mismatch_historical: scopeMismatchCount,
           missing_amount: Math.max(monthMissingAmount, missingAmountDebugCount),
+          missing_amount_historical: missingAmountDebugCount,
         },
         completeness: {
           level: "forward_aggregate",
