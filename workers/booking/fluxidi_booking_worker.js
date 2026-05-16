@@ -581,6 +581,1555 @@ function _bookingLifecycleValue(rec) {
   );
 }
 
+function _allocatorText(value, maxLen = 240) {
+  const text = sanitizeTenantString(value, maxLen);
+  return text || "";
+}
+
+function _allocatorNumberInRange(value, min, max) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  if (num < min || num > max) return null;
+  return num;
+}
+
+function _allocatorFirstText(root, paths = [], maxLen = 240) {
+  for (const path of paths) {
+    const text = _allocatorText(_pick(root, path, ""), maxLen);
+    if (text) return text;
+  }
+  return "";
+}
+
+function _allocatorFirstCoord(root, paths = [], { min = -90, max = 90 } = {}) {
+  for (const path of paths) {
+    const value = _pick(root, path, null);
+    const num = _allocatorNumberInRange(value, min, max);
+    if (num != null) return num;
+  }
+  return null;
+}
+
+function _allocatorDemandContextFromBookingRecord(rec, env) {
+  const pickupAddress = _allocatorFirstText(rec, [
+    ["from"],
+    ["pickup"],
+    ["pickup_address"],
+    ["from_address"],
+    ["booking", "from"],
+    ["booking", "pickup"],
+    ["booking", "pickup_address"],
+    ["booking", "from_address"],
+    ["quote", "inputs", "from"],
+    ["quote", "from"],
+    ["payload", "from"],
+    ["payload", "pickup"],
+    ["payload", "pickup_address"],
+    ["payload", "from_address"],
+  ]);
+  const dropoffAddress = _allocatorFirstText(rec, [
+    ["to"],
+    ["destination"],
+    ["dropoff_address"],
+    ["to_address"],
+    ["booking", "to"],
+    ["booking", "destination"],
+    ["booking", "dropoff_address"],
+    ["booking", "to_address"],
+    ["quote", "inputs", "to"],
+    ["quote", "to"],
+    ["payload", "to"],
+    ["payload", "destination"],
+    ["payload", "dropoff_address"],
+    ["payload", "to_address"],
+  ]);
+  const pickupLat = _allocatorFirstCoord(
+    rec,
+    [
+      ["from_lat"],
+      ["fromLat"],
+      ["pickup_lat"],
+      ["pickupLat"],
+      ["booking", "from_lat"],
+      ["booking", "fromLat"],
+      ["booking", "pickup_lat"],
+      ["booking", "pickupLat"],
+      ["quote", "inputs", "from_lat"],
+      ["quote", "inputs", "fromLat"],
+      ["payload", "from_lat"],
+      ["payload", "fromLat"],
+      ["payload", "pickup_lat"],
+      ["payload", "pickupLat"],
+    ],
+    { min: -90, max: 90 },
+  );
+  const pickupLng = _allocatorFirstCoord(
+    rec,
+    [
+      ["from_lng"],
+      ["fromLng"],
+      ["pickup_lng"],
+      ["pickupLng"],
+      ["booking", "from_lng"],
+      ["booking", "fromLng"],
+      ["booking", "pickup_lng"],
+      ["booking", "pickupLng"],
+      ["quote", "inputs", "from_lng"],
+      ["quote", "inputs", "fromLng"],
+      ["payload", "from_lng"],
+      ["payload", "fromLng"],
+      ["payload", "pickup_lng"],
+      ["payload", "pickupLng"],
+    ],
+    { min: -180, max: 180 },
+  );
+  const dropoffLat = _allocatorFirstCoord(
+    rec,
+    [
+      ["to_lat"],
+      ["toLat"],
+      ["dropoff_lat"],
+      ["dropoffLat"],
+      ["destination_lat"],
+      ["destinationLat"],
+      ["booking", "to_lat"],
+      ["booking", "toLat"],
+      ["booking", "destination_lat"],
+      ["booking", "destinationLat"],
+      ["quote", "inputs", "to_lat"],
+      ["quote", "inputs", "toLat"],
+      ["payload", "to_lat"],
+      ["payload", "toLat"],
+      ["payload", "destination_lat"],
+      ["payload", "destinationLat"],
+    ],
+    { min: -90, max: 90 },
+  );
+  const dropoffLng = _allocatorFirstCoord(
+    rec,
+    [
+      ["to_lng"],
+      ["toLng"],
+      ["dropoff_lng"],
+      ["dropoffLng"],
+      ["destination_lng"],
+      ["destinationLng"],
+      ["booking", "to_lng"],
+      ["booking", "toLng"],
+      ["booking", "destination_lng"],
+      ["booking", "destinationLng"],
+      ["quote", "inputs", "to_lng"],
+      ["quote", "inputs", "toLng"],
+      ["payload", "to_lng"],
+      ["payload", "toLng"],
+      ["payload", "destination_lng"],
+      ["payload", "destinationLng"],
+    ],
+    { min: -180, max: 180 },
+  );
+  const requiredBufferSeconds = Math.max(
+    0,
+    Number(
+      _pick(rec, ["booking", "required_buffer_seconds"], null) ??
+      _pick(rec, ["booking", "requiredBufferSeconds"], null) ??
+      _pick(rec, ["required_buffer_seconds"], null) ??
+      _pick(rec, ["requiredBufferSeconds"], null) ??
+      _pick(rec, ["payload", "required_buffer_seconds"], null) ??
+      _pick(rec, ["payload", "requiredBufferSeconds"], null) ??
+      getTravelGapMin(env || {}) * 60,
+    ) || 0,
+  );
+  return {
+    pickupAddress,
+    pickupLat,
+    pickupLng,
+    dropoffAddress,
+    dropoffLat,
+    dropoffLng,
+    requiredBufferSeconds,
+    required_buffer_seconds: requiredBufferSeconds,
+  };
+}
+
+function _normalizeAllocatorDemandContextFromInput(input, env) {
+  const routeDurationSecondsRaw = Number(
+    _pick(input, ["route_duration_seconds"], null) ??
+      _pick(input, ["routeDurationSeconds"], null) ??
+      _pick(input, ["duration_seconds"], null) ??
+      _pick(input, ["durationSeconds"], null) ??
+      _pick(input, ["booking", "route_duration_seconds"], null) ??
+      _pick(input, ["booking", "routeDurationSeconds"], null) ??
+      _pick(input, ["booking", "duration_seconds"], null) ??
+      _pick(input, ["booking", "durationSeconds"], null) ??
+      _pick(input, ["quote", "route_duration_seconds"], null) ??
+      _pick(input, ["quote", "routeDurationSeconds"], null) ??
+      _pick(input, ["quote", "route", "duration"], null) ??
+      _pick(input, ["route", "duration"], null),
+  );
+  const routeDurationMinutesRaw = Number(
+    _pick(input, ["route_duration_min"], null) ??
+      _pick(input, ["routeDurationMin"], null) ??
+      _pick(input, ["duration_min"], null) ??
+      _pick(input, ["durationMin"], null) ??
+      _pick(input, ["duration_route_min"], null) ??
+      _pick(input, ["durationRouteMin"], null) ??
+      _pick(input, ["booking", "route_duration_min"], null) ??
+      _pick(input, ["booking", "routeDurationMin"], null) ??
+      _pick(input, ["booking", "duration_min"], null) ??
+      _pick(input, ["booking", "durationMin"], null) ??
+      _pick(input, ["booking", "duration_route_min"], null) ??
+      _pick(input, ["booking", "durationRouteMin"], null) ??
+      _pick(input, ["quote", "duration_min"], null) ??
+      _pick(input, ["quote", "durationMin"], null) ??
+      _pick(input, ["quote", "duration_route_min"], null) ??
+      _pick(input, ["quote", "durationRouteMin"], null),
+  );
+  const pickupAtMs = Number(
+    input?.pickup_at_ms ??
+    input?.pickupAtMs ??
+    input?.pickup_ms ??
+    input?.pickupMs,
+  );
+  const serviceMin = Math.max(
+    1,
+    Number(input?.service_min ?? input?.serviceMin ?? 1) || 1,
+  );
+  const serviceEndMsRaw = Number(
+    input?.service_end_ms ?? input?.serviceEndMs,
+  );
+  const serviceEndMs = Number.isFinite(serviceEndMsRaw)
+    ? serviceEndMsRaw
+    : (Number.isFinite(pickupAtMs) ? pickupAtMs + serviceMin * 60000 : Number.NaN);
+  let routeDurationSeconds = 0;
+  if (Number.isFinite(routeDurationSecondsRaw) && routeDurationSecondsRaw > 0) {
+    routeDurationSeconds = Math.max(0, Math.round(routeDurationSecondsRaw));
+  } else if (Number.isFinite(routeDurationMinutesRaw) && routeDurationMinutesRaw > 0) {
+    routeDurationSeconds = Math.max(0, Math.round(routeDurationMinutesRaw * 60));
+  }
+  const dropoffAtMsRaw = Number(
+    _pick(input, ["dropoff_at_ms"], null) ??
+      _pick(input, ["dropoffAtMs"], null) ??
+      _pick(input, ["booking", "dropoff_at_ms"], null) ??
+      _pick(input, ["booking", "dropoffAtMs"], null),
+  );
+  if (
+    routeDurationSeconds <= 0 &&
+    Number.isFinite(dropoffAtMsRaw) &&
+    Number.isFinite(pickupAtMs) &&
+    dropoffAtMsRaw >= pickupAtMs
+  ) {
+    routeDurationSeconds = Math.max(0, Math.round((dropoffAtMsRaw - pickupAtMs) / 1000));
+  }
+  let dropoffAtMs = Number.NaN;
+  if (Number.isFinite(pickupAtMs) && routeDurationSeconds > 0) {
+    dropoffAtMs = pickupAtMs + routeDurationSeconds * 1000;
+  } else if (Number.isFinite(dropoffAtMsRaw)) {
+    dropoffAtMs = dropoffAtMsRaw;
+  } else if (Number.isFinite(serviceEndMs)) {
+    // Last-resort fallback for legacy rows missing route/dropoff timing.
+    dropoffAtMs = serviceEndMs;
+  }
+  const pickupAddress = _allocatorText(
+    input?.pickup_address ??
+      input?.pickupAddress ??
+      input?.from ??
+      input?.pickup ??
+      input?.pickup_from ??
+      input?.pickupFrom,
+    240,
+  );
+  const dropoffAddress = _allocatorText(
+    input?.dropoff_address ??
+      input?.dropoffAddress ??
+      input?.to ??
+      input?.destination ??
+      input?.dropoff,
+    240,
+  );
+  const pickupLat = _allocatorNumberInRange(
+    input?.pickup_lat ??
+      input?.pickupLat ??
+      input?.from_lat ??
+      input?.fromLat,
+    -90,
+    90,
+  );
+  const pickupLng = _allocatorNumberInRange(
+    input?.pickup_lng ??
+      input?.pickupLng ??
+      input?.from_lng ??
+      input?.fromLng,
+    -180,
+    180,
+  );
+  const dropoffLat = _allocatorNumberInRange(
+    input?.dropoff_lat ??
+      input?.dropoffLat ??
+      input?.to_lat ??
+      input?.toLat ??
+      input?.destination_lat ??
+      input?.destinationLat,
+    -90,
+    90,
+  );
+  const dropoffLng = _allocatorNumberInRange(
+    input?.dropoff_lng ??
+      input?.dropoffLng ??
+      input?.to_lng ??
+      input?.toLng ??
+      input?.destination_lng ??
+      input?.destinationLng,
+    -180,
+    180,
+  );
+  const requiredBufferSeconds = Math.max(
+    0,
+    Number(
+      input?.required_buffer_seconds ??
+        input?.requiredBufferSeconds ??
+        getTravelGapMin(env || {}) * 60,
+    ) || 0,
+  );
+  const etaCheckStatus = _allocatorText(
+    input?.eta_check_status ?? input?.etaCheckStatus,
+    64,
+  );
+  const strictEta = input?.strict_eta === true || input?.strictEta === true;
+  const bookingId = _allocatorText(
+    input?.booking_id ?? input?.bookingId,
+    128,
+  );
+  const vehicleId = _allocatorText(
+    input?.vehicle_id ?? input?.vehicleId,
+    128,
+  );
+  const source = _allocatorText(input?.source, 48);
+  return {
+    pickupAtMs,
+    pickup_at_ms: pickupAtMs,
+    serviceEndMs,
+    service_end_ms: serviceEndMs,
+    routeDurationSeconds,
+    route_duration_seconds: routeDurationSeconds,
+    dropoffAtMs,
+    dropoff_at_ms: dropoffAtMs,
+    pickupAddress,
+    pickup_address: pickupAddress,
+    pickupLat,
+    pickupLng,
+    pickup_lat: pickupLat,
+    pickup_lng: pickupLng,
+    dropoffAddress,
+    dropoff_address: dropoffAddress,
+    dropoffLat,
+    dropoffLng,
+    dropoff_lat: dropoffLat,
+    dropoff_lng: dropoffLng,
+    requiredBufferSeconds,
+    required_buffer_seconds: requiredBufferSeconds,
+    etaCheckStatus,
+    eta_check_status: etaCheckStatus,
+    strictEta,
+    strict_eta: strictEta,
+    bookingId,
+    booking_id: bookingId,
+    vehicleId,
+    vehicle_id: vehicleId,
+    source,
+  };
+}
+
+async function _computeTravelSecondsBetweenAllocatorPoints(
+  fromPoint,
+  toPoint,
+  env,
+) {
+  const fromLat = _allocatorNumberInRange(fromPoint?.lat, -90, 90);
+  const fromLng = _allocatorNumberInRange(fromPoint?.lng, -180, 180);
+  const toLat = _allocatorNumberInRange(toPoint?.lat, -90, 90);
+  const toLng = _allocatorNumberInRange(toPoint?.lng, -180, 180);
+  const fromText = _allocatorText(fromPoint?.address, 240);
+  const toText = _allocatorText(toPoint?.address, 240);
+  const canUseCoords = fromLat != null && fromLng != null && toLat != null && toLng != null;
+  if (!canUseCoords && (!fromText || !toText)) {
+    return { ok: false, reason: "missing_location" };
+  }
+  const timeoutMs = Math.max(
+    500,
+    Math.min(5000, Number(env?.ALLOCATOR_ETA_TIMEOUT_MS) || 2500),
+  );
+  const timeoutToken = { timeout: true };
+  const timedRoute = Promise.race([
+    (async () => {
+      const out = await routeFromTextsWithStopsDetailed({
+        fromText,
+        toText,
+        fromPoint: canUseCoords ? { lat: fromLat, lng: fromLng } : null,
+        toPoint: canUseCoords ? { lat: toLat, lng: toLng } : null,
+        stopsTexts: [],
+        token: env?.MAPBOX_TOKEN,
+      });
+      const durationSeconds = Math.max(0, Math.round(Number(out?.route?.duration || 0)));
+      return { ok: true, durationSeconds };
+    })(),
+    new Promise((resolve) => setTimeout(() => resolve(timeoutToken), timeoutMs)),
+  ]);
+  try {
+    const result = await timedRoute;
+    if (result === timeoutToken) return { ok: false, reason: "timeout" };
+    if (!result?.ok) return { ok: false, reason: "route_error" };
+    return result;
+  } catch (_) {
+    return { ok: false, reason: "route_error" };
+  }
+}
+
+function _allocatorMsFromValue(value) {
+  const num = Number(value);
+  if (Number.isFinite(num) && num > 0) return num;
+  const text = _allocatorText(value, 80);
+  if (!text) return Number.NaN;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function _allocatorPointFromLocationLike(input, { latPaths = [], lngPaths = [], addressPaths = [] } = {}) {
+  const lat = _allocatorFirstCoord(input, latPaths, { min: -90, max: 90 });
+  const lng = _allocatorFirstCoord(input, lngPaths, { min: -180, max: 180 });
+  const address = _allocatorFirstText(input, addressPaths, 240);
+  const hasPoint = (lat != null && lng != null) || !!address;
+  if (!hasPoint) return null;
+  return { lat, lng, address };
+}
+
+function _allocatorOriginRequiredHorizonSeconds(env) {
+  return Math.max(
+    300,
+    Math.min(24 * 3600, Number(env?.ALLOCATOR_ORIGIN_REQUIRED_HORIZON_SECONDS) || 7200),
+  );
+}
+
+function _allocatorOriginMaxAgeSeconds(env) {
+  return Math.max(
+    60,
+    Math.min(24 * 3600, Number(env?.ALLOCATOR_ORIGIN_MAX_AGE_SECONDS) || 1800),
+  );
+}
+
+function _allocatorDebugEnabled(env) {
+  return _allocatorEtaDebugEnabled(env) || _allocatorOverlapDebugEnabled(env);
+}
+
+function _allocatorTrackingKeyFamily(key) {
+  const text = _allocatorText(key, 240);
+  if (!text) return "unknown";
+  if (text.includes(":vehicle:") && text.endsWith(":last_location:v1")) return "scoped_vehicle_last_location_v1";
+  if (text.includes(":tracking:vehicle:") && text.endsWith(":last_ping:v1")) return "scoped_tracking_vehicle_last_ping_v1";
+  if (text.includes(":vehicle:") && text.endsWith(":tracking:last:v1")) return "scoped_vehicle_tracking_last_v1";
+  if (text.includes(":driver:") && text.endsWith(":last_location:v1")) return "scoped_driver_last_location_v1";
+  if (text.includes(":tracking:driver:") && text.endsWith(":last_ping:v1")) return "scoped_tracking_driver_last_ping_v1";
+  if (text.includes(":driver:") && text.endsWith(":tracking:last:v1")) return "scoped_driver_tracking_last_v1";
+  if (text.startsWith("vehicle:") && text.endsWith(":last_location")) return "legacy_vehicle_last_location";
+  if (text.startsWith("tracking:vehicle:") && text.endsWith(":last")) return "legacy_tracking_vehicle_last";
+  if (text.startsWith("driver:") && text.endsWith(":last_location")) return "legacy_driver_last_location";
+  if (text.startsWith("tracking:driver:") && text.endsWith(":last")) return "legacy_tracking_driver_last";
+  return "unknown";
+}
+
+async function _readAllocatorTrackingOrigin(env, {
+  tenantId = "",
+  companyId = "",
+  vehicleId = "",
+  driverId = "",
+  nowMs = Date.now(),
+} = {}) {
+  if (!env?.FLUXIDI_TRACKING) return null;
+  const debugEnabled = _allocatorDebugEnabled(env);
+  const tenant = _allocatorText(tenantId, 80);
+  const company = _allocatorText(companyId, 80);
+  const vehicle = _allocatorText(vehicleId, 120);
+  const driver = _allocatorText(driverId, 120);
+  const keyCandidates = [];
+  if (tenant && company && vehicle) {
+    keyCandidates.push(
+      `tenant:${tenant}:company:${company}:vehicle:${vehicle}:last_location:v1`,
+      `tenant:${tenant}:company:${company}:tracking:vehicle:${vehicle}:last_ping:v1`,
+      `tenant:${tenant}:company:${company}:vehicle:${vehicle}:tracking:last:v1`,
+    );
+  }
+  if (tenant && company && driver) {
+    keyCandidates.push(
+      `tenant:${tenant}:company:${company}:driver:${driver}:last_location:v1`,
+      `tenant:${tenant}:company:${company}:tracking:driver:${driver}:last_ping:v1`,
+      `tenant:${tenant}:company:${company}:driver:${driver}:tracking:last:v1`,
+    );
+  }
+  if (vehicle) keyCandidates.push(`vehicle:${vehicle}:last_location`, `tracking:vehicle:${vehicle}:last`);
+  if (driver) keyCandidates.push(`driver:${driver}:last_location`, `tracking:driver:${driver}:last`);
+  if (keyCandidates.length === 0) return null;
+  const uniqueKeys = Array.from(new Set(keyCandidates));
+  if (debugEnabled) {
+    console.log(JSON.stringify({
+      event: "fleet_origin_tracking_lookup_start",
+      tenant: _bookingIntentMask(tenant),
+      company: _bookingIntentMask(company),
+      vehicle: _bookingIntentMask(vehicle),
+      driver: _bookingIntentMask(driver),
+      key_families: uniqueKeys.map(_allocatorTrackingKeyFamily),
+    }));
+  }
+  const rows = await Promise.all(
+    uniqueKeys.map(async (key) => {
+      try {
+        const value = await env.FLUXIDI_TRACKING.get(key, { type: "json" });
+        return { key, value };
+      } catch (_) {
+        return { key, value: null };
+      }
+    }),
+  );
+  if (debugEnabled) {
+    console.log(JSON.stringify({
+      event: "fleet_origin_tracking_lookup_result",
+      tenant: _bookingIntentMask(tenant),
+      company: _bookingIntentMask(company),
+      vehicle: _bookingIntentMask(vehicle),
+      driver: _bookingIntentMask(driver),
+      key_family_results: rows.map((row) => ({
+        family: _allocatorTrackingKeyFamily(row?.key),
+        hit: !!(row?.value && typeof row.value === "object"),
+      })),
+    }));
+  }
+  let best = null;
+  for (const row of rows) {
+    const value = row?.value;
+    if (!value || typeof value !== "object") continue;
+    const point = _allocatorPointFromLocationLike(value, {
+      latPaths: [
+        ["lat"], ["latitude"], ["location", "lat"], ["location", "latitude"],
+        ["coords", "lat"], ["coords", "latitude"], ["position", "lat"], ["position", "latitude"],
+      ],
+      lngPaths: [
+        ["lng"], ["lon"], ["longitude"], ["location", "lng"], ["location", "lon"], ["location", "longitude"],
+        ["coords", "lng"], ["coords", "lon"], ["coords", "longitude"], ["position", "lng"], ["position", "longitude"],
+      ],
+      addressPaths: [["address"], ["location", "address"], ["label"], ["name"]],
+    });
+    if (!point) continue;
+    const tsMs = _allocatorMsFromValue(
+      value?.timestamp ??
+        value?.ts ??
+        value?.at ??
+        value?.updated_at ??
+        value?.updatedAt ??
+        value?.recorded_at ??
+        value?.recordedAt ??
+        value?.ping_at ??
+        value?.pingAt,
+    );
+    const ageSeconds = Number.isFinite(tsMs) ? Math.max(0, Math.round((nowMs - tsMs) / 1000)) : null;
+    if (ageSeconds != null && ageSeconds > _allocatorOriginMaxAgeSeconds(env)) continue;
+    if (!best || (Number.isFinite(tsMs) && tsMs > Number(best?.availableAtMs || 0))) {
+      best = {
+        source: "tracking_ping",
+        point,
+        availableAtMs: Number.isFinite(tsMs) ? tsMs : nowMs,
+        ageSeconds: ageSeconds != null ? ageSeconds : null,
+      };
+    }
+  }
+  if (debugEnabled) {
+    console.log(JSON.stringify({
+      event: "fleet_origin_tracking_lookup_best",
+      tenant: _bookingIntentMask(tenant),
+      company: _bookingIntentMask(company),
+      vehicle: _bookingIntentMask(vehicle),
+      driver: _bookingIntentMask(driver),
+      origin_source: best?.source || null,
+      origin_age_seconds: Number.isFinite(Number(best?.ageSeconds)) ? Number(best.ageSeconds) : null,
+      origin_has_lat_lng:
+        best?.point &&
+        _allocatorNumberInRange(best.point.lat, -90, 90) != null &&
+        _allocatorNumberInRange(best.point.lng, -180, 180) != null,
+      origin_has_address: _allocatorText(best?.point?.address, 240).length > 0,
+    }));
+  }
+  return best;
+}
+
+async function _deriveAllocatorVehicleOrigin({
+  vehicle = null,
+  tenantScope = null,
+  lastCompletedDropoffByVehicle = new Map(),
+  env,
+  nowMs = Date.now(),
+}) {
+  const debugEnabled = _allocatorDebugEnabled(env);
+  const vehicleId = _allocatorText(vehicle?.vehicle_id ?? vehicle?.vehicleId, 120);
+  const driverId = _allocatorText(vehicle?.assigned_driver?.driver_id, 120);
+  const scope = normalizeFleetTenantScope(tenantScope);
+  const logOriginDecision = (payload = {}) => {
+    if (!debugEnabled) return;
+    try {
+      console.log(JSON.stringify({
+        event: "fleet_origin_resolution",
+        tenant: _bookingIntentMask(scope?.tenant_id),
+        company: _bookingIntentMask(scope?.company_id),
+        vehicle: _bookingIntentMask(vehicleId),
+        driver: _bookingIntentMask(driverId),
+        ...payload,
+      }));
+    } catch (_) {}
+  };
+  const trackingOrigin = await _readAllocatorTrackingOrigin(env, {
+    tenantId: scope.tenant_id,
+    companyId: scope.company_id,
+    vehicleId,
+    driverId,
+    nowMs,
+  });
+  if (trackingOrigin?.point) {
+    logOriginDecision({
+      origin_source: "tracking_ping",
+      origin_age_seconds: Number.isFinite(Number(trackingOrigin?.ageSeconds))
+        ? Number(trackingOrigin.ageSeconds)
+        : null,
+      origin_has_lat_lng:
+        _allocatorNumberInRange(trackingOrigin?.point?.lat, -90, 90) != null &&
+        _allocatorNumberInRange(trackingOrigin?.point?.lng, -180, 180) != null,
+      origin_has_address: _allocatorText(trackingOrigin?.point?.address, 240).length > 0,
+    });
+    return {
+      ...trackingOrigin,
+      vehicleId,
+      driverId,
+    };
+  }
+
+  const embeddedKnownPoint = _allocatorPointFromLocationLike(vehicle || {}, {
+    latPaths: [
+      ["last_known_lat"], ["lastKnownLat"], ["current_lat"], ["currentLat"],
+      ["tracking", "lat"], ["tracking", "last_lat"], ["location", "lat"],
+      ["assigned_driver", "last_known_lat"], ["assigned_driver", "lastKnownLat"],
+      ["assigned_driver", "current_lat"], ["assigned_driver", "currentLat"],
+    ],
+    lngPaths: [
+      ["last_known_lng"], ["lastKnownLng"], ["current_lng"], ["currentLng"],
+      ["tracking", "lng"], ["tracking", "last_lng"], ["location", "lng"],
+      ["assigned_driver", "last_known_lng"], ["assigned_driver", "lastKnownLng"],
+      ["assigned_driver", "current_lng"], ["assigned_driver", "currentLng"],
+    ],
+    addressPaths: [
+      ["last_known_address"], ["lastKnownAddress"], ["current_address"], ["currentAddress"],
+      ["tracking", "address"], ["location", "address"],
+      ["assigned_driver", "last_known_address"], ["assigned_driver", "lastKnownAddress"],
+      ["assigned_driver", "current_address"], ["assigned_driver", "currentAddress"],
+    ],
+  });
+  const embeddedKnownTs = _allocatorMsFromValue(
+    vehicle?.last_known_at_ms ??
+      vehicle?.lastKnownAtMs ??
+      vehicle?.current_at_ms ??
+      vehicle?.currentAtMs ??
+      vehicle?.last_ping_at_ms ??
+      vehicle?.lastPingAtMs ??
+      vehicle?.assigned_driver?.last_known_at_ms ??
+      vehicle?.assigned_driver?.lastKnownAtMs ??
+      vehicle?.assigned_driver?.current_at_ms ??
+      vehicle?.assigned_driver?.currentAtMs ??
+      vehicle?.updated_at ??
+      vehicle?.updatedAt,
+  );
+  const embeddedAgeSeconds = Number.isFinite(embeddedKnownTs)
+    ? Math.max(0, Math.round((nowMs - embeddedKnownTs) / 1000))
+    : null;
+  if (
+    embeddedKnownPoint &&
+    (embeddedAgeSeconds == null || embeddedAgeSeconds <= _allocatorOriginMaxAgeSeconds(env))
+  ) {
+    logOriginDecision({
+      origin_source: "known_vehicle_location",
+      origin_age_seconds: embeddedAgeSeconds,
+      origin_has_lat_lng:
+        _allocatorNumberInRange(embeddedKnownPoint?.lat, -90, 90) != null &&
+        _allocatorNumberInRange(embeddedKnownPoint?.lng, -180, 180) != null,
+      origin_has_address: _allocatorText(embeddedKnownPoint?.address, 240).length > 0,
+    });
+    return {
+      source: "known_vehicle_location",
+      point: embeddedKnownPoint,
+      availableAtMs: Number.isFinite(embeddedKnownTs) ? embeddedKnownTs : nowMs,
+      ageSeconds: embeddedAgeSeconds,
+      vehicleId,
+      driverId,
+    };
+  }
+
+  const completedDropoff = lastCompletedDropoffByVehicle.get(vehicleId);
+  if (completedDropoff?.point) {
+    logOriginDecision({
+      origin_source: "last_completed_dropoff",
+      origin_age_seconds: Number.isFinite(completedDropoff?.availableAtMs)
+        ? Math.max(0, Math.round((nowMs - completedDropoff.availableAtMs) / 1000))
+        : null,
+      origin_has_lat_lng:
+        _allocatorNumberInRange(completedDropoff?.point?.lat, -90, 90) != null &&
+        _allocatorNumberInRange(completedDropoff?.point?.lng, -180, 180) != null,
+      origin_has_address: _allocatorText(completedDropoff?.point?.address, 240).length > 0,
+    });
+    return {
+      source: "last_completed_dropoff",
+      point: completedDropoff.point,
+      availableAtMs: Number(completedDropoff.availableAtMs || nowMs),
+      ageSeconds: Number.isFinite(completedDropoff.availableAtMs)
+        ? Math.max(0, Math.round((nowMs - completedDropoff.availableAtMs) / 1000))
+        : null,
+      vehicleId,
+      driverId,
+    };
+  }
+
+  const basePoint = _allocatorPointFromLocationLike(vehicle || {}, {
+    latPaths: [
+      ["base_lat"], ["baseLat"], ["depot_lat"], ["depotLat"], ["garage_lat"], ["garageLat"],
+      ["home_base_lat"], ["homeBaseLat"],
+    ],
+    lngPaths: [
+      ["base_lng"], ["baseLng"], ["depot_lng"], ["depotLng"], ["garage_lng"], ["garageLng"],
+      ["home_base_lng"], ["homeBaseLng"],
+    ],
+    addressPaths: [
+      ["base_address"], ["baseAddress"], ["depot_address"], ["depotAddress"],
+      ["garage_address"], ["garageAddress"], ["home_base_address"], ["homeBaseAddress"],
+    ],
+  });
+  if (basePoint) {
+    logOriginDecision({
+      origin_source: "vehicle_base",
+      origin_age_seconds: null,
+      origin_has_lat_lng:
+        _allocatorNumberInRange(basePoint?.lat, -90, 90) != null &&
+        _allocatorNumberInRange(basePoint?.lng, -180, 180) != null,
+      origin_has_address: _allocatorText(basePoint?.address, 240).length > 0,
+    });
+    return {
+      source: "vehicle_base",
+      point: basePoint,
+      availableAtMs: nowMs,
+      ageSeconds: null,
+      vehicleId,
+      driverId,
+    };
+  }
+  logOriginDecision({
+    origin_source: null,
+    origin_age_seconds: null,
+    origin_has_lat_lng: false,
+    origin_has_address: false,
+    reason: "missing_origin",
+  });
+  return null;
+}
+
+async function evaluateEtaFeasibilityForCandidate({
+  previousReservation,
+  initialOrigin = null,
+  candidateDemand,
+  nextReservation,
+  debugContext = null,
+  env,
+}) {
+  const candidate = _normalizeAllocatorDemandContextFromInput(candidateDemand, env);
+  const etaDebugEnabled = _allocatorEtaDebugEnabled(env);
+  const pushEtaDebug = (payload = {}) => {
+    if (!etaDebugEnabled) return;
+    try {
+      const normalizedPayload = {
+        ...payload,
+        ...(payload?.hasSourceLocation !== undefined
+          ? { source_has_location: !!payload.hasSourceLocation }
+          : {}),
+        ...(payload?.hasTargetLocation !== undefined
+          ? { target_has_location: !!payload.hasTargetLocation }
+          : {}),
+        ...(payload?.requiredSeconds !== undefined
+          ? { required_seconds: payload.requiredSeconds }
+          : {}),
+        ...(payload?.travel_time_seconds !== undefined
+          ? { travel_time_seconds: payload.travel_time_seconds }
+          : {}),
+      };
+      console.log(JSON.stringify({
+        event: "fleet_eta_check",
+        booking: _bookingIntentMask(debugContext?.booking_id ?? candidate?.booking_id),
+        vehicle: _bookingIntentMask(debugContext?.vehicle_id),
+        driver: _bookingIntentMask(debugContext?.driver_id),
+        ...normalizedPayload,
+      }));
+    } catch (_) {}
+  };
+  const candidateStrict = candidate.strictEta === true;
+  const candidatePickupAtMs = Number(candidate.pickupAtMs ?? candidate.pickup_at_ms);
+  const nowMs = Date.now();
+  const needsOriginCheck = candidateStrict &&
+    Number.isFinite(candidatePickupAtMs) &&
+    (candidatePickupAtMs - nowMs) <= (_allocatorOriginRequiredHorizonSeconds(env) * 1000);
+  if (!previousReservation && !needsOriginCheck) {
+    pushEtaDebug({
+      direction: "origin_to_candidate",
+      origin_check_required: false,
+      origin_check_skipped: true,
+      origin_check_skip_reason: "not_near_future",
+      pickupAtMs: Number(candidatePickupAtMs) || null,
+      result: "skipped",
+      result_state: "skip",
+      reason_code: "not_near_future",
+      source_strict: null,
+      target_strict: candidateStrict,
+      strict_pair: false,
+    });
+  }
+  if (!previousReservation && needsOriginCheck) {
+    const origin = initialOrigin && typeof initialOrigin === "object" ? initialOrigin : null;
+    const originPoint = origin?.point && typeof origin.point === "object" ? origin.point : null;
+    const originAvailableAtMs = Number(origin?.availableAtMs);
+    const availableSeconds = Number.isFinite(originAvailableAtMs)
+      ? (candidatePickupAtMs - originAvailableAtMs) / 1000
+      : Number.NaN;
+    const requiredBufferSeconds = Math.max(
+      0,
+      Number(candidate.requiredBufferSeconds ?? candidate.required_buffer_seconds ?? getTravelGapMin(env || {}) * 60) || 0,
+    );
+    const sourceHasLocation = !!originPoint && (
+      (_allocatorNumberInRange(originPoint.lat, -90, 90) != null &&
+        _allocatorNumberInRange(originPoint.lng, -180, 180) != null) ||
+      _allocatorText(originPoint.address, 240).length > 0
+    );
+    const targetHasLocation =
+      (_allocatorNumberInRange(candidate.pickupLat, -90, 90) != null &&
+        _allocatorNumberInRange(candidate.pickupLng, -180, 180) != null) ||
+      _allocatorText(candidate.pickupAddress, 240).length > 0;
+    if (!sourceHasLocation) {
+      pushEtaDebug({
+        direction: "origin_to_candidate",
+        origin_source: _allocatorText(origin?.source, 64),
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        pickupAtMs: Number(candidatePickupAtMs) || null,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : null,
+        originTravelSeconds: null,
+        bufferSeconds: requiredBufferSeconds,
+        requiredSeconds: requiredBufferSeconds,
+        sourceHasLocation,
+        targetHasLocation,
+        origin_check_required: true,
+        origin_check_skipped: false,
+        source_strict: null,
+        target_strict: candidateStrict,
+        strict_pair: candidateStrict,
+        result: "blocked",
+        result_state: "block",
+        reason_code: "missing_vehicle_origin_location",
+      });
+      return {
+        feasible: false,
+        direction: "origin_to_candidate",
+        reason_code: "missing_vehicle_origin_location",
+        origin_source: _allocatorText(origin?.source, 64) || null,
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        origin_travel_seconds: null,
+        required_buffer_seconds: requiredBufferSeconds,
+        required_seconds: requiredBufferSeconds,
+      };
+    }
+    const travel = await _computeTravelSecondsBetweenAllocatorPoints(
+      originPoint,
+      {
+        address: candidate.pickupAddress,
+        lat: candidate.pickupLat,
+        lng: candidate.pickupLng,
+      },
+      env,
+    );
+    if (!travel?.ok) {
+      pushEtaDebug({
+        direction: "origin_to_candidate",
+        origin_source: _allocatorText(origin?.source, 64),
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        pickupAtMs: Number(candidatePickupAtMs) || null,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : null,
+        originTravelSeconds: null,
+        bufferSeconds: requiredBufferSeconds,
+        requiredSeconds: requiredBufferSeconds,
+        sourceHasLocation,
+        targetHasLocation,
+        origin_check_required: true,
+        origin_check_skipped: false,
+        source_strict: null,
+        target_strict: candidateStrict,
+        strict_pair: candidateStrict,
+        result: "blocked",
+        result_state: "block",
+        reason_code: "origin_eta_not_feasible",
+        travel_error: _allocatorText(travel?.reason, 64),
+      });
+      return {
+        feasible: false,
+        direction: "origin_to_candidate",
+        reason_code: "origin_eta_not_feasible",
+        origin_source: _allocatorText(origin?.source, 64) || null,
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        origin_travel_seconds: null,
+        required_buffer_seconds: requiredBufferSeconds,
+        required_seconds: requiredBufferSeconds,
+      };
+    }
+    const requiredSeconds = Number(travel.durationSeconds || 0) + requiredBufferSeconds;
+    if (!Number.isFinite(availableSeconds) || availableSeconds < requiredSeconds) {
+      pushEtaDebug({
+        direction: "origin_to_candidate",
+        origin_source: _allocatorText(origin?.source, 64),
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        pickupAtMs: Number(candidatePickupAtMs) || null,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : null,
+        originTravelSeconds: Number(travel.durationSeconds || 0),
+        bufferSeconds: requiredBufferSeconds,
+        requiredSeconds,
+        sourceHasLocation,
+        targetHasLocation,
+        origin_check_required: true,
+        origin_check_skipped: false,
+        source_strict: null,
+        target_strict: candidateStrict,
+        strict_pair: candidateStrict,
+        result: "blocked",
+        result_state: "block",
+        reason_code: "vehicle_cannot_reach_pickup_in_time",
+      });
+      return {
+        feasible: false,
+        direction: "origin_to_candidate",
+        reason_code: "vehicle_cannot_reach_pickup_in_time",
+        origin_source: _allocatorText(origin?.source, 64) || null,
+        origin_age_seconds: Number(origin?.ageSeconds ?? null),
+        travel_time_seconds: Number(travel.durationSeconds || 0),
+        origin_travel_seconds: Number(travel.durationSeconds || 0),
+        required_buffer_seconds: requiredBufferSeconds,
+        required_seconds: requiredSeconds,
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+      };
+    }
+    pushEtaDebug({
+      direction: "origin_to_candidate",
+      origin_source: _allocatorText(origin?.source, 64),
+      origin_age_seconds: Number(origin?.ageSeconds ?? null),
+      pickupAtMs: Number(candidatePickupAtMs) || null,
+      availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : null,
+      originTravelSeconds: Number(travel.durationSeconds || 0),
+      bufferSeconds: requiredBufferSeconds,
+      requiredSeconds,
+      sourceHasLocation,
+      targetHasLocation,
+      origin_check_required: true,
+      origin_check_skipped: false,
+      source_strict: null,
+      target_strict: candidateStrict,
+      strict_pair: candidateStrict,
+      result: "feasible",
+      result_state: "pass",
+      reason_code: "origin_eta_feasible",
+    });
+  }
+  const skipReasons = [];
+  const addSkipReason = (reason) => {
+    const normalized = _allocatorText(reason, 80);
+    if (!normalized) return;
+    if (!skipReasons.includes(normalized)) {
+      skipReasons.push(normalized);
+    }
+  };
+  const checks = [
+    {
+      direction: "previous_to_candidate",
+      source: previousReservation,
+      target: candidate,
+      sourceType: "dropoff",
+      targetType: "pickup",
+      availableSeconds: Number.NaN,
+    },
+    {
+      direction: "candidate_to_next",
+      source: candidate,
+      target: nextReservation,
+      sourceType: "dropoff",
+      targetType: "pickup",
+      availableSeconds: Number.NaN,
+    },
+  ];
+  const resolveDropoffTiming = (ctx) => {
+    const pickupAtMs = Number(ctx?.pickupAtMs ?? ctx?.pickup_at_ms);
+    const explicitDropoffAtMs = Number(ctx?.dropoffAtMs ?? ctx?.dropoff_at_ms);
+    let routeDurationSeconds = Math.max(0, Number(ctx?.routeDurationSeconds ?? ctx?.route_duration_seconds) || 0);
+    if (
+      routeDurationSeconds <= 0 &&
+      Number.isFinite(explicitDropoffAtMs) &&
+      Number.isFinite(pickupAtMs) &&
+      explicitDropoffAtMs >= pickupAtMs
+    ) {
+      routeDurationSeconds = Math.max(0, Math.round((explicitDropoffAtMs - pickupAtMs) / 1000));
+    }
+    if (Number.isFinite(pickupAtMs) && routeDurationSeconds > 0) {
+      return {
+        dropoffAtMs: pickupAtMs + routeDurationSeconds * 1000,
+        routeDurationSeconds,
+        source: "pickup_plus_route",
+        missingRouteTiming: false,
+      };
+    }
+    if (Number.isFinite(explicitDropoffAtMs)) {
+      return {
+        dropoffAtMs: explicitDropoffAtMs,
+        routeDurationSeconds,
+        source: "dropoff_explicit",
+        missingRouteTiming: false,
+      };
+    }
+    const fallbackServiceEndMs = Number(ctx?.serviceEndMs ?? ctx?.service_end_ms);
+    if (Number.isFinite(fallbackServiceEndMs)) {
+      return {
+        dropoffAtMs: fallbackServiceEndMs,
+        routeDurationSeconds,
+        source: "service_end_fallback",
+        missingRouteTiming: true,
+      };
+    }
+    return {
+      dropoffAtMs: Number.NaN,
+      routeDurationSeconds,
+      source: "missing",
+      missingRouteTiming: true,
+    };
+  };
+  for (const check of checks) {
+    if (!check.target) continue;
+    if (!check.source) continue;
+    const sourceCtx = _normalizeAllocatorDemandContextFromInput(check.source, env);
+    const targetCtx = _normalizeAllocatorDemandContextFromInput(check.target, env);
+    const sourceStrict = sourceCtx.strictEta === true;
+    const targetStrict = targetCtx.strictEta === true;
+    const strictPair = sourceStrict && targetStrict;
+    const sourcePoint = check.sourceType === "dropoff"
+      ? {
+          address: sourceCtx.dropoffAddress,
+          lat: sourceCtx.dropoffLat,
+          lng: sourceCtx.dropoffLng,
+        }
+      : {
+          address: sourceCtx.pickupAddress,
+          lat: sourceCtx.pickupLat,
+          lng: sourceCtx.pickupLng,
+        };
+    const targetPoint = check.targetType === "pickup"
+      ? {
+          address: targetCtx.pickupAddress,
+          lat: targetCtx.pickupLat,
+          lng: targetCtx.pickupLng,
+        }
+      : {
+          address: targetCtx.dropoffAddress,
+          lat: targetCtx.dropoffLat,
+          lng: targetCtx.dropoffLng,
+        };
+    const sourceHasLocation =
+      (_allocatorNumberInRange(sourcePoint.lat, -90, 90) != null &&
+        _allocatorNumberInRange(sourcePoint.lng, -180, 180) != null) ||
+      _allocatorText(sourcePoint.address, 240).length > 0;
+    const targetHasLocation =
+      (_allocatorNumberInRange(targetPoint.lat, -90, 90) != null &&
+        _allocatorNumberInRange(targetPoint.lng, -180, 180) != null) ||
+      _allocatorText(targetPoint.address, 240).length > 0;
+    const sourceDropoffTiming = resolveDropoffTiming(sourceCtx);
+    const sourceDropoffAtMs = Number(sourceDropoffTiming.dropoffAtMs);
+    const targetPickupAtMs = Number(targetCtx.pickupAtMs ?? targetCtx.pickup_at_ms);
+    const availableSeconds = (targetPickupAtMs - sourceDropoffAtMs) / 1000;
+    check.availableSeconds = availableSeconds;
+    if (strictPair && check.sourceType === "dropoff" && sourceDropoffTiming.source === "missing") {
+      pushEtaDebug({
+        direction: check.direction,
+        previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+        next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+        source_timing_source: sourceDropoffTiming.source,
+        pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+        dropoffAtMs: Number(sourceDropoffAtMs) || null,
+        routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : null,
+        sourceHasAddress: _allocatorText(sourcePoint.address, 240).length > 0,
+        targetHasAddress: _allocatorText(targetPoint.address, 240).length > 0,
+        result: "blocked",
+        result_state: "block",
+        source_strict: sourceStrict,
+        target_strict: targetStrict,
+        strict_pair: strictPair,
+        reason_code: "eta_missing_route_duration",
+      });
+      return {
+        feasible: false,
+        reason_code: "eta_missing_route_duration",
+        direction: check.direction,
+      };
+    }
+    if (!sourceHasLocation) {
+      const reason = check.direction === "previous_to_candidate"
+        ? "missing_previous_location"
+        : "missing_candidate_location";
+      pushEtaDebug({
+        direction: check.direction,
+        previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+        next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+        hasSourceLocation: false,
+        hasTargetLocation: targetHasLocation,
+        previousDropoffAt:
+          Number(
+            sourceCtx.dropoffAtMs ??
+              sourceCtx.dropoff_at_ms ??
+              sourceCtx.serviceEndMs ??
+              sourceCtx.service_end_ms,
+          ) || null,
+        candidatePickupAt: Number(targetCtx.pickupAtMs ?? targetCtx.pickup_at_ms) || null,
+        pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+        dropoffAtMs: Number(sourceDropoffAtMs) || null,
+        routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        required_buffer_seconds: Number(
+          targetCtx.requiredBufferSeconds ??
+            targetCtx.required_buffer_seconds ??
+            getTravelGapMin(env || {}) * 60,
+        ) || 0,
+        result: strictPair ? "blocked" : "skipped",
+        result_state: strictPair ? "block" : "skip",
+        source_strict: sourceStrict,
+        target_strict: targetStrict,
+        strict_pair: strictPair,
+        skip_reason: strictPair ? undefined : reason,
+        reason_code: strictPair ? "eta_not_feasible" : undefined,
+      });
+      if (strictPair) {
+        const strictRequiredBufferSeconds = Math.max(
+          0,
+          Number(
+            targetCtx.requiredBufferSeconds ??
+              targetCtx.required_buffer_seconds ??
+              getTravelGapMin(env || {}) * 60,
+          ) || 0,
+        );
+        const strictAvailableSeconds = Number(check.availableSeconds || 0);
+        const strictReasonCode = strictAvailableSeconds < strictRequiredBufferSeconds
+          ? "pickup_buffer_too_short"
+          : "eta_not_feasible";
+        return {
+          feasible: false,
+          reason_code: strictReasonCode,
+          direction: check.direction,
+          required_buffer_seconds: strictRequiredBufferSeconds,
+          available_seconds: Number.isFinite(strictAvailableSeconds) ? strictAvailableSeconds : 0,
+        };
+      }
+      addSkipReason(
+        reason,
+      );
+      continue;
+    }
+    if (!targetHasLocation) {
+      const reason = check.direction === "candidate_to_next"
+        ? "missing_next_location"
+        : "missing_candidate_location";
+      pushEtaDebug({
+        direction: check.direction,
+        previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+        next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+        hasSourceLocation: sourceHasLocation,
+        hasTargetLocation: false,
+        previousDropoffAt:
+          Number(
+            sourceCtx.dropoffAtMs ??
+              sourceCtx.dropoff_at_ms ??
+              sourceCtx.serviceEndMs ??
+              sourceCtx.service_end_ms,
+          ) || null,
+        candidatePickupAt: Number(targetCtx.pickupAtMs ?? targetCtx.pickup_at_ms) || null,
+        pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+        dropoffAtMs: Number(sourceDropoffAtMs) || null,
+        routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        required_buffer_seconds: Number(
+          targetCtx.requiredBufferSeconds ??
+            targetCtx.required_buffer_seconds ??
+            getTravelGapMin(env || {}) * 60,
+        ) || 0,
+        result: strictPair ? "blocked" : "skipped",
+        result_state: strictPair ? "block" : "skip",
+        source_strict: sourceStrict,
+        target_strict: targetStrict,
+        strict_pair: strictPair,
+        skip_reason: strictPair ? undefined : reason,
+        reason_code: strictPair ? "eta_not_feasible" : undefined,
+      });
+      if (strictPair) {
+        const strictRequiredBufferSeconds = Math.max(
+          0,
+          Number(
+            targetCtx.requiredBufferSeconds ??
+              targetCtx.required_buffer_seconds ??
+              getTravelGapMin(env || {}) * 60,
+          ) || 0,
+        );
+        const strictAvailableSeconds = Number(check.availableSeconds || 0);
+        const strictReasonCode = strictAvailableSeconds < strictRequiredBufferSeconds
+          ? "pickup_buffer_too_short"
+          : "eta_not_feasible";
+        return {
+          feasible: false,
+          reason_code: strictReasonCode,
+          direction: check.direction,
+          required_buffer_seconds: strictRequiredBufferSeconds,
+          available_seconds: Number.isFinite(strictAvailableSeconds) ? strictAvailableSeconds : 0,
+        };
+      }
+      addSkipReason(
+        reason,
+      );
+      continue;
+    }
+    const travel = await _computeTravelSecondsBetweenAllocatorPoints(
+      sourcePoint,
+      targetPoint,
+      env,
+    );
+    if (!travel?.ok) {
+      const travelReason = _allocatorText(travel?.reason, 64);
+      const requiredBufferSeconds = Math.max(
+        0,
+        Number(targetCtx.requiredBufferSeconds ?? targetCtx.required_buffer_seconds ?? getTravelGapMin(env || {}) * 60) || 0,
+      );
+      const availableSeconds = Number(check.availableSeconds);
+      const strictReasonCode = availableSeconds < requiredBufferSeconds
+        ? "pickup_buffer_too_short"
+        : "eta_not_feasible";
+      pushEtaDebug({
+        direction: check.direction,
+        previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+        next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+        hasSourceLocation: sourceHasLocation,
+        hasTargetLocation: targetHasLocation,
+        previousDropoffAt:
+          Number(
+            sourceCtx.dropoffAtMs ??
+              sourceCtx.dropoff_at_ms ??
+              sourceCtx.serviceEndMs ??
+              sourceCtx.service_end_ms,
+          ) || null,
+        candidatePickupAt: Number(targetPickupAtMs) || null,
+        pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+        dropoffAtMs: Number(sourceDropoffAtMs) || null,
+        routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        repositionSeconds: null,
+        bufferSeconds: requiredBufferSeconds,
+        travel_time_seconds: null,
+        required_buffer_seconds: requiredBufferSeconds,
+        requiredSeconds: requiredBufferSeconds,
+        result: strictPair ? "blocked" : "skipped",
+        result_state: strictPair ? "block" : "skip",
+        source_strict: sourceStrict,
+        target_strict: targetStrict,
+        strict_pair: strictPair,
+        reason_code: strictPair ? strictReasonCode : undefined,
+        skip_reason: strictPair ? undefined : travelReason,
+      });
+      if (strictPair) {
+        return {
+          feasible: false,
+          reason_code: strictReasonCode,
+          direction: check.direction,
+          required_buffer_seconds: requiredBufferSeconds,
+          available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        };
+      }
+      if (travelReason === "timeout") {
+        addSkipReason("eta_route_timeout");
+      } else if (travelReason === "route_error") {
+        addSkipReason("eta_route_error");
+      } else {
+        addSkipReason(
+          check.direction === "previous_to_candidate"
+            ? "missing_previous_location"
+            : "missing_next_location",
+        );
+      }
+      continue;
+    }
+    const requiredBufferSeconds = Math.max(
+      0,
+      Number(targetCtx.requiredBufferSeconds ?? targetCtx.required_buffer_seconds ?? getTravelGapMin(env || {}) * 60) || 0,
+    );
+    const requiredSeconds = Number(travel.durationSeconds || 0) + requiredBufferSeconds;
+    if (!Number.isFinite(availableSeconds) || availableSeconds < requiredSeconds) {
+      const reasonCode = availableSeconds < requiredBufferSeconds
+        ? "pickup_buffer_too_short"
+        : "eta_not_feasible";
+      pushEtaDebug({
+        direction: check.direction,
+        previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+        next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+        hasSourceLocation: sourceHasLocation,
+        hasTargetLocation: targetHasLocation,
+        previousDropoffAt:
+          Number(
+            sourceCtx.dropoffAtMs ??
+              sourceCtx.dropoff_at_ms ??
+              sourceCtx.serviceEndMs ??
+              sourceCtx.service_end_ms,
+          ) || null,
+        candidatePickupAt: Number(targetPickupAtMs) || null,
+        pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+        dropoffAtMs: Number(sourceDropoffAtMs) || null,
+        routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+        repositionSeconds: Number(travel.durationSeconds || 0),
+        bufferSeconds: requiredBufferSeconds,
+        travel_time_seconds: Number(travel.durationSeconds || 0),
+        required_buffer_seconds: requiredBufferSeconds,
+        requiredSeconds,
+        result: "blocked",
+        result_state: "block",
+        source_strict: sourceStrict,
+        target_strict: targetStrict,
+        strict_pair: strictPair,
+        reason_code: reasonCode,
+      });
+      return {
+        feasible: false,
+        reason_code: reasonCode,
+        direction: check.direction,
+        travel_time_seconds: Number(travel.durationSeconds || 0),
+        required_buffer_seconds: requiredBufferSeconds,
+        available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+      };
+    }
+    pushEtaDebug({
+      direction: check.direction,
+      previous_booking: _bookingIntentMask(sourceCtx.booking_id ?? sourceCtx.bookingId),
+      next_booking: _bookingIntentMask(targetCtx.booking_id ?? targetCtx.bookingId),
+      hasSourceLocation: sourceHasLocation,
+      hasTargetLocation: targetHasLocation,
+      previousDropoffAt:
+        Number(
+          sourceCtx.dropoffAtMs ??
+            sourceCtx.dropoff_at_ms ??
+            sourceCtx.serviceEndMs ??
+            sourceCtx.service_end_ms,
+        ) || null,
+      candidatePickupAt: Number(targetPickupAtMs) || null,
+      pickupAtMs: Number(sourceCtx.pickupAtMs ?? sourceCtx.pickup_at_ms) || null,
+      dropoffAtMs: Number(sourceDropoffAtMs) || null,
+      routeDurationSeconds: Number(sourceDropoffTiming.routeDurationSeconds || 0),
+      available_seconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+      availableSeconds: Number.isFinite(availableSeconds) ? availableSeconds : 0,
+      repositionSeconds: Number(travel.durationSeconds || 0),
+      bufferSeconds: requiredBufferSeconds,
+      travel_time_seconds: Number(travel.durationSeconds || 0),
+      required_buffer_seconds: requiredBufferSeconds,
+      requiredSeconds,
+      result: "feasible",
+      result_state: "pass",
+      source_strict: sourceStrict,
+      target_strict: targetStrict,
+      strict_pair: strictPair,
+    });
+  }
+  if (skipReasons.length > 0) {
+    return {
+      feasible: true,
+      skipped: true,
+      skip_reason: skipReasons[0],
+      skip_reasons: skipReasons,
+    };
+  }
+  return { feasible: true };
+}
+
+async function _selectVehicleCandidateWithEta({
+  freeVehicles = [],
+  vehicleTimelineByVehicle = new Map(),
+  tenantScope = null,
+  lastCompletedDropoffByVehicle = new Map(),
+  candidateDemand = null,
+  bookingId = "",
+  env,
+}) {
+  const debugEnabled = _allocatorDebugEnabled(env);
+  const normalizedCandidate = _normalizeAllocatorDemandContextFromInput(
+    candidateDemand || {},
+    env,
+  );
+  const etaFailures = [];
+  let etaSkippedMissingLocation = false;
+  let chosen = null;
+  let chosenEta = null;
+  const originByVehicle = new Map();
+  for (const candidateVehicle of freeVehicles) {
+    const timeline = (vehicleTimelineByVehicle.get(candidateVehicle.vehicle_id) || [])
+      .filter((row) => String(row?.booking_id || "").trim() !== bookingId)
+      .sort(
+        (a, b) =>
+          Number(a?.pickupAtMs ?? a?.pickup_at_ms ?? Number.POSITIVE_INFINITY) -
+          Number(b?.pickupAtMs ?? b?.pickup_at_ms ?? Number.POSITIVE_INFINITY),
+      );
+    const candidatePickupAtMs = Number(
+      normalizedCandidate.pickupAtMs ?? normalizedCandidate.pickup_at_ms,
+    );
+    const previousReservation = timeline
+      .filter(
+        (row) =>
+          Number.isFinite(candidatePickupAtMs) &&
+          Number(row?.pickupAtMs ?? row?.pickup_at_ms) < candidatePickupAtMs,
+      )
+      .sort(
+        (a, b) =>
+          Number(b?.pickupAtMs ?? b?.pickup_at_ms ?? Number.NEGATIVE_INFINITY) -
+          Number(a?.pickupAtMs ?? a?.pickup_at_ms ?? Number.NEGATIVE_INFINITY),
+      )[0] || null;
+    const nextReservation = timeline
+      .filter(
+        (row) =>
+          Number.isFinite(candidatePickupAtMs) &&
+          Number(row?.pickupAtMs ?? row?.pickup_at_ms) > candidatePickupAtMs,
+      )
+      .sort(
+        (a, b) =>
+          Number(a?.pickupAtMs ?? a?.pickup_at_ms ?? Number.POSITIVE_INFINITY) -
+          Number(b?.pickupAtMs ?? b?.pickup_at_ms ?? Number.POSITIVE_INFINITY),
+      )[0] || null;
+    let initialOrigin = null;
+    const originCheckRequired =
+      normalizedCandidate.strictEta === true &&
+      Number.isFinite(candidatePickupAtMs) &&
+      (candidatePickupAtMs - Date.now()) <= (_allocatorOriginRequiredHorizonSeconds(env) * 1000);
+    if (!previousReservation) {
+      const vehicleKey = String(candidateVehicle?.vehicle_id || "");
+      if (originByVehicle.has(vehicleKey)) {
+        initialOrigin = originByVehicle.get(vehicleKey);
+      } else {
+        initialOrigin = await _deriveAllocatorVehicleOrigin({
+          vehicle: candidateVehicle,
+          tenantScope,
+          lastCompletedDropoffByVehicle,
+          env,
+        });
+        originByVehicle.set(vehicleKey, initialOrigin);
+      }
+    }
+    const prevCtx = previousReservation
+      ? _normalizeAllocatorDemandContextFromInput(previousReservation, env)
+      : null;
+    const nextCtx = nextReservation
+      ? _normalizeAllocatorDemandContextFromInput(nextReservation, env)
+      : null;
+    const originCheckSkipped = !originCheckRequired || !!previousReservation;
+    const originSkipReason = !originCheckRequired
+      ? "not_near_future"
+      : (previousReservation
+        ? "skip_origin_check_due_to_previous_reservation"
+        : (initialOrigin ? "previous_chain_used" : "missing_origin"));
+    if (debugEnabled) {
+      console.log(JSON.stringify({
+        event: "fleet_eta_candidate_context",
+        vehicle: _bookingIntentMask(candidateVehicle?.vehicle_id),
+        driver: _bookingIntentMask(candidateVehicle?.assigned_driver?.driver_id),
+        candidatePickupAtMs: Number(normalizedCandidate.pickupAtMs) || null,
+        serviceMin: Number(candidateDemand?.service_min ?? candidateDemand?.serviceMin ?? 0) || null,
+        routeDurationSeconds: Number(normalizedCandidate.routeDurationSeconds || 0),
+        dropoffAtMs: Number(normalizedCandidate.dropoffAtMs) || null,
+        requiredBufferSeconds: Number(normalizedCandidate.requiredBufferSeconds || 0),
+        previousReservationId: _bookingIntentMask(previousReservation?.booking_id ?? previousReservation?.bookingId),
+        previousPickupAtMs: Number(prevCtx?.pickupAtMs) || null,
+        previousDropoffAtMs: Number(prevCtx?.dropoffAtMs) || null,
+        previousRouteDurationSeconds: Number(prevCtx?.routeDurationSeconds || 0),
+        nextReservationId: _bookingIntentMask(nextReservation?.booking_id ?? nextReservation?.bookingId),
+        nextPickupAtMs: Number(nextCtx?.pickupAtMs) || null,
+        nextDropoffAtMs: Number(nextCtx?.dropoffAtMs) || null,
+        nextRouteDurationSeconds: Number(nextCtx?.routeDurationSeconds || 0),
+        origin_check_required: originCheckRequired,
+        origin_check_skipped: originCheckSkipped,
+        origin_check_skip_reason: originSkipReason,
+        origin_chain_mode: previousReservation ? "previous_chain_used" : "origin_chain_used",
+        origin_source: _allocatorText(initialOrigin?.source, 64) || null,
+        origin_age_seconds: Number.isFinite(Number(initialOrigin?.ageSeconds))
+          ? Number(initialOrigin.ageSeconds)
+          : null,
+      }));
+    }
+    const etaCheck = await evaluateEtaFeasibilityForCandidate({
+      previousReservation,
+      initialOrigin,
+      candidateDemand: normalizedCandidate,
+      nextReservation,
+      debugContext: {
+        booking_id: bookingId || normalizedCandidate.booking_id,
+        vehicle_id: candidateVehicle.vehicle_id,
+        driver_id: candidateVehicle?.assigned_driver?.driver_id,
+      },
+      env,
+    });
+    if (debugEnabled) {
+      console.log(JSON.stringify({
+        event: "fleet_eta_candidate_result",
+        vehicle: _bookingIntentMask(candidateVehicle?.vehicle_id),
+        driver: _bookingIntentMask(candidateVehicle?.assigned_driver?.driver_id),
+        feasible: etaCheck?.feasible === true,
+        skipped: etaCheck?.skipped === true,
+        reason_code: _allocatorText(etaCheck?.reason_code, 80) || null,
+        direction: _allocatorText(etaCheck?.direction, 64) || null,
+        origin_check_required: originCheckRequired,
+        origin_check_skipped: originCheckSkipped,
+        origin_check_skip_reason: originSkipReason,
+      }));
+    }
+    if (etaCheck?.feasible === false) {
+      etaFailures.push({
+        vehicle_id: candidateVehicle.vehicle_id,
+        ...etaCheck,
+      });
+      continue;
+    }
+    if (etaCheck?.skipped === true && Array.isArray(etaCheck?.skip_reasons)) {
+      const hasMissing = etaCheck.skip_reasons.some((reason) => String(reason || "").startsWith("missing_"));
+      if (hasMissing) etaSkippedMissingLocation = true;
+    } else if (
+      etaCheck?.skipped === true &&
+      etaCheck?.skip_reason &&
+      String(etaCheck.skip_reason).startsWith("missing_")
+    ) {
+      etaSkippedMissingLocation = true;
+    }
+    chosen = candidateVehicle;
+    chosenEta = etaCheck || null;
+    break;
+  }
+  return {
+    chosen,
+    chosenEta,
+    etaFailures,
+    etaSkippedMissingLocation,
+  };
+}
+
 export class FleetAllocatorDO {
   constructor(state, env) {
     this.state = state;
@@ -610,14 +2159,132 @@ export class FleetAllocatorDO {
     const tier = String(body?.tier || "comfort").trim().toLowerCase();
     const pax = Number(body?.pax ?? 1);
     const bags = Number(body?.bags ?? 0);
-    if (!bookingId || !Number.isFinite(pickupMs)) {
+    if (!bookingId) {
       return this._json({ ok: false, error: "Invalid allocate request" }, 400);
+    }
+    if (!Number.isFinite(pickupMs)) {
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: "missing_pickup_time",
+        reason_code: "missing_pickup_time",
+        block_reason: "missing_pickup_time",
+      });
+    }
+    if (pickupMs <= Date.now()) {
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: "pickup_time_in_past",
+        reason_code: "pickup_time_in_past",
+        block_reason: "pickup_time_in_past",
+      });
     }
 
     const tenantScope = normalizeFleetTenantScope(body);
-    const req = { pickupMs, serviceMin, tier, pax, bags, tenantScope };
+    const req = {
+      pickupMs,
+      serviceMin,
+      tier,
+      pax,
+      bags,
+      tenantScope,
+      ..._normalizeAllocatorDemandContextFromInput({
+        pickup_ms: pickupMs,
+        service_min: serviceMin,
+        pickup_at_ms: body?.pickup_at_ms ?? body?.pickupAtMs ?? pickupMs,
+        service_end_ms:
+          body?.service_end_ms ??
+          body?.serviceEndMs ??
+          (Number.isFinite(pickupMs) ? pickupMs + serviceMin * 60000 : null),
+        pickup_address:
+          body?.pickup_address ??
+          body?.pickupAddress ??
+          body?.from ??
+          body?.pickup ??
+          body?.pickup_from ??
+          body?.pickupFrom,
+        dropoff_address:
+          body?.dropoff_address ??
+          body?.dropoffAddress ??
+          body?.to ??
+          body?.destination ??
+          body?.dropoff,
+        pickup_lat:
+          body?.pickup_lat ??
+          body?.pickupLat ??
+          body?.from_lat ??
+          body?.fromLat,
+        pickup_lng:
+          body?.pickup_lng ??
+          body?.pickupLng ??
+          body?.from_lng ??
+          body?.fromLng,
+        dropoff_lat:
+          body?.dropoff_lat ??
+          body?.dropoffLat ??
+          body?.to_lat ??
+          body?.toLat ??
+          body?.destination_lat ??
+          body?.destinationLat,
+        dropoff_lng:
+          body?.dropoff_lng ??
+          body?.dropoffLng ??
+          body?.to_lng ??
+          body?.toLng ??
+          body?.destination_lng ??
+          body?.destinationLng,
+        required_buffer_seconds:
+          body?.required_buffer_seconds ?? body?.requiredBufferSeconds,
+      }, this.env),
+    };
     const reservations = await this._loadReservations();
     let reservationsDirty = false;
+    const vehicleTimelineByVehicle = new Map();
+    const lastCompletedDropoffByVehicle = new Map();
+    const upsertCompletedDropoffByVehicle = (vehicleId, demand) => {
+      const normalizedVehicleId = _allocatorText(vehicleId, 120);
+      if (!normalizedVehicleId) return;
+      const dropoffAtMs = Number(demand?.dropoffAtMs ?? demand?.dropoff_at_ms);
+      const point = {
+        address: _allocatorText(demand?.dropoffAddress ?? demand?.dropoff_address, 240),
+        lat: _allocatorNumberInRange(demand?.dropoffLat ?? demand?.dropoff_lat, -90, 90),
+        lng: _allocatorNumberInRange(demand?.dropoffLng ?? demand?.dropoff_lng, -180, 180),
+      };
+      const hasLocation = (point.lat != null && point.lng != null) || !!point.address;
+      if (!Number.isFinite(dropoffAtMs) || !hasLocation) return;
+      const current = lastCompletedDropoffByVehicle.get(normalizedVehicleId);
+      if (!current || dropoffAtMs > Number(current.availableAtMs || 0)) {
+        lastCompletedDropoffByVehicle.set(normalizedVehicleId, {
+          availableAtMs: dropoffAtMs,
+          point,
+        });
+      }
+    };
+    const upsertVehicleTimelineEntry = (vehicleId, entry) => {
+      const normalizedVehicleId = String(vehicleId || "").trim();
+      if (!normalizedVehicleId) return;
+      const pickupAtMs = Number(entry?.pickupAtMs ?? entry?.pickup_at_ms);
+      if (!Number.isFinite(pickupAtMs)) return;
+      const current = vehicleTimelineByVehicle.get(normalizedVehicleId) || [];
+      const bookingKey = String(entry?.booking_id || "").trim();
+      if (bookingKey) {
+        const existingIdx = current.findIndex((row) => String(row?.booking_id || "").trim() === bookingKey);
+        if (existingIdx >= 0) {
+          current[existingIdx] = {
+            ...current[existingIdx],
+            ...entry,
+          };
+          vehicleTimelineByVehicle.set(normalizedVehicleId, current);
+          return;
+        }
+      }
+      current.push({
+        ...entry,
+        pickupAtMs,
+      });
+      vehicleTimelineByVehicle.set(normalizedVehicleId, current);
+    };
 
     // Idempotency for retried booking confirmation
     if (reservations[bookingId]?.vehicle_id) {
@@ -670,20 +2337,97 @@ export class FleetAllocatorDO {
     const suitableIds = new Set(suitableVehicles.map((v) => v.vehicle_id));
     const occupiedAssignedIds = new Set();
     let overlappingUnassignedDemand = 0;
+    const overlapDebug = _allocatorOverlapDebugEnabled(this.env);
+    const allocatorScopeMask = _bookingIntentScopeMask(tenantScope);
 
     // Existing persisted bookings from KV
     const listed = await this.env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
     for (const k of listed?.keys || []) {
       const key = String(k?.name || "");
       if (!key.startsWith("booking:")) continue;
+      const bookingKeyId = key.slice("booking:".length);
       const rec = await this.env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
-      if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, tenantScope)) continue;
-      if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
-      const d = _bookingDemandFromRecord(rec, this.env);
-      if (!Number.isFinite(d.pickupMs)) continue;
-      if (!_windowsOverlap(req.pickupMs, req.serviceMin, d.pickupMs, d.serviceMin)) continue;
+      const recordScope = resolveBookingTenantScopeFromRecord(rec);
+      const matchScope = _bookingMatchesFleetScopeOrLegacyGlobal(rec, tenantScope);
+      if (!matchScope) {
+        if (overlapDebug) {
+          console.log(JSON.stringify({
+            event: "fleet_allocator_overlap_scan",
+            stage: "persisted_booking",
+            tenant: allocatorScopeMask.tenant || "-",
+            company: allocatorScopeMask.company || "-",
+            booking: _bookingIntentMask(bookingKeyId),
+            matchScope: false,
+            record_tenant: _bookingIntentMask(recordScope?.tenant_id),
+            record_company: _bookingIntentMask(recordScope?.company_id),
+          }));
+        }
+        continue;
+      }
+      const lifecycleStatus = _bookingLifecycleValue(rec);
       const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
+      if (isTerminalLifecycleStatus(lifecycleStatus)) {
+        if (assignedVehicleId) {
+          const terminalDemand = _bookingDemandFromRecord(rec, this.env);
+          upsertCompletedDropoffByVehicle(assignedVehicleId, terminalDemand);
+        }
+        continue;
+      }
+      const d = _bookingDemandFromRecord(rec, this.env);
+      const overlap = Number.isFinite(d.pickupMs)
+        ? _windowsOverlap(req.pickupMs, req.serviceMin, d.pickupMs, d.serviceMin)
+        : false;
+      if (overlapDebug) {
+        console.log(JSON.stringify({
+          event: "fleet_allocator_overlap_scan",
+          stage: "persisted_booking",
+          tenant: allocatorScopeMask.tenant || "-",
+          company: allocatorScopeMask.company || "-",
+          booking: _bookingIntentMask(bookingKeyId),
+          matchScope: true,
+          pickupMsFinite: Number.isFinite(d.pickupMs),
+          serviceMin: Number(d.serviceMin || 0),
+          assignedVehicleId: _bookingIntentMask(assignedVehicleId),
+          overlap,
+        }));
+      }
+      if (assignedVehicleId) {
+        upsertVehicleTimelineEntry(assignedVehicleId, {
+          booking_id: bookingKeyId,
+          vehicle_id: assignedVehicleId,
+          pickup_at_ms: d.pickupAtMs,
+          pickupAtMs: d.pickupAtMs,
+          dropoff_at_ms: d.dropoffAtMs,
+          dropoffAtMs: d.dropoffAtMs,
+          route_duration_seconds: d.routeDurationSeconds,
+          routeDurationSeconds: d.routeDurationSeconds,
+          service_end_ms: d.serviceEndMs,
+          serviceEndMs: d.serviceEndMs,
+          pickup_address: d.pickupAddress,
+          pickupAddress: d.pickupAddress,
+          pickup_lat: d.pickupLat,
+          pickup_lng: d.pickupLng,
+          pickupLat: d.pickupLat,
+          pickupLng: d.pickupLng,
+          dropoff_address: d.dropoffAddress,
+          dropoffAddress: d.dropoffAddress,
+          dropoff_lat: d.dropoffLat,
+          dropoff_lng: d.dropoffLng,
+          dropoffLat: d.dropoffLat,
+          dropoffLng: d.dropoffLng,
+          required_buffer_seconds: d.requiredBufferSeconds,
+          requiredBufferSeconds: d.requiredBufferSeconds,
+          strict_eta:
+            _pick(rec, ["booking", "allocator_eta_strict"], null) === true ||
+            _pick(rec, ["booking", "allocatorEtaStrict"], null) === true ||
+            _pick(rec, ["allocator_eta_strict"], null) === true ||
+            _pick(rec, ["allocatorEtaStrict"], null) === true,
+          source: "persisted_booking",
+        });
+      }
+      if (!Number.isFinite(d.pickupMs)) continue;
+      if (!overlap) continue;
       if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
         occupiedAssignedIds.add(assignedVehicleId);
         continue;
@@ -709,11 +2453,44 @@ export class FleetAllocatorDO {
       } catch (_) {
         // Best-effort stale-prune check only.
       }
+      const rv = String(r.vehicle_id || "").trim();
+      if (rv) {
+        const rd = _normalizeAllocatorDemandContextFromInput(r, this.env);
+        upsertVehicleTimelineEntry(rv, {
+          booking_id: id,
+          vehicle_id: rv,
+          pickup_at_ms: rd.pickupAtMs,
+          pickupAtMs: rd.pickupAtMs,
+          dropoff_at_ms: rd.dropoffAtMs,
+          dropoffAtMs: rd.dropoffAtMs,
+          route_duration_seconds: rd.routeDurationSeconds,
+          routeDurationSeconds: rd.routeDurationSeconds,
+          service_end_ms: rd.serviceEndMs,
+          serviceEndMs: rd.serviceEndMs,
+          pickup_address: rd.pickupAddress,
+          pickupAddress: rd.pickupAddress,
+          pickup_lat: rd.pickupLat,
+          pickup_lng: rd.pickupLng,
+          pickupLat: rd.pickupLat,
+          pickupLng: rd.pickupLng,
+          dropoff_address: rd.dropoffAddress,
+          dropoffAddress: rd.dropoffAddress,
+          dropoff_lat: rd.dropoffLat,
+          dropoff_lng: rd.dropoffLng,
+          dropoffLat: rd.dropoffLat,
+          dropoffLng: rd.dropoffLng,
+          required_buffer_seconds: rd.requiredBufferSeconds,
+          requiredBufferSeconds: rd.requiredBufferSeconds,
+          eta_check_status: _allocatorText(rd.etaCheckStatus, 64),
+          etaCheckStatus: _allocatorText(rd.etaCheckStatus, 64),
+          strict_eta: rd.strictEta === true,
+          source: "do_reservation",
+        });
+      }
       const rPickup = Number(r.pickup_ms);
       const rService = Math.max(1, Number(r.service_min) || 1);
       if (!Number.isFinite(rPickup)) continue;
       if (!_windowsOverlap(req.pickupMs, req.serviceMin, rPickup, rService)) continue;
-      const rv = String(r.vehicle_id || "").trim();
       if (rv && suitableIds.has(rv)) {
         occupiedAssignedIds.add(rv);
       }
@@ -739,11 +2516,103 @@ export class FleetAllocatorDO {
       });
     }
 
-    const chosen = freeVehicles[0];
+    const candidateDemand = _normalizeAllocatorDemandContextFromInput(
+      {
+        booking_id: bookingId,
+        pickup_at_ms: req.pickupAtMs,
+        dropoff_at_ms: req.dropoffAtMs,
+        route_duration_seconds: req.routeDurationSeconds,
+        service_end_ms: req.serviceEndMs,
+        pickup_address: req.pickupAddress,
+        pickup_lat: req.pickupLat,
+        pickup_lng: req.pickupLng,
+        dropoff_address: req.dropoffAddress,
+        dropoff_lat: req.dropoffLat,
+        dropoff_lng: req.dropoffLng,
+        required_buffer_seconds: req.requiredBufferSeconds,
+        strict_eta: true,
+      },
+      this.env,
+    );
+    const {
+      chosen,
+      chosenEta,
+      etaFailures,
+      etaSkippedMissingLocation,
+    } = await _selectVehicleCandidateWithEta({
+      freeVehicles,
+      vehicleTimelineByVehicle,
+      tenantScope,
+      lastCompletedDropoffByVehicle,
+      candidateDemand,
+      bookingId,
+      env: this.env,
+    });
+    if (!chosen) {
+      const failureReasonCodes = new Set(
+        etaFailures
+          .map((row) => _allocatorText(row?.reason_code, 64))
+          .filter(Boolean),
+      );
+      const etaReasonCode = failureReasonCodes.has("pickup_buffer_too_short")
+        ? "pickup_buffer_too_short"
+        : (failureReasonCodes.has("vehicle_cannot_reach_pickup_in_time")
+          ? "vehicle_cannot_reach_pickup_in_time"
+          : (failureReasonCodes.has("missing_vehicle_origin_location")
+            ? "missing_vehicle_origin_location"
+            : (failureReasonCodes.has("origin_eta_not_feasible")
+              ? "origin_eta_not_feasible"
+        : (failureReasonCodes.has("eta_missing_route_duration")
+          ? "eta_missing_route_duration"
+              : "eta_not_feasible"))));
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: etaReasonCode,
+        reason_code: etaReasonCode,
+        block_reason: etaReasonCode,
+        suitable_vehicle_count: suitableVehicles.length,
+        occupied_assigned_count: occupiedAssignedIds.size,
+        overlapping_unassigned_demand: overlappingUnassignedDemand,
+        available_slots: Math.max(0, availableSlots),
+        eta_failed_vehicle_count: etaFailures.length,
+      });
+    }
+
     reservations[bookingId] = {
       vehicle_id: chosen.vehicle_id,
       pickup_ms: req.pickupMs,
       service_min: req.serviceMin,
+      booking_id: bookingId,
+      pickup_at_ms: candidateDemand.pickupAtMs,
+      pickupAtMs: candidateDemand.pickupAtMs,
+      dropoff_at_ms: candidateDemand.dropoffAtMs,
+      dropoffAtMs: candidateDemand.dropoffAtMs,
+      route_duration_seconds: candidateDemand.routeDurationSeconds,
+      routeDurationSeconds: candidateDemand.routeDurationSeconds,
+      service_end_ms: candidateDemand.serviceEndMs,
+      serviceEndMs: candidateDemand.serviceEndMs,
+      pickup_address: candidateDemand.pickupAddress,
+      pickupAddress: candidateDemand.pickupAddress,
+      pickup_lat: candidateDemand.pickupLat,
+      pickup_lng: candidateDemand.pickupLng,
+      pickupLat: candidateDemand.pickupLat,
+      pickupLng: candidateDemand.pickupLng,
+      dropoff_address: candidateDemand.dropoffAddress,
+      dropoffAddress: candidateDemand.dropoffAddress,
+      dropoff_lat: candidateDemand.dropoffLat,
+      dropoff_lng: candidateDemand.dropoffLng,
+      dropoffLat: candidateDemand.dropoffLat,
+      dropoffLng: candidateDemand.dropoffLng,
+      required_buffer_seconds: candidateDemand.requiredBufferSeconds,
+      requiredBufferSeconds: candidateDemand.requiredBufferSeconds,
+      strict_eta: true,
+      eta_check_status: etaSkippedMissingLocation
+        ? "skipped_missing_location"
+        : (chosenEta?.skipped ? "skipped" : "checked"),
+      etaCheckStatus: etaSkippedMissingLocation
+        ? "skipped_missing_location"
+        : (chosenEta?.skipped ? "skipped" : "checked"),
       created_at: Date.now(),
     };
     await this._saveReservations(reservations);
@@ -753,6 +2622,9 @@ export class FleetAllocatorDO {
       booking_id: bookingId,
       assigned_vehicle_id: chosen.vehicle_id,
       assigned_driver: _assignedDriverFromVehicle(chosen),
+      ...(etaSkippedMissingLocation
+        ? { eta_check_status: "skipped_missing_location" }
+        : {}),
       source: "new_reservation",
     });
   }
@@ -7939,11 +9811,39 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     advisory: true,
     reason: "availability_check_skipped",
   };
+  const availabilityDebugEnabled = _allocatorDebugEnabled(env);
   try {
     const pickupIsoForAvailability =
       safeStr(body?.pickup_iso || body?.pickupIso) ||
       brusselsIsoFromDateTime(body?.date, body?.time);
     const pickupMsForAvailability = Date.parse(pickupIsoForAvailability);
+    const nowMsForAvailability = Date.now();
+    const deltaSeconds = Number.isFinite(pickupMsForAvailability)
+      ? Math.round((pickupMsForAvailability - nowMsForAvailability) / 1000)
+      : null;
+    const pickupIsoOffset = (() => {
+      const text = safeStr(pickupIsoForAvailability, 80);
+      if (!text) return null;
+      if (text.endsWith("Z")) return "Z";
+      const m = text.match(/([+-][0-9]{2}:[0-9]{2})$/);
+      return m ? m[1] : "none";
+    })();
+    if (availabilityDebugEnabled) {
+      console.log(JSON.stringify({
+        event: "quote_availability_pickup_parsed",
+        tenant: quoteScopeMask.tenant || "-",
+        company: quoteScopeMask.company || "-",
+        pickup_iso: safeStr(pickupIsoForAvailability, 80),
+        pickup_ms: Number.isFinite(pickupMsForAvailability) ? pickupMsForAvailability : null,
+        now_ms: nowMsForAvailability,
+        delta_seconds: deltaSeconds,
+        timezone_offset: pickupIsoOffset,
+        pickup_time_relation:
+          !Number.isFinite(pickupMsForAvailability)
+            ? "invalid"
+            : (pickupMsForAvailability <= nowMsForAvailability ? "past_or_now" : "future"),
+      }));
+    }
     if (quoteScope?.hasScope && Number.isFinite(pickupMsForAvailability)) {
       const fleetScope = normalizeFleetTenantScope(quoteScope);
       const quoteServiceMin = Math.max(
@@ -7960,26 +9860,66 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       );
       const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
         pickupMs: pickupMsForAvailability,
+        pickupAtMs: pickupMsForAvailability,
         serviceMin: quoteServiceMin,
+        routeDurationSeconds: Math.max(0, Number(route?.duration || 0)),
+        dropoffAtMs: pickupMsForAvailability + Math.max(0, Number(route?.duration || 0)) * 1000,
+        pickupAddress: body.from,
+        dropoffAddress: body.to,
+        pickupLat: fromPoint?.lat,
+        pickupLng: fromPoint?.lng,
+        dropoffLat: toPoint?.lat,
+        dropoffLng: toPoint?.lng,
+        strict_eta: true,
         tier,
         pax,
         bags,
         tenantScope: fleetScope,
       });
       const available = vehicleCapacity?.ok === true;
+      if (availabilityDebugEnabled) {
+        console.log(JSON.stringify({
+          event: "quote_availability_vehicle_capacity_raw",
+          tenant: quoteScopeMask.tenant || "-",
+          company: quoteScopeMask.company || "-",
+          raw_ok: vehicleCapacity?.ok === true,
+          raw_reason: safeStr(vehicleCapacity?.reason, 80) || null,
+          raw_reason_code: safeStr(vehicleCapacity?.reason_code, 80) || null,
+          raw_block_reason: safeStr(vehicleCapacity?.block_reason, 80) || null,
+        }));
+      }
       availability = {
         checked: true,
         available,
         advisory: true,
         reason: available
           ? "vehicle_capacity_ok"
-          : (safeStr(vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
+          : (safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
+        reason_code: available
+          ? "vehicle_capacity_ok"
+          : (safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
+        block_reason: available
+          ? null
+          : (safeStr(vehicleCapacity?.block_reason ?? vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
         availability_mode: availabilityMode,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
             ? vehicleCapacity
             : null,
       };
+      if (availabilityDebugEnabled) {
+        console.log(JSON.stringify({
+          event: "quote_availability_final_mapping",
+          tenant: quoteScopeMask.tenant || "-",
+          company: quoteScopeMask.company || "-",
+          raw_ok: vehicleCapacity?.ok === true,
+          raw_reason: safeStr(vehicleCapacity?.reason, 80) || null,
+          raw_reason_code: safeStr(vehicleCapacity?.reason_code, 80) || null,
+          final_available: availability?.available === true,
+          final_reason: safeStr(availability?.reason, 80) || null,
+          final_reason_code: safeStr(availability?.reason_code, 80) || null,
+        }));
+      }
     }
   } catch (_) {
     availability = {
@@ -15963,6 +17903,32 @@ function _scopeText(value, maxLen = 80) {
   return safeStr(value, maxLen) || "";
 }
 
+function _normalizeTenantCompanyScopePart(value, kind = "company") {
+  const raw = _scopeText(value, 120);
+  if (!raw) return "";
+  if (raw.startsWith("company:")) {
+    const parts = raw.split(":");
+    if (parts.length === 3) {
+      const tenantId = _scopeText(parts[1], 80);
+      const companyId = _scopeText(parts[2], 80);
+      if (kind === "tenant") return tenantId || companyId || "";
+      return companyId || tenantId || "";
+    }
+  }
+  return _scopeText(raw, 80);
+}
+
+function _allocatorOverlapDebugEnabled(env) {
+  const raw = _scopeText(env?.FLEET_OVERLAP_DEBUG, 24).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function _allocatorEtaDebugEnabled(env) {
+  const raw = _scopeText(env?.FLEET_ETA_DEBUG, 24).toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return true;
+  return _allocatorOverlapDebugEnabled(env);
+}
+
 function extractBookingTenantScope({ request, url, body = null } = {}) {
   const search = url?.searchParams;
   const tenantFromQuery = _scopeText(
@@ -16110,7 +18076,7 @@ function isLegacyTenantScopeRequest(requestedScope) {
 
 function resolveBookingTenantScopeFromRecord(rec) {
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : null;
-  const tenantId = _scopeText(
+  const tenantId = _normalizeTenantCompanyScopePart(
     rec?.tenant_id ??
       rec?.tenantId ??
       booking?.tenant_id ??
@@ -16119,8 +18085,9 @@ function resolveBookingTenantScopeFromRecord(rec) {
       rec?.companyId ??
       booking?.company_id ??
       booking?.companyId,
+    "tenant",
   );
-  const companyId = _scopeText(
+  const companyId = _normalizeTenantCompanyScopePart(
     rec?.company_id ??
       rec?.companyId ??
       booking?.company_id ??
@@ -16129,6 +18096,7 @@ function resolveBookingTenantScopeFromRecord(rec) {
       rec?.tenantId ??
       booking?.tenant_id ??
       booking?.tenantId,
+    "company",
   );
   return {
     tenant_id: tenantId,
@@ -17707,10 +19675,12 @@ function resolveBookingTenantContext({ payload, request, env, allowLegacyFallbac
     payload?.source_context ?? payload?.sourceContext,
   );
 
+  const normalizedTenantId = _normalizeTenantCompanyScopePart(tenantId, "tenant");
+  const normalizedCompanyId = _normalizeTenantCompanyScopePart(companyId, "company");
   return {
     hasScope: true,
-    tenant_id: tenantId,
-    company_id: companyId,
+    tenant_id: normalizedTenantId || normalizedCompanyId,
+    company_id: normalizedCompanyId || normalizedTenantId,
     booking_source: bookingSource,
     entry_channel: entryChannel,
     source_context: sourceContext,
@@ -18483,6 +20453,55 @@ async function handleBooking(payload, env, request) {
           Math.max(0, getPostBufferMin(env)),
       ),
     );
+    const allocatorDemandContext = _normalizeAllocatorDemandContextFromInput(
+      {
+        pickup_at_ms: Date.parse(pickup_iso),
+        route_duration_seconds: Math.max(
+          0,
+          Math.round(
+            (Math.max(0, duration_route_min) + (hasReturnSchedule ? 0 : Math.max(0, return_duration_min))) * 60,
+          ),
+        ),
+        dropoff_at_ms:
+          Date.parse(pickup_iso) +
+          Math.max(
+            0,
+            Math.round(
+              (Math.max(0, duration_route_min) + (hasReturnSchedule ? 0 : Math.max(0, return_duration_min))) * 60000,
+            ),
+          ),
+        service_end_ms:
+          Date.parse(pickup_iso) + bookingServiceMin * 60000,
+        pickup_address: from,
+        dropoff_address: to,
+        pickup_lat:
+          payload?.pickup_lat ??
+          payload?.pickupLat ??
+          payload?.from_lat ??
+          payload?.fromLat,
+        pickup_lng:
+          payload?.pickup_lng ??
+          payload?.pickupLng ??
+          payload?.from_lng ??
+          payload?.fromLng,
+        dropoff_lat:
+          payload?.dropoff_lat ??
+          payload?.dropoffLat ??
+          payload?.to_lat ??
+          payload?.toLat ??
+          payload?.destination_lat ??
+          payload?.destinationLat,
+        dropoff_lng:
+          payload?.dropoff_lng ??
+          payload?.dropoffLng ??
+          payload?.to_lng ??
+          payload?.toLng ??
+          payload?.destination_lng ??
+          payload?.destinationLng,
+        required_buffer_seconds: getTravelGapMin(env) * 60,
+      },
+      env,
+    );
     let calendar_event_id = null;
     let htmlLink = null;
     let calendar = {
@@ -18575,22 +20594,46 @@ async function handleBooking(payload, env, request) {
               booking_id: canonicalBookingId,
               pickup_ms: Date.parse(pickup_iso),
               service_min: bookingServiceMin,
+              pickup_at_ms: allocatorDemandContext.pickupAtMs,
+              dropoff_at_ms: allocatorDemandContext.dropoffAtMs,
+              route_duration_seconds: allocatorDemandContext.routeDurationSeconds,
+              service_end_ms: allocatorDemandContext.serviceEndMs,
+              pickup_address: allocatorDemandContext.pickupAddress,
+              pickup_lat: allocatorDemandContext.pickupLat,
+              pickup_lng: allocatorDemandContext.pickupLng,
+              dropoff_address: allocatorDemandContext.dropoffAddress,
+              dropoff_lat: allocatorDemandContext.dropoffLat,
+              dropoff_lng: allocatorDemandContext.dropoffLng,
+              required_buffer_seconds: allocatorDemandContext.requiredBufferSeconds,
               tier,
               pax,
               bags,
               tenantScope: fleetScope,
             });
             if (!alloc?.allowed) {
+              const allocatorReason = safeStr(
+                alloc?.reason ||
+                  alloc?.reason_code ||
+                  alloc?.block_reason ||
+                  "vehicle_capacity_exceeded",
+                80,
+              ) || "vehicle_capacity_exceeded";
+              const allocatorBlockReason = safeStr(
+                alloc?.block_reason || allocatorReason,
+                80,
+              ) || allocatorReason;
               console.log(
-                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+                `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(allocatorReason, 64) || "vehicle_capacity_exceeded"}`,
               );
               return {
                 ok: false,
                 error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
                 availability: {
-                  reason: "vehicle_capacity",
+                  reason: allocatorReason,
+                  reason_code: allocatorReason,
                   availability_mode: availabilityMode,
-                  allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
+                  allocator_reason: allocatorReason,
+                  block_reason: allocatorBlockReason,
                   suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
                   available_slots: Number(alloc?.available_slots || 0),
                 },
@@ -18604,7 +20647,19 @@ async function handleBooking(payload, env, request) {
           } else {
             const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
               pickupMs: Date.parse(pickup_iso),
+              pickupAtMs: allocatorDemandContext.pickupAtMs,
+              dropoffAtMs: allocatorDemandContext.dropoffAtMs,
+              routeDurationSeconds: allocatorDemandContext.routeDurationSeconds,
               serviceMin: bookingServiceMin,
+              serviceEndMs: allocatorDemandContext.serviceEndMs,
+              pickupAddress: allocatorDemandContext.pickupAddress,
+              pickupLat: allocatorDemandContext.pickupLat,
+              pickupLng: allocatorDemandContext.pickupLng,
+              dropoffAddress: allocatorDemandContext.dropoffAddress,
+              dropoffLat: allocatorDemandContext.dropoffLat,
+              dropoffLng: allocatorDemandContext.dropoffLng,
+              requiredBufferSeconds: allocatorDemandContext.requiredBufferSeconds,
+              strict_eta: true,
               tier,
               pax,
               bags,
@@ -18618,8 +20673,10 @@ async function handleBooking(payload, env, request) {
                 ok: false,
                 error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
                 availability: {
-                  reason: "vehicle_capacity",
+                  reason: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
+                  reason_code: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
                   availability_mode: availabilityMode,
+                  block_reason: safeStr(vehicleCapacity?.block_reason ?? vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
                   ...vehicleCapacity,
                 },
               };
@@ -19202,22 +21259,46 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           booking_id: canonicalBookingId,
           pickup_ms: Date.parse(pickup_iso),
           service_min: bookingServiceMin,
+          pickup_at_ms: allocatorDemandContext.pickupAtMs,
+          dropoff_at_ms: allocatorDemandContext.dropoffAtMs,
+          route_duration_seconds: allocatorDemandContext.routeDurationSeconds,
+          service_end_ms: allocatorDemandContext.serviceEndMs,
+          pickup_address: allocatorDemandContext.pickupAddress,
+          pickup_lat: allocatorDemandContext.pickupLat,
+          pickup_lng: allocatorDemandContext.pickupLng,
+          dropoff_address: allocatorDemandContext.dropoffAddress,
+          dropoff_lat: allocatorDemandContext.dropoffLat,
+          dropoff_lng: allocatorDemandContext.dropoffLng,
+          required_buffer_seconds: allocatorDemandContext.requiredBufferSeconds,
           tier,
           pax,
           bags,
           tenantScope: fleetScope,
         });
         if (!alloc?.allowed) {
+          const allocatorReason = safeStr(
+            alloc?.reason ||
+              alloc?.reason_code ||
+              alloc?.block_reason ||
+              "vehicle_capacity_exceeded",
+            80,
+          ) || "vehicle_capacity_exceeded";
+          const allocatorBlockReason = safeStr(
+            alloc?.block_reason || allocatorReason,
+            80,
+          ) || allocatorReason;
           console.log(
-            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(alloc?.reason || "vehicle_capacity_exceeded", 64) || "vehicle_capacity_exceeded"}`,
+            `[BOOKING][NO_VEHICLE] tenant=${bookingScopeMask.tenant || "-"} company=${bookingScopeMask.company || "-"} booking=${_bookingIntentMask(canonicalBookingId)} mode=${availabilityMode} reason=${safeStr(allocatorReason, 64) || "vehicle_capacity_exceeded"}`,
           );
           return {
             ok: false,
             error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
             availability: {
-              reason: "vehicle_capacity",
+              reason: allocatorReason,
+              reason_code: allocatorReason,
               availability_mode: availabilityMode,
-              allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
+              allocator_reason: allocatorReason,
+              block_reason: allocatorBlockReason,
               suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
               available_slots: Number(alloc?.available_slots || 0),
             },
@@ -19231,7 +21312,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       } else {
         const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
           pickupMs: Date.parse(pickup_iso),
+          pickupAtMs: allocatorDemandContext.pickupAtMs,
+          dropoffAtMs: allocatorDemandContext.dropoffAtMs,
+          routeDurationSeconds: allocatorDemandContext.routeDurationSeconds,
           serviceMin: bookingServiceMin,
+          serviceEndMs: allocatorDemandContext.serviceEndMs,
+          pickupAddress: allocatorDemandContext.pickupAddress,
+          pickupLat: allocatorDemandContext.pickupLat,
+          pickupLng: allocatorDemandContext.pickupLng,
+          dropoffAddress: allocatorDemandContext.dropoffAddress,
+          dropoffLat: allocatorDemandContext.dropoffLat,
+          dropoffLng: allocatorDemandContext.dropoffLng,
+          requiredBufferSeconds: allocatorDemandContext.requiredBufferSeconds,
+          strict_eta: true,
           tier,
           pax,
           bags,
@@ -19245,8 +21338,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             ok: false,
             error: "Niet beschikbaar: geen geschikt voertuig beschikbaar.",
             availability: {
-              reason: "vehicle_capacity",
+              reason: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
+              reason_code: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
               availability_mode: availabilityMode,
+              block_reason: safeStr(vehicleCapacity?.block_reason ?? vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 80) || "vehicle_capacity_exceeded",
               ...vehicleCapacity,
             },
           };
@@ -19670,6 +21765,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
+      allocator_eta_strict: true,
+      allocatorEtaStrict: true,
       calendar_auth_source: calendarAuthSource,
       calendarAuthSource: calendarAuthSource,
       ...paymentFields,
@@ -19733,6 +21830,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         ),
         assigned_vehicle_id: resolvedAssignedVehicleId,
         assigned_driver: resolvedAssignedDriver,
+        allocator_eta_strict: true,
+        allocatorEtaStrict: true,
         calendar_event_id,
         calendarEventId: calendar_event_id || null,
         return_event_id: safeStr(calendar?.return_event_id || null),
@@ -24158,8 +26257,14 @@ function _bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope) {
 }
 
 function normalizeFleetTenantScope(scope) {
-  const tenantIdRaw = _scopeText(scope?.tenant_id ?? scope?.tenantId);
-  const companyIdRaw = _scopeText(scope?.company_id ?? scope?.companyId);
+  const tenantIdRaw = _normalizeTenantCompanyScopePart(
+    scope?.tenant_id ?? scope?.tenantId,
+    "tenant",
+  );
+  const companyIdRaw = _normalizeTenantCompanyScopePart(
+    scope?.company_id ?? scope?.companyId,
+    "company",
+  );
   const tenantId = tenantIdRaw || companyIdRaw || "";
   const companyId = companyIdRaw || tenantId || "";
   return {
@@ -24294,6 +26399,44 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
       };
     }
   }
+  const currentLat = _allocatorNumberInRange(
+    raw.current_lat ?? raw.currentLat ?? raw.last_known_lat ?? raw.lastKnownLat,
+    -90,
+    90,
+  );
+  const currentLng = _allocatorNumberInRange(
+    raw.current_lng ?? raw.currentLng ?? raw.last_known_lng ?? raw.lastKnownLng,
+    -180,
+    180,
+  );
+  const currentAddress = _allocatorText(
+    raw.current_address ?? raw.currentAddress ?? raw.last_known_address ?? raw.lastKnownAddress,
+    240,
+  );
+  const currentAtMs = _allocatorMsFromValue(
+    raw.current_at_ms ??
+      raw.currentAtMs ??
+      raw.last_known_at_ms ??
+      raw.lastKnownAtMs ??
+      raw.last_ping_at_ms ??
+      raw.lastPingAtMs ??
+      raw.updated_at ??
+      raw.updatedAt,
+  );
+  const baseLat = _allocatorNumberInRange(
+    raw.base_lat ?? raw.baseLat ?? raw.depot_lat ?? raw.depotLat ?? raw.garage_lat ?? raw.garageLat,
+    -90,
+    90,
+  );
+  const baseLng = _allocatorNumberInRange(
+    raw.base_lng ?? raw.baseLng ?? raw.depot_lng ?? raw.depotLng ?? raw.garage_lng ?? raw.garageLng,
+    -180,
+    180,
+  );
+  const baseAddress = _allocatorText(
+    raw.base_address ?? raw.baseAddress ?? raw.depot_address ?? raw.depotAddress ?? raw.garage_address ?? raw.garageAddress,
+    240,
+  );
   const normalizedScope = normalizeFleetTenantScope(scope);
   const tenantId = _scopeText(raw.tenant_id ?? raw.tenantId) || normalizedScope.tenant_id || "";
   const companyId = _scopeText(raw.company_id ?? raw.companyId) || normalizedScope.company_id || tenantId;
@@ -24344,6 +26487,13 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
     luggage_capacity: luggageCapacity,
     luggageCapacity: luggageCapacity,
     assigned_driver: assignedDriver,
+    ...(currentLat != null ? { current_lat: currentLat, currentLat: currentLat } : {}),
+    ...(currentLng != null ? { current_lng: currentLng, currentLng: currentLng } : {}),
+    ...(currentAddress ? { current_address: currentAddress, currentAddress: currentAddress } : {}),
+    ...(Number.isFinite(currentAtMs) ? { current_at_ms: currentAtMs, currentAtMs: currentAtMs } : {}),
+    ...(baseLat != null ? { base_lat: baseLat, baseLat: baseLat } : {}),
+    ...(baseLng != null ? { base_lng: baseLng, baseLng: baseLng } : {}),
+    ...(baseAddress ? { base_address: baseAddress, baseAddress: baseAddress } : {}),
     ...(primaryPhotoRef
       ? {
           primary_photo_ref: primaryPhotoRef,
@@ -24424,9 +26574,20 @@ function _windowsOverlap(aStartMs, aDurMin, bStartMs, bDurMin) {
 
 function _bookingDemandFromRecord(rec, env) {
   const pickupIso =
+    _pick(rec, ["pickup_iso"], null) ??
+    _pick(rec, ["pickupIso"], null) ??
+    _pick(rec, ["pickupStartIso"], null) ??
     _pick(rec, ["booking", "pickupStartIso"], null) ??
     _pick(rec, ["booking", "pickup_iso"], null) ??
-    _pick(rec, ["quote", "pickup_iso"], null);
+    _pick(rec, ["booking", "pickupIso"], null) ??
+    _pick(rec, ["quote", "pickup_iso"], null) ??
+    _pick(rec, ["quote", "pickupIso"], null) ??
+    _pick(rec, ["quote", "inputs", "pickup_iso"], null) ??
+    _pick(rec, ["quote", "inputs", "pickupIso"], null) ??
+    _pick(rec, ["payload", "pickup_iso"], null) ??
+    _pick(rec, ["payload", "pickupIso"], null) ??
+    _pick(rec, ["booking_details", "pickup_iso"], null) ??
+    _pick(rec, ["bookingDetails", "pickupIso"], null);
   const pickupMs = pickupIso ? Date.parse(pickupIso) : Number.NaN;
   const tier = normalizeTier(
     _pick(rec, ["booking", "tier"], null) ??
@@ -24436,9 +26597,18 @@ function _bookingDemandFromRecord(rec, env) {
   const pax = _toPositiveInt(_pick(rec, ["booking", "pax"], null), 1);
   const bags = _toPositiveInt(_pick(rec, ["booking", "bags"], null), 0);
   const durationRoute = Number(
-    _pick(rec, ["booking", "duration_route_min"], null) ??
+    _pick(rec, ["duration_route_min"], null) ??
+      _pick(rec, ["durationRouteMin"], null) ??
+      _pick(rec, ["duration_min"], null) ??
+      _pick(rec, ["durationMin"], null) ??
+      _pick(rec, ["booking", "duration_route_min"], null) ??
+      _pick(rec, ["booking", "durationRouteMin"], null) ??
+      _pick(rec, ["booking", "duration_min"], null) ??
+      _pick(rec, ["booking", "durationMin"], null) ??
       _pick(rec, ["quote", "duration_min"], null) ??
+      _pick(rec, ["quote", "durationMin"], null) ??
       _pick(rec, ["quote", "duration_route_min"], null) ??
+      _pick(rec, ["quote", "durationRouteMin"], null) ??
       0,
   );
   const returnEnabled = !!(
@@ -24485,12 +26655,56 @@ function _bookingDemandFromRecord(rec, env) {
     30,
     Math.round(durationTotalMin + waitMin + Math.max(0, stopHandlingMin) + Math.max(0, postBufferMin)),
   );
+  const pickupAtMs = pickupMs;
+  const normalizedTiming = _normalizeAllocatorDemandContextFromInput(
+    {
+      ...rec,
+      pickup_at_ms: pickupAtMs,
+      service_min: serviceMin,
+      service_end_ms: Number.isFinite(pickupAtMs)
+        ? pickupAtMs + serviceMin * 60000
+        : Number.NaN,
+      route_duration_min: durationTotalMin,
+    },
+    env,
+  );
+  const routeDurationSeconds = Math.max(
+    0,
+    Number(normalizedTiming.routeDurationSeconds || 0),
+  );
+  const dropoffAtMs = Number(normalizedTiming.dropoffAtMs);
+  const serviceEndMs = Number.isFinite(pickupAtMs)
+    ? pickupAtMs + serviceMin * 60000
+    : Number.NaN;
+  const locationContext = _allocatorDemandContextFromBookingRecord(rec, env);
   return {
     pickupMs,
+    pickupAtMs,
+    pickup_at_ms: pickupAtMs,
     tier,
     pax,
     bags,
     serviceMin,
+    routeDurationSeconds,
+    route_duration_seconds: routeDurationSeconds,
+    dropoffAtMs,
+    dropoff_at_ms: dropoffAtMs,
+    serviceEndMs,
+    service_end_ms: serviceEndMs,
+    pickupAddress: locationContext.pickupAddress,
+    pickup_address: locationContext.pickupAddress,
+    pickupLat: locationContext.pickupLat,
+    pickupLng: locationContext.pickupLng,
+    pickup_lat: locationContext.pickupLat,
+    pickup_lng: locationContext.pickupLng,
+    dropoffAddress: locationContext.dropoffAddress,
+    dropoff_address: locationContext.dropoffAddress,
+    dropoffLat: locationContext.dropoffLat,
+    dropoffLng: locationContext.dropoffLng,
+    dropoff_lat: locationContext.dropoffLat,
+    dropoff_lng: locationContext.dropoffLng,
+    requiredBufferSeconds: locationContext.requiredBufferSeconds,
+    required_buffer_seconds: locationContext.requiredBufferSeconds,
   };
 }
 
@@ -24527,13 +26741,35 @@ async function _vehicleCapacityGateForRequest(env, req) {
   const availableSlots = Number(assignment?.available_slots ?? 0);
   const overlappingDemand = Number(assignment?.overlapping_demand_count ?? 0);
   if (availableSlots <= 0) {
+    const blockReason = safeStr(
+      assignment?.reason_code ?? assignment?.block_reason,
+      64,
+    ) || "vehicle_capacity_exceeded";
     return {
       ok: false,
-      reason: "vehicle_capacity_exceeded",
+      reason: blockReason,
+      reason_code: blockReason,
+      block_reason: blockReason,
       suitable_vehicle_count: suitableVehicles.length,
       overlapping_demand_count: overlappingDemand,
       available_slots: Math.max(0, availableSlots),
       needed_slots: 1,
+      origin_source: safeStr(assignment?.origin_source, 64) || null,
+      origin_age_seconds: Number.isFinite(Number(assignment?.origin_age_seconds))
+        ? Number(assignment.origin_age_seconds)
+        : null,
+      available_seconds: Number.isFinite(Number(assignment?.available_seconds))
+        ? Number(assignment.available_seconds)
+        : null,
+      required_seconds: Number.isFinite(Number(assignment?.required_seconds))
+        ? Number(assignment.required_seconds)
+        : null,
+      origin_travel_seconds: Number.isFinite(Number(assignment?.origin_travel_seconds))
+        ? Number(assignment.origin_travel_seconds)
+        : null,
+      required_buffer_seconds: Number.isFinite(Number(assignment?.required_buffer_seconds))
+        ? Number(assignment.required_buffer_seconds)
+        : null,
     };
   }
 
@@ -24549,7 +26785,13 @@ async function _vehicleCapacityGateForRequest(env, req) {
 function _assignedVehicleIdFromRecord(rec) {
   return (
     _pick(rec, ["assigned_vehicle_id"], null) ??
+    _pick(rec, ["assignedVehicleId"], null) ??
+    _pick(rec, ["vehicle_id"], null) ??
+    _pick(rec, ["vehicleId"], null) ??
     _pick(rec, ["booking", "assigned_vehicle_id"], null) ??
+    _pick(rec, ["booking", "assignedVehicleId"], null) ??
+    _pick(rec, ["booking", "vehicle_id"], null) ??
+    _pick(rec, ["booking", "vehicleId"], null) ??
     null
   );
 }
@@ -24579,17 +26821,113 @@ async function _pickVehicleAssignmentForRequest(env, req) {
       Number(evaluation?.overlapping_unassigned_demand || 0),
     available_slots: Number(evaluation?.available_slots || 0),
     needed_slots: 1,
+    block_reason: safeStr(evaluation?.block_reason, 64) || null,
+    reason_code: safeStr(evaluation?.reason_code ?? evaluation?.block_reason, 64) || null,
+    origin_source: safeStr(evaluation?.origin_source, 64) || null,
+    origin_age_seconds: Number.isFinite(Number(evaluation?.origin_age_seconds))
+      ? Number(evaluation.origin_age_seconds)
+      : null,
+    available_seconds: Number.isFinite(Number(evaluation?.available_seconds))
+      ? Number(evaluation.available_seconds)
+      : null,
+    required_seconds: Number.isFinite(Number(evaluation?.required_seconds))
+      ? Number(evaluation.required_seconds)
+      : null,
+    origin_travel_seconds: Number.isFinite(Number(evaluation?.origin_travel_seconds))
+      ? Number(evaluation.origin_travel_seconds)
+      : null,
+    required_buffer_seconds: Number.isFinite(Number(evaluation?.required_buffer_seconds))
+      ? Number(evaluation.required_buffer_seconds)
+      : null,
   };
 }
 
 async function _evaluateFleetAvailability(env, req) {
   const fleetScope = normalizeFleetTenantScope(req?.tenantScope ?? req?.tenant_scope ?? req);
+  const overlapDebug = _allocatorOverlapDebugEnabled(env);
+  const allocatorScopeMask = _bookingIntentScopeMask(fleetScope);
+  const etaDebug = _allocatorEtaDebugEnabled(env);
   const vehicles = await _loadVehicleInventory(env, { scope: fleetScope });
   const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
   const pickupMs = Number(req?.pickupMs);
   const serviceMin = Math.max(1, Number(req?.serviceMin) || 1);
   const pickupEndMs =
     Number.isFinite(pickupMs) ? pickupMs + serviceMin * 60000 : Number.NaN;
+  if (etaDebug || overlapDebug) {
+    console.log(JSON.stringify({
+      event: "fleet_availability_entry",
+      tenant: allocatorScopeMask.tenant || "-",
+      company: allocatorScopeMask.company || "-",
+      pickup_ms: Number.isFinite(pickupMs) ? pickupMs : null,
+      service_min: serviceMin,
+      suitable_vehicle_count: suitableVehicles.length,
+    }));
+  }
+  if (!Number.isFinite(pickupMs)) {
+    if (etaDebug || overlapDebug) {
+      console.log(JSON.stringify({
+        event: "fleet_availability_pickup_guard",
+        tenant: allocatorScopeMask.tenant || "-",
+        company: allocatorScopeMask.company || "-",
+        reason_code: "missing_pickup_time",
+      }));
+    }
+    return {
+      request: {
+        tier: req?.tier ?? null,
+        pax: req?.pax ?? null,
+        bags: req?.bags ?? null,
+        pickup_ms: null,
+        pickup_window_end_ms: null,
+        service_min: serviceMin,
+      },
+      suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
+      overlapping_actionable_bookings: [],
+      occupied_assigned_vehicle_ids: [],
+      overlapping_unassigned_demand: 0,
+      suitable_vehicle_count: suitableVehicles.length,
+      free_vehicle_count: suitableVehicles.length,
+      available_slots: 0,
+      would_allow_booking: false,
+      next_vehicle_candidate: null,
+      reason: "missing_pickup_time",
+      reason_code: "missing_pickup_time",
+      block_reason: "missing_pickup_time",
+    };
+  }
+  if (pickupMs <= Date.now()) {
+    if (etaDebug || overlapDebug) {
+      console.log(JSON.stringify({
+        event: "fleet_availability_pickup_guard",
+        tenant: allocatorScopeMask.tenant || "-",
+        company: allocatorScopeMask.company || "-",
+        reason_code: "pickup_time_in_past",
+        pickup_ms: pickupMs,
+      }));
+    }
+    return {
+      request: {
+        tier: req?.tier ?? null,
+        pax: req?.pax ?? null,
+        bags: req?.bags ?? null,
+        pickup_ms: pickupMs,
+        pickup_window_end_ms: Number.isFinite(pickupEndMs) ? pickupEndMs : null,
+        service_min: serviceMin,
+      },
+      suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
+      overlapping_actionable_bookings: [],
+      occupied_assigned_vehicle_ids: [],
+      overlapping_unassigned_demand: 0,
+      suitable_vehicle_count: suitableVehicles.length,
+      free_vehicle_count: suitableVehicles.length,
+      available_slots: 0,
+      would_allow_booking: false,
+      next_vehicle_candidate: null,
+      reason: "pickup_time_in_past",
+      reason_code: "pickup_time_in_past",
+      block_reason: "pickup_time_in_past",
+    };
+  }
 
   if (suitableVehicles.length === 0) {
     return {
@@ -24617,6 +26955,34 @@ async function _evaluateFleetAvailability(env, req) {
   const suitableIds = new Set(suitableVehicles.map((v) => v.vehicle_id));
   const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
   const occupiedAssignedIds = new Set();
+  const vehicleTimelineByVehicle = new Map();
+  const lastCompletedDropoffByVehicle = new Map();
+  const upsertCompletedDropoffByVehicle = (vehicleId, demand) => {
+    const normalizedVehicleId = _allocatorText(vehicleId, 120);
+    if (!normalizedVehicleId) return;
+    const dropoffAtMs = Number(demand?.dropoffAtMs ?? demand?.dropoff_at_ms);
+    const point = {
+      address: _allocatorText(demand?.dropoffAddress ?? demand?.dropoff_address, 240),
+      lat: _allocatorNumberInRange(demand?.dropoffLat ?? demand?.dropoff_lat, -90, 90),
+      lng: _allocatorNumberInRange(demand?.dropoffLng ?? demand?.dropoff_lng, -180, 180),
+    };
+    const hasLocation = (point.lat != null && point.lng != null) || !!point.address;
+    if (!Number.isFinite(dropoffAtMs) || !hasLocation) return;
+    const current = lastCompletedDropoffByVehicle.get(normalizedVehicleId);
+    if (!current || dropoffAtMs > Number(current.availableAtMs || 0)) {
+      lastCompletedDropoffByVehicle.set(normalizedVehicleId, {
+        availableAtMs: dropoffAtMs,
+        point,
+      });
+    }
+  };
+  const upsertVehicleTimelineEntry = (vehicleId, entry) => {
+    const normalizedVehicleId = String(vehicleId || "").trim();
+    if (!normalizedVehicleId) return;
+    const list = vehicleTimelineByVehicle.get(normalizedVehicleId) || [];
+    list.push(entry);
+    vehicleTimelineByVehicle.set(normalizedVehicleId, list);
+  };
   let overlappingUnassignedDemand = 0;
   const overlappingBookings = [];
 
@@ -24625,16 +26991,83 @@ async function _evaluateFleetAvailability(env, req) {
     if (!key.startsWith("booking:")) continue;
     const rec = await env.BOOKING_KV.get(key, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
-    if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope)) continue;
+    const bookingId = key.slice("booking:".length);
+    const recordScope = resolveBookingTenantScopeFromRecord(rec);
+    const matchScope = _bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope);
+    if (!matchScope) {
+      if (overlapDebug) {
+        console.log(JSON.stringify({
+          event: "fleet_availability_overlap_scan",
+          tenant: allocatorScopeMask.tenant || "-",
+          company: allocatorScopeMask.company || "-",
+          booking: _bookingIntentMask(bookingId),
+          matchScope: false,
+          record_tenant: _bookingIntentMask(recordScope?.tenant_id),
+          record_company: _bookingIntentMask(recordScope?.company_id),
+        }));
+      }
+      continue;
+    }
 
-    if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
+    const lifecycleStatus = _bookingLifecycleValue(rec);
+    const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
+    if (isTerminalLifecycleStatus(lifecycleStatus)) {
+      if (assignedVehicleId) {
+        const terminalDemand = _bookingDemandFromRecord(rec, env);
+        upsertCompletedDropoffByVehicle(assignedVehicleId, terminalDemand);
+      }
+      continue;
+    }
 
     const d = _bookingDemandFromRecord(rec, env);
+    if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
+      upsertVehicleTimelineEntry(assignedVehicleId, {
+        booking_id: bookingId,
+        vehicle_id: assignedVehicleId,
+        pickup_at_ms: d.pickupAtMs,
+        pickupAtMs: d.pickupAtMs,
+        dropoff_at_ms: d.dropoffAtMs,
+        dropoffAtMs: d.dropoffAtMs,
+        route_duration_seconds: d.routeDurationSeconds,
+        routeDurationSeconds: d.routeDurationSeconds,
+        service_end_ms: d.serviceEndMs,
+        serviceEndMs: d.serviceEndMs,
+        pickup_address: d.pickupAddress,
+        pickupAddress: d.pickupAddress,
+        pickup_lat: d.pickupLat,
+        pickup_lng: d.pickupLng,
+        dropoff_address: d.dropoffAddress,
+        dropoffAddress: d.dropoffAddress,
+        dropoff_lat: d.dropoffLat,
+        dropoff_lng: d.dropoffLng,
+        required_buffer_seconds: d.requiredBufferSeconds,
+        requiredBufferSeconds: d.requiredBufferSeconds,
+        strict_eta: _coerceBoolean(
+          _pick(rec, ["allocator_eta_strict"], null) ??
+            _pick(rec, ["booking", "allocator_eta_strict"], null),
+          false,
+        ),
+      });
+    }
+    const overlap = Number.isFinite(d.pickupMs)
+      ? _windowsOverlap(pickupMs, serviceMin, d.pickupMs, d.serviceMin)
+      : false;
+    if (overlapDebug) {
+      console.log(JSON.stringify({
+        event: "fleet_availability_overlap_scan",
+        tenant: allocatorScopeMask.tenant || "-",
+        company: allocatorScopeMask.company || "-",
+        booking: _bookingIntentMask(bookingId),
+        matchScope: true,
+        pickupMsFinite: Number.isFinite(d.pickupMs),
+        serviceMin: Number(d.serviceMin || 0),
+        assignedVehicleId: _bookingIntentMask(assignedVehicleId),
+        overlap,
+      }));
+    }
     if (!Number.isFinite(d.pickupMs)) continue;
-    if (!_windowsOverlap(pickupMs, serviceMin, d.pickupMs, d.serviceMin)) continue;
-    const bookingId = key.slice("booking:".length);
+    if (!overlap) continue;
     const demandEndMs = d.pickupMs + Math.max(1, Number(d.serviceMin) || 1) * 60000;
-    const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
     if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
       occupiedAssignedIds.add(assignedVehicleId);
       overlappingBookings.push({
@@ -24674,13 +27107,131 @@ async function _evaluateFleetAvailability(env, req) {
   freeVehicles.sort((a, b) =>
     String(a.vehicle_id).localeCompare(String(b.vehicle_id)),
   );
-  const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
-  const nextVehicle = availableSlots > 0 && freeVehicles.length
-    ? {
-        vehicle_id: freeVehicles[0].vehicle_id,
-        assigned_driver: _assignedDriverFromVehicle(freeVehicles[0]),
+  const capacityAvailableSlots = freeVehicles.length - overlappingUnassignedDemand;
+  const candidateDemand = _normalizeAllocatorDemandContextFromInput(
+    {
+      booking_id: _allocatorText(req?.bookingId || req?.booking_id, 160),
+      pickup_at_ms: req?.pickupAtMs ?? req?.pickup_at_ms ?? req?.pickupMs,
+      dropoff_at_ms: req?.dropoffAtMs ?? req?.dropoff_at_ms,
+      route_duration_seconds: req?.routeDurationSeconds ?? req?.route_duration_seconds,
+      service_end_ms: req?.serviceEndMs ?? req?.service_end_ms,
+      pickup_address: req?.pickupAddress ?? req?.pickup_address ?? req?.from,
+      pickup_lat: req?.pickupLat ?? req?.pickup_lat ?? req?.fromLat ?? req?.from_lat,
+      pickup_lng: req?.pickupLng ?? req?.pickup_lng ?? req?.fromLng ?? req?.from_lng,
+      dropoff_address: req?.dropoffAddress ?? req?.dropoff_address ?? req?.to,
+      dropoff_lat: req?.dropoffLat ?? req?.dropoff_lat ?? req?.toLat ?? req?.to_lat,
+      dropoff_lng: req?.dropoffLng ?? req?.dropoff_lng ?? req?.toLng ?? req?.to_lng,
+      required_buffer_seconds:
+        req?.requiredBufferSeconds ??
+        req?.required_buffer_seconds ??
+        (Math.max(0, getTravelGapMin(env)) * 60),
+      strict_eta: _coerceBoolean(req?.strict_eta, true),
+      source: "quote",
+    },
+    env,
+  );
+  if (etaDebug || overlapDebug) {
+    console.log(JSON.stringify({
+      event: "fleet_availability_candidate_demand",
+      tenant: allocatorScopeMask.tenant || "-",
+      company: allocatorScopeMask.company || "-",
+      candidatePickupAtMs: Number(candidateDemand.pickupAtMs) || null,
+      serviceMin: serviceMin,
+      routeDurationSeconds: Number(candidateDemand.routeDurationSeconds || 0),
+      dropoffAtMs: Number(candidateDemand.dropoffAtMs) || null,
+      requiredBufferSeconds: Number(candidateDemand.requiredBufferSeconds || 0),
+      free_candidates: freeVehicles.map((v) => ({
+        vehicle: _bookingIntentMask(v?.vehicle_id),
+        driver: _bookingIntentMask(v?.assigned_driver?.driver_id),
+      })),
+    }));
+  }
+  let nextVehicle = null;
+  let blockReason = capacityAvailableSlots > 0 ? null : "vehicle_capacity_exceeded";
+  let reasonCode = capacityAvailableSlots > 0 ? null : "vehicle_capacity_exceeded";
+  let originSource = null;
+  let originAgeSeconds = null;
+  let availableSeconds = null;
+  let requiredSeconds = null;
+  let originTravelSeconds = null;
+  let requiredBufferSeconds = null;
+  let availableSlots = Math.max(0, capacityAvailableSlots);
+  if (capacityAvailableSlots > 0 && freeVehicles.length > 0) {
+    const etaSelection = await _selectVehicleCandidateWithEta({
+      freeVehicles,
+      vehicleTimelineByVehicle,
+      tenantScope: fleetScope,
+      lastCompletedDropoffByVehicle,
+      candidateDemand,
+      bookingId: "",
+      env,
+    });
+    if (etaSelection?.chosen) {
+      nextVehicle = {
+        vehicle_id: etaSelection.chosen.vehicle_id,
+        assigned_driver: _assignedDriverFromVehicle(etaSelection.chosen),
+      };
+    } else {
+      const firstEtaFailure = Array.isArray(etaSelection?.etaFailures) ? etaSelection.etaFailures[0] : null;
+      if (firstEtaFailure?.reason_code) {
+        blockReason = String(firstEtaFailure.reason_code);
+        reasonCode = String(firstEtaFailure.reason_code);
+      } else if (etaSelection?.etaSkippedMissingLocation) {
+        blockReason = "eta_not_feasible";
+        reasonCode = "eta_not_feasible";
+      } else {
+        blockReason = "eta_not_feasible";
+        reasonCode = "eta_not_feasible";
       }
-    : null;
+      originSource = safeStr(firstEtaFailure?.origin_source, 64) || null;
+      originAgeSeconds = Number.isFinite(Number(firstEtaFailure?.origin_age_seconds))
+        ? Number(firstEtaFailure.origin_age_seconds)
+        : null;
+      availableSeconds = Number.isFinite(Number(firstEtaFailure?.available_seconds))
+        ? Number(firstEtaFailure.available_seconds)
+        : null;
+      requiredSeconds = Number.isFinite(Number(firstEtaFailure?.required_seconds))
+        ? Number(firstEtaFailure.required_seconds)
+        : null;
+      originTravelSeconds = Number.isFinite(Number(
+        firstEtaFailure?.origin_travel_seconds ?? firstEtaFailure?.travel_time_seconds,
+      ))
+        ? Number(firstEtaFailure?.origin_travel_seconds ?? firstEtaFailure?.travel_time_seconds)
+        : null;
+      requiredBufferSeconds = Number.isFinite(Number(firstEtaFailure?.required_buffer_seconds))
+        ? Number(firstEtaFailure.required_buffer_seconds)
+        : null;
+      availableSlots = 0;
+      if (
+        blockReason === "missing_vehicle_origin_location" ||
+        blockReason === "origin_eta_not_feasible" ||
+        blockReason === "vehicle_cannot_reach_pickup_in_time"
+      ) {
+        if (etaDebug || overlapDebug) {
+          console.log(
+            `[FLEET][ORIGIN_ETA_BLOCK] tenant=${allocatorScopeMask.tenant || "-"} company=${allocatorScopeMask.company || "-"} vehicle=${_bookingIntentMask(firstEtaFailure?.vehicle_id || "")} reason=${blockReason}`,
+          );
+        }
+      }
+      if (etaDebug) {
+        console.log(JSON.stringify({
+          event: "fleet_eta_quote_block",
+          tenant: allocatorScopeMask.tenant || "-",
+          company: allocatorScopeMask.company || "-",
+          candidatePickupAt: Number(candidateDemand.pickupAtMs) || null,
+          candidateDropoffAt: Number(candidateDemand.dropoffAtMs) || null,
+          reason_code: blockReason,
+          failed_vehicle: _bookingIntentMask(firstEtaFailure?.vehicle_id || ""),
+          origin_source: originSource,
+          origin_age_seconds: originAgeSeconds,
+          available_seconds: availableSeconds,
+          required_seconds: requiredSeconds,
+          origin_travel_seconds: originTravelSeconds,
+          required_buffer_seconds: requiredBufferSeconds,
+        }));
+      }
+    }
+  }
 
   return {
     request: {
@@ -24690,6 +27241,9 @@ async function _evaluateFleetAvailability(env, req) {
       pickup_ms: Number.isFinite(pickupMs) ? pickupMs : null,
       pickup_window_end_ms: Number.isFinite(pickupEndMs) ? pickupEndMs : null,
       service_min: serviceMin,
+      pickup_at_ms: Number(candidateDemand.pickupAtMs) || null,
+      dropoff_at_ms: Number(candidateDemand.dropoffAtMs) || null,
+      route_duration_seconds: Number(candidateDemand.routeDurationSeconds) || null,
     },
     suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
     overlapping_actionable_bookings: overlappingBookings,
@@ -24698,9 +27252,17 @@ async function _evaluateFleetAvailability(env, req) {
     suitable_vehicle_count: suitableVehicles.length,
     free_vehicle_count: freeVehicles.length,
     available_slots: Math.max(0, availableSlots),
-    would_allow_booking: availableSlots > 0,
+    would_allow_booking: !!nextVehicle,
     next_vehicle_candidate: nextVehicle,
-    block_reason: availableSlots > 0 ? null : "vehicle_capacity_exceeded",
+    reason: reasonCode || blockReason,
+    reason_code: reasonCode || blockReason,
+    block_reason: blockReason,
+    origin_source: originSource,
+    origin_age_seconds: originAgeSeconds,
+    available_seconds: availableSeconds,
+    required_seconds: requiredSeconds,
+    origin_travel_seconds: originTravelSeconds,
+    required_buffer_seconds: requiredBufferSeconds,
   };
 }
 
@@ -26291,6 +28853,21 @@ async function handleAvailability(body, env, request = null, url = null) {
 
   const vehicleCapacity = await _vehicleCapacityGateForRequest(env, {
     pickupMs: Date.parse(timeMin),
+    pickupAtMs: Date.parse(timeMin),
+    routeDurationSeconds: Math.max(
+      0,
+      Math.round(
+        Number(body?.duration_min ?? body?.duration_route_min ?? body?.durationMin ?? 0) * 60,
+      ),
+    ),
+    dropoffAtMs:
+      Date.parse(timeMin) +
+      Math.max(
+        0,
+        Math.round(
+          Number(body?.duration_min ?? body?.duration_route_min ?? body?.durationMin ?? 0) * 60000,
+        ),
+      ),
     serviceMin: Math.max(
       30,
       Math.round(
@@ -26299,6 +28876,13 @@ async function handleAvailability(body, env, request = null, url = null) {
           15,
       ),
     ),
+    pickupAddress: body?.from ?? body?.pickup ?? body?.pickup_address,
+    dropoffAddress: body?.to ?? body?.destination ?? body?.dropoff_address,
+    pickupLat: body?.from_lat ?? body?.fromLat ?? body?.pickup_lat ?? body?.pickupLat,
+    pickupLng: body?.from_lng ?? body?.fromLng ?? body?.pickup_lng ?? body?.pickupLng,
+    dropoffLat: body?.to_lat ?? body?.toLat ?? body?.dropoff_lat ?? body?.dropoffLat,
+    dropoffLng: body?.to_lng ?? body?.toLng ?? body?.dropoff_lng ?? body?.dropoffLng,
+    strict_eta: true,
     tier: normalizeTier(body?.tier || "comfort"),
     pax: clampInt(body?.pax, 1, 99),
     bags: Math.max(0, clampInt(body?.bags, 0, 99)),
@@ -26308,7 +28892,9 @@ async function handleAvailability(body, env, request = null, url = null) {
     return {
       ok: true,
       available: false,
-      reason: "vehicle_capacity",
+      reason: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity",
+      reason_code: safeStr(vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity",
+      block_reason: safeStr(vehicleCapacity?.block_reason ?? vehicleCapacity?.reason_code ?? vehicleCapacity?.reason, 64) || "vehicle_capacity",
       vehicle_capacity: vehicleCapacity,
       availability_mode: availabilityMode,
       calendar_configured: calendarConfigured,
