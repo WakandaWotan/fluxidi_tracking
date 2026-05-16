@@ -21048,6 +21048,37 @@ function _trackingSyncScopedTripContribKey(scope, tripId) {
   return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpi_contrib:${tripPart}:v1`;
 }
 
+function _trackingSyncScopedPendingBookingKey(scope, bookingId) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const bookingPart = _trackingSyncSafeKeyPart(bookingId, 160);
+  if (!tenantPart || !companyPart || !bookingPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpi_pending_booking:${bookingPart}:v1`;
+}
+
+function _trackingSyncScopedDebugKey(scope) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  if (!tenantPart || !companyPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:trip_kpi_debug:v1`;
+}
+
+function _trackingSyncScopedBookingFinanceMonthKey(scope, month) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const monthPart = _trackingSyncSafeKeyPart(month, 16);
+  if (!tenantPart || !companyPart || !monthPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:booking_finance:month:${monthPart}:v1`;
+}
+
+function _trackingSyncScopedBookingFinanceContribKey(scope, bookingId) {
+  const tenantPart = _trackingSyncSafeKeyPart(scope?.tenant_id, 96);
+  const companyPart = _trackingSyncSafeKeyPart(scope?.company_id, 96);
+  const bookingPart = _trackingSyncSafeKeyPart(bookingId, 160);
+  if (!tenantPart || !companyPart || !bookingPart) return "";
+  return `tenant:${tenantPart}:company:${companyPart}:dashboard:booking_finance_contrib:${bookingPart}:v1`;
+}
+
 function _trackingSyncMonthFromIso(value) {
   const text = safeStr(value);
   if (!text) return null;
@@ -21133,6 +21164,7 @@ function _trackingSyncDeriveContribution(trip) {
     _trackingSyncAmountCents(trip?.totalEur) ??
     0;
   const monthlyPaid = completed && paid && !!paidMonth;
+  const missingAmount = monthlyPaid && amountCents <= 0;
   return {
     trip_id: tripId,
     completed_rides_count: completed ? 1 : 0,
@@ -21140,6 +21172,7 @@ function _trackingSyncDeriveContribution(trip) {
     paid_month: monthlyPaid ? paidMonth : null,
     monthly_paid_rides_count: monthlyPaid ? 1 : 0,
     monthly_income_cents: monthlyPaid ? amountCents : 0,
+    monthly_missing_amount_count: missingAmount ? 1 : 0,
   };
 }
 
@@ -21153,6 +21186,9 @@ function _trackingSyncReadContribShape(value, fallbackTripId = null) {
   const monthlyIncomeCents = Number.isFinite(Number(obj.monthly_income_cents))
     ? Math.round(Number(obj.monthly_income_cents))
     : 0;
+  const monthlyMissingAmountCount = Number.isFinite(Number(obj.monthly_missing_amount_count))
+    ? Math.max(0, Math.round(Number(obj.monthly_missing_amount_count)))
+    : 0;
   return {
     trip_id: tripId,
     completed_rides_count: completed,
@@ -21160,6 +21196,72 @@ function _trackingSyncReadContribShape(value, fallbackTripId = null) {
     paid_month: paidMonth,
     monthly_paid_rides_count: monthlyPaidCount,
     monthly_income_cents: monthlyIncomeCents,
+    monthly_missing_amount_count: monthlyMissingAmountCount,
+  };
+}
+
+function _trackingSyncIsCancelledBookingLifecycle(value) {
+  const token = safeStr(value, 64).toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return token === "cancelled" || token === "canceled";
+}
+
+function _trackingSyncDeriveBookingFinanceContribution(bookingId, rec) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId) return null;
+  const normalizedPayment = normalizeCompliancePaymentStatus(
+    rec?.payment_status ?? rec?.paymentStatus ?? rec?.booking?.payment_status ?? rec?.booking?.paymentStatus,
+  );
+  const paid = normalizedPayment === "paid";
+  const paidAtMonth = _trackingSyncMonthFromIso(
+    rec?.paid_at ?? rec?.paidAt ?? rec?.booking?.paid_at ?? rec?.booking?.paidAt,
+  );
+  const amountCents =
+    _trackingSyncAmountCents(rec?.payment_amount ?? rec?.paymentAmount) ??
+    _trackingSyncAmountCents(rec?.price_incl_vat ?? rec?.booking?.price_incl_vat) ??
+    _trackingSyncAmountCents(_pick(rec, ["quote", "pricing", "price_incl_vat"], null)) ??
+    0;
+  const cancelled =
+    _trackingSyncIsCancelledBookingLifecycle(rec?.status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.stage) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.lifecycle_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.lifecycleStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.bookingStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.stage) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.lifecycle_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.lifecycleStatus) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.booking_status) ||
+    _trackingSyncIsCancelledBookingLifecycle(rec?.booking?.bookingStatus);
+  const monthlyPaid = paid && !!paidAtMonth;
+  return {
+    booking_id: safeBookingId,
+    paid_month: monthlyPaid ? paidAtMonth : null,
+    monthly_paid_bookings_count: monthlyPaid ? 1 : 0,
+    monthly_paid_bookings_income_cents: monthlyPaid ? amountCents : 0,
+    monthly_cancelled_paid_bookings_cents: monthlyPaid && cancelled ? amountCents : 0,
+  };
+}
+
+function _trackingSyncReadBookingFinanceContribShape(value, fallbackBookingId = null) {
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const bookingId = safeStr(obj.booking_id ?? fallbackBookingId, 160) || null;
+  const paidMonth = _trackingSyncSafeKeyPart(obj.paid_month, 16) || null;
+  const paidCount = Number.isFinite(Number(obj.monthly_paid_bookings_count))
+    ? Math.max(0, Math.round(Number(obj.monthly_paid_bookings_count)))
+    : 0;
+  const paidIncome = Number.isFinite(Number(obj.monthly_paid_bookings_income_cents))
+    ? Math.round(Number(obj.monthly_paid_bookings_income_cents))
+    : 0;
+  const cancelledPaid = Number.isFinite(Number(obj.monthly_cancelled_paid_bookings_cents))
+    ? Math.round(Number(obj.monthly_cancelled_paid_bookings_cents))
+    : 0;
+  return {
+    booking_id: bookingId,
+    paid_month: paidMonth,
+    monthly_paid_bookings_count: paidCount,
+    monthly_paid_bookings_income_cents: paidIncome,
+    monthly_cancelled_paid_bookings_cents: cancelledPaid,
   };
 }
 
@@ -21233,6 +21335,139 @@ async function _trackingSyncPutJson(env, key, value) {
   });
 }
 
+async function _trackingSyncDeleteJsonBestEffort(env, key) {
+  if (!key || !env?.FLUXIDI_TRACKING || typeof env.FLUXIDI_TRACKING.delete !== "function") return;
+  try {
+    await env.FLUXIDI_TRACKING.delete(key);
+  } catch (_) {
+    // best effort
+  }
+}
+
+async function _trackingSyncBumpDebugCounterBestEffort(env, scope, field, delta = 1) {
+  const key = _trackingSyncScopedDebugKey(scope);
+  if (!key || !field) return;
+  const current = (await _trackingSyncGetJson(env, key)) || {};
+  const nextValue =
+    (Number.isFinite(Number(current?.[field])) ? Math.round(Number(current[field])) : 0) +
+    (Number.isFinite(Number(delta)) ? Math.round(Number(delta)) : 0);
+  await _trackingSyncPutJson(env, key, {
+    ...current,
+    [field]: Math.max(0, nextValue),
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function _trackingSyncUpsertPendingBookingMarkerBestEffort(env, scope, bookingId, rec, reason, source) {
+  const key = _trackingSyncScopedPendingBookingKey(scope, bookingId);
+  if (!key) return;
+  const nowIso = new Date().toISOString();
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    rec?.payment_status ?? rec?.paymentStatus ?? rec?.booking?.payment_status ?? rec?.booking?.paymentStatus,
+  );
+  const completed = _trackingSyncIsCompletedStatus(
+    rec?.status ?? rec?.stage ?? rec?.lifecycle_status ?? rec?.lifecycleStatus ??
+      rec?.booking?.status ?? rec?.booking?.stage ?? rec?.booking?.lifecycle_status ?? rec?.booking?.lifecycleStatus,
+  );
+  const paymentAmountCents =
+    _trackingSyncAmountCents(rec?.payment_amount ?? rec?.paymentAmount) ??
+    _trackingSyncAmountCents(rec?.price_incl_vat ?? rec?.booking?.price_incl_vat) ??
+    _trackingSyncAmountCents(_pick(rec, ["quote", "pricing", "price_incl_vat"], null)) ??
+    0;
+  await _trackingSyncPutJson(env, key, {
+    booking_id: safeStr(bookingId, 160),
+    reason: safeStr(reason, 64) || "trip_missing",
+    payment_status: paymentStatus || null,
+    paid_at: safeStr(rec?.paid_at ?? rec?.paidAt ?? rec?.booking?.paid_at ?? rec?.booking?.paidAt, 64) || null,
+    payment_amount_cents: paymentAmountCents,
+    currency: safeStr(rec?.currency ?? rec?.booking?.currency ?? "EUR", 8).toUpperCase() || "EUR",
+    completed,
+    source: safeStr(source, 64) || "booking_payment_update",
+    updated_at: nowIso,
+    created_at: nowIso,
+  });
+}
+
+async function _trackingSyncMaterializeBookingFinanceKpiBestEffort({
+  env,
+  scope,
+  bookingId,
+  rec,
+  source = "booking_payment_update",
+} = {}) {
+  if (!env?.FLUXIDI_TRACKING || !scope?.tenant_id || !scope?.company_id) return;
+  const nextRaw = _trackingSyncDeriveBookingFinanceContribution(bookingId, rec);
+  if (!nextRaw?.booking_id) return;
+  const next = _trackingSyncReadBookingFinanceContribShape(nextRaw, nextRaw.booking_id);
+  const contribKey = _trackingSyncScopedBookingFinanceContribKey(scope, next.booking_id);
+  if (!contribKey) return;
+  const prev = _trackingSyncReadBookingFinanceContribShape(
+    await _trackingSyncGetJson(env, contribKey),
+    next.booking_id,
+  );
+  const monthDeltas = {};
+  if (prev.paid_month && prev.monthly_paid_bookings_count > 0) {
+    monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
+      monthly_paid_bookings_count: 0,
+      monthly_paid_bookings_income_cents: 0,
+      monthly_cancelled_paid_bookings_cents: 0,
+    };
+    monthDeltas[prev.paid_month].monthly_paid_bookings_count -= prev.monthly_paid_bookings_count;
+    monthDeltas[prev.paid_month].monthly_paid_bookings_income_cents -= prev.monthly_paid_bookings_income_cents;
+    monthDeltas[prev.paid_month].monthly_cancelled_paid_bookings_cents -= prev.monthly_cancelled_paid_bookings_cents;
+  }
+  if (next.paid_month && next.monthly_paid_bookings_count > 0) {
+    monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
+      monthly_paid_bookings_count: 0,
+      monthly_paid_bookings_income_cents: 0,
+      monthly_cancelled_paid_bookings_cents: 0,
+    };
+    monthDeltas[next.paid_month].monthly_paid_bookings_count += next.monthly_paid_bookings_count;
+    monthDeltas[next.paid_month].monthly_paid_bookings_income_cents += next.monthly_paid_bookings_income_cents;
+    monthDeltas[next.paid_month].monthly_cancelled_paid_bookings_cents += next.monthly_cancelled_paid_bookings_cents;
+  }
+  for (const [month, delta] of Object.entries(monthDeltas)) {
+    if (!delta) continue;
+    if (
+      !delta.monthly_paid_bookings_count &&
+      !delta.monthly_paid_bookings_income_cents &&
+      !delta.monthly_cancelled_paid_bookings_cents
+    ) {
+      continue;
+    }
+    const monthKey = _trackingSyncScopedBookingFinanceMonthKey(scope, month);
+    const current = (await _trackingSyncGetJson(env, monthKey)) || {};
+    const currentCount = Number.isFinite(Number(current.monthly_paid_bookings_count))
+      ? Math.round(Number(current.monthly_paid_bookings_count))
+      : 0;
+    const currentIncome = Number.isFinite(Number(current.monthly_paid_bookings_income_cents))
+      ? Math.round(Number(current.monthly_paid_bookings_income_cents))
+      : 0;
+    const currentCancelled = Number.isFinite(Number(current.monthly_cancelled_paid_bookings_cents))
+      ? Math.round(Number(current.monthly_cancelled_paid_bookings_cents))
+      : 0;
+    await _trackingSyncPutJson(env, monthKey, {
+      month,
+      currency: "EUR",
+      monthly_paid_bookings_count: Math.max(0, currentCount + delta.monthly_paid_bookings_count),
+      monthly_paid_bookings_income_cents: Math.max(
+        0,
+        currentIncome + delta.monthly_paid_bookings_income_cents,
+      ),
+      monthly_cancelled_paid_bookings_cents: Math.max(
+        0,
+        currentCancelled + delta.monthly_cancelled_paid_bookings_cents,
+      ),
+      updated_at: new Date().toISOString(),
+    });
+  }
+  await _trackingSyncPutJson(env, contribKey, {
+    ...next,
+    updated_at: new Date().toISOString(),
+    source,
+  });
+}
+
 async function syncScopedTrackingTripKpiBestEffort({
   env,
   bookingId,
@@ -21257,6 +21492,12 @@ async function syncScopedTrackingTripKpiBestEffort({
         (recordScope.tenant_id !== reqTenant || recordScope.company_id !== reqCompany)
       ) {
         console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=scope_mismatch");
+        await _trackingSyncBumpDebugCounterBestEffort(
+          env,
+          recordScope,
+          "scope_mismatch",
+          1,
+        );
         return;
       }
     }
@@ -21269,6 +21510,13 @@ async function syncScopedTrackingTripKpiBestEffort({
         rec?.booking?.bookingId,
       160,
     );
+    await _trackingSyncMaterializeBookingFinanceKpiBestEffort({
+      env,
+      scope: recordScope,
+      bookingId: resolvedBookingId,
+      rec,
+      source,
+    });
     const tripId = _trackingSyncResolveTripId(resolvedBookingId, rec);
     if (!tripId) {
       console.log("[TRACKING_KPI_SYNC][SKIP] reason=missing_trip_id");
@@ -21278,6 +21526,14 @@ async function syncScopedTrackingTripKpiBestEffort({
     const tripKey = _trackingSyncScopedTripKey(recordScope, tripId);
     const trip = await _trackingSyncGetJson(env, tripKey);
     if (!trip || typeof trip !== "object" || Array.isArray(trip)) {
+      await _trackingSyncUpsertPendingBookingMarkerBestEffort(
+        env,
+        recordScope,
+        resolvedBookingId,
+        rec,
+        "trip_missing",
+        source,
+      );
       console.log(
         `[TRACKING_KPI_SYNC][SKIP] reason=trip_missing booking=${safeStr(resolvedBookingId)} trip=${safeStr(tripId)}`,
       );
@@ -21291,8 +21547,18 @@ async function syncScopedTrackingTripKpiBestEffort({
       (tripCompany && tripCompany !== recordScope.company_id)
     ) {
       console.log("[TRACKING_KPI_SYNC][SKIP_SCOPE] reason=trip_scope_mismatch");
+      await _trackingSyncBumpDebugCounterBestEffort(
+        env,
+        recordScope,
+        "scope_mismatch",
+        1,
+      );
       return;
     }
+    await _trackingSyncDeleteJsonBestEffort(
+      env,
+      _trackingSyncScopedPendingBookingKey(recordScope, resolvedBookingId),
+    );
 
     const normalizedStatus = normalizeCompliancePaymentStatus(
       rec?.payment_status ?? rec?.paymentStatus,
@@ -21370,23 +21636,29 @@ async function syncScopedTrackingTripKpiBestEffort({
       monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
         monthly_paid_rides_count: 0,
         monthly_income_cents: 0,
+        monthly_missing_amount_count: 0,
       };
       monthDeltas[prev.paid_month].monthly_paid_rides_count -= prev.monthly_paid_rides_count;
       monthDeltas[prev.paid_month].monthly_income_cents -= prev.monthly_income_cents;
+      monthDeltas[prev.paid_month].monthly_missing_amount_count -= prev.monthly_missing_amount_count;
     }
     if (next.paid_month && next.monthly_paid_rides_count > 0) {
       monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
         monthly_paid_rides_count: 0,
         monthly_income_cents: 0,
+        monthly_missing_amount_count: 0,
       };
       monthDeltas[next.paid_month].monthly_paid_rides_count += next.monthly_paid_rides_count;
       monthDeltas[next.paid_month].monthly_income_cents += next.monthly_income_cents;
+      monthDeltas[next.paid_month].monthly_missing_amount_count += next.monthly_missing_amount_count;
     }
 
     for (const [month, delta] of Object.entries(monthDeltas)) {
       if (
         !delta ||
-        (!delta.monthly_paid_rides_count && !delta.monthly_income_cents)
+        (!delta.monthly_paid_rides_count &&
+          !delta.monthly_income_cents &&
+          !delta.monthly_missing_amount_count)
       ) {
         continue;
       }
@@ -21397,6 +21669,9 @@ async function syncScopedTrackingTripKpiBestEffort({
         : 0;
       const currentIncome = Number.isFinite(Number(current.monthly_income_cents))
         ? Math.round(Number(current.monthly_income_cents))
+        : 0;
+      const currentMissingAmountCount = Number.isFinite(Number(current.monthly_missing_amount_count))
+        ? Math.round(Number(current.monthly_missing_amount_count))
         : 0;
       await _trackingSyncPutJson(env, monthKey, {
         month,
@@ -21409,8 +21684,21 @@ async function syncScopedTrackingTripKpiBestEffort({
           0,
           currentIncome + delta.monthly_income_cents,
         ),
+        monthly_missing_amount_count: Math.max(
+          0,
+          currentMissingAmountCount + delta.monthly_missing_amount_count,
+        ),
         updated_at: new Date().toISOString(),
       });
+    }
+
+    if (next.monthly_paid_rides_count > 0 && next.monthly_income_cents <= 0) {
+      await _trackingSyncBumpDebugCounterBestEffort(
+        env,
+        recordScope,
+        "missing_amount",
+        1,
+      );
     }
 
     await _trackingSyncPutJson(env, contribKey, {

@@ -530,6 +530,30 @@ function scopedDashboardTripContribKey(scope, tripId) {
   return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_contrib:${tripPart}:v1`;
 }
 
+function scopedDashboardTripPendingBookingKey(scope, bookingId) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const bookingPart = safeKeyPart(bookingId, 160);
+  if (!bookingPart) throw new Error("booking_id is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_pending_booking:${bookingPart}:v1`;
+}
+
+function scopedDashboardTripPendingBookingPrefix(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_pending_booking:`;
+}
+
+function scopedDashboardTripDebugKey(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_debug:v1`;
+}
+
+function scopedDashboardBookingFinanceMonthKey(scope, month) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  const monthPart = safeKeyPart(month, 16);
+  if (!monthPart) throw new Error("month is required");
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:booking_finance:month:${monthPart}:v1`;
+}
+
 function normalizeDashboardTripLifecycleStatus(value) {
   const raw = safeStr(value, 64);
   if (!raw) return "unknown";
@@ -625,6 +649,7 @@ function deriveDashboardTripKpiContribution(trip) {
     0;
 
   const monthlyPaid = completed && paid && !!paidMonth;
+  const missingAmount = monthlyPaid && amountCents <= 0;
   return {
     trip_id: tripId,
     completed_rides_count: completed ? 1 : 0,
@@ -632,6 +657,7 @@ function deriveDashboardTripKpiContribution(trip) {
     paid_month: monthlyPaid ? paidMonth : null,
     monthly_paid_rides_count: monthlyPaid ? 1 : 0,
     monthly_income_cents: monthlyPaid ? amountCents : 0,
+    monthly_missing_amount_count: missingAmount ? 1 : 0,
   };
 }
 
@@ -645,6 +671,9 @@ function _readDashboardContribShape(value, fallbackTripId = null) {
   const monthlyIncomeCents = Number.isFinite(Number(obj.monthly_income_cents))
     ? Math.round(Number(obj.monthly_income_cents))
     : 0;
+  const monthlyMissingAmountCount = Number.isFinite(Number(obj.monthly_missing_amount_count))
+    ? Math.max(0, Math.round(Number(obj.monthly_missing_amount_count)))
+    : 0;
   return {
     trip_id: tripId,
     completed_rides_count: completed,
@@ -652,12 +681,47 @@ function _readDashboardContribShape(value, fallbackTripId = null) {
     paid_month: paidMonth,
     monthly_paid_rides_count: monthlyPaidCount,
     monthly_income_cents: monthlyIncomeCents,
+    monthly_missing_amount_count: monthlyMissingAmountCount,
   };
+}
+
+async function _applyPendingBookingPaymentToTripBestEffort(env, scope, trip) {
+  try {
+    if (!env?.FLUXIDI_TRACKING || !trip || typeof trip !== "object") return trip;
+    const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+    if (!bookingId) return trip;
+    const markerKey = scopedDashboardTripPendingBookingKey(scope, bookingId);
+    const marker = await kvGetJson(env.FLUXIDI_TRACKING, markerKey);
+    if (!marker || typeof marker !== "object" || Array.isArray(marker)) return trip;
+    const markerPayment = normalizeCompliancePaymentStatus(marker?.payment_status);
+    if (markerPayment === "paid") {
+      trip.payment_status = "paid";
+      trip.paymentStatus = "paid";
+      const paidAt = safeStr(marker?.paid_at, 64);
+      if (paidAt) {
+        trip.paid_at = paidAt;
+        trip.paidAt = paidAt;
+      }
+      const amountCents = Number(marker?.payment_amount_cents);
+      if (Number.isFinite(amountCents)) {
+        const amount = Math.round(amountCents) / 100;
+        trip.payment_amount = amount;
+        trip.paymentAmount = amount;
+      }
+      const currency = safeStr(marker?.currency, 8).toUpperCase();
+      if (currency) trip.currency = currency;
+    }
+    await kvDel(env.FLUXIDI_TRACKING, markerKey);
+    return trip;
+  } catch (_) {
+    return trip;
+  }
 }
 
 async function materializeTripDashboardKpisBestEffort(env, scope, trip, sourceTag = "unknown") {
   try {
     if (!env?.FLUXIDI_TRACKING) return;
+    trip = await _applyPendingBookingPaymentToTripBestEffort(env, scope, trip);
     const nextRaw = deriveDashboardTripKpiContribution(trip);
     if (!nextRaw?.trip_id) return;
     const normalizedScope = normalizeScopedKeyScope(scope);
@@ -699,25 +763,31 @@ async function materializeTripDashboardKpisBestEffort(env, scope, trip, sourceTa
       monthDeltas[prev.paid_month] = monthDeltas[prev.paid_month] || {
         monthly_paid_rides_count: 0,
         monthly_income_cents: 0,
+        monthly_missing_amount_count: 0,
       };
       monthDeltas[prev.paid_month].monthly_paid_rides_count -=
         prev.monthly_paid_rides_count;
       monthDeltas[prev.paid_month].monthly_income_cents -= prev.monthly_income_cents;
+      monthDeltas[prev.paid_month].monthly_missing_amount_count -= prev.monthly_missing_amount_count;
     }
     if (next.paid_month && next.monthly_paid_rides_count > 0) {
       monthDeltas[next.paid_month] = monthDeltas[next.paid_month] || {
         monthly_paid_rides_count: 0,
         monthly_income_cents: 0,
+        monthly_missing_amount_count: 0,
       };
       monthDeltas[next.paid_month].monthly_paid_rides_count +=
         next.monthly_paid_rides_count;
       monthDeltas[next.paid_month].monthly_income_cents += next.monthly_income_cents;
+      monthDeltas[next.paid_month].monthly_missing_amount_count += next.monthly_missing_amount_count;
     }
 
     for (const [month, delta] of Object.entries(monthDeltas)) {
       if (
         !delta ||
-        (!delta.monthly_paid_rides_count && !delta.monthly_income_cents)
+        (!delta.monthly_paid_rides_count &&
+          !delta.monthly_income_cents &&
+          !delta.monthly_missing_amount_count)
       ) {
         continue;
       }
@@ -728,6 +798,9 @@ async function materializeTripDashboardKpisBestEffort(env, scope, trip, sourceTa
         : 0;
       const currentIncome = Number.isFinite(Number(current.monthly_income_cents))
         ? Math.round(Number(current.monthly_income_cents))
+        : 0;
+      const currentMissingAmountCount = Number.isFinite(Number(current.monthly_missing_amount_count))
+        ? Math.round(Number(current.monthly_missing_amount_count))
         : 0;
       await kvPutJson(
         env.FLUXIDI_TRACKING,
@@ -742,6 +815,10 @@ async function materializeTripDashboardKpisBestEffort(env, scope, trip, sourceTa
           monthly_income_cents: Math.max(
             0,
             currentIncome + delta.monthly_income_cents,
+          ),
+          monthly_missing_amount_count: Math.max(
+            0,
+            currentMissingAmountCount + delta.monthly_missing_amount_count,
           ),
           updated_at: nowIso(),
         },
@@ -1664,6 +1741,44 @@ async function handleHealth(req, env, origin) {
   );
 }
 
+async function _collectTripKpiPendingDiagnostics(env, scope) {
+  const out = {
+    trip_missing: 0,
+    paid_but_not_completed: 0,
+  };
+  try {
+    if (!env?.FLUXIDI_TRACKING || typeof env.FLUXIDI_TRACKING.list !== "function") {
+      return out;
+    }
+    const prefix = scopedDashboardTripPendingBookingPrefix(scope);
+    let cursor = undefined;
+    let scanned = 0;
+    const maxScan = 5000;
+    do {
+      const page = await env.FLUXIDI_TRACKING.list({ prefix, limit: 1000, cursor });
+      for (const keyMeta of page?.keys || []) {
+        if (scanned >= maxScan) break;
+        scanned += 1;
+        const key = safeStr(keyMeta?.name, 220);
+        if (!key) continue;
+        const marker = await kvGetJson(env.FLUXIDI_TRACKING, key);
+        if (!marker || typeof marker !== "object" || Array.isArray(marker)) continue;
+        const reason = safeStr(marker?.reason, 64).toLowerCase();
+        if (reason === "trip_missing") out.trip_missing += 1;
+        const paid = normalizeCompliancePaymentStatus(marker?.payment_status) === "paid";
+        const completed = marker?.completed === true;
+        if (paid && !completed) out.paid_but_not_completed += 1;
+      }
+      if (scanned >= maxScan) break;
+      cursor = page?.cursor;
+      if (page?.list_complete !== false) break;
+    } while (cursor);
+  } catch (_) {
+    // best effort only
+  }
+  return out;
+}
+
 async function handleDashboardTripKpis(req, url, env, origin) {
   requireAdmin(req, url, env);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, {
@@ -1690,6 +1805,15 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     env.FLUXIDI_TRACKING,
     scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
   )) ?? {};
+  const financeMonth = (await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth),
+  )) ?? {};
+  const debugCounters = (await kvGetJson(
+    env.FLUXIDI_TRACKING,
+    scopedDashboardTripDebugKey(normalizedScope),
+  )) ?? {};
+  const pendingDiagnostics = await _collectTripKpiPendingDiagnostics(env, normalizedScope);
   const completed = Number.isFinite(Number(global.completed_rides_count))
     ? Math.max(0, Math.round(Number(global.completed_rides_count)))
     : 0;
@@ -1701,6 +1825,24 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     : 0;
   const monthIncomeCents = Number.isFinite(Number(month.monthly_income_cents))
     ? Math.max(0, Math.round(Number(month.monthly_income_cents)))
+    : 0;
+  const monthMissingAmount = Number.isFinite(Number(month.monthly_missing_amount_count))
+    ? Math.max(0, Math.round(Number(month.monthly_missing_amount_count)))
+    : 0;
+  const monthBookingPaidCount = Number.isFinite(Number(financeMonth.monthly_paid_bookings_count))
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_paid_bookings_count)))
+    : 0;
+  const monthBookingPaidIncomeCents = Number.isFinite(Number(financeMonth.monthly_paid_bookings_income_cents))
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_paid_bookings_income_cents)))
+    : 0;
+  const monthCancelledPaidCents = Number.isFinite(Number(financeMonth.monthly_cancelled_paid_bookings_cents))
+    ? Math.max(0, Math.round(Number(financeMonth.monthly_cancelled_paid_bookings_cents)))
+    : 0;
+  const scopeMismatchCount = Number.isFinite(Number(debugCounters.scope_mismatch))
+    ? Math.max(0, Math.round(Number(debugCounters.scope_mismatch)))
+    : 0;
+  const missingAmountDebugCount = Number.isFinite(Number(debugCounters.missing_amount))
+    ? Math.max(0, Math.round(Number(debugCounters.missing_amount)))
     : 0;
   return withCors(
     json(
@@ -1716,6 +1858,19 @@ async function handleDashboardTripKpis(req, url, env, origin) {
         monthly_paid_rides_count: monthPaid,
         monthly_income_eur: monthIncomeCents / 100,
         monthly_income_cents: monthIncomeCents,
+        monthly_paid_bookings_count: monthBookingPaidCount,
+        monthly_paid_bookings_income_cents: monthBookingPaidIncomeCents,
+        monthly_paid_bookings_income_eur: monthBookingPaidIncomeCents / 100,
+        monthly_cancelled_paid_bookings_cents: monthCancelledPaidCents,
+        monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
+        diagnostics: {
+          trip_missing: pendingDiagnostics.trip_missing,
+          paid_but_not_completed: pendingDiagnostics.paid_but_not_completed,
+          completed_but_unpaid: unpaid,
+          completed_paid_contributed: monthPaid,
+          scope_mismatch: scopeMismatchCount,
+          missing_amount: Math.max(monthMissingAmount, missingAmountDebugCount),
+        },
         completeness: {
           level: "forward_aggregate",
           notes: [
