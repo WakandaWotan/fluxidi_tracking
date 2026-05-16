@@ -1391,6 +1391,13 @@ class RemoteComplianceEvent {
     required this.eventId,
     required this.eventType,
     required this.rideType,
+    required this.lifecycleStatus,
+    required this.status,
+    required this.bookingStatus,
+    required this.rideStatus,
+    required this.previousStatus,
+    required this.actorRole,
+    required this.source,
     required this.bookingId,
     required this.publicBookingReference,
     required this.planningReference,
@@ -1408,6 +1415,13 @@ class RemoteComplianceEvent {
   final String eventId;
   final String eventType;
   final String rideType;
+  final String lifecycleStatus;
+  final String status;
+  final String bookingStatus;
+  final String rideStatus;
+  final String previousStatus;
+  final String actorRole;
+  final String source;
   final String bookingId;
   final String publicBookingReference;
   final String planningReference;
@@ -1427,12 +1441,22 @@ class RemoteComplianceEvent {
     }
 
     String text(String key) => (json[key] ?? '').toString().trim();
+    final provenance = asMap(json['provenance']);
 
     return RemoteComplianceEvent(
       key: text('key'),
       eventId: text('event_id'),
       eventType: text('event_type'),
       rideType: text('ride_type'),
+      lifecycleStatus: text('lifecycle_status'),
+      status: text('status'),
+      bookingStatus: text('booking_status'),
+      rideStatus: text('ride_status'),
+      previousStatus: text('previous_status'),
+      actorRole: text('actor_role'),
+      source: text('source').isNotEmpty
+          ? text('source')
+          : ((provenance['source_endpoint'] ?? '').toString().trim()),
       bookingId: text('booking_id'),
       publicBookingReference: text('public_booking_reference').isNotEmpty
           ? text('public_booking_reference')
@@ -1457,7 +1481,7 @@ class RemoteComplianceEvent {
       timestamps: asMap(json['timestamps']),
       payment: asMap(json['payment']),
       fare: asMap(json['fare']),
-      provenance: asMap(json['provenance']),
+      provenance: provenance,
     );
   }
 }
@@ -1626,6 +1650,13 @@ class _RemoteComplianceEventsSectionState
 
   String _localizedEventTypeLabel(String raw) {
     switch (raw.trim().toLowerCase()) {
+      case 'booking_status_update':
+        return _t(
+          nl: 'Statusupdate',
+          en: 'Status update',
+          fr: 'Mise à jour du statut',
+          es: 'Actualización de estado',
+        );
       case 'payment_update':
         return _t(
           nl: 'Betalingsupdate',
@@ -2604,6 +2635,36 @@ class _RemoteComplianceEventsSectionState
   }
 
   String _localizedRideStatus(List<RemoteComplianceEvent> events) {
+    for (final event in [...events]..sort(_compareRemoteEventsNewestFirst)) {
+      final eventType = _normalizeToken(event.eventType);
+      if (eventType == 'booking_status_update') {
+        final statusTokens = <String>[
+          _normalizeToken(event.lifecycleStatus),
+          _normalizeToken(event.status),
+          _normalizeToken(event.bookingStatus),
+          _normalizeToken(event.rideStatus),
+        ];
+        if (statusTokens.contains('cancelled') || statusTokens.contains('canceled')) {
+          return _t(
+            nl: 'geannuleerd',
+            en: 'cancelled',
+            fr: 'annulée',
+            es: 'cancelado',
+          );
+        }
+        if (statusTokens.contains('completed')) {
+          return _t(
+            nl: 'afgerond',
+            en: 'completed',
+            fr: 'terminée',
+            es: 'finalizado',
+          );
+        }
+        if (statusTokens.contains('pending')) {
+          return _localizedUnknown();
+        }
+      }
+    }
     final hasRideStop = events.any(
       (event) => _normalizeToken(event.eventType) == 'ride_stop',
     );
@@ -2618,12 +2679,66 @@ class _RemoteComplianceEventsSectionState
     return _localizedUnknown();
   }
 
+  String _localizedActorRoleLabel(String raw) {
+    switch (_normalizeToken(raw)) {
+      case 'customer':
+        return _t(nl: 'klant', en: 'customer', fr: 'client', es: 'cliente');
+      case 'admin':
+        return _t(nl: 'beheer', en: 'admin', fr: 'admin', es: 'admin');
+      case 'driver':
+        return _t(nl: 'chauffeur', en: 'driver', fr: 'chauffeur', es: 'conductor');
+      case 'system':
+        return _t(nl: 'systeem', en: 'system', fr: 'système', es: 'sistema');
+      default:
+        return _localizedUnknown();
+    }
+  }
+
+  String _localizedAuditSourceLabel(String raw) {
+    final token = _normalizeToken(raw);
+    if (token == 'booking_status_update') {
+      return _t(
+        nl: 'statusupdate',
+        en: 'status update',
+        fr: 'mise à jour du statut',
+        es: 'actualización de estado',
+      );
+    }
+    if (token.contains('bookings') && token.contains('status')) {
+      return _t(
+        nl: 'boekingsstatus',
+        en: 'booking status',
+        fr: 'statut de réservation',
+        es: 'estado de reserva',
+      );
+    }
+    if (token.contains('track') && token.contains('booking') && token.contains('status')) {
+      return _t(
+        nl: 'boekingsstatus',
+        en: 'booking status',
+        fr: 'statut de réservation',
+        es: 'estado de reserva',
+      );
+    }
+    return _localizedUnknown();
+  }
+
   Widget _auditHistoryRow(
     RemoteComplianceEvent e,
     Map<String, RemoteComplianceEvent> latestPaymentUpdates,
   ) {
     final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
     final producer = _text(e.provenance['producer']);
+    final actorRole = _text(e.actorRole);
+    final statusToken = _normalizeToken(
+      e.lifecycleStatus.isNotEmpty
+          ? e.lifecycleStatus
+          : (e.status.isNotEmpty ? e.status : e.bookingStatus),
+    );
+    final eventTitle = _normalizeToken(e.eventType) == 'booking_status_update' &&
+            (statusToken == 'cancelled' || statusToken == 'canceled')
+        ? _t(nl: 'Annulatie', en: 'Cancellation', fr: 'Annulation', es: 'Cancelación')
+        : _localizedEventTypeLabel(e.eventType);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -2636,7 +2751,7 @@ class _RemoteComplianceEventsSectionState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${_localizedEventTypeLabel(e.eventType)} • ${_localizedRideTypeLabel(e.rideType)}',
+            '$eventTitle • ${_localizedRideTypeLabel(e.rideType)}',
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w700,
@@ -2678,6 +2793,16 @@ class _RemoteComplianceEventsSectionState
               if (producer.isNotEmpty)
                 _chip(
                   '${_t(nl: 'Aangemaakt door', en: 'Created by', fr: 'Créé par', es: 'Creado por')}: ${_localizedProducerLabel(producer)}',
+                ),
+              if (actorRole.isNotEmpty &&
+                  actorRole.toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Actor', en: 'Actor', fr: 'Acteur', es: 'Actor')}: ${_localizedActorRoleLabel(actorRole)}',
+                ),
+              if (_text(e.source).isNotEmpty &&
+                  _text(e.source).toLowerCase() != 'unknown')
+                _chip(
+                  '${_t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente')}: ${_localizedAuditSourceLabel(e.source)}',
                 ),
             ],
           ),

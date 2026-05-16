@@ -15963,6 +15963,7 @@ GET /oauth/callback
           }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const adminAuthorized = hasValidAdminToken(request, url, env);
+          const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           if (!adminAuthorized) {
             if (actorRole === "customer") {
               const proof = _requestCustomerContactProof({ url, body });
@@ -16001,6 +16002,10 @@ GET /oauth/callback
             body?.status,
             env,
             tenantScope,
+            {
+              actor_role: statusActorRole,
+              source_endpoint: "/bookings/:id/status",
+            },
           );
           return json(
             out,
@@ -16206,6 +16211,7 @@ GET /oauth/callback
         const { rec } = await loadBookingRecord(env, bookingId);
         const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
         const adminAuthorized = hasValidAdminToken(request, url, env);
+        const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
         if (!adminAuthorized) {
           if (actorRole === "customer") {
             const proof = _requestCustomerContactProof({ url, body });
@@ -16244,6 +16250,10 @@ GET /oauth/callback
           body?.status,
           env,
           tenantScope,
+          {
+            actor_role: statusActorRole,
+            source_endpoint: "/track/booking/status",
+          },
         );
         return json(
           out,
@@ -17582,6 +17592,116 @@ function buildBookingPaymentUpdateComplianceEvent(recordOrBooking, bookingId, pa
       source_endpoint: "/bookings/:id/payment",
       backend_confirmed: true,
       validation_state: "payment_update",
+    },
+  };
+}
+
+function buildBookingStatusUpdateComplianceEvent(
+  recordOrBooking,
+  bookingId,
+  {
+    newStatus = null,
+    previousStatus = null,
+    actorRole = "",
+    sourceEndpoint = "/bookings/:id/status",
+  } = {},
+) {
+  const rec = recordOrBooking && typeof recordOrBooking === "object" ? recordOrBooking : {};
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const normalizedStatus = _normLifecycleStatus(newStatus);
+  if (normalizedStatus !== "CANCELLED" && normalizedStatus !== "COMPLETED") {
+    return null;
+  }
+  const tenantId = safeStr(
+    rec?.tenant_id ??
+      rec?.tenantId ??
+      booking?.tenant_id ??
+      booking?.tenantId,
+  );
+  const companyId = safeStr(
+    rec?.company_id ??
+      rec?.companyId ??
+      booking?.company_id ??
+      booking?.companyId,
+  );
+  if (!tenantId || !companyId) {
+    console.log(
+      "[COMPLIANCE][SKIP_SCOPE] source=booking_status_update reason=missing_tenant_company_scope",
+    );
+    return null;
+  }
+  const newStatusLower = normalizedStatus.toLowerCase();
+  const previousStatusNorm = _normLifecycleStatus(previousStatus);
+  const previousStatusLower = previousStatusNorm ? previousStatusNorm.toLowerCase() : null;
+  const eventAt =
+    safeStr(
+      rec?.updatedAt ??
+        rec?.updated_at ??
+        booking?.updatedAt ??
+        booking?.updated_at,
+      64,
+    ) || new Date().toISOString();
+  const publicBookingReference = safeStr(
+    rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      rec?.public_reference ??
+      rec?.publicReference ??
+      booking?.public_booking_reference ??
+      booking?.publicBookingReference ??
+      booking?.booking_reference ??
+      booking?.bookingReference ??
+      booking?.public_reference ??
+      booking?.publicReference,
+    120,
+  );
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    rec?.payment_status ??
+      rec?.paymentStatus ??
+      booking?.payment_status ??
+      booking?.paymentStatus,
+  );
+  const eventActorRoleRaw = safeStr(actorRole, 32).toLowerCase();
+  const eventActorRole = ["customer", "admin", "driver", "system"].includes(eventActorRoleRaw)
+    ? eventActorRoleRaw
+    : "system";
+  return {
+    event_type: "booking_status_update",
+    tenant_id: tenantId,
+    company_id: companyId,
+    booking_id: safeStr(bookingId) || undefined,
+    public_booking_reference: publicBookingReference || undefined,
+    publicBookingReference: publicBookingReference || undefined,
+    booking_reference: publicBookingReference || undefined,
+    bookingReference: publicBookingReference || undefined,
+    public_reference: publicBookingReference || undefined,
+    publicReference: publicBookingReference || undefined,
+    ride_type: "planned",
+    lifecycle_status: newStatusLower,
+    status: newStatusLower,
+    booking_status: newStatusLower,
+    ride_status: newStatusLower,
+    previous_status: previousStatusLower || undefined,
+    actor_role: eventActorRole,
+    source: "booking_status_update",
+    sync_state: "not_configured",
+    timestamps: {
+      event_at_utc: eventAt,
+      status_updated_at_utc: eventAt,
+    },
+    payment: {
+      status: paymentStatus,
+      method: normalizeComplianceText(rec?.payment_method ?? rec?.paymentMethod ?? booking?.payment_method ?? booking?.paymentMethod),
+      source: normalizeComplianceText(rec?.payment_source ?? rec?.paymentSource ?? booking?.payment_source ?? booking?.paymentSource),
+      provider: normalizeComplianceText(rec?.payment_provider ?? rec?.paymentProvider ?? booking?.payment_provider ?? booking?.paymentProvider),
+      payment_id: safeStr(rec?.payment_id ?? rec?.paymentId ?? booking?.payment_id ?? booking?.paymentId) || undefined,
+    },
+    provenance: {
+      producer: "booking_worker",
+      source_endpoint: safeStr(sourceEndpoint, 64) || "/bookings/:id/status",
+      backend_confirmed: true,
+      validation_state: "status_update",
     },
   };
 }
@@ -28647,7 +28767,13 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
   }
 }
 
-async function updateBookingStatusAuthoritative(bookingId, status, env, tenantScope = null) {
+async function updateBookingStatusAuthoritative(
+  bookingId,
+  status,
+  env,
+  tenantScope = null,
+  options = {},
+) {
   if (!tenantScope?.hasScope) {
     return missingTenantScopeError();
   }
@@ -28659,6 +28785,12 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
   if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
   }
+  const previousStatusNormalized = _normLifecycleStatus(
+    rec?.status ??
+    rec?.stage ??
+    rec?.booking?.status ??
+    rec?.booking?.stage,
+  );
   const nowIso = new Date().toISOString();
   rec.status = normalized;
   rec.stage = normalized;
@@ -28695,9 +28827,33 @@ async function updateBookingStatusAuthoritative(bookingId, status, env, tenantSc
     }
   }
   if (normalized === "COMPLETED" || normalized === "CANCELLED") {
-    await cleanupBookingCalendarEvents(env, rec, tenantScope);
+    try {
+      await cleanupBookingCalendarEvents(env, rec, tenantScope);
+    } catch (calendarErr) {
+      console.log(
+        `[CALENDAR][CLEANUP][STATUS_UPDATE][ERROR] booking=${_bookingIntentMask(bookingId)} reason=${safeStr(calendarErr?.message || calendarErr, 120) || "unknown"}`,
+      );
+    }
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  try {
+    const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, bookingId, {
+      newStatus: normalized,
+      previousStatus: previousStatusNormalized,
+      actorRole: options?.actor_role,
+      sourceEndpoint: options?.source_endpoint || "/bookings/:id/status",
+    });
+    if (complianceEvent) {
+      emitComplianceEventBestEffort(env, complianceEvent, {
+        timeoutMs: 1500,
+        logLabel: "booking_status_update",
+      }).catch(() => {});
+    } else {
+      console.log("[COMPLIANCE_EMIT][booking_status_update] skipped reason=builder_null");
+    }
+  } catch (_) {
+    console.log("[COMPLIANCE_EMIT][booking_status_update] failed error=internal_error");
+  }
   if (isTerminalLifecycleStatus(normalized)) {
     await releaseAllocatorReservationForBooking({
       env,
