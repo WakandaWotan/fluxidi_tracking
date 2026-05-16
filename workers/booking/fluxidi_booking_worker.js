@@ -610,12 +610,28 @@ export class FleetAllocatorDO {
     const tier = String(body?.tier || "comfort").trim().toLowerCase();
     const pax = Number(body?.pax ?? 1);
     const bags = Number(body?.bags ?? 0);
+    const pickupAddress = safeStr(
+      body?.pickup_address ?? body?.pickup_from ?? body?.from ?? "",
+      240,
+    );
+    const pickupLat = Number(body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat);
+    const pickupLng = Number(body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng);
     if (!bookingId || !Number.isFinite(pickupMs)) {
       return this._json({ ok: false, error: "Invalid allocate request" }, 400);
     }
 
     const tenantScope = normalizeFleetTenantScope(body);
-    const req = { pickupMs, serviceMin, tier, pax, bags, tenantScope };
+    const req = {
+      pickupMs,
+      serviceMin,
+      tier,
+      pax,
+      bags,
+      pickup_address: pickupAddress,
+      pickup_lat: Number.isFinite(pickupLat) ? pickupLat : null,
+      pickup_lng: Number.isFinite(pickupLng) ? pickupLng : null,
+      tenantScope,
+    };
     const reservations = await this._loadReservations();
     let reservationsDirty = false;
 
@@ -727,6 +743,7 @@ export class FleetAllocatorDO {
       .filter((v) => !occupiedAssignedIds.has(v.vehicle_id))
       .sort((a, b) => String(a.vehicle_id).localeCompare(String(b.vehicle_id)));
     const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
+    const etaEvaluation = await _evaluateFleetAvailability(this.env, req);
     if (availableSlots <= 0 || freeVehicles.length === 0) {
       return this._json({
         ok: true,
@@ -738,8 +755,66 @@ export class FleetAllocatorDO {
         available_slots: Math.max(0, availableSlots),
       });
     }
+    if (!etaEvaluation?.would_allow_booking || !etaEvaluation?.next_vehicle_candidate?.vehicle_id) {
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: safeStr(etaEvaluation?.reason_code, 80) || "eta_not_feasible",
+        reason_code: safeStr(etaEvaluation?.reason_code, 80) || "eta_not_feasible",
+        block_reason: safeStr(etaEvaluation?.block_reason, 80) || "eta_not_feasible",
+        suitable_vehicle_count: suitableVehicles.length,
+        occupied_assigned_count: occupiedAssignedIds.size,
+        overlapping_unassigned_demand: overlappingUnassignedDemand,
+        available_slots: Math.max(0, availableSlots),
+        available_seconds: Number.isFinite(Number(etaEvaluation?.available_seconds))
+          ? Number(etaEvaluation.available_seconds)
+          : null,
+        required_seconds: Number.isFinite(Number(etaEvaluation?.required_seconds))
+          ? Number(etaEvaluation.required_seconds)
+          : null,
+        origin_travel_seconds: Number.isFinite(Number(etaEvaluation?.origin_travel_seconds))
+          ? Number(etaEvaluation.origin_travel_seconds)
+          : null,
+        required_buffer_seconds: Number.isFinite(Number(etaEvaluation?.required_buffer_seconds))
+          ? Number(etaEvaluation.required_buffer_seconds)
+          : null,
+        origin_source: safeStr(etaEvaluation?.origin_source, 80) || null,
+        origin_has_location:
+          typeof etaEvaluation?.origin_has_location === "boolean"
+            ? etaEvaluation.origin_has_location
+            : null,
+        pickup_has_location:
+          typeof etaEvaluation?.pickup_has_location === "boolean"
+            ? etaEvaluation.pickup_has_location
+            : null,
+        origin_address_preview: safeStr(etaEvaluation?.origin_address_preview, 80) || null,
+        pickup_address_preview: safeStr(etaEvaluation?.pickup_address_preview, 80) || null,
+        origin_age_seconds: Number.isFinite(Number(etaEvaluation?.origin_age_seconds))
+          ? Number(etaEvaluation.origin_age_seconds)
+          : null,
+        earliest_available_at_ms: Number.isFinite(Number(etaEvaluation?.earliest_available_at_ms))
+          ? Number(etaEvaluation.earliest_available_at_ms)
+          : null,
+        earliest_available_at: safeStr(etaEvaluation?.earliest_available_at, 80) || null,
+        route_failure_reason: safeStr(etaEvaluation?.route_failure_reason, 80) || null,
+      });
+    }
 
-    const chosen = freeVehicles[0];
+    const etaChosenVehicleId = safeStr(etaEvaluation?.next_vehicle_candidate?.vehicle_id, 120);
+    const chosen = freeVehicles.find((v) => v.vehicle_id === etaChosenVehicleId);
+    if (!chosen) {
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: "vehicle_capacity_exceeded",
+        reason_code: "vehicle_capacity_exceeded",
+        block_reason: "vehicle_capacity_exceeded",
+        suitable_vehicle_count: suitableVehicles.length,
+        occupied_assigned_count: occupiedAssignedIds.size,
+        overlapping_unassigned_demand: overlappingUnassignedDemand,
+        available_slots: Math.max(0, availableSlots),
+      });
+    }
     reservations[bookingId] = {
       vehicle_id: chosen.vehicle_id,
       pickup_ms: req.pickupMs,
@@ -7944,7 +8019,31 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       safeStr(body?.pickup_iso || body?.pickupIso) ||
       brusselsIsoFromDateTime(body?.date, body?.time);
     const pickupMsForAvailability = Date.parse(pickupIsoForAvailability);
-    if (quoteScope?.hasScope && Number.isFinite(pickupMsForAvailability)) {
+    if (quoteScope?.hasScope) {
+      if (!Number.isFinite(pickupMsForAvailability)) {
+        availability = {
+          checked: true,
+          available: false,
+          advisory: true,
+          reason: "missing_pickup_time",
+          reason_code: "missing_pickup_time",
+          block_reason: "missing_pickup_time",
+          availability_mode: availabilityMode,
+          available_seconds: null,
+          required_seconds: null,
+          origin_travel_seconds: null,
+          required_buffer_seconds: null,
+          origin_source: null,
+          origin_has_location: null,
+          pickup_has_location: null,
+          origin_address_preview: null,
+          pickup_address_preview: null,
+          origin_age_seconds: null,
+          earliest_available_at_ms: null,
+          earliest_available_at: null,
+          route_failure_reason: "missing_pickup_time",
+        };
+      } else {
       const fleetScope = normalizeFleetTenantScope(quoteScope);
       const quoteServiceMin = Math.max(
         30,
@@ -7964,6 +8063,11 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         tier,
         pax,
         bags,
+        from: body?.from,
+        pickup_from: body?.from,
+        pickup_address: body?.from,
+        pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
+        pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
         tenantScope: fleetScope,
       });
       const available = vehicleCapacity?.ok === true;
@@ -7971,15 +8075,51 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         checked: true,
         available,
         advisory: true,
-        reason: available
-          ? "vehicle_capacity_ok"
-          : (safeStr(vehicleCapacity?.reason, 64) || "vehicle_capacity_exceeded"),
+        reason: safeStr(vehicleCapacity?.reason_code, 80)
+          || safeStr(vehicleCapacity?.reason, 80)
+          || (available ? "vehicle_capacity_ok" : "vehicle_capacity_exceeded"),
+        reason_code: safeStr(vehicleCapacity?.reason_code, 80)
+          || safeStr(vehicleCapacity?.reason, 80)
+          || (available ? "vehicle_capacity_ok" : "vehicle_capacity_exceeded"),
+        block_reason: safeStr(vehicleCapacity?.block_reason, 80) || null,
         availability_mode: availabilityMode,
+        available_seconds: Number.isFinite(Number(vehicleCapacity?.available_seconds))
+          ? Number(vehicleCapacity.available_seconds)
+          : null,
+        required_seconds: Number.isFinite(Number(vehicleCapacity?.required_seconds))
+          ? Number(vehicleCapacity.required_seconds)
+          : null,
+        origin_travel_seconds: Number.isFinite(Number(vehicleCapacity?.origin_travel_seconds))
+          ? Number(vehicleCapacity.origin_travel_seconds)
+          : null,
+        required_buffer_seconds: Number.isFinite(Number(vehicleCapacity?.required_buffer_seconds))
+          ? Number(vehicleCapacity.required_buffer_seconds)
+          : null,
+        origin_source: safeStr(vehicleCapacity?.origin_source, 80) || null,
+        origin_has_location:
+          typeof vehicleCapacity?.origin_has_location === "boolean"
+            ? vehicleCapacity.origin_has_location
+            : null,
+        pickup_has_location:
+          typeof vehicleCapacity?.pickup_has_location === "boolean"
+            ? vehicleCapacity.pickup_has_location
+            : null,
+        origin_address_preview: safeStr(vehicleCapacity?.origin_address_preview, 80) || null,
+        pickup_address_preview: safeStr(vehicleCapacity?.pickup_address_preview, 80) || null,
+        origin_age_seconds: Number.isFinite(Number(vehicleCapacity?.origin_age_seconds))
+          ? Number(vehicleCapacity.origin_age_seconds)
+          : null,
+        earliest_available_at_ms: Number.isFinite(Number(vehicleCapacity?.earliest_available_at_ms))
+          ? Number(vehicleCapacity.earliest_available_at_ms)
+          : null,
+        earliest_available_at: safeStr(vehicleCapacity?.earliest_available_at, 80) || null,
+        route_failure_reason: safeStr(vehicleCapacity?.route_failure_reason, 80) || null,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
             ? vehicleCapacity
             : null,
       };
+      }
     }
   } catch (_) {
     availability = {
@@ -7990,7 +8130,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     };
   }
   console.log(
-    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"}`,
+    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
   );
 
   return {
@@ -18578,6 +18718,11 @@ async function handleBooking(payload, env, request) {
               tier,
               pax,
               bags,
+              from,
+              pickup_from: from,
+              pickup_address: from,
+              pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
+              pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
               tenantScope: fleetScope,
             });
             if (!alloc?.allowed) {
@@ -18591,8 +18736,27 @@ async function handleBooking(payload, env, request) {
                   reason: "vehicle_capacity",
                   availability_mode: availabilityMode,
                   allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
+                  reason_code: safeStr(alloc?.reason_code, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
+                  block_reason: safeStr(alloc?.block_reason, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
                   suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
                   available_slots: Number(alloc?.available_slots || 0),
+                  available_seconds: Number.isFinite(Number(alloc?.available_seconds)) ? Number(alloc.available_seconds) : null,
+                  required_seconds: Number.isFinite(Number(alloc?.required_seconds)) ? Number(alloc.required_seconds) : null,
+                  origin_travel_seconds: Number.isFinite(Number(alloc?.origin_travel_seconds)) ? Number(alloc.origin_travel_seconds) : null,
+                  required_buffer_seconds: Number.isFinite(Number(alloc?.required_buffer_seconds)) ? Number(alloc.required_buffer_seconds) : null,
+                  origin_source: safeStr(alloc?.origin_source, 80) || null,
+                  origin_has_location:
+                    typeof alloc?.origin_has_location === "boolean" ? alloc.origin_has_location : null,
+                  pickup_has_location:
+                    typeof alloc?.pickup_has_location === "boolean" ? alloc.pickup_has_location : null,
+                  origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
+                  pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
+                  origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
+                  earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
+                    ? Number(alloc.earliest_available_at_ms)
+                    : null,
+                  earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
+                  route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
                 },
               };
             }
@@ -18608,6 +18772,11 @@ async function handleBooking(payload, env, request) {
               tier,
               pax,
               bags,
+              from,
+              pickup_from: from,
+              pickup_address: from,
+              pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
+              pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
               tenantScope: fleetScope,
             });
             if (!vehicleCapacity.ok) {
@@ -19205,6 +19374,11 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tier,
           pax,
           bags,
+          from,
+          pickup_from: from,
+          pickup_address: from,
+          pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
+          pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
           tenantScope: fleetScope,
         });
         if (!alloc?.allowed) {
@@ -19218,8 +19392,27 @@ Retour route: ${return_from || to} → ${return_to || from}`,
               reason: "vehicle_capacity",
               availability_mode: availabilityMode,
               allocator_reason: alloc?.reason || "vehicle_capacity_exceeded",
+              reason_code: safeStr(alloc?.reason_code, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
+              block_reason: safeStr(alloc?.block_reason, 80) || safeStr(alloc?.reason, 80) || "vehicle_capacity_exceeded",
               suitable_vehicle_count: Number(alloc?.suitable_vehicle_count || 0),
               available_slots: Number(alloc?.available_slots || 0),
+              available_seconds: Number.isFinite(Number(alloc?.available_seconds)) ? Number(alloc.available_seconds) : null,
+              required_seconds: Number.isFinite(Number(alloc?.required_seconds)) ? Number(alloc.required_seconds) : null,
+              origin_travel_seconds: Number.isFinite(Number(alloc?.origin_travel_seconds)) ? Number(alloc.origin_travel_seconds) : null,
+              required_buffer_seconds: Number.isFinite(Number(alloc?.required_buffer_seconds)) ? Number(alloc.required_buffer_seconds) : null,
+              origin_source: safeStr(alloc?.origin_source, 80) || null,
+              origin_has_location:
+                typeof alloc?.origin_has_location === "boolean" ? alloc.origin_has_location : null,
+              pickup_has_location:
+                typeof alloc?.pickup_has_location === "boolean" ? alloc.pickup_has_location : null,
+              origin_address_preview: safeStr(alloc?.origin_address_preview, 80) || null,
+              pickup_address_preview: safeStr(alloc?.pickup_address_preview, 80) || null,
+              origin_age_seconds: Number.isFinite(Number(alloc?.origin_age_seconds)) ? Number(alloc.origin_age_seconds) : null,
+              earliest_available_at_ms: Number.isFinite(Number(alloc?.earliest_available_at_ms))
+                ? Number(alloc.earliest_available_at_ms)
+                : null,
+              earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
+              route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
             },
           };
         }
@@ -19235,6 +19428,11 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tier,
           pax,
           bags,
+          from,
+          pickup_from: from,
+          pickup_address: from,
+          pickup_lat: body?.pickup_lat ?? body?.pickupLat ?? body?.from_lat ?? body?.fromLat,
+          pickup_lng: body?.pickup_lng ?? body?.pickupLng ?? body?.from_lng ?? body?.fromLng,
           tenantScope: fleetScope,
         });
         if (!vehicleCapacity.ok) {
@@ -24297,6 +24495,13 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
   const normalizedScope = normalizeFleetTenantScope(scope);
   const tenantId = _scopeText(raw.tenant_id ?? raw.tenantId) || normalizedScope.tenant_id || "";
   const companyId = _scopeText(raw.company_id ?? raw.companyId) || normalizedScope.company_id || tenantId;
+  const currentLat = Number(raw.current_lat ?? raw.currentLat ?? Number.NaN);
+  const currentLng = Number(raw.current_lng ?? raw.currentLng ?? Number.NaN);
+  const currentAddress = sanitizeTenantString(raw.current_address ?? raw.currentAddress, 240);
+  const currentAtMs = Number(raw.current_at_ms ?? raw.currentAtMs ?? raw.at_ms ?? Number.NaN);
+  const baseLat = Number(raw.base_lat ?? raw.baseLat ?? Number.NaN);
+  const baseLng = Number(raw.base_lng ?? raw.baseLng ?? Number.NaN);
+  const baseAddress = sanitizeTenantString(raw.base_address ?? raw.baseAddress, 240);
   return {
     vehicle_id: vehicleId,
     vehicleId: vehicleId,
@@ -24368,6 +24573,48 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
           vehiclePhotoUrl: vehiclePhotoUrl,
         }
       : {}),
+    ...(Number.isFinite(currentLat)
+      ? {
+          current_lat: currentLat,
+          currentLat: currentLat,
+        }
+      : {}),
+    ...(Number.isFinite(currentLng)
+      ? {
+          current_lng: currentLng,
+          currentLng: currentLng,
+        }
+      : {}),
+    ...(currentAddress
+      ? {
+          current_address: currentAddress,
+          currentAddress: currentAddress,
+        }
+      : {}),
+    ...(Number.isFinite(currentAtMs)
+      ? {
+          current_at_ms: currentAtMs,
+          currentAtMs: currentAtMs,
+        }
+      : {}),
+    ...(Number.isFinite(baseLat)
+      ? {
+          base_lat: baseLat,
+          baseLat: baseLat,
+        }
+      : {}),
+    ...(Number.isFinite(baseLng)
+      ? {
+          base_lng: baseLng,
+          baseLng: baseLng,
+        }
+      : {}),
+    ...(baseAddress
+      ? {
+          base_address: baseAddress,
+          baseAddress: baseAddress,
+        }
+      : {}),
     tenant_id: tenantId,
     company_id: companyId,
     tenantId: tenantId,
@@ -24420,6 +24667,176 @@ function _windowsOverlap(aStartMs, aDurMin, bStartMs, bDurMin) {
   const aEnd = aStartMs + Math.max(1, Number(aDurMin) || 1) * 60000;
   const bEnd = bStartMs + Math.max(1, Number(bDurMin) || 1) * 60000;
   return aStartMs < bEnd && bStartMs < aEnd;
+}
+
+function _locationPointFromAny(raw = {}) {
+  if (!raw || typeof raw !== "object") return null;
+  const lat = Number(
+    raw.lat ??
+    raw.latitude ??
+    raw.pickup_lat ??
+    raw.pickupLat ??
+    raw.dropoff_lat ??
+    raw.dropoffLat ??
+    raw.current_lat ??
+    raw.currentLat ??
+    raw.base_lat ??
+    raw.baseLat,
+  );
+  const lng = Number(
+    raw.lng ??
+    raw.lon ??
+    raw.longitude ??
+    raw.pickup_lng ??
+    raw.pickupLng ??
+    raw.dropoff_lng ??
+    raw.dropoffLng ??
+    raw.current_lng ??
+    raw.currentLng ??
+    raw.base_lng ??
+    raw.baseLng,
+  );
+  const address = safeStr(
+    raw.address ??
+    raw.pickup_address ??
+    raw.pickupAddress ??
+    raw.dropoff_address ??
+    raw.dropoffAddress ??
+    raw.current_address ??
+    raw.currentAddress ??
+    raw.base_address ??
+    raw.baseAddress ??
+    raw.from ??
+    raw.to ??
+    "",
+    240,
+  );
+  const point = {
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+    address: address || "",
+  };
+  if ((point.lat == null || point.lng == null) && !point.address) return null;
+  return point;
+}
+
+function _isUsableLocationPoint(point) {
+  if (!point || typeof point !== "object") return false;
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return true;
+  return !!safeStr(point.address, 240);
+}
+
+function _pointToRouteText(point) {
+  if (!_isUsableLocationPoint(point)) return "";
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return `${lat},${lng}`;
+  return safeStr(point.address, 240);
+}
+
+function _allocatorAddressPreviewMasked(value, maxLen = 64) {
+  const raw = safeStr(value, 240);
+  if (!raw) return "";
+  const masked = raw.replace(/[A-Za-z0-9]/g, "*");
+  if (masked.length <= maxLen) return masked;
+  return `${masked.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function _allocatorOriginRequiredHorizonSeconds(env) {
+  return Math.max(
+    300,
+    Math.min(
+      24 * 3600,
+      Number(env?.ALLOCATOR_ORIGIN_REQUIRED_HORIZON_SECONDS) || 2 * 3600,
+    ),
+  );
+}
+
+function _allocatorOriginMaxAgeSeconds(env) {
+  return Math.max(
+    60,
+    Math.min(30 * 24 * 3600, Number(env?.ALLOCATOR_ORIGIN_MAX_AGE_SECONDS) || 6 * 3600),
+  );
+}
+
+function _earliestAvailabilityFieldsFromBaseline(baselineMs, requiredSeconds) {
+  const baseMs = Number(baselineMs);
+  const reqSeconds = Math.max(0, Number(requiredSeconds) || 0);
+  if (!Number.isFinite(baseMs)) {
+    return { earliest_available_at_ms: null, earliest_available_at: null };
+  }
+  const earliestMs = baseMs + reqSeconds * 1000;
+  return {
+    earliest_available_at_ms: Number.isFinite(earliestMs) ? earliestMs : null,
+    earliest_available_at: Number.isFinite(earliestMs)
+      ? new Date(earliestMs).toISOString()
+      : null,
+  };
+}
+
+async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
+  const originHasLocation = _isUsableLocationPoint(fromPoint);
+  const pickupHasLocation = _isUsableLocationPoint(toPoint);
+  const fromText = _pointToRouteText(fromPoint);
+  const toText = _pointToRouteText(toPoint);
+  if (!fromText || !toText) {
+    return {
+      ok: false,
+      reason_code: "missing_vehicle_origin_location",
+      route_failure_reason: !originHasLocation
+        ? "missing_origin_location"
+        : (!pickupHasLocation ? "missing_pickup_location" : "missing_route_input"),
+      origin_has_location: originHasLocation,
+      pickup_has_location: pickupHasLocation,
+      origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
+      pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+    };
+  }
+  try {
+    const out = await routeFromTextsWithStopsDetailed({
+      fromText,
+      toText,
+      stopsTexts: [],
+      token: env.MAPBOX_TOKEN,
+    });
+    const sec = Number(out?.route?.duration || 0);
+    if (!Number.isFinite(sec) || sec <= 0) {
+      return {
+        ok: false,
+        reason_code: "origin_eta_not_feasible",
+        route_failure_reason: "no_route",
+        origin_has_location: originHasLocation,
+        pickup_has_location: pickupHasLocation,
+        origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
+        pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+      };
+    }
+    return {
+      ok: true,
+      travel_seconds: Math.round(sec),
+      route_failure_reason: null,
+      origin_has_location: originHasLocation,
+      pickup_has_location: pickupHasLocation,
+      origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
+      pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+    };
+  } catch (e) {
+    const msg = safeStr(e?.message || e, 160).toLowerCase();
+    const routeFailureReason = msg.includes("timeout") || msg.includes("abort")
+      ? "timeout"
+      : "route_error";
+    return {
+      ok: false,
+      reason_code: "origin_eta_not_feasible",
+      route_failure_reason: routeFailureReason,
+      origin_has_location: originHasLocation,
+      pickup_has_location: pickupHasLocation,
+      origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
+      pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+    };
+  }
 }
 
 function _bookingDemandFromRecord(rec, env) {
@@ -24485,13 +24902,231 @@ function _bookingDemandFromRecord(rec, env) {
     30,
     Math.round(durationTotalMin + waitMin + Math.max(0, stopHandlingMin) + Math.max(0, postBufferMin)),
   );
+  const pickupPoint = _locationPointFromAny({
+    lat:
+      _pick(rec, ["booking", "pickup_lat"], null) ??
+      _pick(rec, ["booking", "pickupLat"], null) ??
+      _pick(rec, ["quote", "pickup_lat"], null) ??
+      _pick(rec, ["quote", "pickupLat"], null),
+    lng:
+      _pick(rec, ["booking", "pickup_lng"], null) ??
+      _pick(rec, ["booking", "pickupLng"], null) ??
+      _pick(rec, ["quote", "pickup_lng"], null) ??
+      _pick(rec, ["quote", "pickupLng"], null),
+    address:
+      _pick(rec, ["booking", "from"], null) ??
+      _pick(rec, ["quote", "from"], null),
+  });
+  const dropoffPoint = _locationPointFromAny({
+    lat:
+      _pick(rec, ["booking", "dropoff_lat"], null) ??
+      _pick(rec, ["booking", "dropoffLat"], null) ??
+      _pick(rec, ["quote", "dropoff_lat"], null) ??
+      _pick(rec, ["quote", "dropoffLat"], null),
+    lng:
+      _pick(rec, ["booking", "dropoff_lng"], null) ??
+      _pick(rec, ["booking", "dropoffLng"], null) ??
+      _pick(rec, ["quote", "dropoff_lng"], null) ??
+      _pick(rec, ["quote", "dropoffLng"], null),
+    address:
+      _pick(rec, ["booking", "to"], null) ??
+      _pick(rec, ["quote", "to"], null),
+  });
+  const explicitDropoffMs = Number(
+    _pick(rec, ["booking", "dropoff_at_ms"], null) ??
+    _pick(rec, ["booking", "dropoffAtMs"], null) ??
+    _pick(rec, ["booking", "dropoff_at"], null) ??
+    _pick(rec, ["booking", "dropoffAt"], null) ??
+    Number.NaN,
+  );
+  const routeDurationSeconds = Math.max(
+    0,
+    Math.round(durationMainMin * 60),
+  );
+  const dropoffAtMs = Number.isFinite(explicitDropoffMs)
+    ? explicitDropoffMs
+    : (Number.isFinite(pickupMs) ? pickupMs + routeDurationSeconds * 1000 : Number.NaN);
   return {
     pickupMs,
+    pickupAtMs: pickupMs,
     tier,
     pax,
     bags,
     serviceMin,
+    routeDurationSeconds,
+    dropoffAtMs: Number.isFinite(dropoffAtMs) ? dropoffAtMs : Number.NaN,
+    pickupPoint,
+    dropoffPoint,
   };
+}
+
+function _demandDropoffTiming(demand) {
+  const pickupAtMs = Number(demand?.pickupAtMs ?? demand?.pickupMs);
+  const dropoffAtMs = Number(demand?.dropoffAtMs);
+  const routeDurationSeconds = Math.max(0, Number(demand?.routeDurationSeconds) || 0);
+  if (Number.isFinite(dropoffAtMs)) {
+    return { dropoffAtMs, routeDurationSeconds, hasOperationalTiming: true };
+  }
+  if (Number.isFinite(pickupAtMs) && routeDurationSeconds > 0) {
+    return {
+      dropoffAtMs: pickupAtMs + routeDurationSeconds * 1000,
+      routeDurationSeconds,
+      hasOperationalTiming: true,
+    };
+  }
+  return { dropoffAtMs: Number.NaN, routeDurationSeconds: 0, hasOperationalTiming: false };
+}
+
+function _validPreviousReservationForCandidate(previousDemand, candidateDemand, env, vehicleId = "") {
+  if (!previousDemand || typeof previousDemand !== "object") {
+    return { valid: false, reason_code: "missing_previous_reservation" };
+  }
+  const prevVehicleId = safeStr(previousDemand?.assigned_vehicle_id || previousDemand?.vehicle_id, 120);
+  const wantedVehicleId = safeStr(vehicleId, 120);
+  if (wantedVehicleId && prevVehicleId && prevVehicleId !== wantedVehicleId) {
+    return { valid: false, reason_code: "previous_vehicle_mismatch" };
+  }
+  const prevPickupAtMs = Number(previousDemand?.pickupAtMs ?? previousDemand?.pickupMs);
+  const candidatePickupAtMs = Number(candidateDemand?.pickupAtMs ?? candidateDemand?.pickupMs);
+  if (!Number.isFinite(prevPickupAtMs)) {
+    return { valid: false, reason_code: "previous_missing_pickup_time" };
+  }
+  if (!Number.isFinite(candidatePickupAtMs)) {
+    return { valid: false, reason_code: "missing_pickup_time" };
+  }
+  const timing = _demandDropoffTiming(previousDemand);
+  if (!timing.hasOperationalTiming || !Number.isFinite(timing.dropoffAtMs)) {
+    return { valid: false, reason_code: "previous_missing_route_or_dropoff" };
+  }
+  if (!_isUsableLocationPoint(previousDemand?.dropoffPoint)) {
+    return { valid: false, reason_code: "previous_missing_dropoff_location" };
+  }
+  if (timing.dropoffAtMs >= candidatePickupAtMs) {
+    return { valid: false, reason_code: "previous_not_before_candidate" };
+  }
+  const relevanceWindowSeconds = Math.max(
+    1800,
+    Math.min(7 * 24 * 3600, Number(env?.ALLOCATOR_PREVIOUS_RELEVANCE_SECONDS) || 24 * 3600),
+  );
+  const ageSeconds = Math.round((candidatePickupAtMs - timing.dropoffAtMs) / 1000);
+  if (!Number.isFinite(ageSeconds) || ageSeconds > relevanceWindowSeconds) {
+    return { valid: false, reason_code: "previous_stale_for_candidate" };
+  }
+  return {
+    valid: true,
+    reason_code: "previous_chain_used",
+    dropoffAtMs: timing.dropoffAtMs,
+    dropoffPoint: previousDemand.dropoffPoint,
+  };
+}
+
+async function _readTrackingOriginForVehicle(env, vehicleId) {
+  if (!env?.FLUXIDI_TRACKING) return null;
+  const wantedVehicleId = safeStr(vehicleId, 120);
+  if (!wantedVehicleId) return null;
+  const candidates = [
+    `vehicle:${wantedVehicleId}:last_ping`,
+    `vehicle:${wantedVehicleId}:last`,
+    `vehicle_last:${wantedVehicleId}`,
+    `tracking:vehicle:${wantedVehicleId}:last`,
+  ];
+  for (const key of candidates) {
+    let obj = await env.FLUXIDI_TRACKING.get(key, "json");
+    if (!obj) {
+      try {
+        const raw = await env.FLUXIDI_TRACKING.get(key);
+        obj = raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        obj = null;
+      }
+    }
+    if (!obj || typeof obj !== "object") continue;
+    const point = _locationPointFromAny(obj);
+    if (!_isUsableLocationPoint(point)) continue;
+    const atMs = Number(obj.at_ms ?? obj.timestamp_ms ?? obj.ts_ms ?? obj.updated_at_ms ?? Date.NaN);
+    return {
+      point,
+      at_ms: Number.isFinite(atMs) ? atMs : Number.NaN,
+      source: "tracking_last_ping",
+    };
+  }
+  return null;
+}
+
+async function _deriveVehicleOrigin(env, vehicle, vehicleDemands, candidatePickupMs, options = {}) {
+  const tenantScope = normalizeFleetTenantScope(options?.tenantScope ?? null);
+  const allowStale = options?.allowStale === true;
+  const trackingOrigin = await _readTrackingOriginForVehicle(env, vehicle?.vehicle_id);
+  const maxOriginAgeSeconds = _allocatorOriginMaxAgeSeconds(env);
+  if (trackingOrigin && _isUsableLocationPoint(trackingOrigin.point)) {
+    const ageSeconds = Number.isFinite(trackingOrigin.at_ms)
+      ? Math.max(0, Math.round((candidatePickupMs - trackingOrigin.at_ms) / 1000))
+      : 0;
+    if (!Number.isFinite(ageSeconds) || ageSeconds <= maxOriginAgeSeconds || allowStale) {
+      return { ...trackingOrigin, age_seconds: Number.isFinite(ageSeconds) ? ageSeconds : null };
+    }
+  }
+  const lastDemand = [...(vehicleDemands || [])]
+    .sort((a, b) => Number(a?.pickupAtMs ?? a?.pickupMs ?? 0) - Number(b?.pickupAtMs ?? b?.pickupMs ?? 0))
+    .pop();
+  if (lastDemand && _isUsableLocationPoint(lastDemand.dropoffPoint)) {
+    const timing = _demandDropoffTiming(lastDemand);
+    const ageSeconds = Number.isFinite(timing.dropoffAtMs)
+      ? Math.max(0, Math.round((candidatePickupMs - timing.dropoffAtMs) / 1000))
+      : null;
+    if (ageSeconds == null || ageSeconds <= maxOriginAgeSeconds || allowStale) {
+      return {
+        point: lastDemand.dropoffPoint,
+        at_ms: Number.isFinite(timing.dropoffAtMs) ? timing.dropoffAtMs : Number.NaN,
+        source: "last_completed_dropoff",
+        age_seconds: ageSeconds,
+      };
+    }
+  }
+  const vehiclePoint = _locationPointFromAny({
+    current_lat: vehicle?.current_lat ?? vehicle?.currentLat,
+    current_lng: vehicle?.current_lng ?? vehicle?.currentLng,
+    current_address: vehicle?.current_address ?? vehicle?.currentAddress,
+    base_lat: vehicle?.base_lat ?? vehicle?.baseLat,
+    base_lng: vehicle?.base_lng ?? vehicle?.baseLng,
+    base_address: vehicle?.base_address ?? vehicle?.baseAddress,
+  });
+  if (_isUsableLocationPoint(vehiclePoint)) {
+    return { point: vehiclePoint, at_ms: Number.NaN, source: "vehicle_inventory" };
+  }
+  if (tenantScope?.hasScope) {
+    try {
+      const businessProfile = await loadBusinessProfile(env, tenantScope, {
+        allowTenantLegacyFallback: false,
+      });
+      const companyBaseAddress = [
+        safeStr(businessProfile?.address, 240),
+        safeStr(businessProfile?.postcode, 40),
+        safeStr(businessProfile?.city, 120),
+        safeStr(businessProfile?.country, 80),
+      ].filter((part) => part.length > 0).join(", ");
+      const companyBasePoint = _locationPointFromAny({
+        lat:
+          Number(businessProfile?.base_lat ?? businessProfile?.baseLat ?? Number.NaN),
+        lng:
+          Number(businessProfile?.base_lng ?? businessProfile?.baseLng ?? Number.NaN),
+        address:
+          safeStr(businessProfile?.base_address ?? businessProfile?.baseAddress, 240) ||
+          companyBaseAddress,
+      });
+      if (_isUsableLocationPoint(companyBasePoint)) {
+        return {
+          point: companyBasePoint,
+          at_ms: Number.NaN,
+          source: "company_business_base",
+          age_seconds: null,
+        };
+      }
+    } catch (_) {
+      // Best-effort fallback only.
+    }
+  }
+  return null;
 }
 
 function _availabilityMode(env) {
@@ -24517,23 +25152,64 @@ async function _vehicleCapacityGateForRequest(env, req) {
       overlapping_demand_count: 0,
       available_slots: 0,
       needed_slots: 1,
+      reason_code: "no_suitable_vehicle",
+      block_reason: "no_suitable_vehicle",
     };
   }
 
-  const assignment = await _pickVehicleAssignmentForRequest(env, {
+  const evaluation = await _evaluateFleetAvailability(env, {
     ...req,
     tenantScope: fleetScope,
   });
+  const assignment = {
+    vehicle_id: evaluation?.next_vehicle_candidate?.vehicle_id || null,
+    assigned_driver: evaluation?.next_vehicle_candidate?.assigned_driver || null,
+    suitable_vehicle_count: Number(evaluation?.suitable_vehicle_count || 0),
+    overlapping_demand_count:
+      Number(evaluation?.occupied_assigned_vehicle_ids?.length || 0) +
+      Number(evaluation?.overlapping_unassigned_demand || 0),
+    available_slots: Number(evaluation?.available_slots || 0),
+    needed_slots: 1,
+  };
   const availableSlots = Number(assignment?.available_slots ?? 0);
   const overlappingDemand = Number(assignment?.overlapping_demand_count ?? 0);
   if (availableSlots <= 0) {
     return {
       ok: false,
-      reason: "vehicle_capacity_exceeded",
+      reason: safeStr(evaluation?.reason_code, 80) || "vehicle_capacity_exceeded",
       suitable_vehicle_count: suitableVehicles.length,
       overlapping_demand_count: overlappingDemand,
       available_slots: Math.max(0, availableSlots),
       needed_slots: 1,
+      reason_code: safeStr(evaluation?.reason_code, 80) || "vehicle_capacity_exceeded",
+      block_reason: safeStr(evaluation?.block_reason, 80) || "vehicle_capacity_exceeded",
+      available_seconds: Number.isFinite(Number(evaluation?.available_seconds))
+        ? Number(evaluation.available_seconds)
+        : null,
+      required_seconds: Number.isFinite(Number(evaluation?.required_seconds))
+        ? Number(evaluation.required_seconds)
+        : null,
+      origin_travel_seconds: Number.isFinite(Number(evaluation?.origin_travel_seconds))
+        ? Number(evaluation.origin_travel_seconds)
+        : null,
+      required_buffer_seconds: Number.isFinite(Number(evaluation?.required_buffer_seconds))
+        ? Number(evaluation.required_buffer_seconds)
+        : null,
+      origin_source: safeStr(evaluation?.origin_source, 80) || null,
+      origin_has_location:
+        typeof evaluation?.origin_has_location === "boolean" ? evaluation.origin_has_location : null,
+      pickup_has_location:
+        typeof evaluation?.pickup_has_location === "boolean" ? evaluation.pickup_has_location : null,
+      origin_address_preview: safeStr(evaluation?.origin_address_preview, 80) || null,
+      pickup_address_preview: safeStr(evaluation?.pickup_address_preview, 80) || null,
+      origin_age_seconds: Number.isFinite(Number(evaluation?.origin_age_seconds))
+        ? Number(evaluation.origin_age_seconds)
+        : null,
+      earliest_available_at_ms: Number.isFinite(Number(evaluation?.earliest_available_at_ms))
+        ? Number(evaluation.earliest_available_at_ms)
+        : null,
+      earliest_available_at: safeStr(evaluation?.earliest_available_at, 80) || null,
+      route_failure_reason: safeStr(evaluation?.route_failure_reason, 80) || null,
     };
   }
 
@@ -24543,6 +25219,38 @@ async function _vehicleCapacityGateForRequest(env, req) {
     overlapping_demand_count: overlappingDemand,
     available_slots: availableSlots,
     needed_slots: 1,
+    reason: "vehicle_capacity_ok",
+    reason_code: "vehicle_capacity_ok",
+    block_reason: null,
+    available_seconds: Number.isFinite(Number(evaluation?.available_seconds))
+      ? Number(evaluation.available_seconds)
+      : null,
+    required_seconds: Number.isFinite(Number(evaluation?.required_seconds))
+      ? Number(evaluation.required_seconds)
+      : null,
+    origin_travel_seconds: Number.isFinite(Number(evaluation?.origin_travel_seconds))
+      ? Number(evaluation.origin_travel_seconds)
+      : null,
+    required_buffer_seconds: Number.isFinite(Number(evaluation?.required_buffer_seconds))
+      ? Number(evaluation.required_buffer_seconds)
+      : null,
+    origin_source: safeStr(evaluation?.origin_source, 80) || null,
+    origin_has_location:
+      typeof evaluation?.origin_has_location === "boolean" ? evaluation.origin_has_location : null,
+    pickup_has_location:
+      typeof evaluation?.pickup_has_location === "boolean" ? evaluation.pickup_has_location : null,
+    origin_address_preview: safeStr(evaluation?.origin_address_preview, 80) || null,
+    pickup_address_preview: safeStr(evaluation?.pickup_address_preview, 80) || null,
+    origin_age_seconds: Number.isFinite(Number(evaluation?.origin_age_seconds))
+      ? Number(evaluation.origin_age_seconds)
+      : null,
+    earliest_available_at_ms: Number.isFinite(Number(evaluation?.earliest_available_at_ms))
+      ? Number(evaluation.earliest_available_at_ms)
+      : null,
+    earliest_available_at: safeStr(evaluation?.earliest_available_at, 80) || null,
+    route_failure_reason: safeStr(evaluation?.route_failure_reason, 80) || null,
+    vehicle_id: assignment?.vehicle_id || null,
+    assigned_driver: assignment?.assigned_driver || null,
   };
 }
 
@@ -24590,6 +25298,87 @@ async function _evaluateFleetAvailability(env, req) {
   const serviceMin = Math.max(1, Number(req?.serviceMin) || 1);
   const pickupEndMs =
     Number.isFinite(pickupMs) ? pickupMs + serviceMin * 60000 : Number.NaN;
+  const pickupPoint = _locationPointFromAny({
+    lat: req?.pickup_lat ?? req?.pickupLat,
+    lng: req?.pickup_lng ?? req?.pickupLng,
+    address: req?.pickup_address ?? req?.pickupAddress ?? req?.pickup_from ?? req?.pickupFrom ?? req?.from,
+  });
+  const nowMs = Date.now();
+  if (!Number.isFinite(pickupMs)) {
+    return {
+      request: {
+        tier: req?.tier ?? null,
+        pax: req?.pax ?? null,
+        bags: req?.bags ?? null,
+        pickup_ms: null,
+        pickup_window_end_ms: null,
+        service_min: serviceMin,
+      },
+      suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
+      overlapping_actionable_bookings: [],
+      occupied_assigned_vehicle_ids: [],
+      overlapping_unassigned_demand: 0,
+      suitable_vehicle_count: suitableVehicles.length,
+      free_vehicle_count: suitableVehicles.length,
+      available_slots: 0,
+      would_allow_booking: false,
+      next_vehicle_candidate: null,
+      block_reason: "missing_pickup_time",
+      reason: "missing_pickup_time",
+      reason_code: "missing_pickup_time",
+      available_seconds: null,
+      required_seconds: null,
+      origin_travel_seconds: null,
+      required_buffer_seconds: null,
+      origin_source: null,
+      origin_has_location: null,
+      pickup_has_location: null,
+      origin_address_preview: null,
+      pickup_address_preview: null,
+      origin_age_seconds: null,
+      earliest_available_at_ms: null,
+      earliest_available_at: null,
+      route_failure_reason: "missing_pickup_time",
+    };
+  }
+  if (pickupMs <= nowMs) {
+    const earliest = _earliestAvailabilityFieldsFromBaseline(nowMs, 0);
+    return {
+      request: {
+        tier: req?.tier ?? null,
+        pax: req?.pax ?? null,
+        bags: req?.bags ?? null,
+        pickup_ms: pickupMs,
+        pickup_window_end_ms: Number.isFinite(pickupEndMs) ? pickupEndMs : null,
+        service_min: serviceMin,
+      },
+      suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
+      overlapping_actionable_bookings: [],
+      occupied_assigned_vehicle_ids: [],
+      overlapping_unassigned_demand: 0,
+      suitable_vehicle_count: suitableVehicles.length,
+      free_vehicle_count: suitableVehicles.length,
+      available_slots: 0,
+      would_allow_booking: false,
+      next_vehicle_candidate: null,
+      block_reason: "pickup_time_in_past",
+      reason: "pickup_time_in_past",
+      reason_code: "pickup_time_in_past",
+      available_seconds: 0,
+      required_seconds: 0,
+      origin_travel_seconds: 0,
+      required_buffer_seconds: 0,
+      origin_source: null,
+      origin_has_location: null,
+      pickup_has_location: null,
+      origin_address_preview: null,
+      pickup_address_preview: null,
+      origin_age_seconds: null,
+      earliest_available_at_ms: earliest.earliest_available_at_ms,
+      earliest_available_at: earliest.earliest_available_at,
+      route_failure_reason: "pickup_time_in_past",
+    };
+  }
 
   if (suitableVehicles.length === 0) {
     return {
@@ -24611,6 +25400,21 @@ async function _evaluateFleetAvailability(env, req) {
       would_allow_booking: false,
       next_vehicle_candidate: null,
       block_reason: "no_suitable_vehicle",
+      reason: "no_suitable_vehicle",
+      reason_code: "no_suitable_vehicle",
+      available_seconds: null,
+      required_seconds: null,
+      origin_travel_seconds: null,
+      required_buffer_seconds: null,
+      origin_source: null,
+      origin_has_location: null,
+      pickup_has_location: null,
+      origin_address_preview: null,
+      pickup_address_preview: null,
+      origin_age_seconds: null,
+      earliest_available_at_ms: null,
+      earliest_available_at: null,
+      route_failure_reason: "no_suitable_vehicle",
     };
   }
 
@@ -24619,6 +25423,7 @@ async function _evaluateFleetAvailability(env, req) {
   const occupiedAssignedIds = new Set();
   let overlappingUnassignedDemand = 0;
   const overlappingBookings = [];
+  const vehicleDemands = new Map();
 
   for (const k of listed?.keys || []) {
     const key = String(k?.name || "");
@@ -24631,10 +25436,20 @@ async function _evaluateFleetAvailability(env, req) {
 
     const d = _bookingDemandFromRecord(rec, env);
     if (!Number.isFinite(d.pickupMs)) continue;
+    const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
+    if (assignedVehicleId) {
+      const demandWithVehicle = {
+        ...d,
+        assigned_vehicle_id: assignedVehicleId,
+        booking_id: key.slice("booking:".length) || null,
+      };
+      const arr = vehicleDemands.get(assignedVehicleId) || [];
+      arr.push(demandWithVehicle);
+      vehicleDemands.set(assignedVehicleId, arr);
+    }
     if (!_windowsOverlap(pickupMs, serviceMin, d.pickupMs, d.serviceMin)) continue;
     const bookingId = key.slice("booking:".length);
     const demandEndMs = d.pickupMs + Math.max(1, Number(d.serviceMin) || 1) * 60000;
-    const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
     if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
       occupiedAssignedIds.add(assignedVehicleId);
       overlappingBookings.push({
@@ -24675,12 +25490,192 @@ async function _evaluateFleetAvailability(env, req) {
     String(a.vehicle_id).localeCompare(String(b.vehicle_id)),
   );
   const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
-  const nextVehicle = availableSlots > 0 && freeVehicles.length
-    ? {
-        vehicle_id: freeVehicles[0].vehicle_id,
-        assigned_driver: _assignedDriverFromVehicle(freeVehicles[0]),
+  const etaFailures = [];
+  let nextVehicle = null;
+  const nearFuture = (pickupMs - nowMs) <= _allocatorOriginRequiredHorizonSeconds(env) * 1000;
+  const requiredBufferSeconds = Math.max(0, getTravelGapMin(env || {}) * 60);
+  if (availableSlots > 0 && freeVehicles.length > 0) {
+    for (const vehicle of freeVehicles) {
+      const vehicleId = String(vehicle?.vehicle_id || "").trim();
+      if (!vehicleId) continue;
+      const demands = [...(vehicleDemands.get(vehicleId) || [])]
+        .filter((d) => Number.isFinite(Number(d?.pickupAtMs ?? d?.pickupMs)))
+        .sort((a, b) => Number(a.pickupAtMs ?? a.pickupMs) - Number(b.pickupAtMs ?? b.pickupMs));
+      const previous = [...demands]
+        .filter((d) => Number(_demandDropoffTiming(d).dropoffAtMs) < pickupMs)
+        .sort((a, b) => Number(_demandDropoffTiming(b).dropoffAtMs) - Number(_demandDropoffTiming(a).dropoffAtMs))[0] || null;
+      const candidateDemand = { pickupAtMs: pickupMs, pickupMs, pickupPoint };
+      const previousValidity = _validPreviousReservationForCandidate(previous, candidateDemand, env, vehicleId);
+      if (previousValidity.valid) {
+        const previousDropoffMs = Number(previousValidity.dropoffAtMs);
+        const travel = await _computeRoadTravelSecondsBetweenPoints(
+          env,
+          previousValidity.dropoffPoint,
+          pickupPoint,
+        );
+        if (!travel.ok) {
+          etaFailures.push({
+            vehicle_id: vehicleId,
+            reason_code: "eta_not_feasible",
+            block_reason: "eta_not_feasible",
+            available_seconds: null,
+            required_seconds: null,
+            origin_travel_seconds: null,
+            required_buffer_seconds: requiredBufferSeconds,
+            origin_source: "previous_reservation_dropoff",
+            origin_has_location: _isUsableLocationPoint(previousValidity.dropoffPoint),
+            pickup_has_location: _isUsableLocationPoint(pickupPoint),
+            origin_address_preview: _allocatorAddressPreviewMasked(previousValidity?.dropoffPoint?.address),
+            pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+            origin_age_seconds: Math.max(0, Math.round((pickupMs - previousDropoffMs) / 1000)),
+            earliest_available_at_ms: null,
+            earliest_available_at: null,
+            route_failure_reason: safeStr(travel?.route_failure_reason, 64) || "route_error",
+          });
+          continue;
+        }
+        const availableSeconds = Math.max(0, Math.round((pickupMs - previousDropoffMs) / 1000));
+        const requiredSeconds = Math.max(0, Number(travel.travel_seconds || 0)) + requiredBufferSeconds;
+        if (availableSeconds < requiredSeconds) {
+          const earliest = _earliestAvailabilityFieldsFromBaseline(previousDropoffMs, requiredSeconds);
+          etaFailures.push({
+            vehicle_id: vehicleId,
+            reason_code: "pickup_buffer_too_short",
+            block_reason: "pickup_buffer_too_short",
+            available_seconds: availableSeconds,
+            required_seconds: requiredSeconds,
+            origin_travel_seconds: Number(travel.travel_seconds || 0),
+            required_buffer_seconds: requiredBufferSeconds,
+            origin_source: "previous_reservation_dropoff",
+            origin_has_location: _isUsableLocationPoint(previousValidity.dropoffPoint),
+            pickup_has_location: _isUsableLocationPoint(pickupPoint),
+            origin_address_preview: _allocatorAddressPreviewMasked(previousValidity?.dropoffPoint?.address),
+            pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+            origin_age_seconds: availableSeconds,
+            earliest_available_at_ms: earliest.earliest_available_at_ms,
+            earliest_available_at: earliest.earliest_available_at,
+            route_failure_reason: null,
+          });
+          continue;
+        }
+        nextVehicle = {
+          vehicle_id: vehicleId,
+          assigned_driver: _assignedDriverFromVehicle(vehicle),
+          reason_code: "vehicle_capacity_ok",
+          reason: "vehicle_capacity_ok",
+          block_reason: null,
+          available_seconds: availableSeconds,
+          required_seconds: requiredSeconds,
+          origin_travel_seconds: Number(travel.travel_seconds || 0),
+          required_buffer_seconds: requiredBufferSeconds,
+          origin_source: "previous_reservation_dropoff",
+          origin_has_location: _isUsableLocationPoint(previousValidity.dropoffPoint),
+          pickup_has_location: _isUsableLocationPoint(pickupPoint),
+          origin_address_preview: _allocatorAddressPreviewMasked(previousValidity?.dropoffPoint?.address),
+          pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+          origin_age_seconds: availableSeconds,
+          earliest_available_at_ms: null,
+          earliest_available_at: null,
+          route_failure_reason: null,
+        };
+        break;
       }
-    : null;
+      const origin = await _deriveVehicleOrigin(env, vehicle, demands, pickupMs, {
+        tenantScope: fleetScope,
+        allowStale: !nearFuture,
+      });
+      if (!origin || !_isUsableLocationPoint(origin.point)) {
+        etaFailures.push({
+          vehicle_id: vehicleId,
+          reason_code: "missing_vehicle_origin_location",
+          block_reason: "missing_vehicle_origin_location",
+          available_seconds: null,
+          required_seconds: null,
+          origin_travel_seconds: null,
+          required_buffer_seconds: requiredBufferSeconds,
+          origin_source: null,
+          origin_has_location: false,
+          pickup_has_location: _isUsableLocationPoint(pickupPoint),
+          origin_address_preview: null,
+          pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+          origin_age_seconds: null,
+          earliest_available_at_ms: null,
+          earliest_available_at: null,
+          route_failure_reason: "missing_origin_location",
+        });
+        continue;
+      }
+      const travel = await _computeRoadTravelSecondsBetweenPoints(env, origin.point, pickupPoint);
+      if (!travel.ok) {
+        etaFailures.push({
+          vehicle_id: vehicleId,
+          reason_code: "origin_eta_not_feasible",
+          block_reason: "origin_eta_not_feasible",
+          origin_source: origin.source || null,
+          origin_has_location: _isUsableLocationPoint(origin.point),
+          pickup_has_location: _isUsableLocationPoint(pickupPoint),
+          origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
+          pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+          origin_age_seconds: Number.isFinite(origin.age_seconds) ? origin.age_seconds : null,
+          available_seconds: null,
+          required_seconds: null,
+          origin_travel_seconds: null,
+          required_buffer_seconds: requiredBufferSeconds,
+          earliest_available_at_ms: null,
+          earliest_available_at: null,
+          route_failure_reason: safeStr(travel?.route_failure_reason, 64) || "route_error",
+        });
+        continue;
+      }
+      const baselineMs = Number.isFinite(origin.at_ms) ? Number(origin.at_ms) : nowMs;
+      const availableSeconds = Math.max(0, Math.round((pickupMs - baselineMs) / 1000));
+      const requiredSeconds = Math.max(0, Number(travel.travel_seconds || 0)) + requiredBufferSeconds;
+      if (availableSeconds < requiredSeconds) {
+        const earliest = _earliestAvailabilityFieldsFromBaseline(baselineMs, requiredSeconds);
+        etaFailures.push({
+          vehicle_id: vehicleId,
+          reason_code: "vehicle_cannot_reach_pickup_in_time",
+          block_reason: "vehicle_cannot_reach_pickup_in_time",
+          origin_source: origin.source || null,
+          origin_has_location: _isUsableLocationPoint(origin.point),
+          pickup_has_location: _isUsableLocationPoint(pickupPoint),
+          origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
+          pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+          origin_age_seconds: Number.isFinite(origin.age_seconds) ? origin.age_seconds : null,
+          available_seconds: availableSeconds,
+          required_seconds: requiredSeconds,
+          origin_travel_seconds: Number(travel.travel_seconds || 0),
+          required_buffer_seconds: requiredBufferSeconds,
+          earliest_available_at_ms: earliest.earliest_available_at_ms,
+          earliest_available_at: earliest.earliest_available_at,
+          route_failure_reason: null,
+        });
+        continue;
+      }
+      nextVehicle = {
+        vehicle_id: vehicleId,
+        assigned_driver: _assignedDriverFromVehicle(vehicle),
+        reason_code: "vehicle_capacity_ok",
+        reason: "vehicle_capacity_ok",
+        block_reason: null,
+        origin_source: origin.source || null,
+        origin_has_location: _isUsableLocationPoint(origin.point),
+        pickup_has_location: _isUsableLocationPoint(pickupPoint),
+        origin_address_preview: _allocatorAddressPreviewMasked(origin?.point?.address),
+        pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+        origin_age_seconds: Number.isFinite(origin.age_seconds) ? origin.age_seconds : null,
+        available_seconds: availableSeconds,
+        required_seconds: requiredSeconds,
+        origin_travel_seconds: Number(travel.travel_seconds || 0),
+        required_buffer_seconds: requiredBufferSeconds,
+        earliest_available_at_ms: null,
+        earliest_available_at: null,
+        route_failure_reason: null,
+      };
+      break;
+    }
+  }
+  const topEtaFailure = etaFailures[0] || null;
 
   return {
     request: {
@@ -24697,10 +25692,33 @@ async function _evaluateFleetAvailability(env, req) {
     overlapping_unassigned_demand: overlappingUnassignedDemand,
     suitable_vehicle_count: suitableVehicles.length,
     free_vehicle_count: freeVehicles.length,
-    available_slots: Math.max(0, availableSlots),
-    would_allow_booking: availableSlots > 0,
+    available_slots: nextVehicle ? Math.max(1, availableSlots) : 0,
+    would_allow_booking: !!nextVehicle,
     next_vehicle_candidate: nextVehicle,
-    block_reason: availableSlots > 0 ? null : "vehicle_capacity_exceeded",
+    block_reason: nextVehicle
+      ? null
+      : (topEtaFailure?.block_reason || (availableSlots > 0 ? "eta_not_feasible" : "vehicle_capacity_exceeded")),
+    reason: nextVehicle
+      ? (nextVehicle.reason || "vehicle_capacity_ok")
+      : (topEtaFailure?.reason_code || (availableSlots > 0 ? "eta_not_feasible" : "vehicle_capacity_exceeded")),
+    reason_code: nextVehicle
+      ? (nextVehicle.reason_code || "vehicle_capacity_ok")
+      : (topEtaFailure?.reason_code || (availableSlots > 0 ? "eta_not_feasible" : "vehicle_capacity_exceeded")),
+    available_seconds: topEtaFailure?.available_seconds ?? nextVehicle?.available_seconds ?? null,
+    required_seconds: topEtaFailure?.required_seconds ?? nextVehicle?.required_seconds ?? null,
+    origin_travel_seconds: topEtaFailure?.origin_travel_seconds ?? nextVehicle?.origin_travel_seconds ?? null,
+    required_buffer_seconds: topEtaFailure?.required_buffer_seconds ?? nextVehicle?.required_buffer_seconds ?? null,
+    origin_source: topEtaFailure?.origin_source ?? nextVehicle?.origin_source ?? null,
+    origin_has_location: topEtaFailure?.origin_has_location ?? nextVehicle?.origin_has_location ?? null,
+    pickup_has_location: topEtaFailure?.pickup_has_location ?? nextVehicle?.pickup_has_location ?? null,
+    origin_address_preview: topEtaFailure?.origin_address_preview ?? nextVehicle?.origin_address_preview ?? null,
+    pickup_address_preview: topEtaFailure?.pickup_address_preview ?? nextVehicle?.pickup_address_preview ?? null,
+    origin_age_seconds: topEtaFailure?.origin_age_seconds ?? nextVehicle?.origin_age_seconds ?? null,
+    earliest_available_at_ms:
+      topEtaFailure?.earliest_available_at_ms ?? nextVehicle?.earliest_available_at_ms ?? null,
+    earliest_available_at:
+      topEtaFailure?.earliest_available_at ?? nextVehicle?.earliest_available_at ?? null,
+    route_failure_reason: topEtaFailure?.route_failure_reason ?? nextVehicle?.route_failure_reason ?? null,
   };
 }
 
