@@ -843,6 +843,20 @@ export class FleetAllocatorDO {
           typeof etaEvaluation?.route_used_geocode_fallback === "boolean"
             ? etaEvaluation.route_used_geocode_fallback
             : null,
+        route_retry_reason: safeStr(etaEvaluation?.route_retry_reason, 80) || null,
+        route_retry_used:
+          typeof etaEvaluation?.route_retry_used === "boolean" ? etaEvaluation.route_retry_used : null,
+        route_retry_success:
+          typeof etaEvaluation?.route_retry_success === "boolean" ? etaEvaluation.route_retry_success : null,
+        route_retry_http_status: Number.isFinite(Number(etaEvaluation?.route_retry_http_status))
+          ? Number(etaEvaluation.route_retry_http_status)
+          : null,
+        route_retry_error_code: safeStr(etaEvaluation?.route_retry_error_code, 80) || null,
+        route_retry_error_message: safeStr(etaEvaluation?.route_retry_error_message, 180) || null,
+        route_retry_duration_seconds_raw:
+          Number.isFinite(Number(etaEvaluation?.route_retry_duration_seconds_raw))
+            ? Number(etaEvaluation.route_retry_duration_seconds_raw)
+            : null,
       });
     }
 
@@ -8220,6 +8234,20 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           typeof vehicleCapacity?.route_used_geocode_fallback === "boolean"
             ? vehicleCapacity.route_used_geocode_fallback
             : null,
+        route_retry_reason: safeStr(vehicleCapacity?.route_retry_reason, 80) || null,
+        route_retry_used:
+          typeof vehicleCapacity?.route_retry_used === "boolean" ? vehicleCapacity.route_retry_used : null,
+        route_retry_success:
+          typeof vehicleCapacity?.route_retry_success === "boolean" ? vehicleCapacity.route_retry_success : null,
+        route_retry_http_status: Number.isFinite(Number(vehicleCapacity?.route_retry_http_status))
+          ? Number(vehicleCapacity.route_retry_http_status)
+          : null,
+        route_retry_error_code: safeStr(vehicleCapacity?.route_retry_error_code, 80) || null,
+        route_retry_error_message: safeStr(vehicleCapacity?.route_retry_error_message, 180) || null,
+        route_retry_duration_seconds_raw:
+          Number.isFinite(Number(vehicleCapacity?.route_retry_duration_seconds_raw))
+            ? Number(vehicleCapacity.route_retry_duration_seconds_raw)
+            : null,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
             ? vehicleCapacity
@@ -8236,7 +8264,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     };
   }
   console.log(
-    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
+    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} route_retry_reason=${safeStr(availability.route_retry_reason, 64) || "-"} route_retry_used=${availability.route_retry_used === true ? "true" : availability.route_retry_used === false ? "false" : "null"} route_retry_success=${availability.route_retry_success === true ? "true" : availability.route_retry_success === false ? "false" : "null"} route_retry_http_status=${Number.isFinite(Number(availability.route_retry_http_status)) ? Number(availability.route_retry_http_status) : -1} route_retry_error_code=${safeStr(availability.route_retry_error_code, 64) || "-"} route_retry_error_message=${safeStr(availability.route_retry_error_message, 64) || "-"} route_retry_duration_seconds_raw=${Number.isFinite(Number(availability.route_retry_duration_seconds_raw)) ? Number(availability.route_retry_duration_seconds_raw) : -1} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
   );
 
   return {
@@ -18901,6 +18929,20 @@ async function handleBooking(payload, env, request) {
                     typeof alloc?.route_used_geocode_fallback === "boolean"
                       ? alloc.route_used_geocode_fallback
                       : null,
+                  route_retry_reason: safeStr(alloc?.route_retry_reason, 80) || null,
+                  route_retry_used:
+                    typeof alloc?.route_retry_used === "boolean" ? alloc.route_retry_used : null,
+                  route_retry_success:
+                    typeof alloc?.route_retry_success === "boolean" ? alloc.route_retry_success : null,
+                  route_retry_http_status: Number.isFinite(Number(alloc?.route_retry_http_status))
+                    ? Number(alloc.route_retry_http_status)
+                    : null,
+                  route_retry_error_code: safeStr(alloc?.route_retry_error_code, 80) || null,
+                  route_retry_error_message: safeStr(alloc?.route_retry_error_message, 180) || null,
+                  route_retry_duration_seconds_raw:
+                    Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
+                      ? Number(alloc.route_retry_duration_seconds_raw)
+                      : null,
                 },
               };
             }
@@ -19594,6 +19636,20 @@ Retour route: ${return_from || to} → ${return_to || from}`,
               route_used_geocode_fallback:
                 typeof alloc?.route_used_geocode_fallback === "boolean"
                   ? alloc.route_used_geocode_fallback
+                  : null,
+              route_retry_reason: safeStr(alloc?.route_retry_reason, 80) || null,
+              route_retry_used:
+                typeof alloc?.route_retry_used === "boolean" ? alloc.route_retry_used : null,
+              route_retry_success:
+                typeof alloc?.route_retry_success === "boolean" ? alloc.route_retry_success : null,
+              route_retry_http_status: Number.isFinite(Number(alloc?.route_retry_http_status))
+                ? Number(alloc.route_retry_http_status)
+                : null,
+              route_retry_error_code: safeStr(alloc?.route_retry_error_code, 80) || null,
+              route_retry_error_message: safeStr(alloc?.route_retry_error_message, 180) || null,
+              route_retry_duration_seconds_raw:
+                Number.isFinite(Number(alloc?.route_retry_duration_seconds_raw))
+                  ? Number(alloc.route_retry_duration_seconds_raw)
                   : null,
             },
           };
@@ -21475,13 +21531,17 @@ function readExplicitCoordinatePair(body, prefix) {
 
 async function geocodeText(query, token) { return geocode(query, token); }
 
-async function directionsMulti(coords, token) {
+async function directionsMulti(coords, token, options = {}) {
   if (!token) throw new Error("Missing MAPBOX_TOKEN in Worker secrets");
   if (!coords || coords.length < 2) throw new Error("Need at least 2 coordinates for directions");
 
   const path = coords.map(c => `${c.lng},${c.lat}`).join(";");
   const profile = "mapbox/driving";
-  const u = `https://api.mapbox.com/directions/v5/${profile}/${path}?overview=false&access_token=${token}`;
+  const radiuses = String(options?.radiuses || "").trim();
+  const radiusPart = radiuses
+    ? `&radiuses=${encodeURIComponent(radiuses)}`
+    : "";
+  const u = `https://api.mapbox.com/directions/v5/${profile}/${path}?overview=false${radiusPart}&access_token=${token}`;
 
   let r;
   try {
@@ -21538,6 +21598,7 @@ async function directionsMulti(coords, token) {
       route_error_code: null,
       route_error_message: null,
       route_profile: profile,
+      route_radiuses: radiuses || null,
       route_duration_seconds_raw: Number(primary?.duration),
       route_response_has_routes: true,
       route_response_routes_count: routes.length,
@@ -25086,6 +25147,15 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
   const canUseCoordinateDirect = !!(originCoords && pickupCoords);
   const fromText = _pointToRouteText(fromPoint);
   const toText = _pointToRouteText(toPoint);
+  const defaultRetryDiag = {
+    route_retry_reason: null,
+    route_retry_used: false,
+    route_retry_success: null,
+    route_retry_http_status: null,
+    route_retry_error_code: null,
+    route_retry_error_message: null,
+    route_retry_duration_seconds_raw: null,
+  };
   if (!fromText || !toText) {
     return {
       ok: false,
@@ -25113,8 +25183,60 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       route_response_has_duration: false,
       route_used_coordinate_direct: false,
       route_used_geocode_fallback: false,
+      ...defaultRetryDiag,
     };
   }
+  const _formatTravelResult = (payload = {}) => ({
+    origin_has_location: originHasLocation,
+    pickup_has_location: pickupHasLocation,
+    origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
+    pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+    route_origin_lat_ok: originDiag.lat_ok,
+    route_origin_lng_ok: originDiag.lng_ok,
+    route_pickup_lat_ok: pickupDiag.lat_ok,
+    route_pickup_lng_ok: pickupDiag.lng_ok,
+    route_origin_latlng_preview: originDiag.latlng_preview,
+    route_pickup_latlng_preview: pickupDiag.latlng_preview,
+    route_profile: "mapbox/driving",
+    route_used_coordinate_direct: canUseCoordinateDirect,
+    route_used_geocode_fallback: !canUseCoordinateDirect,
+    ...defaultRetryDiag,
+    ...payload,
+  });
+  const _isNoSegment = (errorCode, errorMessage) => {
+    const code = safeStr(errorCode, 80).toLowerCase();
+    const msg = safeStr(errorMessage, 180).toLowerCase();
+    return code === "nosegment" || msg.includes("matching segment");
+  };
+  const _routeDiagFromResolved = (routeResolved, fallback = {}) => {
+    const diag = routeResolved?._diagnostics && typeof routeResolved._diagnostics === "object"
+      ? routeResolved._diagnostics
+      : fallback;
+    return {
+      route_http_status: Number(diag?.route_http_status) || 200,
+      route_error_message: _sanitizeRouteErrorMessage(diag?.route_error_message, 180) || null,
+      route_error_code: safeStr(diag?.route_error_code, 80) || null,
+      route_profile: safeStr(diag?.route_profile, 80) || "mapbox/driving",
+      route_duration_seconds_raw: Number.isFinite(Number(routeResolved?.duration))
+        ? Number(routeResolved.duration)
+        : null,
+      route_response_has_routes: diag?.route_response_has_routes === true,
+      route_response_routes_count: Number(diag?.route_response_routes_count || 0),
+      route_response_has_duration: diag?.route_response_has_duration === true,
+    };
+  };
+  const _routeDiagFromError = (errorObj) => ({
+    route_http_status: Number.isFinite(Number(errorObj?.route_http_status))
+      ? Number(errorObj.route_http_status)
+      : null,
+    route_error_message: _sanitizeRouteErrorMessage(errorObj?.route_error_message || errorObj?.message || errorObj, 180) || "route_error",
+    route_error_code: safeStr(errorObj?.route_error_code, 80) || "route_error",
+    route_profile: safeStr(errorObj?.route_profile, 80) || "mapbox/driving",
+    route_duration_seconds_raw: null,
+    route_response_has_routes: errorObj?.route_response_has_routes === true,
+    route_response_routes_count: Number(errorObj?.route_response_routes_count || 0),
+    route_response_has_duration: false,
+  });
   try {
     const routeResolved = canUseCoordinateDirect
       ? await directionsMulti(
@@ -25130,95 +25252,97 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
           stopsTexts: [],
           token: env.MAPBOX_TOKEN,
         })).route;
-    const effectiveRouteDiag = routeResolved?._diagnostics && typeof routeResolved._diagnostics === "object"
-      ? routeResolved._diagnostics
-      : {};
-    const secRaw = Number(routeResolved?.duration);
-    const sec = Number.isFinite(secRaw) ? secRaw : 0;
+    const primaryDiag = _routeDiagFromResolved(routeResolved);
+    const sec = Number(primaryDiag.route_duration_seconds_raw || 0);
     if (!Number.isFinite(sec) || sec <= 0) {
-      return {
+      return _formatTravelResult({
         ok: false,
         reason_code: "origin_eta_not_feasible",
         route_failure_reason: "no_route",
-        origin_has_location: originHasLocation,
-        pickup_has_location: pickupHasLocation,
-        origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
-        pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
-        route_http_status: Number(effectiveRouteDiag?.route_http_status) || 200,
-        route_error_message: _sanitizeRouteErrorMessage(effectiveRouteDiag?.route_error_message, 180) || null,
-        route_error_code: safeStr(effectiveRouteDiag?.route_error_code, 80) || "no_route",
-        route_profile: safeStr(effectiveRouteDiag?.route_profile, 80) || "mapbox/driving",
-        route_origin_lat_ok: originDiag.lat_ok,
-        route_origin_lng_ok: originDiag.lng_ok,
-        route_pickup_lat_ok: pickupDiag.lat_ok,
-        route_pickup_lng_ok: pickupDiag.lng_ok,
-        route_origin_latlng_preview: originDiag.latlng_preview,
-        route_pickup_latlng_preview: pickupDiag.latlng_preview,
-        route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
-        route_response_has_routes: effectiveRouteDiag?.route_response_has_routes === true,
-        route_response_routes_count: Number(effectiveRouteDiag?.route_response_routes_count || 0),
-        route_response_has_duration: effectiveRouteDiag?.route_response_has_duration === true,
-        route_used_coordinate_direct: canUseCoordinateDirect,
-        route_used_geocode_fallback: !canUseCoordinateDirect,
-      };
+        ...primaryDiag,
+      });
     }
-    return {
+    return _formatTravelResult({
       ok: true,
       travel_seconds: Math.round(sec),
       route_failure_reason: null,
-      origin_has_location: originHasLocation,
-      pickup_has_location: pickupHasLocation,
-      origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
-      pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
-      route_http_status: Number(effectiveRouteDiag?.route_http_status) || 200,
-      route_error_message: _sanitizeRouteErrorMessage(effectiveRouteDiag?.route_error_message, 180) || null,
-      route_error_code: safeStr(effectiveRouteDiag?.route_error_code, 80) || null,
-      route_profile: safeStr(effectiveRouteDiag?.route_profile, 80) || "mapbox/driving",
-      route_origin_lat_ok: originDiag.lat_ok,
-      route_origin_lng_ok: originDiag.lng_ok,
-      route_pickup_lat_ok: pickupDiag.lat_ok,
-      route_pickup_lng_ok: pickupDiag.lng_ok,
-      route_origin_latlng_preview: originDiag.latlng_preview,
-      route_pickup_latlng_preview: pickupDiag.latlng_preview,
-      route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
-      route_response_has_routes: effectiveRouteDiag?.route_response_has_routes === true,
-      route_response_routes_count: Number(effectiveRouteDiag?.route_response_routes_count || 0),
-      route_response_has_duration: effectiveRouteDiag?.route_response_has_duration === true,
-      route_used_coordinate_direct: canUseCoordinateDirect,
-      route_used_geocode_fallback: !canUseCoordinateDirect,
-    };
+      ...primaryDiag,
+    });
   } catch (e) {
+    const primaryDiag = _routeDiagFromError(e);
+    const primaryNoSegment = _isNoSegment(primaryDiag.route_error_code, primaryDiag.route_error_message);
+    if (canUseCoordinateDirect && primaryNoSegment) {
+      const retryRadiuses = "50;50";
+      try {
+        const retryRoute = await directionsMulti(
+          [
+            { lat: originCoords.lat, lng: originCoords.lng },
+            { lat: pickupCoords.lat, lng: pickupCoords.lng },
+          ],
+          env.MAPBOX_TOKEN,
+          { radiuses: retryRadiuses },
+        );
+        const retryDiag = _routeDiagFromResolved(retryRoute);
+        const retrySec = Number(retryDiag.route_duration_seconds_raw || 0);
+        if (Number.isFinite(retrySec) && retrySec > 0) {
+          return _formatTravelResult({
+            ok: true,
+            travel_seconds: Math.round(retrySec),
+            route_failure_reason: null,
+            ...retryDiag,
+            route_retry_reason: "nosegment_retry_with_radiuses",
+            route_retry_used: true,
+            route_retry_success: true,
+            route_retry_http_status: retryDiag.route_http_status,
+            route_retry_error_code: null,
+            route_retry_error_message: null,
+            route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
+          });
+        }
+        return _formatTravelResult({
+          ok: false,
+          reason_code: "origin_eta_not_feasible",
+          route_failure_reason: "no_route",
+          ...retryDiag,
+          route_retry_reason: "nosegment_retry_with_radiuses",
+          route_retry_used: true,
+          route_retry_success: false,
+          route_retry_http_status: retryDiag.route_http_status,
+          route_retry_error_code: safeStr(retryDiag.route_error_code, 80) || "no_route",
+          route_retry_error_message: _sanitizeRouteErrorMessage(retryDiag.route_error_message, 180) || "no_route",
+          route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
+        });
+      } catch (retryErr) {
+        const retryDiag = _routeDiagFromError(retryErr);
+        const msgRetry = safeStr(retryErr?.message || retryErr, 160).toLowerCase();
+        const retryReason = msgRetry.includes("timeout") || msgRetry.includes("abort")
+          ? "timeout"
+          : (_isNoSegment(retryDiag.route_error_code, retryDiag.route_error_message) ? "no_route" : "route_error");
+        return _formatTravelResult({
+          ok: false,
+          reason_code: "origin_eta_not_feasible",
+          route_failure_reason: retryReason,
+          ...retryDiag,
+          route_retry_reason: "nosegment_retry_with_radiuses",
+          route_retry_used: true,
+          route_retry_success: false,
+          route_retry_http_status: retryDiag.route_http_status,
+          route_retry_error_code: retryDiag.route_error_code,
+          route_retry_error_message: retryDiag.route_error_message,
+          route_retry_duration_seconds_raw: retryDiag.route_duration_seconds_raw,
+        });
+      }
+    }
     const msg = safeStr(e?.message || e, 160).toLowerCase();
     const routeFailureReason = msg.includes("timeout") || msg.includes("abort")
       ? "timeout"
       : (safeStr(e?.route_error_code, 80) === "no_route" ? "no_route" : "route_error");
-    return {
+    return _formatTravelResult({
       ok: false,
       reason_code: "origin_eta_not_feasible",
       route_failure_reason: routeFailureReason,
-      origin_has_location: originHasLocation,
-      pickup_has_location: pickupHasLocation,
-      origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
-      pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
-      route_http_status: Number.isFinite(Number(e?.route_http_status))
-        ? Number(e.route_http_status)
-        : null,
-      route_error_message: _sanitizeRouteErrorMessage(e?.route_error_message || e?.message || e, 180) || "route_error",
-      route_error_code: safeStr(e?.route_error_code, 80) || "route_error",
-      route_profile: safeStr(e?.route_profile, 80) || "mapbox/driving",
-      route_origin_lat_ok: originDiag.lat_ok,
-      route_origin_lng_ok: originDiag.lng_ok,
-      route_pickup_lat_ok: pickupDiag.lat_ok,
-      route_pickup_lng_ok: pickupDiag.lng_ok,
-      route_origin_latlng_preview: originDiag.latlng_preview,
-      route_pickup_latlng_preview: pickupDiag.latlng_preview,
-      route_duration_seconds_raw: null,
-      route_response_has_routes: e?.route_response_has_routes === true,
-      route_response_routes_count: Number(e?.route_response_routes_count || 0),
-      route_response_has_duration: false,
-      route_used_coordinate_direct: canUseCoordinateDirect,
-      route_used_geocode_fallback: !canUseCoordinateDirect,
-    };
+      ...primaryDiag,
+    });
   }
 }
 
@@ -25631,6 +25755,20 @@ async function _vehicleCapacityGateForRequest(env, req) {
         typeof evaluation?.route_used_geocode_fallback === "boolean"
           ? evaluation.route_used_geocode_fallback
           : null,
+      route_retry_reason: safeStr(evaluation?.route_retry_reason, 80) || null,
+      route_retry_used:
+        typeof evaluation?.route_retry_used === "boolean" ? evaluation.route_retry_used : null,
+      route_retry_success:
+        typeof evaluation?.route_retry_success === "boolean" ? evaluation.route_retry_success : null,
+      route_retry_http_status: Number.isFinite(Number(evaluation?.route_retry_http_status))
+        ? Number(evaluation.route_retry_http_status)
+        : null,
+      route_retry_error_code: safeStr(evaluation?.route_retry_error_code, 80) || null,
+      route_retry_error_message: safeStr(evaluation?.route_retry_error_message, 180) || null,
+      route_retry_duration_seconds_raw:
+        Number.isFinite(Number(evaluation?.route_retry_duration_seconds_raw))
+          ? Number(evaluation.route_retry_duration_seconds_raw)
+          : null,
     };
   }
 
@@ -25707,6 +25845,20 @@ async function _vehicleCapacityGateForRequest(env, req) {
     route_used_geocode_fallback:
       typeof evaluation?.route_used_geocode_fallback === "boolean"
         ? evaluation.route_used_geocode_fallback
+        : null,
+    route_retry_reason: safeStr(evaluation?.route_retry_reason, 80) || null,
+    route_retry_used:
+      typeof evaluation?.route_retry_used === "boolean" ? evaluation.route_retry_used : null,
+    route_retry_success:
+      typeof evaluation?.route_retry_success === "boolean" ? evaluation.route_retry_success : null,
+    route_retry_http_status: Number.isFinite(Number(evaluation?.route_retry_http_status))
+      ? Number(evaluation.route_retry_http_status)
+      : null,
+    route_retry_error_code: safeStr(evaluation?.route_retry_error_code, 80) || null,
+    route_retry_error_message: safeStr(evaluation?.route_retry_error_message, 180) || null,
+    route_retry_duration_seconds_raw:
+      Number.isFinite(Number(evaluation?.route_retry_duration_seconds_raw))
+        ? Number(evaluation.route_retry_duration_seconds_raw)
         : null,
     vehicle_id: assignment?.vehicle_id || null,
     assigned_driver: assignment?.assigned_driver || null,
@@ -26072,6 +26224,20 @@ async function _evaluateFleetAvailability(env, req) {
               typeof travel?.route_used_geocode_fallback === "boolean"
                 ? travel.route_used_geocode_fallback
                 : null,
+            route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+            route_retry_used:
+              typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+            route_retry_success:
+              typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+            route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+              ? Number(travel.route_retry_http_status)
+              : null,
+            route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+            route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+            route_retry_duration_seconds_raw:
+              Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+                ? Number(travel.route_retry_duration_seconds_raw)
+                : null,
           });
           continue;
         }
@@ -26134,6 +26300,20 @@ async function _evaluateFleetAvailability(env, req) {
               typeof travel?.route_used_geocode_fallback === "boolean"
                 ? travel.route_used_geocode_fallback
                 : null,
+            route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+            route_retry_used:
+              typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+            route_retry_success:
+              typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+            route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+              ? Number(travel.route_retry_http_status)
+              : null,
+            route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+            route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+            route_retry_duration_seconds_raw:
+              Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+                ? Number(travel.route_retry_duration_seconds_raw)
+                : null,
           });
           continue;
         }
@@ -26193,6 +26373,20 @@ async function _evaluateFleetAvailability(env, req) {
           route_used_geocode_fallback:
             typeof travel?.route_used_geocode_fallback === "boolean"
               ? travel.route_used_geocode_fallback
+              : null,
+          route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+          route_retry_used:
+            typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+          route_retry_success:
+            typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+          route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+            ? Number(travel.route_retry_http_status)
+            : null,
+          route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+          route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+          route_retry_duration_seconds_raw:
+            Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+              ? Number(travel.route_retry_duration_seconds_raw)
               : null,
         };
         break;
@@ -26295,6 +26489,20 @@ async function _evaluateFleetAvailability(env, req) {
             typeof travel?.route_used_geocode_fallback === "boolean"
               ? travel.route_used_geocode_fallback
               : null,
+          route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+          route_retry_used:
+            typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+          route_retry_success:
+            typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+          route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+            ? Number(travel.route_retry_http_status)
+            : null,
+          route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+          route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+          route_retry_duration_seconds_raw:
+            Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+              ? Number(travel.route_retry_duration_seconds_raw)
+              : null,
         });
         continue;
       }
@@ -26358,6 +26566,20 @@ async function _evaluateFleetAvailability(env, req) {
             typeof travel?.route_used_geocode_fallback === "boolean"
               ? travel.route_used_geocode_fallback
               : null,
+          route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+          route_retry_used:
+            typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+          route_retry_success:
+            typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+          route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+            ? Number(travel.route_retry_http_status)
+            : null,
+          route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+          route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+          route_retry_duration_seconds_raw:
+            Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+              ? Number(travel.route_retry_duration_seconds_raw)
+              : null,
         });
         continue;
       }
@@ -26417,6 +26639,20 @@ async function _evaluateFleetAvailability(env, req) {
         route_used_geocode_fallback:
           typeof travel?.route_used_geocode_fallback === "boolean"
             ? travel.route_used_geocode_fallback
+            : null,
+        route_retry_reason: safeStr(travel?.route_retry_reason, 80) || null,
+        route_retry_used:
+          typeof travel?.route_retry_used === "boolean" ? travel.route_retry_used : null,
+        route_retry_success:
+          typeof travel?.route_retry_success === "boolean" ? travel.route_retry_success : null,
+        route_retry_http_status: Number.isFinite(Number(travel?.route_retry_http_status))
+          ? Number(travel.route_retry_http_status)
+          : null,
+        route_retry_error_code: safeStr(travel?.route_retry_error_code, 80) || null,
+        route_retry_error_message: safeStr(travel?.route_retry_error_message, 180) || null,
+        route_retry_duration_seconds_raw:
+          Number.isFinite(Number(travel?.route_retry_duration_seconds_raw))
+            ? Number(travel.route_retry_duration_seconds_raw)
             : null,
       };
       break;
@@ -26490,6 +26726,20 @@ async function _evaluateFleetAvailability(env, req) {
       topEtaFailure?.route_used_coordinate_direct ?? nextVehicle?.route_used_coordinate_direct ?? null,
     route_used_geocode_fallback:
       topEtaFailure?.route_used_geocode_fallback ?? nextVehicle?.route_used_geocode_fallback ?? null,
+    route_retry_reason:
+      topEtaFailure?.route_retry_reason ?? nextVehicle?.route_retry_reason ?? null,
+    route_retry_used:
+      topEtaFailure?.route_retry_used ?? nextVehicle?.route_retry_used ?? null,
+    route_retry_success:
+      topEtaFailure?.route_retry_success ?? nextVehicle?.route_retry_success ?? null,
+    route_retry_http_status:
+      topEtaFailure?.route_retry_http_status ?? nextVehicle?.route_retry_http_status ?? null,
+    route_retry_error_code:
+      topEtaFailure?.route_retry_error_code ?? nextVehicle?.route_retry_error_code ?? null,
+    route_retry_error_message:
+      topEtaFailure?.route_retry_error_message ?? nextVehicle?.route_retry_error_message ?? null,
+    route_retry_duration_seconds_raw:
+      topEtaFailure?.route_retry_duration_seconds_raw ?? nextVehicle?.route_retry_duration_seconds_raw ?? null,
   };
 }
 
