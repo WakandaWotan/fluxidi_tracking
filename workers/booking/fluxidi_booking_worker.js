@@ -797,6 +797,44 @@ export class FleetAllocatorDO {
           : null,
         earliest_available_at: safeStr(etaEvaluation?.earliest_available_at, 80) || null,
         route_failure_reason: safeStr(etaEvaluation?.route_failure_reason, 80) || null,
+        route_http_status: Number.isFinite(Number(etaEvaluation?.route_http_status))
+          ? Number(etaEvaluation.route_http_status)
+          : null,
+        route_error_message: safeStr(etaEvaluation?.route_error_message, 180) || null,
+        route_error_code: safeStr(etaEvaluation?.route_error_code, 80) || null,
+        route_profile: safeStr(etaEvaluation?.route_profile, 80) || null,
+        route_origin_lat_ok:
+          typeof etaEvaluation?.route_origin_lat_ok === "boolean"
+            ? etaEvaluation.route_origin_lat_ok
+            : null,
+        route_origin_lng_ok:
+          typeof etaEvaluation?.route_origin_lng_ok === "boolean"
+            ? etaEvaluation.route_origin_lng_ok
+            : null,
+        route_pickup_lat_ok:
+          typeof etaEvaluation?.route_pickup_lat_ok === "boolean"
+            ? etaEvaluation.route_pickup_lat_ok
+            : null,
+        route_pickup_lng_ok:
+          typeof etaEvaluation?.route_pickup_lng_ok === "boolean"
+            ? etaEvaluation.route_pickup_lng_ok
+            : null,
+        route_origin_latlng_preview: safeStr(etaEvaluation?.route_origin_latlng_preview, 64) || null,
+        route_pickup_latlng_preview: safeStr(etaEvaluation?.route_pickup_latlng_preview, 64) || null,
+        route_duration_seconds_raw: Number.isFinite(Number(etaEvaluation?.route_duration_seconds_raw))
+          ? Number(etaEvaluation.route_duration_seconds_raw)
+          : null,
+        route_response_has_routes:
+          typeof etaEvaluation?.route_response_has_routes === "boolean"
+            ? etaEvaluation.route_response_has_routes
+            : null,
+        route_response_routes_count: Number.isFinite(Number(etaEvaluation?.route_response_routes_count))
+          ? Number(etaEvaluation.route_response_routes_count)
+          : null,
+        route_response_has_duration:
+          typeof etaEvaluation?.route_response_has_duration === "boolean"
+            ? etaEvaluation.route_response_has_duration
+            : null,
       });
     }
 
@@ -8042,6 +8080,20 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           earliest_available_at_ms: null,
           earliest_available_at: null,
           route_failure_reason: "missing_pickup_time",
+          route_http_status: null,
+          route_error_message: null,
+          route_error_code: null,
+          route_profile: null,
+          route_origin_lat_ok: null,
+          route_origin_lng_ok: null,
+          route_pickup_lat_ok: null,
+          route_pickup_lng_ok: null,
+          route_origin_latlng_preview: null,
+          route_pickup_latlng_preview: null,
+          route_duration_seconds_raw: null,
+          route_response_has_routes: null,
+          route_response_routes_count: null,
+          route_response_has_duration: null,
         };
       } else {
       const fleetScope = normalizeFleetTenantScope(quoteScope);
@@ -8114,6 +8166,44 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           : null,
         earliest_available_at: safeStr(vehicleCapacity?.earliest_available_at, 80) || null,
         route_failure_reason: safeStr(vehicleCapacity?.route_failure_reason, 80) || null,
+        route_http_status: Number.isFinite(Number(vehicleCapacity?.route_http_status))
+          ? Number(vehicleCapacity.route_http_status)
+          : null,
+        route_error_message: safeStr(vehicleCapacity?.route_error_message, 180) || null,
+        route_error_code: safeStr(vehicleCapacity?.route_error_code, 80) || null,
+        route_profile: safeStr(vehicleCapacity?.route_profile, 80) || null,
+        route_origin_lat_ok:
+          typeof vehicleCapacity?.route_origin_lat_ok === "boolean"
+            ? vehicleCapacity.route_origin_lat_ok
+            : null,
+        route_origin_lng_ok:
+          typeof vehicleCapacity?.route_origin_lng_ok === "boolean"
+            ? vehicleCapacity.route_origin_lng_ok
+            : null,
+        route_pickup_lat_ok:
+          typeof vehicleCapacity?.route_pickup_lat_ok === "boolean"
+            ? vehicleCapacity.route_pickup_lat_ok
+            : null,
+        route_pickup_lng_ok:
+          typeof vehicleCapacity?.route_pickup_lng_ok === "boolean"
+            ? vehicleCapacity.route_pickup_lng_ok
+            : null,
+        route_origin_latlng_preview: safeStr(vehicleCapacity?.route_origin_latlng_preview, 64) || null,
+        route_pickup_latlng_preview: safeStr(vehicleCapacity?.route_pickup_latlng_preview, 64) || null,
+        route_duration_seconds_raw: Number.isFinite(Number(vehicleCapacity?.route_duration_seconds_raw))
+          ? Number(vehicleCapacity.route_duration_seconds_raw)
+          : null,
+        route_response_has_routes:
+          typeof vehicleCapacity?.route_response_has_routes === "boolean"
+            ? vehicleCapacity.route_response_has_routes
+            : null,
+        route_response_routes_count: Number.isFinite(Number(vehicleCapacity?.route_response_routes_count))
+          ? Number(vehicleCapacity.route_response_routes_count)
+          : null,
+        route_response_has_duration:
+          typeof vehicleCapacity?.route_response_has_duration === "boolean"
+            ? vehicleCapacity.route_response_has_duration
+            : null,
         vehicle_capacity:
           vehicleCapacity && typeof vehicleCapacity === "object"
             ? vehicleCapacity
@@ -8130,7 +8220,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     };
   }
   console.log(
-    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
+    `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
   );
 
   return {
@@ -18757,6 +18847,36 @@ async function handleBooking(payload, env, request) {
                     : null,
                   earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
                   route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
+                  route_http_status: Number.isFinite(Number(alloc?.route_http_status))
+                    ? Number(alloc.route_http_status)
+                    : null,
+                  route_error_message: safeStr(alloc?.route_error_message, 180) || null,
+                  route_error_code: safeStr(alloc?.route_error_code, 80) || null,
+                  route_profile: safeStr(alloc?.route_profile, 80) || null,
+                  route_origin_lat_ok:
+                    typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
+                  route_origin_lng_ok:
+                    typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
+                  route_pickup_lat_ok:
+                    typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
+                  route_pickup_lng_ok:
+                    typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
+                  route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
+                  route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
+                  route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
+                    ? Number(alloc.route_duration_seconds_raw)
+                    : null,
+                  route_response_has_routes:
+                    typeof alloc?.route_response_has_routes === "boolean"
+                      ? alloc.route_response_has_routes
+                      : null,
+                  route_response_routes_count: Number.isFinite(Number(alloc?.route_response_routes_count))
+                    ? Number(alloc.route_response_routes_count)
+                    : null,
+                  route_response_has_duration:
+                    typeof alloc?.route_response_has_duration === "boolean"
+                      ? alloc.route_response_has_duration
+                      : null,
                 },
               };
             }
@@ -19413,6 +19533,36 @@ Retour route: ${return_from || to} → ${return_to || from}`,
                 : null,
               earliest_available_at: safeStr(alloc?.earliest_available_at, 80) || null,
               route_failure_reason: safeStr(alloc?.route_failure_reason, 80) || null,
+              route_http_status: Number.isFinite(Number(alloc?.route_http_status))
+                ? Number(alloc.route_http_status)
+                : null,
+              route_error_message: safeStr(alloc?.route_error_message, 180) || null,
+              route_error_code: safeStr(alloc?.route_error_code, 80) || null,
+              route_profile: safeStr(alloc?.route_profile, 80) || null,
+              route_origin_lat_ok:
+                typeof alloc?.route_origin_lat_ok === "boolean" ? alloc.route_origin_lat_ok : null,
+              route_origin_lng_ok:
+                typeof alloc?.route_origin_lng_ok === "boolean" ? alloc.route_origin_lng_ok : null,
+              route_pickup_lat_ok:
+                typeof alloc?.route_pickup_lat_ok === "boolean" ? alloc.route_pickup_lat_ok : null,
+              route_pickup_lng_ok:
+                typeof alloc?.route_pickup_lng_ok === "boolean" ? alloc.route_pickup_lng_ok : null,
+              route_origin_latlng_preview: safeStr(alloc?.route_origin_latlng_preview, 64) || null,
+              route_pickup_latlng_preview: safeStr(alloc?.route_pickup_latlng_preview, 64) || null,
+              route_duration_seconds_raw: Number.isFinite(Number(alloc?.route_duration_seconds_raw))
+                ? Number(alloc.route_duration_seconds_raw)
+                : null,
+              route_response_has_routes:
+                typeof alloc?.route_response_has_routes === "boolean"
+                  ? alloc.route_response_has_routes
+                  : null,
+              route_response_routes_count: Number.isFinite(Number(alloc?.route_response_routes_count))
+                ? Number(alloc.route_response_routes_count)
+                : null,
+              route_response_has_duration:
+                typeof alloc?.route_response_has_duration === "boolean"
+                  ? alloc.route_response_has_duration
+                  : null,
             },
           };
         }
@@ -21298,12 +21448,71 @@ async function directionsMulti(coords, token) {
   if (!coords || coords.length < 2) throw new Error("Need at least 2 coordinates for directions");
 
   const path = coords.map(c => `${c.lng},${c.lat}`).join(";");
-  const u = `https://api.mapbox.com/directions/v5/mapbox/driving/${path}?overview=false&access_token=${token}`;
+  const profile = "mapbox/driving";
+  const u = `https://api.mapbox.com/directions/v5/${profile}/${path}?overview=false&access_token=${token}`;
 
-  const r = await fetch(u);
-  const j = await r.json();
-  if (!j.routes?.length) throw new Error("Directions failed");
-  return j.routes[0];
+  let r;
+  try {
+    r = await fetch(u);
+  } catch (e) {
+    const err = new Error("Directions failed");
+    err.route_http_status = null;
+    err.route_error_code = "fetch_error";
+    err.route_error_message = _sanitizeRouteErrorMessage(e?.message || e, 180) || "fetch_error";
+    err.route_profile = profile;
+    throw err;
+  }
+
+  let j = null;
+  let rawBody = "";
+  try {
+    rawBody = await r.text();
+  } catch (_) {
+    rawBody = "";
+  }
+  try {
+    j = rawBody ? JSON.parse(rawBody) : null;
+  } catch (_) {
+    j = null;
+  }
+
+  if (!r.ok) {
+    const bodyMessage = _sanitizeRouteErrorMessage(j?.message ?? j?.error ?? rawBody, 180) || "mapbox_error";
+    const err = new Error("Directions failed");
+    err.route_http_status = Number(r.status) || null;
+    err.route_error_code = safeStr(j?.code ?? j?.error_code, 80) || `http_${Number(r.status) || 0}`;
+    err.route_error_message = bodyMessage;
+    err.route_profile = profile;
+    err.route_response_has_routes = Array.isArray(j?.routes) && j.routes.length > 0;
+    err.route_response_routes_count = Array.isArray(j?.routes) ? j.routes.length : 0;
+    throw err;
+  }
+
+  const routes = Array.isArray(j?.routes) ? j.routes : [];
+  if (!routes.length) {
+    const err = new Error("Directions failed");
+    err.route_http_status = Number(r.status) || 200;
+    err.route_error_code = safeStr(j?.code, 80) || "no_route";
+    err.route_error_message = _sanitizeRouteErrorMessage(j?.message ?? "no routes returned", 180) || "no routes returned";
+    err.route_profile = profile;
+    err.route_response_has_routes = false;
+    err.route_response_routes_count = 0;
+    throw err;
+  }
+  const primary = routes[0];
+  if (primary && typeof primary === "object") {
+    primary._diagnostics = {
+      route_http_status: Number(r.status) || 200,
+      route_error_code: null,
+      route_error_message: null,
+      route_profile: profile,
+      route_duration_seconds_raw: Number(primary?.duration),
+      route_response_has_routes: true,
+      route_response_routes_count: routes.length,
+      route_response_has_duration: Number.isFinite(Number(primary?.duration)),
+    };
+  }
+  return primary;
 }
 
 function normalizeStops(body) {
@@ -24744,6 +24953,43 @@ function _allocatorAddressPreviewMasked(value, maxLen = 64) {
   return `${masked.slice(0, Math.max(0, maxLen - 3))}...`;
 }
 
+function _sanitizeRouteErrorMessage(value, maxLen = 180) {
+  const raw = safeStr(value, 400);
+  if (!raw) return "";
+  const noToken = raw
+    .replace(/access_token=[^&\s]+/gi, "access_token=[redacted]")
+    .replace(/https?:\/\/[^\s]+/gi, "[url]");
+  if (noToken.length <= maxLen) return noToken;
+  return `${noToken.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function _allocatorRoutePointDiagnostics(point) {
+  const raw = point && typeof point === "object" ? point : {};
+  const latCandidates = [
+    raw?.lat,
+    raw?.latitude,
+    Array.isArray(raw?.coordinates) ? raw.coordinates[1] : undefined,
+  ];
+  const lngCandidates = [
+    raw?.lng,
+    raw?.lon,
+    raw?.longitude,
+    Array.isArray(raw?.coordinates) ? raw.coordinates[0] : undefined,
+  ];
+  const latOk = latCandidates.some((value) => Number.isFinite(Number(value)));
+  const lngOk = lngCandidates.some((value) => Number.isFinite(Number(value)));
+  const lat = Number(raw?.lat);
+  const lng = Number(raw?.lng);
+  const preview = Number.isFinite(lat) && Number.isFinite(lng)
+    ? `${lat.toFixed(3)},${lng.toFixed(3)}`
+    : "";
+  return {
+    lat_ok: latOk,
+    lng_ok: lngOk,
+    latlng_preview: preview || null,
+  };
+}
+
 function _allocatorOriginRequiredHorizonSeconds(env) {
   return Math.max(
     300,
@@ -24779,6 +25025,8 @@ function _earliestAvailabilityFieldsFromBaseline(baselineMs, requiredSeconds) {
 async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
   const originHasLocation = _isUsableLocationPoint(fromPoint);
   const pickupHasLocation = _isUsableLocationPoint(toPoint);
+  const originDiag = _allocatorRoutePointDiagnostics(fromPoint);
+  const pickupDiag = _allocatorRoutePointDiagnostics(toPoint);
   const fromText = _pointToRouteText(fromPoint);
   const toText = _pointToRouteText(toPoint);
   if (!fromText || !toText) {
@@ -24792,6 +25040,20 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       pickup_has_location: pickupHasLocation,
       origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
       pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+      route_http_status: null,
+      route_error_message: null,
+      route_error_code: null,
+      route_profile: "mapbox/driving",
+      route_origin_lat_ok: originDiag.lat_ok,
+      route_origin_lng_ok: originDiag.lng_ok,
+      route_pickup_lat_ok: pickupDiag.lat_ok,
+      route_pickup_lng_ok: pickupDiag.lng_ok,
+      route_origin_latlng_preview: originDiag.latlng_preview,
+      route_pickup_latlng_preview: pickupDiag.latlng_preview,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: false,
+      route_response_routes_count: 0,
+      route_response_has_duration: false,
     };
   }
   try {
@@ -24801,7 +25063,11 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       stopsTexts: [],
       token: env.MAPBOX_TOKEN,
     });
-    const sec = Number(out?.route?.duration || 0);
+    const routeDiag = out?.route?._diagnostics && typeof out.route._diagnostics === "object"
+      ? out.route._diagnostics
+      : {};
+    const secRaw = Number(out?.route?.duration);
+    const sec = Number.isFinite(secRaw) ? secRaw : 0;
     if (!Number.isFinite(sec) || sec <= 0) {
       return {
         ok: false,
@@ -24811,6 +25077,20 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
         pickup_has_location: pickupHasLocation,
         origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
         pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+        route_http_status: Number(routeDiag?.route_http_status) || 200,
+        route_error_message: _sanitizeRouteErrorMessage(routeDiag?.route_error_message, 180) || null,
+        route_error_code: safeStr(routeDiag?.route_error_code, 80) || "no_route",
+        route_profile: safeStr(routeDiag?.route_profile, 80) || "mapbox/driving",
+        route_origin_lat_ok: originDiag.lat_ok,
+        route_origin_lng_ok: originDiag.lng_ok,
+        route_pickup_lat_ok: pickupDiag.lat_ok,
+        route_pickup_lng_ok: pickupDiag.lng_ok,
+        route_origin_latlng_preview: originDiag.latlng_preview,
+        route_pickup_latlng_preview: pickupDiag.latlng_preview,
+        route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
+        route_response_has_routes: routeDiag?.route_response_has_routes === true,
+        route_response_routes_count: Number(routeDiag?.route_response_routes_count || 0),
+        route_response_has_duration: routeDiag?.route_response_has_duration === true,
       };
     }
     return {
@@ -24821,12 +25101,26 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       pickup_has_location: pickupHasLocation,
       origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
       pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+      route_http_status: Number(routeDiag?.route_http_status) || 200,
+      route_error_message: _sanitizeRouteErrorMessage(routeDiag?.route_error_message, 180) || null,
+      route_error_code: safeStr(routeDiag?.route_error_code, 80) || null,
+      route_profile: safeStr(routeDiag?.route_profile, 80) || "mapbox/driving",
+      route_origin_lat_ok: originDiag.lat_ok,
+      route_origin_lng_ok: originDiag.lng_ok,
+      route_pickup_lat_ok: pickupDiag.lat_ok,
+      route_pickup_lng_ok: pickupDiag.lng_ok,
+      route_origin_latlng_preview: originDiag.latlng_preview,
+      route_pickup_latlng_preview: pickupDiag.latlng_preview,
+      route_duration_seconds_raw: Number.isFinite(secRaw) ? secRaw : null,
+      route_response_has_routes: routeDiag?.route_response_has_routes === true,
+      route_response_routes_count: Number(routeDiag?.route_response_routes_count || 0),
+      route_response_has_duration: routeDiag?.route_response_has_duration === true,
     };
   } catch (e) {
     const msg = safeStr(e?.message || e, 160).toLowerCase();
     const routeFailureReason = msg.includes("timeout") || msg.includes("abort")
       ? "timeout"
-      : "route_error";
+      : (safeStr(e?.route_error_code, 80) === "no_route" ? "no_route" : "route_error");
     return {
       ok: false,
       reason_code: "origin_eta_not_feasible",
@@ -24835,6 +25129,22 @@ async function _computeRoadTravelSecondsBetweenPoints(env, fromPoint, toPoint) {
       pickup_has_location: pickupHasLocation,
       origin_address_preview: _allocatorAddressPreviewMasked(fromPoint?.address),
       pickup_address_preview: _allocatorAddressPreviewMasked(toPoint?.address),
+      route_http_status: Number.isFinite(Number(e?.route_http_status))
+        ? Number(e.route_http_status)
+        : null,
+      route_error_message: _sanitizeRouteErrorMessage(e?.route_error_message || e?.message || e, 180) || "route_error",
+      route_error_code: safeStr(e?.route_error_code, 80) || "route_error",
+      route_profile: safeStr(e?.route_profile, 80) || "mapbox/driving",
+      route_origin_lat_ok: originDiag.lat_ok,
+      route_origin_lng_ok: originDiag.lng_ok,
+      route_pickup_lat_ok: pickupDiag.lat_ok,
+      route_pickup_lng_ok: pickupDiag.lng_ok,
+      route_origin_latlng_preview: originDiag.latlng_preview,
+      route_pickup_latlng_preview: pickupDiag.latlng_preview,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: e?.route_response_has_routes === true,
+      route_response_routes_count: Number(e?.route_response_routes_count || 0),
+      route_response_has_duration: false,
     };
   }
 }
@@ -25210,6 +25520,36 @@ async function _vehicleCapacityGateForRequest(env, req) {
         : null,
       earliest_available_at: safeStr(evaluation?.earliest_available_at, 80) || null,
       route_failure_reason: safeStr(evaluation?.route_failure_reason, 80) || null,
+      route_http_status: Number.isFinite(Number(evaluation?.route_http_status))
+        ? Number(evaluation.route_http_status)
+        : null,
+      route_error_message: safeStr(evaluation?.route_error_message, 180) || null,
+      route_error_code: safeStr(evaluation?.route_error_code, 80) || null,
+      route_profile: safeStr(evaluation?.route_profile, 80) || null,
+      route_origin_lat_ok:
+        typeof evaluation?.route_origin_lat_ok === "boolean" ? evaluation.route_origin_lat_ok : null,
+      route_origin_lng_ok:
+        typeof evaluation?.route_origin_lng_ok === "boolean" ? evaluation.route_origin_lng_ok : null,
+      route_pickup_lat_ok:
+        typeof evaluation?.route_pickup_lat_ok === "boolean" ? evaluation.route_pickup_lat_ok : null,
+      route_pickup_lng_ok:
+        typeof evaluation?.route_pickup_lng_ok === "boolean" ? evaluation.route_pickup_lng_ok : null,
+      route_origin_latlng_preview: safeStr(evaluation?.route_origin_latlng_preview, 64) || null,
+      route_pickup_latlng_preview: safeStr(evaluation?.route_pickup_latlng_preview, 64) || null,
+      route_duration_seconds_raw: Number.isFinite(Number(evaluation?.route_duration_seconds_raw))
+        ? Number(evaluation.route_duration_seconds_raw)
+        : null,
+      route_response_has_routes:
+        typeof evaluation?.route_response_has_routes === "boolean"
+          ? evaluation.route_response_has_routes
+          : null,
+      route_response_routes_count: Number.isFinite(Number(evaluation?.route_response_routes_count))
+        ? Number(evaluation.route_response_routes_count)
+        : null,
+      route_response_has_duration:
+        typeof evaluation?.route_response_has_duration === "boolean"
+          ? evaluation.route_response_has_duration
+          : null,
     };
   }
 
@@ -25249,6 +25589,36 @@ async function _vehicleCapacityGateForRequest(env, req) {
       : null,
     earliest_available_at: safeStr(evaluation?.earliest_available_at, 80) || null,
     route_failure_reason: safeStr(evaluation?.route_failure_reason, 80) || null,
+    route_http_status: Number.isFinite(Number(evaluation?.route_http_status))
+      ? Number(evaluation.route_http_status)
+      : null,
+    route_error_message: safeStr(evaluation?.route_error_message, 180) || null,
+    route_error_code: safeStr(evaluation?.route_error_code, 80) || null,
+    route_profile: safeStr(evaluation?.route_profile, 80) || null,
+    route_origin_lat_ok:
+      typeof evaluation?.route_origin_lat_ok === "boolean" ? evaluation.route_origin_lat_ok : null,
+    route_origin_lng_ok:
+      typeof evaluation?.route_origin_lng_ok === "boolean" ? evaluation.route_origin_lng_ok : null,
+    route_pickup_lat_ok:
+      typeof evaluation?.route_pickup_lat_ok === "boolean" ? evaluation.route_pickup_lat_ok : null,
+    route_pickup_lng_ok:
+      typeof evaluation?.route_pickup_lng_ok === "boolean" ? evaluation.route_pickup_lng_ok : null,
+    route_origin_latlng_preview: safeStr(evaluation?.route_origin_latlng_preview, 64) || null,
+    route_pickup_latlng_preview: safeStr(evaluation?.route_pickup_latlng_preview, 64) || null,
+    route_duration_seconds_raw: Number.isFinite(Number(evaluation?.route_duration_seconds_raw))
+      ? Number(evaluation.route_duration_seconds_raw)
+      : null,
+    route_response_has_routes:
+      typeof evaluation?.route_response_has_routes === "boolean"
+        ? evaluation.route_response_has_routes
+        : null,
+    route_response_routes_count: Number.isFinite(Number(evaluation?.route_response_routes_count))
+      ? Number(evaluation.route_response_routes_count)
+      : null,
+    route_response_has_duration:
+      typeof evaluation?.route_response_has_duration === "boolean"
+        ? evaluation.route_response_has_duration
+        : null,
     vehicle_id: assignment?.vehicle_id || null,
     assigned_driver: assignment?.assigned_driver || null,
   };
@@ -25339,6 +25709,20 @@ async function _evaluateFleetAvailability(env, req) {
       earliest_available_at_ms: null,
       earliest_available_at: null,
       route_failure_reason: "missing_pickup_time",
+      route_http_status: null,
+      route_error_message: null,
+      route_error_code: null,
+      route_profile: null,
+      route_origin_lat_ok: null,
+      route_origin_lng_ok: null,
+      route_pickup_lat_ok: null,
+      route_pickup_lng_ok: null,
+      route_origin_latlng_preview: null,
+      route_pickup_latlng_preview: null,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: null,
+      route_response_routes_count: null,
+      route_response_has_duration: null,
     };
   }
   if (pickupMs <= nowMs) {
@@ -25377,6 +25761,20 @@ async function _evaluateFleetAvailability(env, req) {
       earliest_available_at_ms: earliest.earliest_available_at_ms,
       earliest_available_at: earliest.earliest_available_at,
       route_failure_reason: "pickup_time_in_past",
+      route_http_status: null,
+      route_error_message: null,
+      route_error_code: null,
+      route_profile: null,
+      route_origin_lat_ok: null,
+      route_origin_lng_ok: null,
+      route_pickup_lat_ok: null,
+      route_pickup_lng_ok: null,
+      route_origin_latlng_preview: null,
+      route_pickup_latlng_preview: null,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: null,
+      route_response_routes_count: null,
+      route_response_has_duration: null,
     };
   }
 
@@ -25415,6 +25813,20 @@ async function _evaluateFleetAvailability(env, req) {
       earliest_available_at_ms: null,
       earliest_available_at: null,
       route_failure_reason: "no_suitable_vehicle",
+      route_http_status: null,
+      route_error_message: null,
+      route_error_code: null,
+      route_profile: null,
+      route_origin_lat_ok: null,
+      route_origin_lng_ok: null,
+      route_pickup_lat_ok: null,
+      route_pickup_lng_ok: null,
+      route_origin_latlng_preview: null,
+      route_pickup_latlng_preview: null,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: null,
+      route_response_routes_count: null,
+      route_response_has_duration: null,
     };
   }
 
@@ -25531,6 +25943,36 @@ async function _evaluateFleetAvailability(env, req) {
             earliest_available_at_ms: null,
             earliest_available_at: null,
             route_failure_reason: safeStr(travel?.route_failure_reason, 64) || "route_error",
+            route_http_status: Number.isFinite(Number(travel?.route_http_status))
+              ? Number(travel.route_http_status)
+              : null,
+            route_error_message: safeStr(travel?.route_error_message, 180) || null,
+            route_error_code: safeStr(travel?.route_error_code, 80) || null,
+            route_profile: safeStr(travel?.route_profile, 80) || null,
+            route_origin_lat_ok:
+              typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+            route_origin_lng_ok:
+              typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+            route_pickup_lat_ok:
+              typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+            route_pickup_lng_ok:
+              typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+            route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+            route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+            route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+              ? Number(travel.route_duration_seconds_raw)
+              : null,
+            route_response_has_routes:
+              typeof travel?.route_response_has_routes === "boolean"
+                ? travel.route_response_has_routes
+                : null,
+            route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+              ? Number(travel.route_response_routes_count)
+              : null,
+            route_response_has_duration:
+              typeof travel?.route_response_has_duration === "boolean"
+                ? travel.route_response_has_duration
+                : null,
           });
           continue;
         }
@@ -25555,6 +25997,36 @@ async function _evaluateFleetAvailability(env, req) {
             earliest_available_at_ms: earliest.earliest_available_at_ms,
             earliest_available_at: earliest.earliest_available_at,
             route_failure_reason: null,
+            route_http_status: Number.isFinite(Number(travel?.route_http_status))
+              ? Number(travel.route_http_status)
+              : null,
+            route_error_message: safeStr(travel?.route_error_message, 180) || null,
+            route_error_code: safeStr(travel?.route_error_code, 80) || null,
+            route_profile: safeStr(travel?.route_profile, 80) || null,
+            route_origin_lat_ok:
+              typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+            route_origin_lng_ok:
+              typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+            route_pickup_lat_ok:
+              typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+            route_pickup_lng_ok:
+              typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+            route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+            route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+            route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+              ? Number(travel.route_duration_seconds_raw)
+              : null,
+            route_response_has_routes:
+              typeof travel?.route_response_has_routes === "boolean"
+                ? travel.route_response_has_routes
+                : null,
+            route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+              ? Number(travel.route_response_routes_count)
+              : null,
+            route_response_has_duration:
+              typeof travel?.route_response_has_duration === "boolean"
+                ? travel.route_response_has_duration
+                : null,
           });
           continue;
         }
@@ -25577,6 +26049,36 @@ async function _evaluateFleetAvailability(env, req) {
           earliest_available_at_ms: null,
           earliest_available_at: null,
           route_failure_reason: null,
+          route_http_status: Number.isFinite(Number(travel?.route_http_status))
+            ? Number(travel.route_http_status)
+            : null,
+          route_error_message: safeStr(travel?.route_error_message, 180) || null,
+          route_error_code: safeStr(travel?.route_error_code, 80) || null,
+          route_profile: safeStr(travel?.route_profile, 80) || null,
+          route_origin_lat_ok:
+            typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+          route_origin_lng_ok:
+            typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+          route_pickup_lat_ok:
+            typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+          route_pickup_lng_ok:
+            typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+          route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+          route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+          route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+            ? Number(travel.route_duration_seconds_raw)
+            : null,
+          route_response_has_routes:
+            typeof travel?.route_response_has_routes === "boolean"
+              ? travel.route_response_has_routes
+              : null,
+          route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+            ? Number(travel.route_response_routes_count)
+            : null,
+          route_response_has_duration:
+            typeof travel?.route_response_has_duration === "boolean"
+              ? travel.route_response_has_duration
+              : null,
         };
         break;
       }
@@ -25602,6 +26104,20 @@ async function _evaluateFleetAvailability(env, req) {
           earliest_available_at_ms: null,
           earliest_available_at: null,
           route_failure_reason: "missing_origin_location",
+          route_http_status: null,
+          route_error_message: null,
+          route_error_code: "missing_origin_location",
+          route_profile: "mapbox/driving",
+          route_origin_lat_ok: false,
+          route_origin_lng_ok: false,
+          route_pickup_lat_ok: _isUsableLocationPoint(pickupPoint),
+          route_pickup_lng_ok: _isUsableLocationPoint(pickupPoint),
+          route_origin_latlng_preview: null,
+          route_pickup_latlng_preview: null,
+          route_duration_seconds_raw: null,
+          route_response_has_routes: false,
+          route_response_routes_count: 0,
+          route_response_has_duration: false,
         });
         continue;
       }
@@ -25624,6 +26140,36 @@ async function _evaluateFleetAvailability(env, req) {
           earliest_available_at_ms: null,
           earliest_available_at: null,
           route_failure_reason: safeStr(travel?.route_failure_reason, 64) || "route_error",
+          route_http_status: Number.isFinite(Number(travel?.route_http_status))
+            ? Number(travel.route_http_status)
+            : null,
+          route_error_message: safeStr(travel?.route_error_message, 180) || null,
+          route_error_code: safeStr(travel?.route_error_code, 80) || null,
+          route_profile: safeStr(travel?.route_profile, 80) || null,
+          route_origin_lat_ok:
+            typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+          route_origin_lng_ok:
+            typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+          route_pickup_lat_ok:
+            typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+          route_pickup_lng_ok:
+            typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+          route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+          route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+          route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+            ? Number(travel.route_duration_seconds_raw)
+            : null,
+          route_response_has_routes:
+            typeof travel?.route_response_has_routes === "boolean"
+              ? travel.route_response_has_routes
+              : null,
+          route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+            ? Number(travel.route_response_routes_count)
+            : null,
+          route_response_has_duration:
+            typeof travel?.route_response_has_duration === "boolean"
+              ? travel.route_response_has_duration
+              : null,
         });
         continue;
       }
@@ -25649,6 +26195,36 @@ async function _evaluateFleetAvailability(env, req) {
           earliest_available_at_ms: earliest.earliest_available_at_ms,
           earliest_available_at: earliest.earliest_available_at,
           route_failure_reason: null,
+          route_http_status: Number.isFinite(Number(travel?.route_http_status))
+            ? Number(travel.route_http_status)
+            : null,
+          route_error_message: safeStr(travel?.route_error_message, 180) || null,
+          route_error_code: safeStr(travel?.route_error_code, 80) || null,
+          route_profile: safeStr(travel?.route_profile, 80) || null,
+          route_origin_lat_ok:
+            typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+          route_origin_lng_ok:
+            typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+          route_pickup_lat_ok:
+            typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+          route_pickup_lng_ok:
+            typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+          route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+          route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+          route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+            ? Number(travel.route_duration_seconds_raw)
+            : null,
+          route_response_has_routes:
+            typeof travel?.route_response_has_routes === "boolean"
+              ? travel.route_response_has_routes
+              : null,
+          route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+            ? Number(travel.route_response_routes_count)
+            : null,
+          route_response_has_duration:
+            typeof travel?.route_response_has_duration === "boolean"
+              ? travel.route_response_has_duration
+              : null,
         });
         continue;
       }
@@ -25671,6 +26247,36 @@ async function _evaluateFleetAvailability(env, req) {
         earliest_available_at_ms: null,
         earliest_available_at: null,
         route_failure_reason: null,
+        route_http_status: Number.isFinite(Number(travel?.route_http_status))
+          ? Number(travel.route_http_status)
+          : null,
+        route_error_message: safeStr(travel?.route_error_message, 180) || null,
+        route_error_code: safeStr(travel?.route_error_code, 80) || null,
+        route_profile: safeStr(travel?.route_profile, 80) || null,
+        route_origin_lat_ok:
+          typeof travel?.route_origin_lat_ok === "boolean" ? travel.route_origin_lat_ok : null,
+        route_origin_lng_ok:
+          typeof travel?.route_origin_lng_ok === "boolean" ? travel.route_origin_lng_ok : null,
+        route_pickup_lat_ok:
+          typeof travel?.route_pickup_lat_ok === "boolean" ? travel.route_pickup_lat_ok : null,
+        route_pickup_lng_ok:
+          typeof travel?.route_pickup_lng_ok === "boolean" ? travel.route_pickup_lng_ok : null,
+        route_origin_latlng_preview: safeStr(travel?.route_origin_latlng_preview, 64) || null,
+        route_pickup_latlng_preview: safeStr(travel?.route_pickup_latlng_preview, 64) || null,
+        route_duration_seconds_raw: Number.isFinite(Number(travel?.route_duration_seconds_raw))
+          ? Number(travel.route_duration_seconds_raw)
+          : null,
+        route_response_has_routes:
+          typeof travel?.route_response_has_routes === "boolean"
+            ? travel.route_response_has_routes
+            : null,
+        route_response_routes_count: Number.isFinite(Number(travel?.route_response_routes_count))
+          ? Number(travel.route_response_routes_count)
+          : null,
+        route_response_has_duration:
+          typeof travel?.route_response_has_duration === "boolean"
+            ? travel.route_response_has_duration
+            : null,
       };
       break;
     }
@@ -25719,6 +26325,26 @@ async function _evaluateFleetAvailability(env, req) {
     earliest_available_at:
       topEtaFailure?.earliest_available_at ?? nextVehicle?.earliest_available_at ?? null,
     route_failure_reason: topEtaFailure?.route_failure_reason ?? nextVehicle?.route_failure_reason ?? null,
+    route_http_status: topEtaFailure?.route_http_status ?? nextVehicle?.route_http_status ?? null,
+    route_error_message: topEtaFailure?.route_error_message ?? nextVehicle?.route_error_message ?? null,
+    route_error_code: topEtaFailure?.route_error_code ?? nextVehicle?.route_error_code ?? null,
+    route_profile: topEtaFailure?.route_profile ?? nextVehicle?.route_profile ?? null,
+    route_origin_lat_ok: topEtaFailure?.route_origin_lat_ok ?? nextVehicle?.route_origin_lat_ok ?? null,
+    route_origin_lng_ok: topEtaFailure?.route_origin_lng_ok ?? nextVehicle?.route_origin_lng_ok ?? null,
+    route_pickup_lat_ok: topEtaFailure?.route_pickup_lat_ok ?? nextVehicle?.route_pickup_lat_ok ?? null,
+    route_pickup_lng_ok: topEtaFailure?.route_pickup_lng_ok ?? nextVehicle?.route_pickup_lng_ok ?? null,
+    route_origin_latlng_preview:
+      topEtaFailure?.route_origin_latlng_preview ?? nextVehicle?.route_origin_latlng_preview ?? null,
+    route_pickup_latlng_preview:
+      topEtaFailure?.route_pickup_latlng_preview ?? nextVehicle?.route_pickup_latlng_preview ?? null,
+    route_duration_seconds_raw:
+      topEtaFailure?.route_duration_seconds_raw ?? nextVehicle?.route_duration_seconds_raw ?? null,
+    route_response_has_routes:
+      topEtaFailure?.route_response_has_routes ?? nextVehicle?.route_response_has_routes ?? null,
+    route_response_routes_count:
+      topEtaFailure?.route_response_routes_count ?? nextVehicle?.route_response_routes_count ?? null,
+    route_response_has_duration:
+      topEtaFailure?.route_response_has_duration ?? nextVehicle?.route_response_has_duration ?? null,
   };
 }
 
