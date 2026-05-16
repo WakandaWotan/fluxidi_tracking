@@ -8735,22 +8735,26 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     required String value,
     required String subtitle,
     required Color accentColor,
+    bool compact = false,
   }) {
     return _panel(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 9 : 12,
+        vertical: compact ? 8 : 11,
+      ),
       child: Row(
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: compact ? 28 : 34,
+            height: compact ? 28 : 34,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: accentColor.withOpacity(0.16),
               border: Border.all(color: accentColor.withOpacity(0.45)),
             ),
-            child: Icon(icon, color: accentColor, size: 19),
+            child: Icon(icon, color: accentColor, size: compact ? 16 : 19),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: compact ? 7 : 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -8759,33 +8763,33 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 13.2,
+                    fontSize: compact ? 11.6 : 13.2,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: compact ? 1 : 2),
                 Text(
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.58),
-                    fontSize: 11.2,
+                    fontSize: compact ? 10.0 : 11.2,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: compact ? 5 : 8),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w900,
-              fontSize: 24,
+              fontSize: compact ? 19 : 24,
             ),
           ),
         ],
@@ -8793,12 +8797,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
-  Widget _primaryCta(BuildContext context) {
+  Widget _primaryCta(BuildContext context, {bool compact = false}) {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => _openCalculator(context),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 12,
+          vertical: compact ? 8 : 10,
+        ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: kFluxidiYellow.withOpacity(0.48)),
@@ -8818,8 +8825,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: compact ? 36 : 44,
+              height: compact ? 36 : 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
@@ -8835,10 +8842,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               child: const Icon(
                 Icons.calculate_outlined,
                 color: Color(0xFFE5B641),
-                size: 24,
+                size: 22,
               ),
             ),
-            const SizedBox(width: 10),
+            SizedBox(width: compact ? 8 : 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -8852,9 +8859,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 15.3,
+                      fontSize: compact ? 14.0 : 15.3,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -8864,7 +8871,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             Icon(
               Icons.arrow_forward_rounded,
               color: kFluxidiYellow.withOpacity(0.98),
-              size: 22,
+              size: compact ? 20 : 22,
             ),
           ],
         ),
@@ -8881,18 +8888,25 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     String? futureBadge,
     String? backgroundAsset,
     bool useImageBackground = false,
+    bool compact = false,
   }) {
     final active = onTap != null && !isFuture;
     final hasImageBackground =
         useImageBackground && (backgroundAsset ?? '').trim().isNotEmpty;
+    final cardPadding = EdgeInsets.fromLTRB(
+      compact ? 9 : 12,
+      compact ? 9 : 12,
+      compact ? 9 : 12,
+      compact ? 8 : 10,
+    );
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: compact ? 36 : 44,
+              height: compact ? 36 : 44,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -8924,13 +8938,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 color: active
                     ? kFluxidiYellow.withOpacity(0.98)
                     : Colors.white.withOpacity(0.60),
-                size: 29,
+                size: compact ? 24 : 29,
               ),
             ),
             const Spacer(),
             if ((futureBadge ?? '').trim().isNotEmpty)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 7 : 8,
+                  vertical: compact ? 2 : 3,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF15120A),
                   borderRadius: BorderRadius.circular(999),
@@ -8940,14 +8957,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   futureBadge!,
                   style: TextStyle(
                     color: kFluxidiYellow.withOpacity(0.95),
-                    fontSize: 10.3,
+                    fontSize: compact ? 9.8 : 10.3,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
           ],
         ),
-        const SizedBox(height: 9),
+        SizedBox(height: compact ? 6 : 9),
         Text(
           title,
           maxLines: 1,
@@ -8955,7 +8972,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           style: TextStyle(
             color: Colors.white.withOpacity(active ? 1.0 : 0.78),
             fontWeight: FontWeight.w800,
-            fontSize: 14.3,
+            fontSize: compact ? 13.1 : 14.3,
             shadows: hasImageBackground
                 ? [
                     Shadow(
@@ -8974,7 +8991,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white.withOpacity(active ? 0.64 : 0.5),
-            fontSize: 11.4,
+            fontSize: compact ? 10.5 : 11.4,
             shadows: hasImageBackground
                 ? [
                     Shadow(
@@ -8992,12 +9009,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           child: active
               ? Icon(
                   Icons.chevron_right_rounded,
-                  size: 17,
+                  size: compact ? 15 : 17,
                   color: kFluxidiYellow.withOpacity(0.9),
                 )
               : Icon(
                   Icons.lock_clock_outlined,
-                  size: 15.5,
+                  size: compact ? 14 : 15.5,
                   color: Colors.white.withOpacity(0.44),
                 ),
         ),
@@ -9007,10 +9024,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       return InkWell(
         borderRadius: BorderRadius.circular(15),
         onTap: active ? onTap : null,
-        child: _panel(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-          child: content,
-        ),
+        child: _panel(padding: cardPadding, child: content),
       );
     }
     return InkWell(
@@ -9050,10 +9064,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              child: content,
-            ),
+            Padding(padding: cardPadding, child: content),
           ],
         ),
       ),
@@ -9088,6 +9099,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 final W = size.width;
                 final H = size.height;
                 final screenClass = FluxidiBreakpoints.classifyWidth(W);
+                final mediaPaddingBottom = MediaQuery.paddingOf(context).bottom;
                 final isTabletPortrait =
                     (screenClass == FluxidiScreenClass.tablet ||
                         screenClass == FluxidiScreenClass.desktop) &&
@@ -9097,26 +9109,49 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     (screenClass == FluxidiScreenClass.tablet ||
                         screenClass == FluxidiScreenClass.desktop) &&
                     W > H &&
-                    H >= 700;
+                    W >= 900 &&
+                    H <= 700;
                 final usesTabletHeader = isTabletPortrait || isTabletLandscape;
                 final businessHeaderHeight = isTabletLandscape
-                    ? clampDouble(H * 0.26, 280.0, 330.0)
+                    ? clampDouble(H * 0.14, 82.0, 102.0)
                     : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
-                final businessHeaderAsset = isTabletLandscape
-                    ? 'assets/fluxidi/zakelijke_tablet_header_foto_landscape.png'
-                    : 'assets/fluxidi/zakelijke_tablet_header_foto.png';
-                final businessQuickActionCardHeight = isTabletPortrait
+                const businessHeaderAsset =
+                    'assets/fluxidi/zakelijke_tablet_header_foto.png';
+                final businessQuickActionCardHeight = isTabletLandscape
+                    ? clampDouble(H * 0.13, 68.0, 90.0)
+                    : isTabletPortrait
                     ? clampDouble(H * 0.092, 118.0, 132.0)
                     : 132.0;
-                final businessQuickActionSpacing = isTabletPortrait
+                final businessQuickActionSpacing = isTabletLandscape
+                    ? 8.0
+                    : isTabletPortrait
                     ? 14.0
                     : 12.0;
-                final businessBackButtonGap = isTabletPortrait ? 10.0 : 14.0;
-                final businessListBottomPadding = isTabletPortrait
+                final businessBackButtonGap = isTabletLandscape
+                    ? 6.0
+                    : isTabletPortrait
+                    ? 10.0
+                    : 14.0;
+                final businessListBottomPadding = isTabletLandscape
+                    ? math.max(mediaPaddingBottom + 12.0, 22.0)
+                    : isTabletPortrait
                     ? 12.0
                     : 20.0;
+                final businessSectionGap = isTabletLandscape ? 6.0 : 10.0;
+                final businessQuickActionsTitleGap = isTabletLandscape
+                    ? 8.0
+                    : 14.0;
+                final businessQuickActionsGridTopGap = isTabletLandscape
+                    ? 7.0
+                    : 10.0;
+                final headerTitleFontSize = isTabletLandscape ? 15.0 : 19.0;
+                final headerSubtitleFontSize = isTabletLandscape ? 11.0 : 12.5;
+                final headerTextBottomGap = isTabletLandscape ? 2.0 : 3.0;
+                final headerContentPadding = isTabletLandscape
+                    ? const EdgeInsets.fromLTRB(10, 8, 10, 10)
+                    : const EdgeInsets.fromLTRB(12, 12, 12, 14);
 
                 return ListView(
                   padding: EdgeInsets.fromLTRB(
@@ -9175,12 +9210,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             ),
                             Positioned.fill(
                               child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  12,
-                                  12,
-                                  14,
-                                ),
+                                padding: headerContentPadding,
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -9200,13 +9230,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         fr: 'Bonjour ! 👋',
                                         es: '¡Buenos días! 👋',
                                       ),
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w800,
-                                        fontSize: 19,
+                                        fontSize: headerTitleFontSize,
                                       ),
                                     ),
-                                    const SizedBox(height: 3),
+                                    SizedBox(height: headerTextBottomGap),
                                     Text(
                                       _t(
                                         nl: 'Bedrijfsoverzicht',
@@ -9216,7 +9246,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                       ),
                                       style: TextStyle(
                                         color: Colors.white.withOpacity(0.78),
-                                        fontSize: 12.5,
+                                        fontSize: headerSubtitleFontSize,
                                       ),
                                     ),
                                   ],
@@ -9266,12 +9296,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                       ),
                     ],
-                    const SizedBox(height: 10),
-                    _primaryCta(context),
-                    const SizedBox(height: 10),
+                    SizedBox(height: businessSectionGap),
+                    _primaryCta(context, compact: isTabletLandscape),
+                    SizedBox(height: businessSectionGap),
                     LayoutBuilder(
                       builder: (context, constraints) {
-                        final stacked = constraints.maxWidth < 430;
+                        final stacked =
+                            !isTabletLandscape && constraints.maxWidth < 430;
                         if (stacked) {
                           return Column(
                             children: [
@@ -9291,8 +9322,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricCountText(_openBookingsCount),
                                 accentColor: const Color(0xFF60A5FA),
+                                compact: isTabletLandscape,
                               ),
-                              const SizedBox(height: 8),
+                              SizedBox(height: isTabletLandscape ? 6 : 8),
                               _metricCard(
                                 icon: Icons.directions_car_outlined,
                                 title: _t(
@@ -9309,8 +9341,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricCountText(_completedRidesCount),
                                 accentColor: const Color(0xFF4ADE80),
+                                compact: isTabletLandscape,
                               ),
-                              const SizedBox(height: 8),
+                              SizedBox(height: isTabletLandscape ? 6 : 8),
                               _metricCard(
                                 icon: Icons.payments_outlined,
                                 title: _t(
@@ -9329,8 +9362,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   _unpaidCompletedRidesCount,
                                 ),
                                 accentColor: const Color(0xFFF97373),
+                                compact: isTabletLandscape,
                               ),
-                              const SizedBox(height: 8),
+                              SizedBox(height: isTabletLandscape ? 6 : 8),
                               _metricCard(
                                 icon: Icons.euro_rounded,
                                 title: _t(
@@ -9347,12 +9381,17 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricIncomeText(),
                                 accentColor: const Color(0xFFE5B641),
+                                compact: isTabletLandscape,
                               ),
                             ],
                           );
                         }
-                        final columns = constraints.maxWidth < 760 ? 2 : 4;
-                        final spacing = 8.0;
+                        final columns = isTabletLandscape
+                            ? 4
+                            : constraints.maxWidth < 760
+                            ? 2
+                            : 4;
+                        final spacing = isTabletLandscape ? 6.0 : 8.0;
                         final cardWidth =
                             (constraints.maxWidth - ((columns - 1) * spacing)) /
                             columns;
@@ -9378,6 +9417,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricCountText(_openBookingsCount),
                                 accentColor: const Color(0xFF60A5FA),
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9398,6 +9438,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricCountText(_completedRidesCount),
                                 accentColor: const Color(0xFF4ADE80),
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9420,6 +9461,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   _unpaidCompletedRidesCount,
                                 ),
                                 accentColor: const Color(0xFFF97373),
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9440,13 +9482,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 value: _metricIncomeText(),
                                 accentColor: const Color(0xFFE5B641),
+                                compact: isTabletLandscape,
                               ),
                             ),
                           ],
                         );
                       },
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: businessQuickActionsTitleGap),
                     Text(
                       _t(
                         nl: 'Snelle acties',
@@ -9460,13 +9503,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: businessQuickActionsGridTopGap),
                     LayoutBuilder(
                       builder: (context, constraints) {
+                        final quickActionColumns = isTabletLandscape ? 4 : 2;
+                        final totalHorizontalSpacing =
+                            businessQuickActionSpacing *
+                            (quickActionColumns - 1);
                         final cardWidth =
-                            (constraints.maxWidth -
-                                businessQuickActionSpacing) /
-                            2;
+                            (constraints.maxWidth - totalHorizontalSpacing) /
+                            quickActionColumns;
                         return Wrap(
                           spacing: businessQuickActionSpacing,
                           runSpacing: businessQuickActionSpacing,
@@ -9499,6 +9545,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/settings_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9529,6 +9576,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/plan_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9559,6 +9607,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/vehicles_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9584,6 +9633,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/chiron_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9614,6 +9664,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/drivers_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9637,6 +9688,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/driver_view_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9667,6 +9719,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/demand_radar_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             SizedBox(
@@ -9691,6 +9744,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/share_booking_link_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                             if (isTabletPortrait)
@@ -9721,6 +9775,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   backgroundAsset:
                                       'assets/fluxidi/bookings_background_company.png',
                                   useImageBackground: isTabletPortrait,
+                                  compact: isTabletLandscape,
                                 ),
                               ),
                             SizedBox(
@@ -9750,6 +9805,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 backgroundAsset:
                                     'assets/fluxidi/ai_dispatch_background_company.png',
                                 useImageBackground: isTabletPortrait,
+                                compact: isTabletLandscape,
                               ),
                             ),
                           ],
