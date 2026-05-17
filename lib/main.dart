@@ -12583,12 +12583,12 @@ class CompanyDriverManagementPage extends StatelessWidget {
     );
   }
 
-  Widget _driverCardAvatar(DriverProfile driver) {
+  Widget _driverCardAvatar(DriverProfile driver, {double size = 52}) {
     final photoPath = _driverCardPhotoPath(driver);
     final networkUrl = _driverCardNetworkPhotoUrl(driver);
     return Container(
-      width: 52,
-      height: 52,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: _subPanelBg,
         shape: BoxShape.circle,
@@ -12981,36 +12981,50 @@ class CompanyDriverManagementPage extends StatelessWidget {
     required Color accent,
     required String label,
     required String value,
+    String? subtitle,
     bool compact = false,
   }) {
+    final decoration = compact
+        ? BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF090909), Color(0xFF101010)],
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _gold.withOpacity(0.30)),
+          )
+        : BoxDecoration(
+            color: _panelBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _gold.withOpacity(0.22)),
+          );
     return Container(
       padding: EdgeInsets.fromLTRB(
-        compact ? 8 : 10,
-        compact ? 6 : 8,
-        compact ? 8 : 10,
-        compact ? 6 : 8,
+        compact ? 14 : 10,
+        compact ? 12 : 8,
+        compact ? 14 : 10,
+        compact ? 12 : 8,
       ),
-      decoration: BoxDecoration(
-        color: _panelBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.22)),
-      ),
+      decoration: decoration,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: compact ? 24 : 28,
-            height: compact ? 24 : 28,
+            width: compact ? 56 : 28,
+            height: compact ? 56 : 28,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: accent.withOpacity(0.15),
               border: Border.all(color: accent.withOpacity(0.52)),
             ),
-            child: Icon(icon, size: compact ? 13 : 15, color: accent),
+            child: Icon(icon, size: compact ? 28 : 15, color: accent),
           ),
-          SizedBox(width: compact ? 6 : 8),
+          SizedBox(width: compact ? 12 : 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
                   label,
@@ -13018,11 +13032,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.62),
-                    fontSize: compact ? 10.1 : 10.8,
+                    fontSize: compact ? 14.8 : 10.8,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                SizedBox(height: compact ? 1 : 2),
+                SizedBox(height: compact ? 3 : 2),
                 Text(
                   value,
                   maxLines: 1,
@@ -13030,13 +13044,621 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: compact ? 15 : 16,
+                    fontSize: compact ? 29 : 16,
                   ),
                 ),
+                if (compact &&
+                    subtitle != null &&
+                    subtitle.trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.60),
+                      fontSize: 12.8,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _landscapeDriverDetailLine({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    final shown = value.trim().isEmpty ? '—' : value.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: _gold.withOpacity(0.9)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13.6,
+                  height: 1.26,
+                ),
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.62),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  TextSpan(
+                    text: shown,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openLandscapeDriverDocumentsSheet(
+    BuildContext context,
+    DriverProfile driver,
+    List<DriverDocument> docs,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _pageBg,
+      builder: (sheetContext) {
+        final maxHeight = math.min(
+          MediaQuery.of(sheetContext).size.height * 0.76,
+          640.0,
+        );
+        return SafeArea(
+          child: SizedBox(
+            height: maxHeight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Documenten',
+                      en: 'Documents',
+                      fr: 'Documents',
+                      es: 'Documentos',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: docs.isEmpty
+                        ? Center(
+                            child: Text(
+                              _t(
+                                nl: 'Nog geen documenten.',
+                                en: 'No documents.',
+                                fr: 'Aucun document.',
+                                es: 'Sin documentos.',
+                              ),
+                              style: const TextStyle(color: Colors.white60),
+                            ),
+                          )
+                        : ListView(
+                            children: [
+                              for (final doc in docs)
+                                _driverDocumentTile(sheetContext, driver, doc),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.of(sheetContext).pop();
+                          await _openDocumentEditor(context, driver);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _gold.withOpacity(0.96),
+                          side: BorderSide(color: _gold.withOpacity(0.38)),
+                          backgroundColor: _panelBg,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: Text(
+                          _t(
+                            nl: 'Document toevoegen',
+                            en: 'Add document',
+                            fr: 'Ajouter',
+                            es: 'Agregar',
+                          ),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          side: BorderSide(
+                            color: Colors.white.withOpacity(0.24),
+                          ),
+                          backgroundColor: _panelBg,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                        icon: const Icon(Icons.close, size: 16),
+                        label: Text(
+                          _t(
+                            nl: 'Sluiten',
+                            en: 'Close',
+                            fr: 'Fermer',
+                            es: 'Cerrar',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _driverLandscapeReferenceCard(
+    BuildContext context, {
+    required DriverProfile driver,
+    required String status,
+    required List<DriverDocument> docs,
+    required bool gap,
+    required String docCountLabel,
+  }) {
+    final docsCount = docs.length;
+    final docsAllGood = docsCount > 0 && !gap;
+    final statusIcon = docsAllGood
+        ? Icons.check_circle_outline_rounded
+        : Icons.warning_amber_rounded;
+    final statusIconColor = docsAllGood
+        ? Colors.greenAccent
+        : Colors.orangeAccent;
+    final docsStatus = docsAllGood
+        ? _t(
+            nl: 'Alle documenten in orde.',
+            en: 'All documents are in order.',
+            fr: 'Tous les documents sont en ordre.',
+            es: 'Todos los documentos están en orden.',
+          )
+        : (docsCount == 0
+              ? _t(
+                  nl: 'Nog geen documenten geüpload.',
+                  en: 'No documents uploaded.',
+                  fr: 'Aucun document téléchargé.',
+                  es: 'No hay documentos subidos.',
+                )
+              : _t(
+                  nl: 'Documenten vereisen controle.',
+                  en: 'Documents need action.',
+                  fr: 'Documents à vérifier.',
+                  es: 'Documentos requieren revisión.',
+                ));
+    final docsSubStatus = docsAllGood
+        ? _t(
+            nl: 'Geen actie vereist',
+            en: 'No action required',
+            fr: 'Aucune action requise',
+            es: 'No se requiere acción',
+          )
+        : _t(
+            nl: 'Controleer of voeg documenten toe',
+            en: 'Review or add required documents',
+            fr: 'Vérifiez ou ajoutez les documents requis',
+            es: 'Revise o agregue documentos requeridos',
+          );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF07080C), Color(0xFF101010)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.30)),
+      ),
+      child: SizedBox(
+        height: 248,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 48,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _driverCardAvatar(driver, size: 88),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                driver.fullName.trim().isEmpty
+                                    ? _t(
+                                        nl: 'Naamloze chauffeur',
+                                        en: 'Unnamed driver',
+                                        fr: 'Chauffeur sans nom',
+                                        es: 'Conductor sin nombre',
+                                      )
+                                    : _displayDriverName(driver.fullName),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 22,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: driver.isActive
+                                      ? Colors.green.withOpacity(0.16)
+                                      : Colors.white.withOpacity(0.06),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: driver.isActive
+                                        ? Colors.greenAccent.withOpacity(0.44)
+                                        : Colors.white24,
+                                  ),
+                                ),
+                                child: Text(
+                                  status,
+                                  style: TextStyle(
+                                    color: driver.isActive
+                                        ? Colors.greenAccent
+                                        : Colors.white70,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _landscapeDriverDetailLine(
+                      icon: Icons.business_outlined,
+                      label: _t(
+                        nl: 'Bedrijfscode',
+                        en: 'Company ID',
+                        fr: 'Code entreprise',
+                        es: 'Código de empresa',
+                      ),
+                      value: _displayCompanyLoginCode(driver),
+                    ),
+                    _landscapeDriverDetailLine(
+                      icon: Icons.badge_outlined,
+                      label: _t(
+                        nl: 'Chauffeurcode',
+                        en: 'Driver code',
+                        fr: 'Code chauffeur',
+                        es: 'Código de conductor',
+                      ),
+                      value: _driverCodeStatusLabel(driver),
+                    ),
+                    _landscapeDriverDetailLine(
+                      icon: Icons.phone_outlined,
+                      label: _t(
+                        nl: 'Telefoon',
+                        en: 'Phone',
+                        fr: 'Téléphone',
+                        es: 'Teléfono',
+                      ),
+                      value: driver.phone,
+                    ),
+                    _landscapeDriverDetailLine(
+                      icon: Icons.credit_card_outlined,
+                      label: _t(
+                        nl: 'Chauffeurskaartnummer',
+                        en: 'Driver card number',
+                        fr: 'N° carte chauffeur',
+                        es: 'N.º tarjeta de conductor',
+                      ),
+                      value: driver.taxiDriverCardNumber,
+                    ),
+                    _landscapeDriverDetailLine(
+                      icon: Icons.event_note_outlined,
+                      label: _t(
+                        nl: 'Vervaldatum chauffeurskaart',
+                        en: 'Driver card expiry',
+                        fr: 'Expiration carte chauffeur',
+                        es: 'Caducidad tarjeta de conductor',
+                      ),
+                      value: driver.taxiDriverCardExpiry,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Container(width: 1, color: Colors.white.withOpacity(0.09)),
+            Expanded(
+              flex: 27,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Documenten',
+                        en: 'Documents',
+                        fr: 'Documents',
+                        es: 'Documentos',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: docsAllGood
+                            ? Colors.green.withOpacity(0.15)
+                            : Colors.orange.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: docsAllGood
+                              ? Colors.greenAccent.withOpacity(0.36)
+                              : Colors.orangeAccent.withOpacity(0.36),
+                        ),
+                      ),
+                      child: Text(
+                        '$docsCount $docCountLabel',
+                        style: TextStyle(
+                          color: docsAllGood
+                              ? Colors.greenAccent
+                              : Colors.orangeAccent,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.6,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 58,
+                          height: 58,
+                          decoration: BoxDecoration(
+                            color: statusIconColor.withOpacity(0.14),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: statusIconColor.withOpacity(0.42),
+                            ),
+                          ),
+                          child: Icon(
+                            statusIcon,
+                            size: 34,
+                            color: statusIconColor,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                docsStatus,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15.2,
+                                  height: 1.2,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                docsSubStatus,
+                                style: const TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 13,
+                                  height: 1.22,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _openLandscapeDriverDocumentsSheet(
+                          context,
+                          driver,
+                          docs,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 50),
+                          foregroundColor: _gold.withOpacity(0.94),
+                          side: BorderSide(color: _gold.withOpacity(0.30)),
+                          backgroundColor: Colors.black.withOpacity(0.14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.folder_open_outlined, size: 20),
+                        label: Text(
+                          _t(
+                            nl: 'Controleer documenten',
+                            en: 'Check documents',
+                            fr: 'Vérifier les documents',
+                            es: 'Revisar documentos',
+                          ),
+                          style: const TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Container(width: 1, color: Colors.white.withOpacity(0.09)),
+            Expanded(
+              flex: 25,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _rotateDriverCode(context, driver),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: _gold.withOpacity(0.98),
+                        side: BorderSide(color: _gold.withOpacity(0.34)),
+                        backgroundColor: const Color(0xFF16120A),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.key_outlined, size: 20),
+                      label: Text(
+                        _t(
+                          nl: 'Nieuwe chauffeurcode genereren',
+                          en: 'Generate new driver code',
+                          fr: 'Generer un nouveau code chauffeur',
+                          es: 'Generar nuevo codigo de conductor',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _openEditDriverDialog(context, driver),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: Colors.white,
+                        side: BorderSide(color: Colors.white.withOpacity(0.24)),
+                        backgroundColor: Colors.black.withOpacity(0.14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      label: Text(
+                        _t(
+                          nl: 'Bewerken',
+                          en: 'Edit driver',
+                          fr: 'Modifier',
+                          es: 'Editar',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    OutlinedButton.icon(
+                      onPressed: () => _confirmDeleteDriver(context, driver),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: Colors.redAccent,
+                        side: BorderSide(
+                          color: Colors.redAccent.withOpacity(0.45),
+                        ),
+                        backgroundColor: const Color(0xFF2A1518),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      label: Text(
+                        _t(
+                          nl: 'Verwijderen',
+                          en: 'Delete driver',
+                          fr: 'Supprimer',
+                          es: 'Eliminar',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -13115,11 +13737,25 @@ class CompanyDriverManagementPage extends StatelessWidget {
                 }
               }
 
+              final listPadding = isTabletLandscape
+                  ? EdgeInsets.fromLTRB(
+                      14,
+                      10,
+                      14,
+                      math.max(16, media.padding.bottom + 8),
+                    )
+                  : const EdgeInsets.fromLTRB(14, 12, 14, 16);
+              final introPadding = isTabletLandscape
+                  ? const EdgeInsets.fromLTRB(14, 8, 14, 8)
+                  : const EdgeInsets.fromLTRB(14, 12, 14, 12);
+              final introTitleFontSize = isTabletLandscape ? 15.6 : 16.0;
+              final introSubtitleFontSize = isTabletLandscape ? 11.8 : 12.4;
+
               return ListView(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+                padding: listPadding,
                 children: [
                   Container(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    padding: introPadding,
                     decoration: BoxDecoration(
                       color: _panelBg,
                       borderRadius: BorderRadius.circular(14),
@@ -13135,13 +13771,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             fr: 'Gérer les chauffeurs',
                             es: 'Gestionar conductores',
                           ),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
-                            fontSize: 16,
+                            fontSize: introTitleFontSize,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        SizedBox(height: isTabletLandscape ? 2 : 4),
                         Text(
                           _t(
                             nl: 'Beheer chauffeurs, documenten en beschikbaarheid',
@@ -13151,27 +13787,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.72),
-                            fontSize: 12.4,
+                            fontSize: introSubtitleFontSize,
                           ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Container(
-                    padding: isTabletLandscape
-                        ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8)
-                        : const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _subPanelBg,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: _gold.withOpacity(0.30)),
-                    ),
-                    child: GridView.count(
-                      crossAxisCount: isTabletLandscape ? 4 : 2,
-                      crossAxisSpacing: isTabletLandscape ? 6 : 8,
-                      mainAxisSpacing: isTabletLandscape ? 6 : 8,
-                      childAspectRatio: isTabletLandscape ? 3.25 : 2.3,
+                  if (isTabletLandscape)
+                    GridView.count(
+                      crossAxisCount: 4,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 2.35,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       children: [
@@ -13185,7 +13813,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Total conductores',
                           ),
                           value: '$totalDrivers',
-                          compact: isTabletLandscape,
+                          subtitle: _t(
+                            nl: 'Alle geregistreerde chauffeurs',
+                            en: 'All registered drivers',
+                            fr: 'Tous les chauffeurs inscrits',
+                            es: 'Todos los conductores registrados',
+                          ),
+                          compact: true,
                         ),
                         _summaryMetric(
                           icon: Icons.verified_user_outlined,
@@ -13197,7 +13831,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Activos',
                           ),
                           value: '$activeDrivers',
-                          compact: isTabletLandscape,
+                          subtitle: _t(
+                            nl: 'Momenteel actief',
+                            en: 'Currently active',
+                            fr: 'Actuellement actifs',
+                            es: 'Actualmente activos',
+                          ),
+                          compact: true,
                         ),
                         _summaryMetric(
                           icon: Icons.warning_amber_rounded,
@@ -13209,7 +13849,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Documentos: acción requerida',
                           ),
                           value: '$gapDrivers',
-                          compact: isTabletLandscape,
+                          subtitle: _t(
+                            nl: 'Vereisen controle',
+                            en: 'Require attention',
+                            fr: 'Nécessitent une attention',
+                            es: 'Requieren atención',
+                          ),
+                          compact: true,
                         ),
                         _summaryMetric(
                           icon: Icons.event_available_outlined,
@@ -13221,12 +13867,84 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Caducan pronto',
                           ),
                           value: '$expiringSoon',
-                          compact: isTabletLandscape,
+                          subtitle: _t(
+                            nl: 'Binnen 30 dagen',
+                            en: 'Within 30 days',
+                            fr: 'Dans les 30 jours',
+                            es: 'Dentro de 30 días',
+                          ),
+                          compact: true,
                         ),
                       ],
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: _subPanelBg,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _gold.withOpacity(0.30)),
+                      ),
+                      child: GridView.count(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 2.3,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        children: [
+                          _summaryMetric(
+                            icon: Icons.groups_rounded,
+                            accent: _gold,
+                            label: _t(
+                              nl: 'Totaal chauffeurs',
+                              en: 'Total drivers',
+                              fr: 'Total chauffeurs',
+                              es: 'Total conductores',
+                            ),
+                            value: '$totalDrivers',
+                            compact: false,
+                          ),
+                          _summaryMetric(
+                            icon: Icons.verified_user_outlined,
+                            accent: Colors.greenAccent,
+                            label: _t(
+                              nl: 'Actief',
+                              en: 'Active',
+                              fr: 'Actifs',
+                              es: 'Activos',
+                            ),
+                            value: '$activeDrivers',
+                            compact: false,
+                          ),
+                          _summaryMetric(
+                            icon: Icons.warning_amber_rounded,
+                            accent: Colors.orangeAccent,
+                            label: _t(
+                              nl: 'Documenten actie vereist',
+                              en: 'Documents need action',
+                              fr: 'Documents: action requise',
+                              es: 'Documentos: acción requerida',
+                            ),
+                            value: '$gapDrivers',
+                            compact: false,
+                          ),
+                          _summaryMetric(
+                            icon: Icons.event_available_outlined,
+                            accent: Colors.lightBlueAccent,
+                            label: _t(
+                              nl: 'Binnenkort vervallen',
+                              en: 'Expiring soon',
+                              fr: 'Expiration proche',
+                              es: 'Caducan pronto',
+                            ),
+                            value: '$expiringSoon',
+                            compact: false,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   for (final d in visible) ...[
                     Builder(
                       builder: (context) {
@@ -13258,6 +13976,16 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                 fr: 'documents',
                                 es: 'documentos',
                               );
+                        if (isTabletLandscape) {
+                          return _driverLandscapeReferenceCard(
+                            context,
+                            driver: d,
+                            status: status,
+                            docs: docs,
+                            gap: gap,
+                            docCountLabel: docCountLabel,
+                          );
+                        }
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
                           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
