@@ -11321,8 +11321,13 @@ class _CompanyDriverManagementPageState
   bool _refreshInFlight = false;
   bool _adminDocsRefreshInFlight = false;
   bool _hasSuccessfulRefresh = false;
+  bool _lastRefreshOk = false;
   bool _recoveryHintShown = false;
   DateTime? _lastRefreshAtUtc;
+  final Set<String> _docRefreshFailedDriverIds = <String>{};
+  final Map<String, ({bool active, DateTime atUtc})>
+  _recentConfirmedDriverActiveById =
+      <String, ({bool active, DateTime atUtc})>{};
 
   Future<void> _ensureCompanySessionTokenForAdminView({
     required String reason,
@@ -11376,15 +11381,24 @@ class _CompanyDriverManagementPageState
         .toList(growable: false);
   }
 
+  bool _isExpiryWithinDaysForDiag(String raw, {required int days}) {
+    final text = raw.trim();
+    if (text.isEmpty) return false;
+    final dt = DateTime.tryParse(text);
+    if (dt == null) return false;
+    final now = DateTime.now().toUtc();
+    final target = dt.toUtc();
+    if (target.isBefore(now)) return false;
+    return target.difference(now).inDays <= days;
+  }
+
   Future<void> _refreshAdminDocumentsForVisibleDrivers({
     required String reason,
     bool force = false,
     String? onlyDriverId,
   }) async {
     if (_adminDocsRefreshInFlight) return;
-    final token =
-        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
-    if (token.isEmpty) return;
+    var refreshFailureStateChanged = false;
     final allVisible = _adminVisibleDrivers();
     final targetDriverId = (onlyDriverId ?? '').trim();
     final targets = targetDriverId.isEmpty
@@ -11393,21 +11407,80 @@ class _CompanyDriverManagementPageState
               .where((d) => d.id.trim() == targetDriverId)
               .toList(growable: false);
     if (targets.isEmpty) return;
+    final token =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (token.isEmpty) {
+      for (final driver in targets) {
+        final safeDriverRef = _shortDriverIdForDiag(driver.id);
+        final scope = _adminScopeForDriver(driver);
+        if (_docRefreshFailedDriverIds.add(driver.id.trim())) {
+          refreshFailureStateChanged = true;
+        }
+        debugPrint('[DRIVER_DOCS_SYNC][AUDIT_START] driver=$safeDriverRef');
+        debugPrint(
+          '[DRIVER_DOCS_SYNC][SCOPE] driver=$safeDriverRef tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
+        );
+        debugPrint('[DRIVER_DOCS_SYNC][BACKEND] driver=$safeDriverRef count=0');
+        debugPrint(
+          '[DRIVER_DOCS_SYNC][MISMATCH] driver=$safeDriverRef reason=no_company_session_token',
+        );
+        debugPrint(
+          '[DRIVER_DOCS][REFRESH_FAILED] driver=${_shortDriverIdForDiag(driver.id)} error=no_company_session_token',
+        );
+      }
+      if (mounted && refreshFailureStateChanged) {
+        setState(() {});
+      }
+      return;
+    }
     _adminDocsRefreshInFlight = true;
+    for (final driver in targets) {
+      if (_docRefreshFailedDriverIds.add(driver.id.trim())) {
+        refreshFailureStateChanged = true;
+      }
+    }
     debugPrint(
       '[DRIVER_DOCS_ADMIN][REFRESH_START] drivers=${targets.length} reason=$reason force=$force',
     );
     try {
       for (final driver in targets) {
+        final safeDriverRef = _shortDriverIdForDiag(driver.id);
+        debugPrint('[DRIVER_DOCS_SYNC][AUDIT_START] driver=$safeDriverRef');
+        debugPrint('[DRIVER_DOCS][REFRESH_START] driver=$safeDriverRef');
         final scope = _adminScopeForDriver(driver);
-        final ok = await DriverDocumentsStore.instance
-            .refreshDriverDocumentsFromBackend(
+        debugPrint(
+          '[DRIVER_DOCS_SYNC][SCOPE] driver=$safeDriverRef tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
+        );
+        final localBefore = DriverDocumentsStore.instance
+            .documentsVisibleForCompanyAdminDriver(
+              driver.id,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+            )
+            .length;
+        debugPrint(
+          '[DRIVER_DOCS_SYNC][LOCAL] driver=$safeDriverRef count=$localBefore',
+        );
+        await DriverDocumentsStore.instance
+            .backfillLocalDriverDocumentsToBackendForDriver(
               bookingBaseUrl: kBookingBaseUrl,
               companySessionToken: token,
               tenantId: scope.tenantId,
               companyId: scope.companyId,
               driverId: driver.id,
             );
+        final refreshResult = await DriverDocumentsStore.instance
+            .refreshDriverDocumentsFromBackendDetailed(
+              bookingBaseUrl: kBookingBaseUrl,
+              companySessionToken: token,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+              driverId: driver.id,
+            );
+        debugPrint(
+          '[DRIVER_DOCS_BACKFILL][AUDIT] driver=$safeDriverRef local=$localBefore backend=${refreshResult.backendCount}',
+        );
+        final ok = refreshResult.ok;
         final visibleCount = DriverDocumentsStore.instance
             .documentsVisibleForCompanyAdminDriver(
               driver.id,
@@ -11416,11 +11489,105 @@ class _CompanyDriverManagementPageState
             )
             .length;
         debugPrint(
+          '[DRIVER_DOCS_SYNC][BACKEND] driver=$safeDriverRef count=${refreshResult.backendCount}',
+        );
+        final compliance = DriverDocumentsStore.instance
+            .complianceSummaryForCompanyAdminDriver(
+              driver.id,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+            );
+        final visibleDocs = DriverDocumentsStore.instance
+            .documentsVisibleForCompanyAdminDriver(
+              driver.id,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+            );
+        final expiringSoonForDriver = visibleDocs
+            .where(
+              (doc) => _isExpiryWithinDaysForDiag(doc.expiryDate, days: 30),
+            )
+            .length;
+        var localOnlyCount = 0;
+        for (final doc in visibleDocs) {
+          final hasMetadata =
+              doc.documentType.trim().isNotEmpty ||
+              doc.title.trim().isNotEmpty ||
+              doc.status.trim().isNotEmpty;
+          final artifactSource = driverDocumentArtifactSource(doc);
+          final hasArtifact = artifactSource != 'missing';
+          debugPrint(
+            '[DRIVER_DOCS][ARTIFACT_CHECK] driver=$safeDriverRef doc=${_shortDriverIdForDiag(doc.documentId)} hasMetadata=$hasMetadata hasArtifact=$hasArtifact source=$artifactSource',
+          );
+          if (!hasArtifact) {
+            final normalizedType = normalizeDriverDocumentTypeForCompliance(
+              rawType: doc.documentType,
+              title: doc.title,
+            );
+            debugPrint(
+              '[DRIVER_DOCS][ARTIFACT_MISSING] driver=$safeDriverRef doc=${_shortDriverIdForDiag(doc.documentId)} type=$normalizedType',
+            );
+          }
+          final likelyLocalOnly =
+              doc.backendFileName.trim().isEmpty &&
+              doc.backendContentType.trim().isEmpty &&
+              doc.backendSizeBytes <= 0 &&
+              doc.storageState.trim().isEmpty;
+          if (likelyLocalOnly) {
+            localOnlyCount++;
+          }
+        }
+        if (localOnlyCount > 0) {
+          debugPrint(
+            '[DRIVER_DOCS_SYNC][UPLOAD_REQUIRED] driver=$safeDriverRef localOnly=$localOnlyCount',
+          );
+        }
+        if (ok && refreshResult.backendCount == 0) {
+          debugPrint(
+            '[DRIVER_DOCS_SYNC][MISMATCH] driver=$safeDriverRef reason=backend_empty_for_scope',
+          );
+          if (localBefore == 0) {
+            debugPrint(
+              '[DRIVER_DOCS_BACKFILL][SOURCE_DEVICE_REQUIRED] driver=$safeDriverRef count=0',
+            );
+          }
+        }
+        if (ok) {
+          if (_docRefreshFailedDriverIds.remove(driver.id.trim())) {
+            refreshFailureStateChanged = true;
+          }
+          debugPrint(
+            '[DRIVER_DOCS][REFRESH_DONE] driver=$safeDriverRef count=$visibleCount',
+          );
+        } else {
+          if (_docRefreshFailedDriverIds.add(driver.id.trim())) {
+            refreshFailureStateChanged = true;
+          }
+          debugPrint(
+            '[DRIVER_DOCS_SYNC][MISMATCH] driver=$safeDriverRef reason=${refreshResult.errorCode}',
+          );
+          debugPrint(
+            '[DRIVER_DOCS][REFRESH_FAILED] driver=$safeDriverRef error=backend_refresh_failed',
+          );
+        }
+        debugPrint(
+          '[DRIVER_DOCS][COMPLIANCE] driver=$safeDriverRef valid=${compliance.validRequiredCount}/7 uploaded=${compliance.uploadedRequiredCount}/7 missing=${compliance.missingRequiredTypeIds.length} expired=${compliance.expiredRequiredTypeIds.length} pending=${compliance.pendingRequiredTypeIds.length} rejected=${compliance.rejectedRequiredTypeIds.length} attachmentMissing=${compliance.missingAttachmentRequiredTypeIds.length}',
+        );
+        debugPrint(
+          '[DRIVER_DOC_EDIT][COMPLIANCE] driver=$safeDriverRef valid=${compliance.validRequiredCount}/7 expired=${compliance.expiredRequiredTypeIds.length} expiringSoon=$expiringSoonForDriver missing=${compliance.missingRequiredTypeIds.length} attachmentMissing=${compliance.missingAttachmentRequiredTypeIds.length}',
+        );
+        debugPrint(
+          '[DRIVER_DOCS_SYNC][DONE] driver=$safeDriverRef visible=$visibleCount',
+        );
+        debugPrint(
           '[DRIVER_DOCS_ADMIN][REFRESH_DRIVER] driver=${_shortDriverIdForDiag(driver.id)} ok=$ok count=$visibleCount',
         );
       }
     } finally {
       _adminDocsRefreshInFlight = false;
+      if (mounted && refreshFailureStateChanged) {
+        setState(() {});
+      }
     }
   }
 
@@ -11450,6 +11617,8 @@ class _CompanyDriverManagementPageState
       final ok = await _hydrateCompanyBootstrapFromActiveSession(
         reason: reason,
       );
+      _reapplyRecentConfirmedDriverState();
+      _lastRefreshOk = ok;
       try {
         await _refreshAdminDocumentsForVisibleDrivers(
           reason: reason,
@@ -11467,6 +11636,105 @@ class _CompanyDriverManagementPageState
       debugPrint('[DRIVERS_PAGE][REFRESH_DONE] reason=$reason ok=$ok');
     } finally {
       _refreshInFlight = false;
+    }
+  }
+
+  void _reapplyRecentConfirmedDriverState() {
+    final now = DateTime.now().toUtc();
+    const keepFor = Duration(seconds: 25);
+    final staleIds = <String>[];
+    for (final entry in _recentConfirmedDriverActiveById.entries) {
+      final driverId = entry.key.trim();
+      final expected = entry.value.active;
+      final atUtc = entry.value.atUtc;
+      if (driverId.isEmpty || now.difference(atUtc) > keepFor) {
+        staleIds.add(driverId);
+        continue;
+      }
+      DriverProfile? current;
+      for (final driver in driversNotifier.value) {
+        if (driver.id.trim() == driverId) {
+          current = driver;
+          break;
+        }
+      }
+      if (current == null) {
+        staleIds.add(driverId);
+        continue;
+      }
+      if (current.isActive == expected) continue;
+      updateDriver(
+        current.id,
+        current.copyWith(isActive: expected),
+        syncInventory: false,
+      );
+      debugPrint(
+        '[DRIVER_STATE_PROPAGATE][NOTIFIER] driver=${_shortDriverIdForDiag(current.id)} updated=true drivers=${driversNotifier.value.length}',
+      );
+    }
+    for (final id in staleIds) {
+      _recentConfirmedDriverActiveById.remove(id);
+    }
+  }
+
+  void _propagateDriverStateAfterConfirmedSave(DriverProfile updated) {
+    final driverId = updated.id.trim();
+    debugPrint(
+      '[DRIVER_STATE_PROPAGATE][START] driver=${_shortDriverIdForDiag(driverId)} active=${updated.isActive}',
+    );
+    var existedBefore = false;
+    for (final driver in driversNotifier.value) {
+      if (driver.id.trim() == driverId) {
+        existedBefore = true;
+        break;
+      }
+    }
+    debugPrint(
+      '[DRIVER_STATE_PROPAGATE][LOCAL_LIST] driver=${_shortDriverIdForDiag(driverId)} updated=$existedBefore',
+    );
+    updateDriver(updated.id, updated, syncInventory: false);
+    _recentConfirmedDriverActiveById[driverId] = (
+      active: updated.isActive,
+      atUtc: DateTime.now().toUtc(),
+    );
+    final total = driversNotifier.value.length;
+    final active = driversNotifier.value.where((d) => d.isActive).length;
+    debugPrint(
+      '[DRIVER_STATE_PROPAGATE][NOTIFIER] driver=${_shortDriverIdForDiag(driverId)} updated=true drivers=$total',
+    );
+    debugPrint(
+      '[DRIVER_STATE_PROPAGATE][TENANT_CACHE] driver=${_shortDriverIdForDiag(driverId)} saved=true',
+    );
+    debugPrint('[DRIVER_STATE_PROPAGATE][KPI] active=$active total=$total');
+    debugPrint(
+      '[DRIVER_STATE_PROPAGATE][DONE] driver=${_shortDriverIdForDiag(driverId)} active=${updated.isActive}',
+    );
+  }
+
+  Future<void> _refreshAfterMutation({required String reason}) async {
+    debugPrint('[DRIVER_MANAGEMENT][REFRESH_AFTER_MUTATION] reason=$reason');
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      await _refreshDriversFromBootstrap(reason: reason, force: true);
+      if (mounted) {
+        setState(() {});
+      }
+      final driversCount = _adminVisibleDrivers().length;
+      if (_lastRefreshOk) {
+        debugPrint(
+          '[DRIVER_MANAGEMENT][REFRESH_DONE] reason=$reason drivers=$driversCount',
+        );
+      } else {
+        debugPrint(
+          '[DRIVER_MANAGEMENT][REFRESH_FAILED] reason=$reason error=bootstrap_refresh_failed',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[DRIVER_MANAGEMENT][REFRESH_FAILED] reason=$reason error=${_shortErrorForDiag(error)}',
+      );
     }
   }
 
@@ -11501,27 +11769,33 @@ class _CompanyDriverManagementPageState
   @override
   Widget build(BuildContext context) {
     return _CompanyDriverManagementPageBody(
-      onRequestBootstrapRefresh: _refreshDriversFromBootstrap,
       onRequestAdminDriverDocumentsRefresh:
           _refreshAdminDocumentsForVisibleDrivers,
+      onRequestMutationRefresh: _refreshAfterMutation,
+      documentRefreshFailedDriverIds: _docRefreshFailedDriverIds,
+      onPropagateConfirmedDriverState: _propagateDriverStateAfterConfirmedSave,
     );
   }
 }
 
 class _CompanyDriverManagementPageBody extends StatelessWidget {
   const _CompanyDriverManagementPageBody({
-    this.onRequestBootstrapRefresh,
     this.onRequestAdminDriverDocumentsRefresh,
+    this.onRequestMutationRefresh,
+    this.documentRefreshFailedDriverIds = const <String>{},
+    this.onPropagateConfirmedDriverState,
   });
 
-  final Future<void> Function({required String reason, bool force})?
-  onRequestBootstrapRefresh;
   final Future<void> Function({
     required String reason,
     bool force,
     String? onlyDriverId,
   })?
   onRequestAdminDriverDocumentsRefresh;
+  final Future<void> Function({required String reason})?
+  onRequestMutationRefresh;
+  final Set<String> documentRefreshFailedDriverIds;
+  final void Function(DriverProfile updated)? onPropagateConfirmedDriverState;
 
   static const Color _pageBg = Color(0xFF07080C);
   static const Color _panelBg = Color(0xFF101113);
@@ -11539,6 +11813,179 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   AppLanguage get _lang => appConfig.currentLanguage;
+
+  String _docsInOrderLabel(DriverDocumentComplianceSummary summary) {
+    return _t(
+      nl: '${summary.validRequiredCount}/${summary.requiredTotal} documenten in orde',
+      en: '${summary.validRequiredCount}/${summary.requiredTotal} documents in order',
+      fr: '${summary.validRequiredCount}/${summary.requiredTotal} documents en ordre',
+      es: '${summary.validRequiredCount}/${summary.requiredTotal} documentos en orden',
+    );
+  }
+
+  String _missingRequiredLabel(int missingCount) {
+    return _t(
+      nl: '$missingCount documenten ontbreken',
+      en: '$missingCount documents are missing',
+      fr: '$missingCount documents manquants',
+      es: 'Faltan $missingCount documentos',
+    );
+  }
+
+  String _documentsNeedsActionLabel() {
+    return _t(
+      nl: 'Documenten vereisen controle.',
+      en: 'Documents need action.',
+      fr: 'Documents à vérifier.',
+      es: 'Documentos requieren revisión.',
+    );
+  }
+
+  Future<void> _openDriverDocumentArtifact(
+    BuildContext context,
+    DriverProfile driver,
+    DriverDocument doc,
+  ) async {
+    final safeDriverRef = _shortDriverIdForDiag(driver.id);
+    final safeDocRef = _shortDriverIdForDiag(doc.documentId);
+    debugPrint(
+      '[DRIVER_DOC_OPEN][START] driver=$safeDriverRef doc=$safeDocRef',
+    );
+    final localPath = doc.filePath.trim();
+    final hasLocal =
+        localPath.isNotEmpty && !kIsWeb && File(localPath).existsSync();
+    final hasBackendArtifact =
+        doc.storageState.trim().toLowerCase() == 'stored' &&
+        doc.backendFileName.trim().isNotEmpty &&
+        doc.backendContentType.trim().isNotEmpty &&
+        doc.backendSizeBytes > 0;
+    final source = hasLocal
+        ? 'local'
+        : (hasBackendArtifact ? 'backend' : 'missing');
+    debugPrint(
+      '[DRIVER_DOC_OPEN][SOURCE] driver=$safeDriverRef doc=$safeDocRef source=$source',
+    );
+    if (source == 'missing') {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Documentbestand niet beschikbaar. Upload opnieuw of synchroniseer documentbestand.',
+              en: 'Document file not available. Re-upload or synchronize the document file.',
+              fr: 'Fichier indisponible. Retéléversez ou synchronisez le fichier.',
+              es: 'Archivo no disponible. Vuelve a subir o sincroniza el archivo.',
+            ),
+          ),
+        ),
+      );
+      debugPrint(
+        '[DRIVER_DOC_OPEN][FAILED] driver=$safeDriverRef doc=$safeDocRef error=artifact_missing',
+      );
+      return;
+    }
+    if (source == 'local') {
+      await openDriverDocumentFile(context, localPath, _lang);
+      debugPrint(
+        '[DRIVER_DOC_OPEN][DONE] driver=$safeDriverRef doc=$safeDocRef',
+      );
+      return;
+    }
+
+    final token =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    final tenantId = doc.tenantId.trim();
+    final companyId = doc.companyId.trim();
+    final driverId = doc.driverId.trim();
+    final documentId = doc.documentId.trim();
+    if (token.isEmpty ||
+        tenantId.isEmpty ||
+        companyId.isEmpty ||
+        driverId.isEmpty ||
+        documentId.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Backend documenttoegang vereist een actieve bedrijfssessie.',
+              en: 'Backend document access requires an active company session.',
+              fr: 'L’accès backend au document nécessite une session entreprise active.',
+              es: 'El acceso backend al documento requiere una sesión activa de empresa.',
+            ),
+          ),
+        ),
+      );
+      debugPrint(
+        '[DRIVER_DOC_OPEN][FAILED] driver=$safeDriverRef doc=$safeDocRef error=missing_scope_or_token',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[DRIVER_DOC_OPEN][REQUEST] driver=$safeDriverRef doc=$safeDocRef endpoint=/admin/driver-documents/file',
+    );
+    try {
+      final downloaded = await downloadAdminDriverDocumentFile(
+        bookingBaseUrl: kBookingBaseUrl,
+        companySessionToken: token,
+        tenantId: tenantId,
+        companyId: companyId,
+        driverId: driverId,
+        documentId: documentId,
+      );
+      debugPrint(
+        '[DRIVER_DOC_OPEN][RESPONSE] driver=$safeDriverRef doc=$safeDocRef status=200 bytes=${downloaded.bytes}',
+      );
+      final saved =
+          downloaded.localPath.trim().isNotEmpty &&
+          await File(downloaded.localPath).exists();
+      debugPrint(
+        '[DRIVER_DOC_OPEN][LOCAL_CACHE] driver=$safeDriverRef doc=$safeDocRef saved=$saved',
+      );
+      if (!saved) {
+        debugPrint(
+          '[DRIVER_DOC_OPEN][FAILED] driver=$safeDriverRef doc=$safeDocRef error=cache_save_failed',
+        );
+        return;
+      }
+      await openDriverDocumentFile(context, downloaded.localPath, _lang);
+      debugPrint(
+        '[DRIVER_DOC_OPEN][DONE] driver=$safeDriverRef doc=$safeDocRef',
+      );
+    } catch (e) {
+      final err = e.toString().toLowerCase();
+      var code = 'download_failed';
+      if (err.contains('404')) code = 'not_found';
+      if (err.contains('401') || err.contains('403')) code = 'unauthorized';
+      if (err.contains('timeout')) code = 'timeout';
+      debugPrint(
+        '[DRIVER_DOC_OPEN][FAILED] driver=$safeDriverRef doc=$safeDocRef error=$code',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kon document niet openen. Probeer opnieuw.',
+              en: 'Could not open document. Please try again.',
+              fr: 'Impossible d’ouvrir le document. Réessayez.',
+              es: 'No se pudo abrir el documento. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  String _attachmentMissingLabel() {
+    return _t(
+      nl: 'Bijlage ontbreekt. Upload opnieuw of synchroniseer documentbestand.',
+      en: 'Attachment missing. Re-upload or synchronize the document file.',
+      fr: 'Pièce jointe manquante. Retéléversez ou synchronisez le fichier.',
+      es: 'Falta el adjunto. Vuelve a subir o sincroniza el archivo.',
+    );
+  }
 
   String _displayDriverName(String rawName) {
     final trimmed = rawName.trim();
@@ -12339,6 +12786,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             uploadedDriver,
                                             tenantId: scope.tenantId,
                                             companyId: scope.companyId,
+                                            companySessionToken:
+                                                activeCompanySessionNotifier
+                                                    .value
+                                                    ?.companySessionToken,
                                           );
                                       if (!context.mounted) return;
                                       if (!persisted) {
@@ -12364,7 +12815,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         syncInventory: false,
                                       );
                                       unawaited(
-                                        onRequestBootstrapRefresh?.call(
+                                        onRequestMutationRefresh?.call(
                                           reason: 'drivers_photo_upload_save',
                                         ),
                                       );
@@ -12603,46 +13054,82 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               existing,
                             );
                             debugPrint(
+                              '[DRIVER_STATUS_SAVE][START] driver=${_shortDriverIdForDiag(updated.id)} desiredActive=${updated.isActive}',
+                            );
+                            debugPrint(
                               '[DRIVER_EDIT_SAVE][BEFORE_UPSERT] driver=${_shortDriverIdForDiag(updated.id)} name=${updated.fullName.trim()} isActive=${updated.isActive} tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
                             );
-                            final persisted =
-                                await syncDriverIndexEntryToBackend(
+                            final persistedResult =
+                                await syncDriverStatusToBackend(
                                   updated,
                                   tenantId: scope.tenantId,
                                   companyId: scope.companyId,
+                                  companySessionToken:
+                                      activeCompanySessionNotifier
+                                          .value
+                                          ?.companySessionToken,
                                 );
+                            final persisted = persistedResult.ok;
                             debugPrint(
                               '[DRIVER_EDIT_SAVE][UPSERT_RESULT] driver=${_shortDriverIdForDiag(updated.id)} ok=$persisted',
                             );
                             if (!navigator.mounted) return;
                             if (!persisted) {
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    _t(
-                                      nl: 'Wijziging kon niet worden opgeslagen op de server. Probeer opnieuw.',
-                                      en: 'Change could not be saved on the server. Please try again.',
-                                      fr: 'La modification n’a pas pu être enregistrée sur le serveur. Réessayez.',
-                                      es: 'No se pudo guardar el cambio en el servidor. Inténtalo de nuevo.',
+                              final statusCode = persistedResult.statusCode;
+                              if (statusCode == 401 || statusCode == 403) {
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      _t(
+                                        nl: 'Uw bedrijfssessie is verlopen. Herkoppel of herstel uw bedrijf en probeer opnieuw.',
+                                        en: 'Your company session expired. Relink or recover your company and try again.',
+                                        fr: 'Votre session entreprise a expiré. Reliez ou récupérez votre entreprise puis réessayez.',
+                                        es: 'Tu sesión de empresa expiró. Vuelve a vincular o recupera tu empresa e inténtalo de nuevo.',
+                                      ),
                                     ),
                                   ),
-                                ),
-                              );
+                                );
+                              } else if (statusCode == 400 ||
+                                  statusCode == 422) {
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      _t(
+                                        nl: 'Bestuurdersgegevens zijn ongeldig voor opslaan. Controleer de velden en probeer opnieuw.',
+                                        en: 'Driver data is invalid for save. Check the fields and try again.',
+                                        fr: 'Les données du chauffeur sont invalides pour l’enregistrement. Vérifiez les champs et réessayez.',
+                                        es: 'Los datos del conductor no son válidos para guardar. Revisa los campos e inténtalo de nuevo.',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      _t(
+                                        nl: 'Wijziging kon niet worden opgeslagen op de server. Probeer opnieuw.',
+                                        en: 'Change could not be saved on the server. Please try again.',
+                                        fr: 'La modification n’a pas pu être enregistrée sur le serveur. Réessayez.',
+                                        es: 'No se pudo guardar el cambio en el servidor. Inténtalo de nuevo.',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
                               return;
                             }
-                            updateDriver(
-                              existing.id,
-                              updated,
-                              syncInventory: false,
+                            onPropagateConfirmedDriverState?.call(updated);
+                            unawaited(
+                              onRequestMutationRefresh?.call(
+                                reason: 'drivers_edit_save',
+                              ),
                             );
                             debugPrint(
                               '[DRIVER_EDIT_SAVE][LOCAL_UPDATED] driver=${_shortDriverIdForDiag(updated.id)} isActive=${updated.isActive} syncInventory=false',
                             );
-                            unawaited(
-                              onRequestBootstrapRefresh?.call(
-                                reason: 'drivers_edit_save',
-                                force: true,
-                              ),
+                            debugPrint(
+                              '[DRIVER_STATUS_SAVE][DONE] driver=${_shortDriverIdForDiag(updated.id)} active=${updated.isActive}',
                             );
                             navigator.pop();
                           },
@@ -12794,6 +13281,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         loginCodeLast4: last4.isEmpty ? null : last4,
       ),
     );
+    unawaited(onRequestMutationRefresh?.call(reason: 'drivers_code_rotate'));
     if (!context.mounted) return;
     await _showGeneratedDriverCodeDialog(
       context,
@@ -12850,6 +13338,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
+        unawaited(onRequestMutationRefresh?.call(reason: 'drivers_delete'));
         debugPrint('[DRIVER_DELETE][OK] driver=$maskedDriver deleted=$deleted');
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -13187,6 +13676,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           '[DRIVER_DOCS][UI_DELETE_LOCAL_ONLY] reason=no_backend_state',
         );
         await DriverDocumentsStore.instance.deleteDocument(doc.documentId);
+        unawaited(
+          onRequestMutationRefresh?.call(reason: 'drivers_doc_delete_local'),
+        );
         return;
       }
       debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_START] requested=true');
@@ -13212,6 +13704,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           force: true,
         ),
       );
+      unawaited(onRequestMutationRefresh?.call(reason: 'drivers_doc_delete'));
     }
   }
 
@@ -13235,6 +13728,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         force: true,
       ),
     );
+    unawaited(onRequestMutationRefresh?.call(reason: refreshReason));
     // The sheet sync runs async after close; do one delayed pull too.
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 1200)).then((_) {
@@ -13262,6 +13756,20 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         d.storageState.trim().isNotEmpty ||
         d.backendSyncedAt.trim().isNotEmpty;
     String storageLabel(DriverDocument d) {
+      final localPath = d.filePath.trim();
+      var hasLocalArtifact = false;
+      if (!kIsWeb && localPath.isNotEmpty) {
+        try {
+          hasLocalArtifact = File(localPath).existsSync();
+        } catch (_) {
+          hasLocalArtifact = false;
+        }
+      }
+      final hasBackendArtifact =
+          d.storageState.trim().toLowerCase() == 'stored' &&
+          d.backendFileName.trim().isNotEmpty &&
+          d.backendContentType.trim().isNotEmpty &&
+          d.backendSizeBytes > 0;
       if (d.backendPendingDelete) {
         return _t(
           nl: 'Verwijderen in wachtrij',
@@ -13286,28 +13794,28 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           es: 'Sincronizacion requiere reintento',
         );
       }
-      if (isBackendSynced(d)) {
+      if (hasBackendArtifact) {
         return _t(
-          nl: 'In cloud opgeslagen',
-          en: 'Cloud saved',
-          fr: 'Enregistré dans le cloud',
-          es: 'Guardado en la nube',
+          nl: 'Backend document beschikbaar',
+          en: 'Backend document available',
+          fr: 'Document backend disponible',
+          es: 'Documento backend disponible',
         );
       }
-      if (d.filePath.trim().isNotEmpty) {
+      if (hasLocalArtifact) {
         return _t(
-          nl: 'Op dit toestel opgeslagen',
-          en: 'Saved on this device',
-          fr: 'Enregistré sur cet appareil',
-          es: 'Guardado en este dispositivo',
+          nl: 'Nog niet gesynchroniseerd',
+          en: 'Not synchronized yet',
+          fr: 'Pas encore synchronisé',
+          es: 'Aún no sincronizado',
         );
       }
-      if (hasBackendMetadata(d)) {
+      if (isBackendSynced(d) || hasBackendMetadata(d)) {
         return _t(
-          nl: 'Cloud copy beschikbaar',
-          en: 'Cloud copy available',
-          fr: 'Copie cloud disponible',
-          es: 'Copia en la nube disponible',
+          nl: 'Opnieuw uploaden vereist',
+          en: 'Re-upload required',
+          fr: 'Retéléversement requis',
+          es: 'Se requiere volver a subir',
         );
       }
       return _t(
@@ -13332,6 +13840,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     final statusLabel = driverDocumentStatusLabel(doc.status, _lang);
     final expiredVisual =
         doc.isExpiredByDate || doc.status == DriverDocumentStatuses.expired;
+    final hasUsableArtifact = documentHasUsableAttachment(doc);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -13396,6 +13905,20 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
+          if (!hasUsableArtifact) ...[
+            const SizedBox(height: 4),
+            Text(
+              _t(
+                nl: 'Bijlage ontbreekt - upload opnieuw of synchroniseer documentbestand.',
+                en: 'Attachment missing - re-upload or synchronize the document file.',
+                fr: 'Pièce jointe manquante - retéléversez ou synchronisez le fichier.',
+                es: 'Falta el adjunto - vuelve a subir o sincroniza el archivo.',
+              ),
+              style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
           if (doc.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
@@ -13425,10 +13948,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                onPressed: !canOpenLocal(doc)
-                    ? null
-                    : () =>
-                          openDriverDocumentFile(context, doc.filePath, _lang),
+                onPressed: () =>
+                    _openDriverDocumentArtifact(context, driver, doc),
                 child: Text(
                   _t(nl: 'Openen', en: 'Open', fr: 'Ouvrir', es: 'Abrir'),
                 ),
@@ -13773,50 +14294,63 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     required DriverProfile driver,
     required String status,
     required List<DriverDocument> docs,
-    required bool gap,
-    required String docCountLabel,
+    required DriverDocumentComplianceSummary compliance,
+    required bool refreshFailed,
   }) {
-    final docsCount = docs.length;
-    final docsAllGood = docsCount > 0 && !gap;
+    final docsAllGood =
+        compliance.hasAllRequiredDocuments &&
+        !compliance.needsAction &&
+        !refreshFailed;
     final statusIcon = docsAllGood
         ? Icons.check_circle_outline_rounded
         : Icons.warning_amber_rounded;
     final statusIconColor = docsAllGood
         ? Colors.greenAccent
         : Colors.orangeAccent;
-    final docsStatus = docsAllGood
+    final docsStatus = refreshFailed
         ? _t(
-            nl: 'Alle documenten in orde.',
-            en: 'All documents are in order.',
-            fr: 'Tous les documents sont en ordre.',
-            es: 'Todos los documentos están en orden.',
+            nl: 'Documentsynchronisatie mislukt.',
+            en: 'Document sync failed.',
+            fr: 'Échec de la synchronisation des documents.',
+            es: 'La sincronización de documentos falló.',
           )
-        : (docsCount == 0
+        : docsAllGood
+        ? _t(
+            nl: 'Alle vereiste documenten zijn in orde.',
+            en: 'All required documents are in order.',
+            fr: 'Tous les documents requis sont en ordre.',
+            es: 'Todos los documentos requeridos están en orden.',
+          )
+        : (compliance.uploadedRequiredCount == 0
               ? _t(
-                  nl: 'Nog geen documenten geüpload.',
-                  en: 'No documents uploaded.',
-                  fr: 'Aucun document téléchargé.',
-                  es: 'No hay documentos subidos.',
+                  nl: 'Vereiste documenten ontbreken.',
+                  en: 'Required documents are missing.',
+                  fr: 'Les documents requis sont manquants.',
+                  es: 'Faltan documentos requeridos.',
                 )
-              : _t(
-                  nl: 'Documenten vereisen controle.',
-                  en: 'Documents need action.',
-                  fr: 'Documents à vérifier.',
-                  es: 'Documentos requieren revisión.',
-                ));
-    final docsSubStatus = docsAllGood
+              : _docsInOrderLabel(compliance));
+    final missingCount = compliance.missingRequiredTypeIds.length;
+    final attachmentMissingCount =
+        compliance.missingAttachmentRequiredTypeIds.length;
+    final docsSubStatus = refreshFailed
+        ? _t(
+            nl: 'Controleer of herstel de bedrijfssessie en vernieuw opnieuw.',
+            en: 'Check or recover the company session and refresh again.',
+            fr: 'Vérifiez ou récupérez la session entreprise puis actualisez.',
+            es: 'Verifica o recupera la sesión de empresa y actualiza de nuevo.',
+          )
+        : docsAllGood
         ? _t(
             nl: 'Geen actie vereist',
             en: 'No action required',
             fr: 'Aucune action requise',
             es: 'No se requiere acción',
           )
-        : _t(
-            nl: 'Controleer of voeg documenten toe',
-            en: 'Review or add required documents',
-            fr: 'Vérifiez ou ajoutez les documents requis',
-            es: 'Revise o agregue documentos requeridos',
-          );
+        : (attachmentMissingCount > 0
+              ? _attachmentMissingLabel()
+              : (missingCount > 0
+                    ? _missingRequiredLabel(missingCount)
+                    : _documentsNeedsActionLabel()));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -13995,7 +14529,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        '$docsCount $docCountLabel',
+                        _docsInOrderLabel(compliance),
                         style: TextStyle(
                           color: docsAllGood
                               ? Colors.greenAccent
@@ -14230,7 +14764,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   .toList(growable: false);
               final docsStore = DriverDocumentsStore.instance;
               final docsByDriverId = <String, List<DriverDocument>>{};
-              final gapByDriverId = <String, bool>{};
+              final complianceByDriverId =
+                  <String, DriverDocumentComplianceSummary>{};
               final visibleByDriverId = <String, DriverProfile>{
                 for (final d in visible) d.id.trim(): d,
               };
@@ -14242,12 +14777,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   companyId: scope.companyId,
                 );
                 docsByDriverId[d.id.trim()] = docs;
-                gapByDriverId[d.id.trim()] = docsStore
-                    .hasCoreDocumentGapForCompanyAdminDriver(
-                      d.id,
-                      tenantId: scope.tenantId,
-                      companyId: scope.companyId,
-                    );
+                complianceByDriverId[d.id.trim()] = docsStore
+                    .complianceSummaryForDocuments(docs);
               }
               final activeVisibleCount = visible
                   .where((d) => d.isActive)
@@ -14315,7 +14846,13 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
               for (final d in visible) {
                 final docs =
                     docsByDriverId[d.id.trim()] ?? const <DriverDocument>[];
-                if (gapByDriverId[d.id.trim()] ?? true) {
+                final compliance =
+                    complianceByDriverId[d.id.trim()] ??
+                    docsStore.complianceSummaryForDocuments(docs);
+                final refreshFailed = documentRefreshFailedDriverIds.contains(
+                  d.id.trim(),
+                );
+                if (compliance.needsAction || refreshFailed) {
                   gapDrivers++;
                 }
                 for (final doc in docs) {
@@ -14552,26 +15089,58 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         final docs =
                             docsByDriverId[d.id.trim()] ??
                             const <DriverDocument>[];
-                        final count = docs.length;
-                        final gap = gapByDriverId[d.id.trim()] ?? true;
-                        final docCountLabel = _lang == AppLanguage.fr
-                            ? ((count == 0 || count == 1)
-                                  ? 'document'
-                                  : 'documents')
-                            : _t(
-                                nl: 'documenten',
-                                en: 'documents',
-                                fr: 'documents',
-                                es: 'documentos',
-                              );
+                        final compliance =
+                            complianceByDriverId[d.id.trim()] ??
+                            docsStore.complianceSummaryForDocuments(docs);
+                        final refreshFailed = documentRefreshFailedDriverIds
+                            .contains(d.id.trim());
+                        final gap = compliance.needsAction || refreshFailed;
+                        final docsStatusText = refreshFailed
+                            ? _t(
+                                nl: 'Documenten vereisen synchronisatie',
+                                en: 'Documents require synchronization',
+                                fr: 'Les documents nécessitent une synchronisation',
+                                es: 'Los documentos requieren sincronización',
+                              )
+                            : _docsInOrderLabel(compliance);
+                        final docsStatusDetail = refreshFailed
+                            ? _t(
+                                nl: 'Controleer documenten',
+                                en: 'Check documents',
+                                fr: 'Vérifier les documents',
+                                es: 'Revise documentos',
+                              )
+                            : (compliance.hasAllRequiredDocuments &&
+                                      !compliance.needsAction
+                                  ? ''
+                                  : (compliance
+                                            .missingAttachmentRequiredTypeIds
+                                            .isNotEmpty
+                                        ? _attachmentMissingLabel()
+                                        : (compliance.uploadedRequiredCount == 0
+                                              ? _t(
+                                                  nl: 'Vereiste documenten ontbreken',
+                                                  en: 'Required documents are missing',
+                                                  fr: 'Documents requis manquants',
+                                                  es: 'Faltan documentos requeridos',
+                                                )
+                                              : (compliance
+                                                        .missingRequiredTypeIds
+                                                        .isNotEmpty
+                                                    ? _missingRequiredLabel(
+                                                        compliance
+                                                            .missingRequiredTypeIds
+                                                            .length,
+                                                      )
+                                                    : _documentsNeedsActionLabel()))));
                         if (isTabletLandscape) {
                           return _driverLandscapeReferenceCard(
                             context,
                             driver: d,
                             status: status,
                             docs: docs,
-                            gap: gap,
-                            docCountLabel: docCountLabel,
+                            compliance: compliance,
+                            refreshFailed: refreshFailed,
                           );
                         }
                         return Container(
@@ -14735,8 +15304,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   ),
                                 ),
                                 child: Text(
-                                  '$count $docCountLabel'
-                                  '${gap ? ' · ${_t(nl: 'Controleer documenten', en: 'Check documents', fr: 'Vérifier les documents', es: 'Revise documentos')}' : ''}',
+                                  '$docsStatusText'
+                                  '${gap && docsStatusDetail.trim().isNotEmpty ? ' · $docsStatusDetail' : ''}',
                                   style: TextStyle(
                                     color: gap
                                         ? Colors.orangeAccent

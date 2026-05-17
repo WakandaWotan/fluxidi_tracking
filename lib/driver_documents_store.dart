@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/app_config.dart'
     show
         deleteAdminDriverDocument,
         listAdminDriverDocuments,
+        updateAdminDriverDocumentMetadata,
         uploadAdminDriverDocument;
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -55,6 +56,334 @@ abstract final class DriverDocumentStatuses {
     expired,
     rejected,
   ];
+}
+
+abstract final class DriverDocumentComplianceTypes {
+  static const drivingLicense = 'driving_license';
+  static const driverCard = 'driver_card';
+  static const medicalCheck = 'medical_check';
+  static const conductCertificate = 'conduct_certificate';
+  static const identityDocument = 'identity_document';
+  static const workPermit = 'work_permit';
+  static const crossBorderDetachment = 'cross_border_detachment';
+  static const other = 'other';
+
+  static const List<String> required = <String>[
+    drivingLicense,
+    driverCard,
+    medicalCheck,
+    conductCertificate,
+    identityDocument,
+    workPermit,
+    crossBorderDetachment,
+  ];
+}
+
+class DriverDocumentComplianceSummary {
+  const DriverDocumentComplianceSummary({
+    this.requiredTotal = 7,
+    required this.validRequiredCount,
+    required this.uploadedRequiredCount,
+    required this.missingRequiredTypeIds,
+    required this.expiredRequiredTypeIds,
+    required this.pendingRequiredTypeIds,
+    required this.rejectedRequiredTypeIds,
+    required this.missingAttachmentRequiredTypeIds,
+  });
+
+  final int requiredTotal;
+  final int validRequiredCount;
+  final int uploadedRequiredCount;
+  final List<String> missingRequiredTypeIds;
+  final List<String> expiredRequiredTypeIds;
+  final List<String> pendingRequiredTypeIds;
+  final List<String> rejectedRequiredTypeIds;
+  final List<String> missingAttachmentRequiredTypeIds;
+
+  bool get hasAllRequiredDocuments => validRequiredCount >= requiredTotal;
+
+  bool get needsAction =>
+      !hasAllRequiredDocuments ||
+      missingRequiredTypeIds.isNotEmpty ||
+      expiredRequiredTypeIds.isNotEmpty ||
+      pendingRequiredTypeIds.isNotEmpty ||
+      rejectedRequiredTypeIds.isNotEmpty ||
+      missingAttachmentRequiredTypeIds.isNotEmpty;
+}
+
+class DriverDocumentsRefreshResult {
+  const DriverDocumentsRefreshResult({
+    required this.ok,
+    required this.backendCount,
+    required this.localBeforeCount,
+    required this.localAfterCount,
+    required this.errorCode,
+  });
+
+  final bool ok;
+  final int backendCount;
+  final int localBeforeCount;
+  final int localAfterCount;
+  final String errorCode;
+}
+
+class DriverDocumentsBackfillResult {
+  const DriverDocumentsBackfillResult({
+    required this.localOnlyCount,
+    required this.uploadedCount,
+    required this.skippedCount,
+    required this.failedCount,
+  });
+
+  final int localOnlyCount;
+  final int uploadedCount;
+  final int skippedCount;
+  final int failedCount;
+}
+
+String _normalizeDocumentAliasToken(String raw) {
+  var out = raw.trim().toLowerCase();
+  if (out.isEmpty) return '';
+  const replacements = <String, String>{
+    'é': 'e',
+    'è': 'e',
+    'ê': 'e',
+    'ë': 'e',
+    'á': 'a',
+    'à': 'a',
+    'ä': 'a',
+    'â': 'a',
+    'í': 'i',
+    'ì': 'i',
+    'ï': 'i',
+    'î': 'i',
+    'ó': 'o',
+    'ò': 'o',
+    'ö': 'o',
+    'ô': 'o',
+    'ú': 'u',
+    'ù': 'u',
+    'ü': 'u',
+    'û': 'u',
+    'ç': 'c',
+    'ñ': 'n',
+  };
+  replacements.forEach((k, v) {
+    out = out.replaceAll(k, v);
+  });
+  out = out.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+  out = out.replaceAll(RegExp(r'_+'), '_');
+  out = out.replaceAll(RegExp(r'^_+|_+$'), '');
+  return out;
+}
+
+String normalizeDriverDocumentTypeForCompliance({
+  required String rawType,
+  String? title,
+}) {
+  final type = _normalizeDocumentAliasToken(rawType);
+  final titleKey = _normalizeDocumentAliasToken(title ?? '');
+  final keys = <String>[
+    if (type.isNotEmpty) type,
+    if (titleKey.isNotEmpty) titleKey,
+  ];
+
+  bool containsAny(String source, List<String> fragments) {
+    for (final fragment in fragments) {
+      if (source.contains(fragment)) return true;
+    }
+    return false;
+  }
+
+  for (final key in keys) {
+    if (key == DriverDocumentComplianceTypes.drivingLicense ||
+        key == DriverDocumentTypes.drivingLicense ||
+        containsAny(key, <String>['rijbewijs', 'driving_license', 'permis'])) {
+      return DriverDocumentComplianceTypes.drivingLicense;
+    }
+    if (key == DriverDocumentComplianceTypes.driverCard ||
+        key == DriverDocumentTypes.taxiDriverCard ||
+        containsAny(key, <String>[
+          'driver_card',
+          'taxi_driver_card',
+          'bestuurderspas',
+          'chauffeurskaart',
+          'tarjeta_de_conductor',
+        ])) {
+      return DriverDocumentComplianceTypes.driverCard;
+    }
+    if (key == DriverDocumentComplianceTypes.medicalCheck ||
+        key == DriverDocumentTypes.medicalCertificate ||
+        containsAny(key, <String>[
+          'medical_check',
+          'medical_certificate',
+          'medische_keuring',
+          'certificat_medical',
+        ])) {
+      return DriverDocumentComplianceTypes.medicalCheck;
+    }
+    if (key == DriverDocumentComplianceTypes.conductCertificate ||
+        key == DriverDocumentTypes.goodConduct ||
+        containsAny(key, <String>[
+          'conduct_certificate',
+          'good_conduct',
+          'vog',
+          'strafregister',
+          'casier_judiciaire',
+          'antecedentes',
+        ])) {
+      return DriverDocumentComplianceTypes.conductCertificate;
+    }
+    if (key == DriverDocumentComplianceTypes.identityDocument ||
+        key == DriverDocumentTypes.identityDocument ||
+        containsAny(key, <String>[
+          'identity_document',
+          'identiteitsbewijs',
+          'identite',
+        ])) {
+      return DriverDocumentComplianceTypes.identityDocument;
+    }
+    if (key == DriverDocumentComplianceTypes.workPermit ||
+        key == DriverDocumentTypes.workPermit ||
+        containsAny(key, <String>[
+          'work_permit',
+          'werkvergunning',
+          'permis_de_travail',
+        ])) {
+      return DriverDocumentComplianceTypes.workPermit;
+    }
+    if (key == DriverDocumentComplianceTypes.crossBorderDetachment ||
+        key == DriverDocumentTypes.postingDeclaration ||
+        containsAny(key, <String>[
+          'cross_border_detachment',
+          'posting_declaration',
+          'detachering',
+          'grensoverschrijdend',
+          'transfronteriza',
+          'detachement',
+        ])) {
+      return DriverDocumentComplianceTypes.crossBorderDetachment;
+    }
+    if (key == DriverDocumentComplianceTypes.other ||
+        key == DriverDocumentTypes.other ||
+        containsAny(key, <String>['overig', 'other', 'autre', 'otro'])) {
+      return DriverDocumentComplianceTypes.other;
+    }
+  }
+  return DriverDocumentComplianceTypes.other;
+}
+
+bool _driverDocumentExpiryIsPast(String rawDate) {
+  final text = rawDate.trim();
+  if (text.isEmpty) return false;
+  final parsed = DateTime.tryParse(text);
+  if (parsed == null) return false;
+  return parsed.toUtc().isBefore(DateTime.now().toUtc());
+}
+
+String driverDocumentArtifactSource(DriverDocument doc) {
+  final storageState = doc.storageState.trim().toLowerCase();
+  final hasBackendArtifactMetadata =
+      storageState == 'stored' &&
+      doc.backendFileName.trim().isNotEmpty &&
+      doc.backendContentType.trim().isNotEmpty &&
+      doc.backendSizeBytes > 0;
+  if (hasBackendArtifactMetadata) return 'backend';
+
+  final localPath = doc.filePath.trim();
+  if (localPath.isEmpty || kIsWeb) return 'missing';
+  try {
+    if (File(localPath).existsSync()) return 'local';
+  } catch (_) {}
+  return 'missing';
+}
+
+bool documentHasUsableAttachment(DriverDocument doc) {
+  return driverDocumentArtifactSource(doc) != 'missing';
+}
+
+DriverDocumentComplianceSummary buildDriverDocumentComplianceSummary(
+  Iterable<DriverDocument> documents,
+) {
+  final grouped = <String, List<DriverDocument>>{};
+  for (final doc in documents) {
+    final normalizedType = normalizeDriverDocumentTypeForCompliance(
+      rawType: doc.documentType,
+      title: doc.title,
+    );
+    if (!DriverDocumentComplianceTypes.required.contains(normalizedType)) {
+      continue;
+    }
+    grouped.putIfAbsent(normalizedType, () => <DriverDocument>[]).add(doc);
+  }
+
+  var validRequiredCount = 0;
+  var uploadedRequiredCount = 0;
+  final missing = <String>[];
+  final expired = <String>[];
+  final pending = <String>[];
+  final rejected = <String>[];
+  final missingAttachment = <String>[];
+
+  for (final requiredType in DriverDocumentComplianceTypes.required) {
+    final docs = grouped[requiredType] ?? const <DriverDocument>[];
+    if (docs.isEmpty) {
+      missing.add(requiredType);
+      continue;
+    }
+
+    uploadedRequiredCount += 1;
+    var hasValid = false;
+    var hasExpired = false;
+    var hasPending = false;
+    var hasRejected = false;
+
+    for (final doc in docs) {
+      final status = doc.status.trim().toLowerCase();
+      final expiryPast = _driverDocumentExpiryIsPast(doc.expiryDate);
+      final hasArtifact = documentHasUsableAttachment(doc);
+      if (status == DriverDocumentStatuses.approved &&
+          !expiryPast &&
+          hasArtifact) {
+        hasValid = true;
+      }
+      if (status == DriverDocumentStatuses.approved &&
+          !expiryPast &&
+          !hasArtifact) {
+        missingAttachment.add(requiredType);
+      }
+      if (status == DriverDocumentStatuses.pendingReview) {
+        hasPending = true;
+      }
+      if (status == DriverDocumentStatuses.rejected) {
+        hasRejected = true;
+      }
+      if (status == DriverDocumentStatuses.expired || expiryPast) {
+        hasExpired = true;
+      }
+    }
+
+    if (hasValid) {
+      validRequiredCount += 1;
+      continue;
+    }
+    if (hasExpired) expired.add(requiredType);
+    if (hasPending) pending.add(requiredType);
+    if (hasRejected) rejected.add(requiredType);
+  }
+
+  return DriverDocumentComplianceSummary(
+    requiredTotal: DriverDocumentComplianceTypes.required.length,
+    validRequiredCount: validRequiredCount,
+    uploadedRequiredCount: uploadedRequiredCount,
+    missingRequiredTypeIds: missing,
+    expiredRequiredTypeIds: expired,
+    pendingRequiredTypeIds: pending,
+    rejectedRequiredTypeIds: rejected,
+    missingAttachmentRequiredTypeIds: missingAttachment.toSet().toList(
+      growable: false,
+    ),
+  );
 }
 
 String driverDocumentTypeLabel(String type, AppLanguage lang) {
@@ -512,6 +841,9 @@ class DriverDocumentsStore {
   static const String _attachmentsFolderName = 'files';
 
   List<DriverDocument>? _memory;
+  final Map<String, ({DriverDocument doc, DateTime atUtc})>
+  _recentConfirmedDocumentEditsByScopedKey =
+      <String, ({DriverDocument doc, DateTime atUtc})>{};
 
   Future<Directory> _dir() async {
     final base = await getApplicationDocumentsDirectory();
@@ -781,6 +1113,13 @@ class DriverDocumentsStore {
     return out;
   }
 
+  String _shortRef(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return 'unknown';
+    if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+    return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+  }
+
   String _documentScopeKey({
     required String tenantId,
     required String companyId,
@@ -851,6 +1190,87 @@ class DriverDocumentsStore {
     await _persist();
   }
 
+  void markRecentConfirmedDocumentEdit(DriverDocument doc) {
+    final key = _documentScopeKey(
+      tenantId: doc.tenantId,
+      companyId: doc.companyId,
+      driverId: doc.driverId,
+      documentId: doc.documentId,
+    );
+    if (key.isEmpty) return;
+    _recentConfirmedDocumentEditsByScopedKey[key] = (
+      doc: doc,
+      atUtc: DateTime.now().toUtc(),
+    );
+  }
+
+  List<DriverDocument> _reapplyRecentConfirmedDocumentEdits({
+    required List<DriverDocument> docs,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) {
+    final now = DateTime.now().toUtc();
+    const keepFor = Duration(seconds: 35);
+    final staleKeys = <String>[];
+    final out = <DriverDocument>[];
+    for (final current in docs) {
+      final key = _documentScopeKey(
+        tenantId: current.tenantId,
+        companyId: current.companyId,
+        driverId: current.driverId,
+        documentId: current.documentId,
+      );
+      if (key.isEmpty) {
+        out.add(current);
+        continue;
+      }
+      final recent = _recentConfirmedDocumentEditsByScopedKey[key];
+      if (recent == null) {
+        out.add(current);
+        continue;
+      }
+      if (now.difference(recent.atUtc) > keepFor) {
+        staleKeys.add(key);
+        out.add(current);
+        continue;
+      }
+      final sameScope =
+          current.tenantId.trim() == tenantId.trim() &&
+          current.companyId.trim() == companyId.trim() &&
+          current.driverId.trim() == driverId.trim();
+      if (!sameScope) {
+        out.add(current);
+        continue;
+      }
+      final backendUpdated = DateTime.tryParse(current.updatedAt.trim());
+      if (backendUpdated != null &&
+          backendUpdated.toUtc().isAfter(recent.atUtc)) {
+        staleKeys.add(key);
+        out.add(current);
+        continue;
+      }
+      debugPrint(
+        '[DRIVER_DOC_EDIT][STALE_PROTECT] driver=${_shortRef(current.driverId)} doc=${_shortRef(current.documentId)} reason=recent_confirmed_edit',
+      );
+      out.add(
+        current.copyWith(
+          documentType: recent.doc.documentType,
+          title: recent.doc.title,
+          expiryDate: recent.doc.expiryDate,
+          status: recent.doc.status,
+          notes: recent.doc.notes,
+          filePath: recent.doc.filePath,
+          updatedAt: recent.doc.updatedAt,
+        ),
+      );
+    }
+    for (final key in staleKeys) {
+      _recentConfirmedDocumentEditsByScopedKey.remove(key);
+    }
+    return out;
+  }
+
   DriverDocument _mergeBackendDocumentMetadata({
     required Map<String, dynamic> backend,
     required String tenantId,
@@ -879,7 +1299,12 @@ class DriverDocumentsStore {
     );
     final backendTitle = _safeBackendText(backend['title']);
     final backendExpiry = _safeBackendText(
-      backend['expiry_date'] ?? backend['expiryDate'],
+      backend['expiry_date'] ??
+          backend['expiryDate'] ??
+          backend['expires_at'] ??
+          backend['expiresAt'] ??
+          backend['valid_until'] ??
+          backend['validUntil'],
     );
     final backendNotes = _safeBackendText(backend['notes']);
     final backendCreated = _safeBackendText(
@@ -1071,6 +1496,25 @@ class DriverDocumentsStore {
         .toList(growable: false);
   }
 
+  DriverDocumentComplianceSummary complianceSummaryForDocuments(
+    Iterable<DriverDocument> docs,
+  ) {
+    return buildDriverDocumentComplianceSummary(docs);
+  }
+
+  DriverDocumentComplianceSummary complianceSummaryForCompanyAdminDriver(
+    String driverId, {
+    required String tenantId,
+    required String companyId,
+  }) {
+    final docs = documentsVisibleForCompanyAdminDriver(
+      driverId,
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    return complianceSummaryForDocuments(docs);
+  }
+
   /// Driving licence + identity recommended for a simple compliance hint.
   bool hasCoreDocumentGapForDriver(String driverId) {
     final docs = documentsVisibleForDriver(driverId);
@@ -1115,6 +1559,7 @@ class DriverDocumentsStore {
     final next = <DriverDocument>[...driverDocumentsNotifier.value, candidate];
     driverDocumentsNotifier.value = next;
     await _persist();
+    markRecentConfirmedDocumentEdit(candidate);
   }
 
   Future<void> updateDocument(DriverDocument doc) async {
@@ -1156,6 +1601,7 @@ class DriverDocumentsStore {
         .toList(growable: false);
     driverDocumentsNotifier.value = next;
     await _persist();
+    markRecentConfirmedDocumentEdit(candidate);
   }
 
   Future<void> deleteDocument(String documentId) async {
@@ -1197,8 +1643,13 @@ class DriverDocumentsStore {
     final driverId = doc.driverId.trim();
     final documentId = doc.documentId.trim();
     final path = doc.filePath.trim();
+    final safeDriverRef = _shortRef(driverId);
+    final safeDocRef = _shortRef(documentId);
     debugPrint(
       '[DRIVER_DOCS][BACKEND_UPLOAD_START] hasScope=${tenantId.isNotEmpty && companyId.isNotEmpty && driverId.isNotEmpty} hasDoc=${documentId.isNotEmpty}',
+    );
+    debugPrint(
+      '[DRIVER_DOC_EDIT][START] driver=$safeDriverRef doc=$safeDocRef',
     );
 
     DriverDocument target =
@@ -1226,6 +1677,9 @@ class DriverDocumentsStore {
       debugPrint(
         '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_company_session_token',
       );
+      debugPrint(
+        '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=missing_company_session_token',
+      );
       return null;
     }
     if (tenantId.isEmpty ||
@@ -1240,35 +1694,76 @@ class DriverDocumentsStore {
       debugPrint(
         '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=invalid_scope_or_document_id',
       );
-      return null;
-    }
-    if (path.isEmpty || !await File(path).exists()) {
-      final withError = target.copyWith(
-        backendPendingUpload: true,
-        backendSyncError: 'missing_local_file',
-      );
-      await _upsertDocumentAndPersist(withError);
       debugPrint(
-        '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_local_file',
+        '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=invalid_scope_or_document_id',
       );
       return null;
     }
+    final hasLocalFile = path.isNotEmpty && await File(path).exists();
+    final hasBackendArtifactMetadata =
+        target.storageState.trim().toLowerCase() == 'stored' &&
+        target.backendFileName.trim().isNotEmpty &&
+        target.backendContentType.trim().isNotEmpty &&
+        target.backendSizeBytes > 0;
 
     try {
-      final response = await uploadAdminDriverDocument(
-        bookingBaseUrl: bookingBaseUrl,
-        companySessionToken: companySessionToken,
-        tenantId: tenantId,
-        companyId: companyId,
-        driverId: driverId,
-        documentId: documentId,
-        documentType: doc.documentType,
-        title: doc.title,
-        expiryDate: doc.expiryDate,
-        status: doc.status,
-        notes: doc.notes,
-        filePath: path,
-      );
+      late final Map<String, dynamic> response;
+      if (hasLocalFile) {
+        debugPrint(
+          '[DRIVER_DOC_EDIT][BACKEND_REQUEST] driver=$safeDriverRef doc=$safeDocRef endpoint=/admin/driver-documents/upload fields=tenant_id,company_id,driver_id,document_id,document_type,title,expiry_date,status,notes,file',
+        );
+        response = await uploadAdminDriverDocument(
+          bookingBaseUrl: bookingBaseUrl,
+          companySessionToken: companySessionToken,
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          documentId: documentId,
+          documentType: doc.documentType,
+          title: doc.title,
+          expiryDate: doc.expiryDate,
+          status: doc.status,
+          notes: doc.notes,
+          filePath: path,
+        );
+        debugPrint(
+          '[DRIVER_DOC_EDIT][BACKEND_RESPONSE] driver=$safeDriverRef doc=$safeDocRef status=200 ok=true',
+        );
+      } else if (hasBackendArtifactMetadata) {
+        debugPrint(
+          '[DRIVER_DOC_EDIT][BACKEND_REQUEST] driver=$safeDriverRef doc=$safeDocRef endpoint=/admin/driver-documents/update fields=tenant_id,company_id,driver_id,document_id,document_type,title,expiry_date,status,notes',
+        );
+        response = await updateAdminDriverDocumentMetadata(
+          bookingBaseUrl: bookingBaseUrl,
+          companySessionToken: companySessionToken,
+          tenantId: tenantId,
+          companyId: companyId,
+          driverId: driverId,
+          documentId: documentId,
+          documentType: doc.documentType,
+          title: doc.title,
+          expiryDate: doc.expiryDate,
+          status: doc.status,
+          notes: doc.notes,
+        );
+        debugPrint(
+          '[DRIVER_DOC_EDIT][BACKEND_RESPONSE] driver=$safeDriverRef doc=$safeDocRef status=200 ok=true',
+        );
+      } else {
+        final withError = target.copyWith(
+          backendPendingUpload: true,
+          backendSyncError: 'missing_local_file',
+        );
+        await _upsertDocumentAndPersist(withError);
+        markRecentConfirmedDocumentEdit(withError);
+        debugPrint(
+          '[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=missing_local_file',
+        );
+        debugPrint(
+          '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=missing_local_file',
+        );
+        return null;
+      }
       final source = response['document'];
       final metadata = source is Map
           ? Map<String, dynamic>.from(source)
@@ -1288,6 +1783,7 @@ class DriverDocumentsStore {
         backendSyncAttemptCount: target.backendSyncAttemptCount,
       );
       await _upsertDocumentAndPersist(persisted);
+      markRecentConfirmedDocumentEdit(persisted);
       debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_OK] ok=true');
       return persisted;
     } catch (e) {
@@ -1297,11 +1793,203 @@ class DriverDocumentsStore {
       );
       await _upsertDocumentAndPersist(withError);
       debugPrint('[DRIVER_DOCS][BACKEND_UPLOAD_FAIL] reason=exception');
+      debugPrint(
+        '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=${_safeSyncErrorCode(e.toString())}',
+      );
       return null;
     }
   }
 
+  Future<DriverDocumentsBackfillResult>
+  backfillLocalDriverDocumentsToBackendForDriver({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    final scopedDriver = driverId.trim();
+    final safeDriverRef = _shortRef(scopedDriver);
+    debugPrint('[DRIVER_DOCS_BACKFILL][START] driver=$safeDriverRef');
+
+    if (companySessionToken.trim().isEmpty ||
+        scopedTenant.isEmpty ||
+        scopedCompany.isEmpty ||
+        scopedDriver.isEmpty) {
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][DONE] driver=$safeDriverRef uploaded=0 skipped=0 failed=0',
+      );
+      return const DriverDocumentsBackfillResult(
+        localOnlyCount: 0,
+        uploadedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+      );
+    }
+
+    final allForDriver = driverDocumentsNotifier.value
+        .where((doc) => doc.driverId.trim() == scopedDriver)
+        .toList(growable: false);
+    final scopedKeySet = <String>{
+      for (final doc in allForDriver)
+        _documentScopeKey(
+          tenantId: doc.tenantId,
+          companyId: doc.companyId,
+          driverId: doc.driverId,
+          documentId: doc.documentId,
+        ),
+    };
+    for (final doc in allForDriver) {
+      final tenant = doc.tenantId.trim();
+      final company = doc.companyId.trim();
+      final isScoped = tenant == scopedTenant && company == scopedCompany;
+      if (isScoped) continue;
+      final canMigrate =
+          (tenant.isEmpty || company.isEmpty) &&
+          doc.documentId.trim().isNotEmpty;
+      final safeDocRef = _shortRef(doc.documentId);
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][LEGACY_CANDIDATE] driver=$safeDriverRef doc=$safeDocRef reason=${canMigrate ? 'missing_scope' : 'scope_mismatch'}',
+      );
+      if (!canMigrate) continue;
+      final targetKey = _documentScopeKey(
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        driverId: scopedDriver,
+        documentId: doc.documentId,
+      );
+      if (targetKey.isEmpty || scopedKeySet.contains(targetKey)) continue;
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][MIGRATE_START] driver=$safeDriverRef doc=$safeDocRef',
+      );
+      final migrated = doc.copyWith(
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+      );
+      await _upsertDocumentAndPersist(migrated);
+      markRecentConfirmedDocumentEdit(migrated);
+      scopedKeySet.add(targetKey);
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][MIGRATE_DONE] driver=$safeDriverRef doc=$safeDocRef',
+      );
+    }
+
+    final scopedDocs = driverDocumentsNotifier.value
+        .where(
+          (doc) =>
+              doc.tenantId.trim() == scopedTenant &&
+              doc.companyId.trim() == scopedCompany &&
+              doc.driverId.trim() == scopedDriver,
+        )
+        .toList(growable: false);
+    final localOnlyDocs = scopedDocs
+        .where((doc) {
+          final storage = doc.storageState.trim().toLowerCase();
+          final backendArtifact =
+              storage == 'stored' &&
+              doc.backendFileName.trim().isNotEmpty &&
+              doc.backendContentType.trim().isNotEmpty &&
+              doc.backendSizeBytes > 0;
+          return !backendArtifact;
+        })
+        .toList(growable: false);
+    debugPrint(
+      '[DRIVER_DOCS_BACKFILL][LOCAL_ONLY] driver=$safeDriverRef count=${localOnlyDocs.length}',
+    );
+
+    var uploaded = 0;
+    var skipped = 0;
+    var failed = 0;
+    var reuploadRequired = 0;
+    for (final doc in localOnlyDocs) {
+      final safeDocRef = _shortRef(doc.documentId);
+      final localPath = doc.filePath.trim();
+      final hasLocalFile =
+          localPath.isNotEmpty && await File(localPath).exists();
+      if (!hasLocalFile) {
+        skipped++;
+        reuploadRequired++;
+        await _upsertDocumentAndPersist(
+          doc.copyWith(
+            backendPendingUpload: true,
+            backendSyncError: 'missing_local_file_for_backfill',
+            backendLastSyncAttemptAt: DateTime.now().toUtc().toIso8601String(),
+            backendSyncAttemptCount: doc.backendSyncAttemptCount + 1,
+          ),
+        );
+        debugPrint(
+          '[DRIVER_DOCS_BACKFILL][SKIP_NO_FILE] driver=$safeDriverRef doc=$safeDocRef',
+        );
+        debugPrint(
+          '[DRIVER_DOCS_BACKFILL][REUPLOAD_REQUIRED] driver=$safeDriverRef doc=$safeDocRef reason=missing_local_file',
+        );
+        continue;
+      }
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][UPLOAD_START] driver=$safeDriverRef doc=$safeDocRef',
+      );
+      try {
+        final out = await syncDocumentUpsertToBackend(
+          doc: doc,
+          bookingBaseUrl: bookingBaseUrl,
+          companySessionToken: companySessionToken,
+        );
+        if (out == null) {
+          failed++;
+          debugPrint(
+            '[DRIVER_DOCS_BACKFILL][UPLOAD_FAILED] driver=$safeDriverRef doc=$safeDocRef error=upload_not_ok',
+          );
+        } else {
+          uploaded++;
+          debugPrint(
+            '[DRIVER_DOCS_BACKFILL][UPLOAD_DONE] driver=$safeDriverRef doc=$safeDocRef',
+          );
+        }
+      } catch (e) {
+        failed++;
+        debugPrint(
+          '[DRIVER_DOCS_BACKFILL][UPLOAD_FAILED] driver=$safeDriverRef doc=$safeDocRef error=${_safeSyncErrorCode(e.toString())}',
+        );
+      }
+    }
+    if (reuploadRequired > 0) {
+      debugPrint(
+        '[DRIVER_DOCS_BACKFILL][SOURCE_DEVICE_REQUIRED] driver=$safeDriverRef count=$reuploadRequired',
+      );
+    }
+    debugPrint(
+      '[DRIVER_DOCS_BACKFILL][DONE] driver=$safeDriverRef uploaded=$uploaded skipped=$skipped failed=$failed',
+    );
+    return DriverDocumentsBackfillResult(
+      localOnlyCount: localOnlyDocs.length,
+      uploadedCount: uploaded,
+      skippedCount: skipped,
+      failedCount: failed,
+    );
+  }
+
   Future<bool> refreshDriverDocumentsFromBackend({
+    required String bookingBaseUrl,
+    required String companySessionToken,
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    final result = await refreshDriverDocumentsFromBackendDetailed(
+      bookingBaseUrl: bookingBaseUrl,
+      companySessionToken: companySessionToken,
+      tenantId: tenantId,
+      companyId: companyId,
+      driverId: driverId,
+    );
+    return result.ok;
+  }
+
+  Future<DriverDocumentsRefreshResult>
+  refreshDriverDocumentsFromBackendDetailed({
     required String bookingBaseUrl,
     required String companySessionToken,
     required String tenantId,
@@ -1314,6 +2002,14 @@ class DriverDocumentsStore {
     debugPrint(
       '[DRIVER_DOCS][BACKEND_REFRESH_START] hasScope=${scopedTenant.isNotEmpty && scopedCompany.isNotEmpty && scopedDriver.isNotEmpty}',
     );
+    final localBeforeCount = driverDocumentsNotifier.value
+        .where(
+          (entry) =>
+              entry.tenantId.trim() == scopedTenant &&
+              entry.companyId.trim() == scopedCompany &&
+              entry.driverId.trim() == scopedDriver,
+        )
+        .length;
     if (companySessionToken.trim().isEmpty ||
         scopedTenant.isEmpty ||
         scopedCompany.isEmpty ||
@@ -1321,7 +2017,13 @@ class DriverDocumentsStore {
       debugPrint(
         '[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=missing_scope_or_token',
       );
-      return false;
+      return DriverDocumentsRefreshResult(
+        ok: false,
+        backendCount: 0,
+        localBeforeCount: localBeforeCount,
+        localAfterCount: localBeforeCount,
+        errorCode: 'missing_scope_or_token',
+      );
     }
 
     try {
@@ -1413,15 +2115,41 @@ class DriverDocumentsStore {
         next.add(entry.value);
       }
 
-      driverDocumentsNotifier.value = next;
+      final protectedNext = _reapplyRecentConfirmedDocumentEdits(
+        docs: next,
+        tenantId: scopedTenant,
+        companyId: scopedCompany,
+        driverId: scopedDriver,
+      );
+      driverDocumentsNotifier.value = protectedNext;
       await _persist();
+      final localAfterCount = protectedNext
+          .where(
+            (entry) =>
+                entry.tenantId.trim() == scopedTenant &&
+                entry.companyId.trim() == scopedCompany &&
+                entry.driverId.trim() == scopedDriver,
+          )
+          .length;
       debugPrint(
         '[DRIVER_DOCS][BACKEND_REFRESH_OK] remote=${remoteByScopedKey.length} local=${next.length}',
       );
-      return true;
+      return DriverDocumentsRefreshResult(
+        ok: true,
+        backendCount: items.length,
+        localBeforeCount: localBeforeCount,
+        localAfterCount: localAfterCount,
+        errorCode: '',
+      );
     } catch (_) {
       debugPrint('[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=exception');
-      return false;
+      return DriverDocumentsRefreshResult(
+        ok: false,
+        backendCount: 0,
+        localBeforeCount: localBeforeCount,
+        localAfterCount: localBeforeCount,
+        errorCode: 'exception',
+      );
     }
   }
 

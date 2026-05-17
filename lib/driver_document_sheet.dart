@@ -621,6 +621,15 @@ Future<void> showDriverDocumentEditorSheet(
                             child: FilledButton(
                               onPressed: () async {
                                 if (driver.id.trim().isEmpty) return;
+                                String shortRef(String value) {
+                                  final text = value.trim();
+                                  if (text.isEmpty) return 'unknown';
+                                  if (text.length <= 4) {
+                                    return '…${text.substring(text.length - 1)}';
+                                  }
+                                  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+                                }
+
                                 final activeCompanyId = DriverDocumentsStore
                                     .instance
                                     .resolvedActiveCompanyIdForDocuments();
@@ -678,6 +687,11 @@ Future<void> showDriverDocumentEditorSheet(
                                 final resolvedDocId =
                                     existing?.documentId ??
                                     DriverDocumentsStore.newDocumentId();
+                                final safeDriverRef = shortRef(driver.id);
+                                final safeDocRef = shortRef(resolvedDocId);
+                                debugPrint(
+                                  '[DRIVER_DOC_EDIT][START] driver=$safeDriverRef doc=$safeDocRef',
+                                );
 
                                 final effectiveStatus = driverSelfService
                                     ? (existing?.status ??
@@ -764,6 +778,14 @@ Future<void> showDriverDocumentEditorSheet(
                                   );
                                   await DriverDocumentsStore.instance
                                       .addDocument(doc);
+                                  DriverDocumentsStore.instance
+                                      .markRecentConfirmedDocumentEdit(doc);
+                                  debugPrint(
+                                    '[DRIVER_DOC_EDIT][DATE_CHANGE] driver=$safeDriverRef doc=$safeDocRef old=none new=${doc.expiryDate.trim().isEmpty ? 'none' : doc.expiryDate.trim()}',
+                                  );
+                                  debugPrint(
+                                    '[DRIVER_DOC_EDIT][LOCAL_SAVE] driver=$safeDriverRef doc=$safeDocRef ok=true',
+                                  );
                                   targetDoc = doc;
                                 } else {
                                   final doc = DriverDocumentsStore.mergeEdit(
@@ -777,6 +799,16 @@ Future<void> showDriverDocumentEditorSheet(
                                   );
                                   await DriverDocumentsStore.instance
                                       .updateDocument(doc);
+                                  DriverDocumentsStore.instance
+                                      .markRecentConfirmedDocumentEdit(doc);
+                                  final oldExpiry = existing.expiryDate.trim();
+                                  final newExpiry = doc.expiryDate.trim();
+                                  debugPrint(
+                                    '[DRIVER_DOC_EDIT][DATE_CHANGE] driver=$safeDriverRef doc=$safeDocRef old=${oldExpiry.isEmpty ? 'none' : oldExpiry} new=${newExpiry.isEmpty ? 'none' : newExpiry}',
+                                  );
+                                  debugPrint(
+                                    '[DRIVER_DOC_EDIT][LOCAL_SAVE] driver=$safeDriverRef doc=$safeDocRef ok=true',
+                                  );
                                   targetDoc = doc;
                                 }
                                 if (!ctx.mounted) return;
@@ -817,10 +849,16 @@ Future<void> showDriverDocumentEditorSheet(
                                         debugPrint(
                                           '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=true',
                                         );
+                                        debugPrint(
+                                          '[DRIVER_DOC_EDIT][PROPAGATE] driver=$safeDriverRef doc=$safeDocRef updated=true',
+                                        );
                                       })
-                                      .catchError((_) {
+                                      .catchError((error) {
                                         debugPrint(
                                           '[DRIVER_DOCS][UI_SYNC_AFTER_SAVE_DONE] ok=false',
+                                        );
+                                        debugPrint(
+                                          '[DRIVER_DOC_EDIT][FAILED] driver=$safeDriverRef doc=$safeDocRef error=sync_failed',
                                         );
                                       }),
                                 );

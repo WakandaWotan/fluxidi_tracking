@@ -1913,6 +1913,35 @@ String _shortBodyPreviewForDiag(String value) {
   return single.length <= 140 ? single : '${single.substring(0, 140)}…';
 }
 
+class DriverStatusSaveResult {
+  const DriverStatusSaveResult({
+    required this.ok,
+    required this.statusCode,
+    required this.authSource,
+    required this.endpointPath,
+    required this.errorCode,
+    required this.payloadFieldNames,
+  });
+
+  final bool ok;
+  final int? statusCode;
+  final String authSource;
+  final String endpointPath;
+  final String errorCode;
+  final List<String> payloadFieldNames;
+}
+
+String _safeDriverStatusSaveErrorCode(Object error) {
+  final text = error.toString().toLowerCase();
+  if (text.contains('401')) return 'unauthorized';
+  if (text.contains('403')) return 'forbidden';
+  if (text.contains('400')) return 'bad_request';
+  if (text.contains('422')) return 'unprocessable_entity';
+  if (text.contains('timeout')) return 'timeout';
+  if (text.contains('socket') || text.contains('network')) return 'network';
+  return 'exception';
+}
+
 Map<String, String> _resolveAdminTenantCompanyScope({
   String? tenantId,
   String? companyId,
@@ -2277,6 +2306,24 @@ Future<bool> syncDriverIndexEntryToBackend(
   String? tenantId,
   String? companyId,
   bool? isActiveOverride,
+  String? companySessionToken,
+}) async {
+  final result = await syncDriverStatusToBackend(
+    driver,
+    tenantId: tenantId,
+    companyId: companyId,
+    isActiveOverride: isActiveOverride,
+    companySessionToken: companySessionToken,
+  );
+  return result.ok;
+}
+
+Future<DriverStatusSaveResult> syncDriverStatusToBackend(
+  DriverProfile driver, {
+  String? tenantId,
+  String? companyId,
+  bool? isActiveOverride,
+  String? companySessionToken,
 }) async {
   try {
     final scope = _resolveAdminTenantCompanyScope(
@@ -2291,10 +2338,27 @@ Future<bool> syncDriverIndexEntryToBackend(
       companyId: scope['company_id'],
     );
     final driverId = driver.id.trim();
-    if (driverId.isEmpty) return false;
+    if (driverId.isEmpty) {
+      return const DriverStatusSaveResult(
+        ok: false,
+        statusCode: null,
+        authSource: 'none',
+        endpointPath: '/admin/company/drivers/index/upsert',
+        errorCode: 'missing_driver_id',
+        payloadFieldNames: <String>[],
+      );
+    }
     final isActiveValue = isActiveOverride ?? driver.isActive;
+    final token = (companySessionToken ?? '').trim();
+    final hasCompanyToken = token.isNotEmpty;
+    debugPrint(
+      '[DRIVER_STATUS_SAVE][TOKEN] source=${hasCompanyToken ? 'company_session' : 'none'} hasToken=$hasCompanyToken',
+    );
     debugPrint(
       '[DRIVER_INDEX_UPSERT][REQUEST] driver=${_maskDriverIdForDiag(driverId)} isActive=$isActiveValue tenant=${_maskCompanyScopeForLog(scope["tenant_id"] ?? "")} company=${_maskCompanyScopeForLog(scope["company_id"] ?? "")}',
+    );
+    debugPrint(
+      '[DRIVER_STATUS_SAVE][REQUEST] driver=${_maskDriverIdForDiag(driverId)} tenant=${_maskCompanyScopeForLog(scope["tenant_id"] ?? "")} company=${_maskCompanyScopeForLog(scope["company_id"] ?? "")} endpoint=${endpoint.path}',
     );
     final payload = _encodeDriverForBackendIndexPayload(
       driver,
@@ -2302,16 +2366,78 @@ Future<bool> syncDriverIndexEntryToBackend(
       companyId: scope['company_id'] ?? '',
       isActiveOverride: isActiveOverride,
     );
+    final payloadFieldNames = payload.keys.toList(growable: false)..sort();
+    debugPrint(
+      '[DRIVER_STATUS_SAVE][PAYLOAD] driver=${_maskDriverIdForDiag(driverId)} fields=${payloadFieldNames.join(",")}',
+    );
+    if (!hasCompanyToken) {
+      return DriverStatusSaveResult(
+        ok: false,
+        statusCode: null,
+        authSource: 'none',
+        endpointPath: endpoint.path,
+        errorCode: 'missing_company_session_token',
+        payloadFieldNames: payloadFieldNames,
+      );
+    }
     final response = await http
-        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .post(
+          endpoint,
+          headers: companyBearerHeaders(token, json: true),
+          body: jsonEncode(payload),
+        )
         .timeout(const Duration(seconds: 12));
     final ok = response.statusCode >= 200 && response.statusCode < 300;
+    String errorCode = '';
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        errorCode = (decoded['error'] ?? decoded['reason'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+      }
+    } catch (_) {}
+    debugPrint(
+      '[DRIVER_STATUS_SAVE][RESPONSE] driver=${_maskDriverIdForDiag(driverId)} status=${response.statusCode} ok=$ok',
+    );
     debugPrint(
       '[DRIVER_INDEX_UPSERT][RESPONSE] driver=${_maskDriverIdForDiag(driverId)} status=${response.statusCode} ok=$ok bodyPreview=${_shortBodyPreviewForDiag(utf8.decode(response.bodyBytes))}',
     );
-    return ok;
-  } catch (_) {
-    return false;
+    if (!ok) {
+      final resolvedError = errorCode.isEmpty ? 'request_failed' : errorCode;
+      debugPrint(
+        '[DRIVER_STATUS_SAVE][FAILED] driver=${_maskDriverIdForDiag(driverId)} status=${response.statusCode} error=$resolvedError',
+      );
+      return DriverStatusSaveResult(
+        ok: false,
+        statusCode: response.statusCode,
+        authSource: 'company_session',
+        endpointPath: endpoint.path,
+        errorCode: resolvedError,
+        payloadFieldNames: payloadFieldNames,
+      );
+    }
+    return DriverStatusSaveResult(
+      ok: true,
+      statusCode: response.statusCode,
+      authSource: 'company_session',
+      endpointPath: endpoint.path,
+      errorCode: '',
+      payloadFieldNames: payloadFieldNames,
+    );
+  } catch (error) {
+    debugPrint(
+      '[DRIVER_STATUS_SAVE][FAILED] driver=${_maskDriverIdForDiag(driver.id)} status=none error=${_safeDriverStatusSaveErrorCode(error)}',
+    );
+    return DriverStatusSaveResult(
+      ok: false,
+      statusCode: null,
+      authSource: 'company_session',
+      endpointPath: '/admin/company/drivers/index/upsert',
+      errorCode: _safeDriverStatusSaveErrorCode(error),
+      payloadFieldNames: const <String>[],
+    );
   }
 }
 
@@ -2980,6 +3106,178 @@ Future<Map<String, dynamic>> deleteAdminDriverDocument({
     throw Exception('driver_document_delete_failed');
   }
   return map;
+}
+
+Future<Map<String, dynamic>> updateAdminDriverDocumentMetadata({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+  required String documentId,
+  required String documentType,
+  required String title,
+  String expiryDate = '',
+  String status = 'pending_review',
+  String notes = '',
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final normalizedTenantId = tenantId.trim();
+  final normalizedCompanyId = companyId.trim();
+  final normalizedDriverId = driverId.trim();
+  final normalizedDocumentId = documentId.trim();
+  final normalizedDocumentType = documentType.trim();
+  final normalizedTitle = title.trim();
+  final normalizedStatus = status.trim().isEmpty
+      ? 'pending_review'
+      : status.trim();
+  final normalizedNotes = notes.trim();
+  final normalizedExpiryDate = expiryDate.trim();
+
+  if (baseUrl.isEmpty) throw Exception('bookingBaseUrl is required');
+  if (token.isEmpty) throw Exception('companySessionToken is required');
+  if (normalizedTenantId.isEmpty) throw Exception('tenantId is required');
+  if (normalizedCompanyId.isEmpty) throw Exception('companyId is required');
+  if (normalizedDriverId.isEmpty) throw Exception('driverId is required');
+  if (normalizedDocumentId.isEmpty) throw Exception('documentId is required');
+  if (normalizedDocumentType.isEmpty) {
+    throw Exception('documentType is required');
+  }
+  if (normalizedTitle.isEmpty) throw Exception('title is required');
+
+  final endpoint = Uri.parse('$baseUrl/admin/driver-documents/update');
+  final payload = <String, dynamic>{
+    'tenant_id': normalizedTenantId,
+    'company_id': normalizedCompanyId,
+    'driver_id': normalizedDriverId,
+    'document_id': normalizedDocumentId,
+    'document_type': normalizedDocumentType,
+    'title': normalizedTitle,
+    'status': normalizedStatus,
+    'notes': normalizedNotes,
+    if (normalizedExpiryDate.isNotEmpty) 'expiry_date': normalizedExpiryDate,
+  };
+  final res = await http
+      .post(
+        endpoint,
+        headers: companyBearerHeaders(token, json: true),
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('driver_document_update_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    final errorCode = (map['error'] ?? '').toString().trim();
+    if (errorCode.isNotEmpty) throw Exception(errorCode);
+    throw Exception('driver_document_update_failed');
+  }
+  return map;
+}
+
+class DriverDocumentFileDownloadResult {
+  const DriverDocumentFileDownloadResult({
+    required this.localPath,
+    required this.contentType,
+    required this.fileName,
+    required this.bytes,
+  });
+
+  final String localPath;
+  final String contentType;
+  final String fileName;
+  final int bytes;
+}
+
+Future<DriverDocumentFileDownloadResult> downloadAdminDriverDocumentFile({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+  required String documentId,
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final normalizedTenantId = tenantId.trim();
+  final normalizedCompanyId = companyId.trim();
+  final normalizedDriverId = driverId.trim();
+  final normalizedDocumentId = documentId.trim();
+
+  if (baseUrl.isEmpty) throw Exception('bookingBaseUrl is required');
+  if (token.isEmpty) throw Exception('companySessionToken is required');
+  if (normalizedTenantId.isEmpty) throw Exception('tenantId is required');
+  if (normalizedCompanyId.isEmpty) throw Exception('companyId is required');
+  if (normalizedDriverId.isEmpty) throw Exception('driverId is required');
+  if (normalizedDocumentId.isEmpty) throw Exception('documentId is required');
+
+  final endpoint = Uri.parse('$baseUrl/admin/driver-documents/file').replace(
+    queryParameters: <String, String>{
+      'tenant_id': normalizedTenantId,
+      'company_id': normalizedCompanyId,
+      'driver_id': normalizedDriverId,
+      'document_id': normalizedDocumentId,
+    },
+  );
+  final response = await http
+      .get(endpoint, headers: companyBearerHeaders(token))
+      .timeout(const Duration(seconds: 20));
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Exception('HTTP ${response.statusCode}');
+  }
+
+  String sanitizeFileName(String raw) {
+    var text = raw.trim();
+    if (text.isEmpty) return 'driver_document';
+    text = text.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+    text = text.replaceAll(RegExp(r'_+'), '_');
+    text = text.replaceAll(RegExp(r'^_+|_+$'), '');
+    if (text.isEmpty) return 'driver_document';
+    return text.length > 160 ? text.substring(0, 160) : text;
+  }
+
+  String resolveFileNameFromHeaders(http.Response res) {
+    final cd = res.headers['content-disposition'] ?? '';
+    final quoted = RegExp(r'filename="([^"]+)"').firstMatch(cd);
+    if (quoted != null) return sanitizeFileName(quoted.group(1) ?? '');
+    final plain = RegExp(r'filename=([^;]+)').firstMatch(cd);
+    if (plain != null) return sanitizeFileName(plain.group(1) ?? '');
+    return 'driver_document';
+  }
+
+  final contentType =
+      (response.headers['content-type'] ?? 'application/octet-stream').trim();
+  final fallbackExt = () {
+    if (contentType.contains('pdf')) return '.pdf';
+    if (contentType.contains('jpeg')) return '.jpg';
+    if (contentType.contains('png')) return '.png';
+    if (contentType.contains('webp')) return '.webp';
+    return '.bin';
+  }();
+  var fileName = resolveFileNameFromHeaders(response);
+  if (!fileName.contains('.')) {
+    fileName = '$fileName$fallbackExt';
+  }
+  final tempDir = await getTemporaryDirectory();
+  final cacheDir = Directory(
+    '${tempDir.path}${Platform.pathSeparator}driver_document_cache',
+  );
+  if (!await cacheDir.exists()) {
+    await cacheDir.create(recursive: true);
+  }
+  final savePath =
+      '${cacheDir.path}${Platform.pathSeparator}${sanitizeFileName(normalizedDriverId)}_${sanitizeFileName(normalizedDocumentId)}_$fileName';
+  final file = File(savePath);
+  await file.writeAsBytes(response.bodyBytes, flush: true);
+  return DriverDocumentFileDownloadResult(
+    localPath: savePath,
+    contentType: contentType,
+    fileName: fileName,
+    bytes: response.bodyBytes.length,
+  );
 }
 
 Future<Map<String, dynamic>?> fetchCompanyBootstrapWithToken({

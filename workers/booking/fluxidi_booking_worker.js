@@ -3822,6 +3822,151 @@ async function handleAdminDriverDocumentsList(request, url, env) {
   return json({ ok: true, tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id, items, count: items.length }, 200);
 }
 
+async function handleAdminDriverDocumentsUpdate(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const body = await readAdminCompanyLinkBody(request.clone());
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: body.tenant_id ?? body.tenantId ?? url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: body.company_id ?? body.companyId ?? url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: body.driver_id ?? body.driverId ?? url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+  const documentId = _safeDriverDocumentScopePart(body.document_id ?? body.documentId, 160);
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const key = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!key) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const existing = _sanitizeDriverDocumentMetadata(raw);
+  if (!existing) return json({ ok: false, error: "not_found" }, 404);
+  if (
+    existing.tenant_id !== auth.tenant_id ||
+    existing.company_id !== auth.company_id ||
+    existing.driver_id !== auth.driver_id
+  ) {
+    return json({ ok: false, error: "scope_forbidden" }, 403);
+  }
+  const documentType = sanitizeTenantString(
+    body.document_type ?? body.documentType ?? existing.document_type,
+    80,
+  );
+  const title = sanitizeTenantString(body.title ?? existing.title, 160);
+  if (!documentType) return json({ ok: false, error: "document_type is required" }, 400);
+  if (!title) return json({ ok: false, error: "title is required" }, 400);
+  const nowIso = new Date().toISOString();
+  const record = _sanitizeDriverDocumentMetadata({
+    ...existing,
+    tenant_id: auth.tenant_id,
+    company_id: auth.company_id,
+    driver_id: auth.driver_id,
+    document_id: documentId,
+    document_type: documentType,
+    title,
+    expiry_date:
+      body.expiry_date ??
+      body.expiryDate ??
+      body.expires_at ??
+      body.expiresAt ??
+      body.valid_until ??
+      body.validUntil ??
+      existing.expiry_date,
+    status: body.status ?? existing.status,
+    notes: body.notes ?? existing.notes,
+    updated_at: nowIso,
+  });
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+  await _upsertDriverDocumentIndexId(
+    env,
+    { tenant_id: auth.tenant_id, company_id: auth.company_id, driver_id: auth.driver_id },
+    documentId,
+    nowIso,
+  );
+  return json({ ok: true, document: record }, 200);
+}
+
+async function handleAdminDriverDocumentsFile(request, url, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const storage = _driverDocumentsStorageBinding(env);
+  if (!storage) {
+    return json(
+      {
+        ok: false,
+        error: "driver document storage binding is missing (set DRIVER_DOCUMENTS_PRIVATE or PRIVATE_MEDIA)",
+      },
+      500,
+    );
+  }
+  const scopeInput = _readDriverDocumentScopeFromInput({
+    tenant_id: url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+    company_id: url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+    driver_id: url.searchParams.get("driver_id") ?? url.searchParams.get("driverId"),
+  });
+  const auth = await _resolveDriverDocumentsAuthScope({
+    request,
+    url,
+    env,
+    inputScope: scopeInput,
+  });
+  if (!auth.ok) return auth.response;
+  const documentId = _safeDriverDocumentScopePart(
+    url.searchParams.get("document_id") ?? url.searchParams.get("documentId"),
+    160,
+  );
+  if (!documentId) return json({ ok: false, error: "invalid_document_id" }, 400);
+  const key = _driverDocumentMetadataKey({
+    tenantId: auth.tenant_id,
+    companyId: auth.company_id,
+    driverId: auth.driver_id,
+    documentId,
+  });
+  if (!key) return json({ ok: false, error: "invalid_scope_or_document_id" }, 400);
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const record = _sanitizeDriverDocumentMetadata(raw);
+  if (!record) return json({ ok: false, error: "not_found" }, 404);
+  if (
+    record.tenant_id !== auth.tenant_id ||
+    record.company_id !== auth.company_id ||
+    record.driver_id !== auth.driver_id
+  ) {
+    return json({ ok: false, error: "scope_forbidden" }, 403);
+  }
+  if (!record.r2_key) {
+    return json({ ok: false, error: "artifact_missing" }, 404);
+  }
+  const object = await storage.get(record.r2_key);
+  if (!object) {
+    return json({ ok: false, error: "artifact_missing" }, 404);
+  }
+  const body = await object.arrayBuffer();
+  const contentType = sanitizeTenantString(
+    record.content_type || object.httpMetadata?.contentType,
+    120,
+  ) || "application/octet-stream";
+  const fileName = _driverDocumentFileNamePart(record.file_name || `${documentId}.bin`);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": `inline; filename="${fileName}"`,
+      "X-Driver-Document-Id": documentId,
+    },
+  });
+}
+
 async function handleAdminDriverDocumentsDelete(request, url, env, documentIdInput) {
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   const storage = _driverDocumentsStorageBinding(env);
@@ -8665,17 +8810,35 @@ async function handleAdminCompanyLinkCodeCreate(request, url, env) {
 
 async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
-  _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
   const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-  if (!explicitScope?.hasScope) {
+  const hasAdmin = hasValidAdminToken(request, url, env);
+  const companySession = hasAdmin ? null : await _loadCompanySessionFromRequest(request, env);
+  if (!hasAdmin && !companySession) {
+    return _companyAuthFail();
+  }
+  if (hasAdmin && !explicitScope?.hasScope) {
     return json(missingTenantScopeError(), 400);
   }
-  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
-  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  if (
+    !hasAdmin &&
+    explicitScope?.hasScope &&
+    (explicitScope.tenant_id !== companySession.tenant_id ||
+      explicitScope.company_id !== companySession.company_id)
+  ) {
+    return json({ ok: false, error: "scope_forbidden" }, 403);
+  }
+  const tenantId = sanitizeTenantString(
+    hasAdmin ? explicitScope.tenant_id : companySession.tenant_id,
+    80,
+  );
+  const companyId = sanitizeTenantString(
+    hasAdmin ? explicitScope.company_id : companySession.company_id,
+    80,
+  );
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
     return json({ ok: false, error: "invalid_tenant_or_company_scope" }, 400);
   }
@@ -14843,6 +15006,20 @@ GET /oauth/callback
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         return handleAdminDriverDocumentsList(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/update") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsUpdate(request, url, env);
+      }
+
+      if (url.pathname === "/admin/driver-documents/file") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleAdminDriverDocumentsFile(request, url, env);
       }
 
       const adminDriverDocumentsDeleteMatch = url.pathname.match(
