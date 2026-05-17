@@ -343,7 +343,20 @@ class ActiveCompanySession {
       lastUsedAt: read('lastUsedAt'),
       companySessionToken:
           readOptional('companySessionToken') ??
-          readOptional('company_session_token'),
+          readOptional('company_session_token') ??
+          readOptional('token') ??
+          readOptional('authToken') ??
+          readOptional('auth_token') ??
+          readOptional('companyToken') ??
+          readOptional('company_token') ??
+          readOptional('sessionToken') ??
+          readOptional('session_token') ??
+          readOptional('pairingToken') ??
+          readOptional('pairing_token') ??
+          readOptional('bootstrapToken') ??
+          readOptional('bootstrap_token') ??
+          readOptional('accessToken') ??
+          readOptional('access_token'),
       companySessionExpiresAtUtc:
           readOptional('companySessionExpiresAtUtc') ??
           readOptional('company_session_expires_at_utc') ??
@@ -549,6 +562,75 @@ class CompanySessionStore {
     return s;
   }
 
+  String? _readTokenAliasFromRawSessionMap(Map<String, dynamic> json) {
+    const keys = <String>[
+      'companySessionToken',
+      'company_session_token',
+      'token',
+      'authToken',
+      'auth_token',
+      'companyToken',
+      'company_token',
+      'sessionToken',
+      'session_token',
+      'pairingToken',
+      'pairing_token',
+      'bootstrapToken',
+      'bootstrap_token',
+      'accessToken',
+      'access_token',
+    ];
+    for (final key in keys) {
+      final raw = (json[key] ?? '').toString().trim();
+      if (raw.isNotEmpty) return raw;
+    }
+    return null;
+  }
+
+  Future<({String? token, String source})> resolveCompanyBootstrapToken({
+    ActiveCompanySession? preferredSession,
+  }) async {
+    final preferredToken = (preferredSession?.companySessionToken ?? '').trim();
+    if (preferredToken.isNotEmpty) {
+      return (token: preferredToken, source: 'notifier');
+    }
+
+    final loaded = await loadSession();
+    final loadedToken = (loaded?.companySessionToken ?? '').trim();
+    if (loadedToken.isNotEmpty) {
+      return (token: loadedToken, source: 'session');
+    }
+
+    try {
+      final scopedFile = await _sessionFileForKnownScope();
+      if (scopedFile != null && await scopedFile.exists()) {
+        final raw = await scopedFile.readAsString();
+        if (raw.trim().isNotEmpty) {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            final map = Map<String, dynamic>.from(decoded);
+            final aliasToken = (_readTokenAliasFromRawSessionMap(map) ?? '')
+                .trim();
+            if (aliasToken.isNotEmpty) {
+              final base = loaded ?? preferredSession;
+              if (base != null &&
+                  (base.companySessionToken ?? '').trim().isEmpty) {
+                final merged = base.copyWith(companySessionToken: aliasToken);
+                _sessionMemory = merged;
+                activeCompanySessionNotifier.value = merged;
+                try {
+                  await scopedFile.writeAsString(jsonEncode(merged.toJson()));
+                } catch (_) {}
+              }
+              return (token: aliasToken, source: 'session_alias');
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return (token: null, source: 'none');
+  }
+
   Future<CompanyProfile?> loadProfile() async {
     try {
       if (_profileMemory != null) return _profileMemory;
@@ -727,6 +809,20 @@ class CompanySessionStore {
   Future<void> _writeSessionForProfile(CompanyProfile p) async {
     final now = DateTime.now().toUtc().toIso8601String();
     final prev = await loadSession();
+    final file = await _sessionFileForScope(
+      tenantId: p.tenantId,
+      companyId: p.companyId,
+    );
+    final stored = await _readSessionFromFile(file);
+    final storedToken = (stored?.companySessionToken ?? '').trim();
+    final prevToken = (prev?.companySessionToken ?? '').trim();
+    final preservedToken = prevToken.isNotEmpty
+        ? prevToken
+        : (storedToken.isNotEmpty ? storedToken : null);
+    final preservedExpires =
+        prev?.companySessionExpiresAtUtc ?? stored?.companySessionExpiresAtUtc;
+    final preservedCompanyCode = prev?.companyCode ?? stored?.companyCode;
+    final preservedLinkMethod = prev?.linkMethod ?? stored?.linkMethod;
     final session = ActiveCompanySession(
       companyId: p.companyId,
       role: 'companyAdmin',
@@ -734,16 +830,12 @@ class CompanySessionStore {
           ? prev.createdAt
           : now,
       lastUsedAt: now,
-      companySessionToken: prev?.companySessionToken,
-      companySessionExpiresAtUtc: prev?.companySessionExpiresAtUtc,
-      companyCode: prev?.companyCode,
-      linkMethod: prev?.linkMethod,
+      companySessionToken: preservedToken,
+      companySessionExpiresAtUtc: preservedExpires,
+      companyCode: preservedCompanyCode,
+      linkMethod: preservedLinkMethod,
     );
     try {
-      final file = await _sessionFileForScope(
-        tenantId: p.tenantId,
-        companyId: p.companyId,
-      );
       await file.writeAsString(jsonEncode(session.toJson()));
       _sessionMemory = session;
       activeCompanySessionNotifier.value = session;
@@ -757,11 +849,20 @@ class CompanySessionStore {
     final cur = activeCompanySessionNotifier.value;
     if (cur == null) return;
     final now = DateTime.now().toUtc().toIso8601String();
-    final next = cur.copyWith(lastUsedAt: now);
     try {
       final file = await _sessionFileForScope(
         tenantId: cur.companyId,
         companyId: cur.companyId,
+      );
+      final stored = await _readSessionFromFile(file);
+      final storedToken = (stored?.companySessionToken ?? '').trim();
+      final currentToken = (cur.companySessionToken ?? '').trim();
+      final preservedToken = currentToken.isNotEmpty
+          ? currentToken
+          : (storedToken.isNotEmpty ? storedToken : null);
+      final next = cur.copyWith(
+        lastUsedAt: now,
+        companySessionToken: preservedToken,
       );
       await file.writeAsString(jsonEncode(next.toJson()));
       _sessionMemory = next;

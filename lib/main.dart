@@ -254,6 +254,35 @@ String _maskScopeForLog(String value) {
   return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
 }
 
+String _shortDriverIdForDiag(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return 'unknown';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _shortUrlForDiag(String value) {
+  final raw = value.trim();
+  if (raw.isEmpty) return '—';
+  try {
+    final uri = Uri.parse(raw);
+    final host = uri.host.trim();
+    final path = uri.path.trim();
+    final head = host.isNotEmpty
+        ? '$host${path.isNotEmpty ? path : '/'}'
+        : (path.isNotEmpty ? path : raw);
+    return head.length <= 80 ? head : '${head.substring(0, 80)}…';
+  } catch (_) {
+    return raw.length <= 80 ? raw : '${raw.substring(0, 80)}…';
+  }
+}
+
+String _shortErrorForDiag(Object error) {
+  final text = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (text.isEmpty) return 'unknown';
+  return text.length <= 180 ? text : '${text.substring(0, 180)}…';
+}
+
 String _firstBootstrapText(List<dynamic> values) {
   for (final value in values) {
     final text = (value ?? '').toString().trim();
@@ -403,45 +432,111 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
   required String reason,
   bool clearOnUnauthorized = false,
 }) async {
-  final session = activeCompanySessionNotifier.value;
-  final token = (session?.companySessionToken ?? '').trim();
-  if (token.isEmpty) return false;
-  debugPrint(
-    '[COMPANY_BOOTSTRAP][REQ] source=$reason company=${_maskScopeForLog(session?.companyId ?? "")}',
-  );
-  final bootstrap = await fetchCompanyBootstrapWithToken(
-    companySessionToken: token,
-  );
-  if (bootstrap == null) {
-    final status = lastCompanyBootstrapHttpStatusCode;
-    debugPrint(
-      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=${status ?? "unknown"}',
-    );
-    if (status == 401 && clearOnUnauthorized) {
-      await CompanySessionStore.instance.clearLocalCompanyState();
+  debugPrint('[COMPANY_BOOTSTRAP_REFRESH][START] reason=$reason');
+  try {
+    var session = activeCompanySessionNotifier.value;
+    session ??= await CompanySessionStore.instance.loadSession();
+    if (session == null) {
+      debugPrint('[COMPANY_BOOTSTRAP_REFRESH][NO_SESSION] reason=$reason');
+      return false;
     }
-    return false;
-  }
-  final hydrated = await hydrateCompanyStateFromBootstrap(bootstrap);
-  if (!hydrated) {
+    final resolvedToken = await CompanySessionStore.instance
+        .resolveCompanyBootstrapToken(preferredSession: session);
+    final token = (resolvedToken.token ?? '').trim();
+    final tokenSource = resolvedToken.source;
     debugPrint(
-      '[COMPANY_BOOTSTRAP][FAIL] source=$reason status=hydrate_failed',
+      '[COMPANY_BOOTSTRAP_REFRESH][TOKEN_SOURCE] reason=$reason source=$tokenSource hasToken=${token.isNotEmpty}',
+    );
+    if (token.isEmpty) {
+      debugPrint(
+        '[COMPANY_BOOTSTRAP_REFRESH][NO_COMPANY_TOKEN] reason=$reason',
+      );
+      return false;
+    }
+    final scopeCompany = session.companyId.trim();
+    debugPrint(
+      '[COMPANY_BOOTSTRAP_REFRESH][REQUEST] reason=$reason tenant=${_maskScopeForLog(scopeCompany)} company=${_maskScopeForLog(scopeCompany)}',
+    );
+    final bootstrap = await fetchCompanyBootstrapWithToken(
+      companySessionToken: token,
+    );
+    final status = lastCompanyBootstrapHttpStatusCode;
+    final vehiclesRaw = bootstrap?['vehicles'];
+    final driversRaw = bootstrap?['drivers'];
+    final vehiclesCount = vehiclesRaw is List ? vehiclesRaw.length : null;
+    final driversCount = driversRaw is List ? driversRaw.length : null;
+    debugPrint(
+      '[COMPANY_BOOTSTRAP_REFRESH][FETCH_RESULT] reason=$reason ok=${bootstrap != null} status=${status ?? "unknown"} drivers=${driversCount ?? "unknown"} vehicles=${vehiclesCount ?? "unknown"}',
+    );
+    if (bootstrap == null) {
+      return false;
+    }
+    if (driversRaw is List) {
+      debugPrint('[COMPANY_BOOTSTRAP][DRIVERS] count=${driversRaw.length}');
+      for (final row in driversRaw) {
+        if (row is! Map) continue;
+        final map = Map<String, dynamic>.from(row);
+        final driverId = _firstBootstrapText(<dynamic>[
+          map['driver_id'],
+          map['driverId'],
+          map['id'],
+        ]);
+        final driverName = _firstBootstrapText(<dynamic>[
+          map['display_name'],
+          map['displayName'],
+          map['driver_name'],
+          map['driverName'],
+          map['full_name'],
+          map['fullName'],
+        ]);
+        final isActiveRaw = map['is_active'] ?? map['isActive'];
+        final isActive = isActiveRaw is bool
+            ? isActiveRaw
+            : isActiveRaw.toString().trim().toLowerCase() == 'true' ||
+                  isActiveRaw.toString().trim() == '1';
+        final publicPortrait = _firstBootstrapText(<dynamic>[
+          map['public_portrait_url'],
+          map['publicPortraitUrl'],
+        ]);
+        final driverPhoto = _firstBootstrapText(<dynamic>[
+          map['driver_photo_url'],
+          map['driverPhotoUrl'],
+        ]);
+        debugPrint(
+          '[COMPANY_BOOTSTRAP][DRIVER] id=${_shortDriverIdForDiag(driverId)} name=${driverName.trim()} isActive=$isActive publicPortrait=${_shortUrlForDiag(publicPortrait)} driverPhoto=${_shortUrlForDiag(driverPhoto)}',
+        );
+      }
+    } else {
+      debugPrint('[COMPANY_BOOTSTRAP][DRIVERS] count=0');
+    }
+    final hydrated = await hydrateCompanyStateFromBootstrap(bootstrap);
+    debugPrint(
+      '[COMPANY_BOOTSTRAP_REFRESH][HYDRATE_DONE] reason=$reason ok=$hydrated',
+    );
+    if (!hydrated) {
+      return false;
+    }
+    final hydratedCompanyCode = _publicCompanyCodeFromBootstrapPayload(
+      bootstrap,
+    );
+    debugPrint(
+      '[COMPANY_CODE][HYDRATE] found=${hydratedCompanyCode != null} source=bootstrap',
+    );
+    if (hydratedCompanyCode != null) {
+      await CompanySessionStore.instance.updateActiveSessionCompanyCode(
+        hydratedCompanyCode,
+        source: 'bootstrap',
+      );
+    }
+    await _applyCompanyProfileFromBootstrapPayload(bootstrap);
+    debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
+    return true;
+  } catch (error) {
+    debugPrint(
+      '[COMPANY_BOOTSTRAP_REFRESH][ERROR] reason=$reason error=${_shortErrorForDiag(error)}',
     );
     return false;
   }
-  final hydratedCompanyCode = _publicCompanyCodeFromBootstrapPayload(bootstrap);
-  debugPrint(
-    '[COMPANY_CODE][HYDRATE] found=${hydratedCompanyCode != null} source=bootstrap',
-  );
-  if (hydratedCompanyCode != null) {
-    await CompanySessionStore.instance.updateActiveSessionCompanyCode(
-      hydratedCompanyCode,
-      source: 'bootstrap',
-    );
-  }
-  await _applyCompanyProfileFromBootstrapPayload(bootstrap);
-  debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
-  return true;
 }
 
 String _activeCompanyScopeIdForSync() {
@@ -11115,14 +11210,199 @@ class _BusinessDemandMapOverlayPainter extends CustomPainter {
   }
 }
 
-class CompanyDriverManagementPage extends StatelessWidget {
+class CompanyDriverManagementPage extends StatefulWidget {
   const CompanyDriverManagementPage({super.key});
+
+  @override
+  State<CompanyDriverManagementPage> createState() =>
+      _CompanyDriverManagementPageState();
+}
+
+class _CompanyDriverManagementPageState
+    extends State<CompanyDriverManagementPage>
+    with WidgetsBindingObserver {
+  bool _refreshInFlight = false;
+  bool _adminDocsRefreshInFlight = false;
+  bool _hasSuccessfulRefresh = false;
+  DateTime? _lastRefreshAtUtc;
+
+  ({String tenantId, String companyId}) _adminScopeForDriver(
+    DriverProfile driver,
+  ) {
+    final scoped = driver.companyId?.trim() ?? '';
+    if (scoped.isNotEmpty) {
+      return (tenantId: scoped, companyId: scoped);
+    }
+    final fromProfile = companyProfileNotifier.value?.companyId.trim() ?? '';
+    if (fromProfile.isNotEmpty) {
+      return (tenantId: fromProfile, companyId: fromProfile);
+    }
+    final fromSession =
+        activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+    if (fromSession.isNotEmpty) {
+      return (tenantId: fromSession, companyId: fromSession);
+    }
+    final resolved = resolvedCompanyId.trim();
+    if (resolved.isNotEmpty) {
+      return (tenantId: resolved, companyId: resolved);
+    }
+    return (tenantId: kTenantId, companyId: kTenantId);
+  }
+
+  List<DriverProfile> _adminVisibleDrivers() {
+    return driversNotifier.value
+        .where((d) => fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId))
+        .toList(growable: false);
+  }
+
+  Future<void> _refreshAdminDocumentsForVisibleDrivers({
+    required String reason,
+    bool force = false,
+    String? onlyDriverId,
+  }) async {
+    if (_adminDocsRefreshInFlight) return;
+    final token =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (token.isEmpty) return;
+    final allVisible = _adminVisibleDrivers();
+    final targetDriverId = (onlyDriverId ?? '').trim();
+    final targets = targetDriverId.isEmpty
+        ? allVisible
+        : allVisible
+              .where((d) => d.id.trim() == targetDriverId)
+              .toList(growable: false);
+    if (targets.isEmpty) return;
+    _adminDocsRefreshInFlight = true;
+    debugPrint(
+      '[DRIVER_DOCS_ADMIN][REFRESH_START] drivers=${targets.length} reason=$reason force=$force',
+    );
+    try {
+      for (final driver in targets) {
+        final scope = _adminScopeForDriver(driver);
+        final ok = await DriverDocumentsStore.instance
+            .refreshDriverDocumentsFromBackend(
+              bookingBaseUrl: kBookingBaseUrl,
+              companySessionToken: token,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+              driverId: driver.id,
+            );
+        final visibleCount = DriverDocumentsStore.instance
+            .documentsVisibleForCompanyAdminDriver(
+              driver.id,
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+            )
+            .length;
+        debugPrint(
+          '[DRIVER_DOCS_ADMIN][REFRESH_DRIVER] driver=${_shortDriverIdForDiag(driver.id)} ok=$ok count=$visibleCount',
+        );
+      }
+    } finally {
+      _adminDocsRefreshInFlight = false;
+    }
+  }
+
+  Future<void> _refreshDriversFromBootstrap({
+    required String reason,
+    bool force = false,
+  }) async {
+    if (_refreshInFlight) {
+      debugPrint(
+        '[DRIVERS_PAGE][REFRESH_SKIP] reason=$reason throttle=false inFlight=true',
+      );
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    if (!force && _hasSuccessfulRefresh && _lastRefreshAtUtc != null) {
+      final elapsed = now.difference(_lastRefreshAtUtc!);
+      if (elapsed < const Duration(seconds: 5)) {
+        debugPrint(
+          '[DRIVERS_PAGE][REFRESH_SKIP] reason=$reason throttle=true inFlight=false',
+        );
+        return;
+      }
+    }
+    debugPrint('[DRIVERS_PAGE][REFRESH_START] reason=$reason');
+    _refreshInFlight = true;
+    try {
+      final ok = await _hydrateCompanyBootstrapFromActiveSession(
+        reason: reason,
+      );
+      try {
+        await _refreshAdminDocumentsForVisibleDrivers(
+          reason: reason,
+          force: force,
+        );
+      } catch (error) {
+        debugPrint(
+          '[DRIVER_DOCS_ADMIN][REFRESH_OPTIONAL_ERROR] reason=$reason error=${_shortErrorForDiag(error)}',
+        );
+      }
+      if (ok) {
+        _lastRefreshAtUtc = DateTime.now().toUtc();
+        _hasSuccessfulRefresh = true;
+      }
+      debugPrint('[DRIVERS_PAGE][REFRESH_DONE] reason=$reason ok=$ok');
+    } finally {
+      _refreshInFlight = false;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(
+      _refreshDriversFromBootstrap(reason: 'drivers_page_open', force: true),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshDriversFromBootstrap(reason: 'drivers_page_resume'));
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _CompanyDriverManagementPageBody(
+      onRequestBootstrapRefresh: _refreshDriversFromBootstrap,
+      onRequestAdminDriverDocumentsRefresh:
+          _refreshAdminDocumentsForVisibleDrivers,
+    );
+  }
+}
+
+class _CompanyDriverManagementPageBody extends StatelessWidget {
+  const _CompanyDriverManagementPageBody({
+    this.onRequestBootstrapRefresh,
+    this.onRequestAdminDriverDocumentsRefresh,
+  });
+
+  final Future<void> Function({required String reason, bool force})?
+  onRequestBootstrapRefresh;
+  final Future<void> Function({
+    required String reason,
+    bool force,
+    String? onlyDriverId,
+  })?
+  onRequestAdminDriverDocumentsRefresh;
 
   static const Color _pageBg = Color(0xFF07080C);
   static const Color _panelBg = Color(0xFF101113);
   static const Color _subPanelBg = Color(0xFF15120A);
   static const Color _gold = Color(0xFFE5B641);
   static final Set<String> _avatarPrecacheQueuedUrls = <String>{};
+  static String _lastDriverPageLogSignature = '';
+  static String _lastAdminDocVisibilitySignature = '';
 
   String _t({
     required String nl,
@@ -11495,6 +11775,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
           final hasPublicPortraitUrl = isHttpsPublicUrl(
             publicPortraitUrlCtrl.text.trim(),
           );
+          final publicPortraitNetworkUrl = hasPublicPortraitUrl
+              ? publicPortraitUrlCtrl.text.trim()
+              : null;
           final hasUsablePublicPhotoSource =
               hasInternalPhoto || hasPublicPortraitUrl;
           return AlertDialog(
@@ -11544,7 +11827,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                 ),
                               ),
                               child: ClipOval(
-                                child: _driverPhotoExists(profilePhotoPath)
+                                child: hasInternalPhoto
                                     ? Image.file(
                                         File(profilePhotoPath),
                                         fit: BoxFit.cover,
@@ -11558,15 +11841,35 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                           ),
                                         ),
                                       )
-                                    : Center(
-                                        child: Text(
-                                          _initialsFromName(nameCtrl.text),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                      ),
+                                    : (publicPortraitNetworkUrl != null
+                                          ? Image.network(
+                                              publicPortraitNetworkUrl,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) =>
+                                                  Center(
+                                                    child: Text(
+                                                      _initialsFromName(
+                                                        nameCtrl.text,
+                                                      ),
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                      ),
+                                                    ),
+                                                  ),
+                                            )
+                                          : Center(
+                                              child: Text(
+                                                _initialsFromName(
+                                                  nameCtrl.text,
+                                                ),
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            )),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -11589,7 +11892,8 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    _driverPhotoExists(profilePhotoPath)
+                                    (hasInternalPhoto ||
+                                            publicPortraitNetworkUrl != null)
                                         ? _t(
                                             nl: 'Foto aanwezig',
                                             en: 'Photo available',
@@ -11903,7 +12207,6 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                             ? true
                                             : existing.publicPhotoEnabled,
                                       );
-                                      updateDriver(existing.id, uploadedDriver);
                                       final persisted =
                                           await syncDriverIndexEntryToBackend(
                                             uploadedDriver,
@@ -11928,6 +12231,16 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                         );
                                         return;
                                       }
+                                      updateDriver(
+                                        existing.id,
+                                        uploadedDriver,
+                                        syncInventory: false,
+                                      );
+                                      unawaited(
+                                        onRequestBootstrapRefresh?.call(
+                                          reason: 'drivers_photo_upload_save',
+                                        ),
+                                      );
                                       ScaffoldMessenger.of(
                                         context,
                                       ).showSnackBar(
@@ -12128,7 +12441,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton(
-                          onPressed: () {
+                          onPressed: () async {
+                            final messenger = ScaffoldMessenger.of(ctx);
+                            final navigator = Navigator.of(ctx);
                             final updated = existing.copyWith(
                               fullName: nameCtrl.text.trim(),
                               phone: phoneCtrl.text.trim(),
@@ -12157,8 +12472,52 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                   ? null
                                   : publicPortraitUrlCtrl.text.trim(),
                             );
-                            updateDriver(existing.id, updated);
-                            Navigator.pop(ctx);
+                            final scope = _activeCompanyScopeForDriverDelete(
+                              existing,
+                            );
+                            debugPrint(
+                              '[DRIVER_EDIT_SAVE][BEFORE_UPSERT] driver=${_shortDriverIdForDiag(updated.id)} name=${updated.fullName.trim()} isActive=${updated.isActive} tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
+                            );
+                            final persisted =
+                                await syncDriverIndexEntryToBackend(
+                                  updated,
+                                  tenantId: scope.tenantId,
+                                  companyId: scope.companyId,
+                                );
+                            debugPrint(
+                              '[DRIVER_EDIT_SAVE][UPSERT_RESULT] driver=${_shortDriverIdForDiag(updated.id)} ok=$persisted',
+                            );
+                            if (!navigator.mounted) return;
+                            if (!persisted) {
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _t(
+                                      nl: 'Wijziging kon niet worden opgeslagen op de server. Probeer opnieuw.',
+                                      en: 'Change could not be saved on the server. Please try again.',
+                                      fr: 'La modification n’a pas pu être enregistrée sur le serveur. Réessayez.',
+                                      es: 'No se pudo guardar el cambio en el servidor. Inténtalo de nuevo.',
+                                    ),
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            updateDriver(
+                              existing.id,
+                              updated,
+                              syncInventory: false,
+                            );
+                            debugPrint(
+                              '[DRIVER_EDIT_SAVE][LOCAL_UPDATED] driver=${_shortDriverIdForDiag(updated.id)} isActive=${updated.isActive} syncInventory=false',
+                            );
+                            unawaited(
+                              onRequestBootstrapRefresh?.call(
+                                reason: 'drivers_edit_save',
+                                force: true,
+                              ),
+                            );
+                            navigator.pop();
                           },
                           child: Text(
                             _t(
@@ -12503,16 +12862,29 @@ class CompanyDriverManagementPage extends StatelessWidget {
           lower.contains('/public-media/');
     }
 
-    final candidates = <String>[];
     final profilePhotoPath = driver.profilePhotoPath?.trim() ?? '';
-    if (isHttpUrl(profilePhotoPath)) candidates.add(profilePhotoPath);
     final publicPortraitUrl = driver.publicPortraitUrl?.trim() ?? '';
-    if (isHttpUrl(publicPortraitUrl)) candidates.add(publicPortraitUrl);
-    if (candidates.isEmpty) return null;
-    for (final candidate in candidates) {
-      if (isPreferredFluxidiMediaUrl(candidate)) return candidate;
+    final ordered = <String>[];
+
+    void addIfValid(String value) {
+      final candidate = value.trim();
+      if (!isHttpUrl(candidate)) return;
+      if (ordered.contains(candidate)) return;
+      ordered.add(candidate);
     }
-    return candidates.first;
+
+    // Prefer backend/public portrait URL first.
+    if (isPreferredFluxidiMediaUrl(publicPortraitUrl)) {
+      addIfValid(publicPortraitUrl);
+    }
+    // Then any Fluxidi media alias carried in legacy local fields.
+    if (isPreferredFluxidiMediaUrl(profilePhotoPath)) {
+      addIfValid(profilePhotoPath);
+    }
+    // Then remote portrait URL, then any other remote avatar URL.
+    addIfValid(publicPortraitUrl);
+    addIfValid(profilePhotoPath);
+    return ordered.isEmpty ? null : ordered.first;
   }
 
   void _queuePrecacheDriverAvatars(
@@ -12595,10 +12967,10 @@ class CompanyDriverManagementPage extends StatelessWidget {
         border: Border.all(color: _gold.withOpacity(0.5)),
       ),
       child: ClipOval(
-        child: photoPath != null
-            ? _driverCardLocalAvatarImage(driver, photoPath)
-            : (networkUrl != null
-                  ? _driverCardNetworkAvatarImage(driver, networkUrl)
+        child: networkUrl != null
+            ? _driverCardNetworkAvatarImage(driver, networkUrl)
+            : (photoPath != null
+                  ? _driverCardLocalAvatarImage(driver, photoPath)
                   : _driverCardInitialsFallback(driver)),
       ),
     );
@@ -12706,6 +13078,13 @@ class CompanyDriverManagementPage extends StatelessWidget {
         );
       }
       debugPrint('[DRIVER_DOCS][UI_DELETE_BACKEND_DONE] ok=$removed');
+      unawaited(
+        onRequestAdminDriverDocumentsRefresh?.call(
+          reason: 'drivers_doc_delete',
+          onlyDriverId: driverId,
+          force: true,
+        ),
+      );
     }
   }
 
@@ -12713,11 +13092,33 @@ class CompanyDriverManagementPage extends StatelessWidget {
     BuildContext context,
     DriverProfile driver, {
     DriverDocument? existing,
-  }) => showDriverDocumentEditorSheet(
-    context,
-    driver: driver,
-    existing: existing,
-  );
+  }) async {
+    await showDriverDocumentEditorSheet(
+      context,
+      driver: driver,
+      existing: existing,
+    );
+    final refreshReason = existing == null
+        ? 'drivers_doc_add_or_edit'
+        : 'drivers_doc_edit';
+    unawaited(
+      onRequestAdminDriverDocumentsRefresh?.call(
+        reason: refreshReason,
+        onlyDriverId: driver.id,
+        force: true,
+      ),
+    );
+    // The sheet sync runs async after close; do one delayed pull too.
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 1200)).then((_) {
+        return onRequestAdminDriverDocumentsRefresh?.call(
+          reason: '${refreshReason}_delayed',
+          onlyDriverId: driver.id,
+          force: true,
+        );
+      }),
+    );
+  }
 
   Widget _driverDocumentTile(
     BuildContext context,
@@ -13700,6 +14101,68 @@ class CompanyDriverManagementPage extends StatelessWidget {
                         fleetRecordBelongsToActiveCompanyOrLegacy(d.companyId),
                   )
                   .toList(growable: false);
+              final docsStore = DriverDocumentsStore.instance;
+              final docsByDriverId = <String, List<DriverDocument>>{};
+              final gapByDriverId = <String, bool>{};
+              final visibleByDriverId = <String, DriverProfile>{
+                for (final d in visible) d.id.trim(): d,
+              };
+              for (final d in visible) {
+                final scope = _activeCompanyScopeForDriverDelete(d);
+                final docs = docsStore.documentsVisibleForCompanyAdminDriver(
+                  d.id,
+                  tenantId: scope.tenantId,
+                  companyId: scope.companyId,
+                );
+                docsByDriverId[d.id.trim()] = docs;
+                gapByDriverId[d.id.trim()] = docsStore
+                    .hasCoreDocumentGapForCompanyAdminDriver(
+                      d.id,
+                      tenantId: scope.tenantId,
+                      companyId: scope.companyId,
+                    );
+              }
+              final activeVisibleCount = visible
+                  .where((d) => d.isActive)
+                  .length;
+              String photoSourceForDriver(DriverProfile driver) {
+                final network = _driverCardNetworkPhotoUrl(driver);
+                if ((network ?? '').trim().isNotEmpty) return 'network';
+                final local = _driverCardPhotoPath(driver);
+                if ((local ?? '').trim().isNotEmpty) return 'local';
+                return 'initials';
+              }
+
+              final signature = visible
+                  .map(
+                    (d) =>
+                        '${d.id.trim()}:${d.isActive}:${photoSourceForDriver(d)}',
+                  )
+                  .join('|');
+              if (signature != _lastDriverPageLogSignature) {
+                _lastDriverPageLogSignature = signature;
+                debugPrint(
+                  '[DRIVER_PAGE][VISIBLE] count=${visible.length} active=$activeVisibleCount',
+                );
+                for (final d in visible) {
+                  debugPrint(
+                    '[DRIVER_PAGE][ROW] id=${_shortDriverIdForDiag(d.id)} name=${d.fullName.trim()} isActive=${d.isActive} photoSource=${photoSourceForDriver(d)}',
+                  );
+                }
+              }
+              final adminDocSignature = docsByDriverId.entries
+                  .map((e) => '${e.key}:${e.value.length}')
+                  .join('|');
+              if (adminDocSignature != _lastAdminDocVisibilitySignature) {
+                _lastAdminDocVisibilitySignature = adminDocSignature;
+                for (final entry in docsByDriverId.entries) {
+                  final driver = visibleByDriverId[entry.key];
+                  if (driver == null) continue;
+                  debugPrint(
+                    '[DRIVER_DOCS_ADMIN][VISIBLE] driver=${_shortDriverIdForDiag(driver.id)} count=${entry.value.length}',
+                  );
+                }
+              }
               _queuePrecacheDriverAvatars(context, visible);
               if (visible.isEmpty) {
                 return Center(
@@ -13723,11 +14186,9 @@ class CompanyDriverManagementPage extends StatelessWidget {
               var gapDrivers = 0;
               var expiringSoon = 0;
               for (final d in visible) {
-                final docs = DriverDocumentsStore.instance
-                    .documentsVisibleForDriver(d.id);
-                if (DriverDocumentsStore.instance.hasCoreDocumentGapForDriver(
-                  d.id,
-                )) {
+                final docs =
+                    docsByDriverId[d.id.trim()] ?? const <DriverDocument>[];
+                if (gapByDriverId[d.id.trim()] ?? true) {
                   gapDrivers++;
                 }
                 for (final doc in docs) {
@@ -13961,11 +14422,11 @@ class CompanyDriverManagementPage extends StatelessWidget {
                                 fr: 'Inactif',
                                 es: 'Inactivo',
                               );
-                        final docs = DriverDocumentsStore.instance
-                            .documentsVisibleForDriver(d.id);
+                        final docs =
+                            docsByDriverId[d.id.trim()] ??
+                            const <DriverDocument>[];
                         final count = docs.length;
-                        final gap = DriverDocumentsStore.instance
-                            .hasCoreDocumentGapForDriver(d.id);
+                        final gap = gapByDriverId[d.id.trim()] ?? true;
                         final docCountLabel = _lang == AppLanguage.fr
                             ? ((count == 0 || count == 1)
                                   ? 'document'
