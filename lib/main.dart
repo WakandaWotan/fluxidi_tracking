@@ -12981,9 +12981,15 @@ class CompanyDriverManagementPage extends StatelessWidget {
     required Color accent,
     required String label,
     required String value,
+    bool compact = false,
   }) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 8 : 10,
+        compact ? 6 : 8,
+        compact ? 8 : 10,
+        compact ? 6 : 8,
+      ),
       decoration: BoxDecoration(
         color: _panelBg,
         borderRadius: BorderRadius.circular(12),
@@ -12992,16 +12998,16 @@ class CompanyDriverManagementPage extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: compact ? 24 : 28,
+            height: compact ? 24 : 28,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: accent.withOpacity(0.15),
               border: Border.all(color: accent.withOpacity(0.52)),
             ),
-            child: Icon(icon, size: 15, color: accent),
+            child: Icon(icon, size: compact ? 13 : 15, color: accent),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: compact ? 6 : 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -13012,19 +13018,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.62),
-                    fontSize: 10.8,
+                    fontSize: compact ? 10.1 : 10.8,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: compact ? 1 : 2),
                 Text(
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 16,
+                    fontSize: compact ? 15 : 16,
                   ),
                 ),
               ],
@@ -13057,6 +13063,15 @@ class CompanyDriverManagementPage extends StatelessWidget {
           builder: (context, _, __) => ValueListenableBuilder<List<DriverProfile>>(
             valueListenable: driversNotifier,
             builder: (context, drivers, _) {
+              final media = MediaQuery.of(context);
+              final screenClass = FluxidiBreakpoints.classifyWidth(
+                media.size.width,
+              );
+              final isTabletLandscape =
+                  (screenClass == FluxidiScreenClass.tablet ||
+                      screenClass == FluxidiScreenClass.desktop) &&
+                  media.size.width > media.size.height &&
+                  media.size.height >= 700;
               final visible = drivers
                   .where(
                     (d) =>
@@ -13144,17 +13159,19 @@ class CompanyDriverManagementPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: isTabletLandscape
+                        ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8)
+                        : const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: _subPanelBg,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: _gold.withOpacity(0.30)),
                     ),
                     child: GridView.count(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      childAspectRatio: 2.3,
+                      crossAxisCount: isTabletLandscape ? 4 : 2,
+                      crossAxisSpacing: isTabletLandscape ? 6 : 8,
+                      mainAxisSpacing: isTabletLandscape ? 6 : 8,
+                      childAspectRatio: isTabletLandscape ? 3.25 : 2.3,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       children: [
@@ -13168,6 +13185,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Total conductores',
                           ),
                           value: '$totalDrivers',
+                          compact: isTabletLandscape,
                         ),
                         _summaryMetric(
                           icon: Icons.verified_user_outlined,
@@ -13179,6 +13197,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Activos',
                           ),
                           value: '$activeDrivers',
+                          compact: isTabletLandscape,
                         ),
                         _summaryMetric(
                           icon: Icons.warning_amber_rounded,
@@ -13190,6 +13209,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Documentos: acción requerida',
                           ),
                           value: '$gapDrivers',
+                          compact: isTabletLandscape,
                         ),
                         _summaryMetric(
                           icon: Icons.event_available_outlined,
@@ -13201,6 +13221,7 @@ class CompanyDriverManagementPage extends StatelessWidget {
                             es: 'Caducan pronto',
                           ),
                           value: '$expiringSoon',
+                          compact: isTabletLandscape,
                         ),
                       ],
                     ),
@@ -15280,6 +15301,7 @@ class CustomerHomePage extends StatelessWidget {
     required double mainAxisExtent,
     bool includeAirportAndHotels = true,
     bool forceTwoColumns = false,
+    bool forceFourColumns = false,
   }) {
     final actions = <({IconData icon, String label, VoidCallback onTap})>[
       (
@@ -15364,9 +15386,9 @@ class CustomerHomePage extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = forceTwoColumns
-            ? 2
-            : (constraints.maxWidth >= 430 ? 3 : 2);
+        final crossAxisCount = forceFourColumns
+            ? 4
+            : (forceTwoColumns ? 2 : (constraints.maxWidth >= 430 ? 3 : 2));
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -15397,9 +15419,13 @@ class CustomerHomePage extends StatelessWidget {
     String? visualAsset,
     double? visualHeight,
     Alignment? visualAlignment,
+    double visualOverlayOpacityMultiplier = 1.0,
     required VoidCallback onTap,
   }) {
     final hasVisual = visualAsset != null && visualAsset.trim().isNotEmpty;
+    final double overlayOpacityFactor = hasVisual
+        ? visualOverlayOpacityMultiplier.clamp(0.0, 1.0).toDouble()
+        : 1.0;
     final iconChipSize = hasVisual ? 58.0 : 52.0;
     final iconSize = hasVisual ? 31.0 : 28.0;
     final titleFontSize = hasVisual ? 16.8 : 15.2;
@@ -15437,10 +15463,18 @@ class CustomerHomePage extends StatelessWidget {
                       end: Alignment.centerRight,
                       stops: const [0.0, 0.46, 0.78, 1.0],
                       colors: [
-                        const Color(0xFF07080C).withOpacity(0.96),
-                        const Color(0xFF07080C).withOpacity(0.82),
-                        const Color(0xFF07080C).withOpacity(0.38),
-                        const Color(0xFF07080C).withOpacity(0.08),
+                        const Color(
+                          0xFF07080C,
+                        ).withOpacity(0.96 * overlayOpacityFactor),
+                        const Color(
+                          0xFF07080C,
+                        ).withOpacity(0.82 * overlayOpacityFactor),
+                        const Color(
+                          0xFF07080C,
+                        ).withOpacity(0.38 * overlayOpacityFactor),
+                        const Color(
+                          0xFF07080C,
+                        ).withOpacity(0.08 * overlayOpacityFactor),
                       ],
                     ),
                   ),
@@ -15643,7 +15677,7 @@ class CustomerHomePage extends StatelessWidget {
         final isPhonePortrait =
             W < H && !isTabletPortrait && !isTabletLandscape;
         final usesSplitUtilityAndFeatureCards =
-            isPhonePortrait || isTabletPortrait;
+            isPhonePortrait || isTabletPortrait || isTabletLandscape;
         final heroAsset = isTabletLandscape
             ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
             : 'assets/fluxidi/fluxidi_customer_home_hero.png';
@@ -15663,6 +15697,12 @@ class CustomerHomePage extends StatelessWidget {
         final customerQuickGridMainAxisExtent = isTabletPortrait
             ? clampDouble(H * 0.10, 126.0, 144.0)
             : 112.0;
+        final customerPortraitUtilityMainAxisExtent = isTabletPortrait
+            ? clampDouble(H * 0.085, 98.0, 118.0)
+            : customerQuickGridMainAxisExtent;
+        final customerLandscapeUtilityMainAxisExtent = isTabletLandscape
+            ? clampDouble(H * 0.09, 86.0, 102.0)
+            : customerPortraitUtilityMainAxisExtent;
         final customerWideCardHeight = isTabletLandscape
             ? clampDouble(H * 0.24, 200.0, 230.0)
             : isTabletPortrait
@@ -15686,84 +15726,185 @@ class CustomerHomePage extends StatelessWidget {
                   const SizedBox(height: 14),
                   _customerQuickActionGrid(
                     context,
-                    mainAxisExtent: customerQuickGridMainAxisExtent,
+                    mainAxisExtent: customerLandscapeUtilityMainAxisExtent,
                     includeAirportAndHotels: !usesSplitUtilityAndFeatureCards,
-                    forceTwoColumns: usesSplitUtilityAndFeatureCards,
+                    forceTwoColumns: isPhonePortrait,
+                    forceFourColumns: isTabletPortrait || isTabletLandscape,
                   ),
                   const SizedBox(height: 12),
-                  if (usesSplitUtilityAndFeatureCards) ...[
-                    _customerWideCard(
-                      context: context,
-                      icon: Icons.flight_takeoff_rounded,
-                      title: _t(
-                        nl: 'Luchthavenritten',
-                        en: 'Airport rides',
-                        fr: 'Trajets aéroport',
-                        es: 'Traslados aeropuerto',
-                      ),
-                      subtitle: '',
-                      visualAsset:
-                          'assets/fluxidi/airport_portret_background_GSM.png',
-                      visualHeight: customerWideCardHeight,
-                      visualAlignment: const Alignment(0.56, 0.18),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              AirportPage(bookingBaseUrl: kBookingBaseUrl),
+                  if (isTabletLandscape) ...[
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        const spacing = 10.0;
+                        final cardWidth = (constraints.maxWidth - spacing) / 2;
+                        final cards = <Widget>[
+                          _customerWideCard(
+                            context: context,
+                            icon: Icons.flight_takeoff_rounded,
+                            title: _t(
+                              nl: 'Luchthavenritten',
+                              en: 'Airport rides',
+                              fr: 'Trajets aéroport',
+                              es: 'Traslados aeropuerto',
+                            ),
+                            subtitle: '',
+                            visualAsset:
+                                'assets/fluxidi/airport_portret_background_GSM.png',
+                            visualHeight: customerWideCardHeight,
+                            visualAlignment: const Alignment(-0.35, -0.15),
+                            visualOverlayOpacityMultiplier: 0.82,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => AirportPage(
+                                  bookingBaseUrl: kBookingBaseUrl,
+                                ),
+                              ),
+                            ),
+                          ),
+                          _customerWideCard(
+                            context: context,
+                            icon: Icons.hotel_rounded,
+                            title: _t(
+                              nl: 'Hotels & B&B',
+                              en: 'Hotels & B&B',
+                              fr: 'Hôtels & B&B',
+                              es: 'Hoteles & B&B',
+                            ),
+                            subtitle: '',
+                            visualAsset:
+                                'assets/fluxidi/Hotel&B&B_background.png',
+                            visualHeight: customerWideCardHeight,
+                            visualAlignment: const Alignment(0.62, 0.08),
+                            onTap: () => _comingSoon(context),
+                          ),
+                          _customerWideCard(
+                            context: context,
+                            icon: Icons.celebration_outlined,
+                            title: _t(
+                              nl: 'Evenementen',
+                              en: 'Events',
+                              fr: 'Événements',
+                              es: 'Eventos',
+                            ),
+                            subtitle: '',
+                            visualAsset: eventsAsset,
+                            visualHeight: customerWideCardHeight,
+                            visualAlignment: Alignment.centerRight,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const EventsPage(),
+                              ),
+                            ),
+                          ),
+                          _customerWideCard(
+                            context: context,
+                            icon: Icons.business_center_outlined,
+                            title: _t(
+                              nl: 'Zakelijk',
+                              en: 'Business',
+                              fr: 'Pro',
+                              es: 'Empresas',
+                            ),
+                            subtitle: '',
+                            visualAsset: businessAsset,
+                            visualHeight: customerWideCardHeight,
+                            visualAlignment: const Alignment(0.65, 0.0),
+                            onTap: () => _comingSoon(context),
+                          ),
+                        ];
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: spacing,
+                          children: [
+                            for (final card in cards)
+                              SizedBox(width: cardWidth, child: card),
+                          ],
+                        );
+                      },
+                    ),
+                  ] else ...[
+                    if (usesSplitUtilityAndFeatureCards) ...[
+                      _customerWideCard(
+                        context: context,
+                        icon: Icons.flight_takeoff_rounded,
+                        title: _t(
+                          nl: 'Luchthavenritten',
+                          en: 'Airport rides',
+                          fr: 'Trajets aéroport',
+                          es: 'Traslados aeropuerto',
+                        ),
+                        subtitle: '',
+                        visualAsset:
+                            'assets/fluxidi/airport_portret_background_GSM.png',
+                        visualHeight: customerWideCardHeight,
+                        visualAlignment: isTabletPortrait
+                            ? const Alignment(-0.35, -0.15)
+                            : const Alignment(0.56, 0.18),
+                        visualOverlayOpacityMultiplier: isTabletPortrait
+                            ? 0.82
+                            : 1.0,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                AirportPage(bookingBaseUrl: kBookingBaseUrl),
+                          ),
                         ),
                       ),
+                      const SizedBox(height: 10),
+                      _customerWideCard(
+                        context: context,
+                        icon: Icons.hotel_rounded,
+                        title: _t(
+                          nl: 'Hotels & B&B',
+                          en: 'Hotels & B&B',
+                          fr: 'Hôtels & B&B',
+                          es: 'Hoteles & B&B',
+                        ),
+                        subtitle: '',
+                        visualAsset: 'assets/fluxidi/Hotel&B&B_background.png',
+                        visualHeight: customerWideCardHeight,
+                        visualAlignment: const Alignment(0.62, 0.08),
+                        visualOverlayOpacityMultiplier: isTabletPortrait
+                            ? 0.9
+                            : 1.0,
+                        onTap: () => _comingSoon(context),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    _customerWideCard(
+                      context: context,
+                      icon: Icons.celebration_outlined,
+                      title: _t(
+                        nl: 'Evenementen',
+                        en: 'Events',
+                        fr: 'Événements',
+                        es: 'Eventos',
+                      ),
+                      subtitle: '',
+                      visualAsset: eventsAsset,
+                      visualHeight: customerWideCardHeight,
+                      visualAlignment: Alignment.centerRight,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const EventsPage()),
+                      ),
                     ),
                     const SizedBox(height: 10),
                     _customerWideCard(
                       context: context,
-                      icon: Icons.hotel_rounded,
+                      icon: Icons.business_center_outlined,
                       title: _t(
-                        nl: 'Hotels & B&B',
-                        en: 'Hotels & B&B',
-                        fr: 'Hôtels & B&B',
-                        es: 'Hoteles & B&B',
+                        nl: 'Zakelijk',
+                        en: 'Business',
+                        fr: 'Pro',
+                        es: 'Empresas',
                       ),
                       subtitle: '',
-                      visualAsset: 'assets/fluxidi/Hotel&B&B_background.png',
+                      visualAsset: businessAsset,
                       visualHeight: customerWideCardHeight,
-                      visualAlignment: const Alignment(0.62, 0.08),
+                      visualAlignment: const Alignment(0.65, 0.0),
                       onTap: () => _comingSoon(context),
                     ),
-                    const SizedBox(height: 10),
                   ],
-                  _customerWideCard(
-                    context: context,
-                    icon: Icons.celebration_outlined,
-                    title: _t(
-                      nl: 'Evenementen',
-                      en: 'Events',
-                      fr: 'Événements',
-                      es: 'Eventos',
-                    ),
-                    subtitle: '',
-                    visualAsset: eventsAsset,
-                    visualHeight: customerWideCardHeight,
-                    visualAlignment: Alignment.centerRight,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const EventsPage()),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _customerWideCard(
-                    context: context,
-                    icon: Icons.business_center_outlined,
-                    title: _t(
-                      nl: 'Zakelijk',
-                      en: 'Business',
-                      fr: 'Pro',
-                      es: 'Empresas',
-                    ),
-                    subtitle: '',
-                    visualAsset: businessAsset,
-                    visualHeight: customerWideCardHeight,
-                    visualAlignment: const Alignment(0.65, 0.0),
-                    onTap: () => _comingSoon(context),
-                  ),
                   const SizedBox(height: 12),
                   const FluxidiBackToStartButton(),
                 ],
