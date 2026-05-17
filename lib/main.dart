@@ -529,6 +529,7 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
       );
     }
     await _applyCompanyProfileFromBootstrapPayload(bootstrap);
+    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
     return true;
   } catch (error) {
@@ -14292,7 +14293,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   Widget _driverLandscapeReferenceCard(
     BuildContext context, {
     required DriverProfile driver,
-    required String status,
+    required String accountStatus,
+    required String? operationalAvailabilityLabel,
     required List<DriverDocument> docs,
     required DriverDocumentComplianceSummary compliance,
     required bool refreshFailed,
@@ -14420,7 +14422,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   ),
                                 ),
                                 child: Text(
-                                  status,
+                                  accountStatus,
                                   style: TextStyle(
                                     color: driver.isActive
                                         ? Colors.greenAccent
@@ -14430,6 +14432,34 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if ((operationalAvailabilityLabel ?? '')
+                                  .trim()
+                                  .isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.withOpacity(0.14),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: Colors.orangeAccent.withOpacity(
+                                        0.44,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    operationalAvailabilityLabel!,
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12.2,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -15086,6 +15116,40 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                 fr: 'Inactif',
                                 es: 'Inactivo',
                               );
+                        final availabilityState =
+                            normalizeDriverAvailabilityState(
+                              d.availabilityStatus,
+                              fallback: 'available',
+                            );
+                        final operationalAvailabilityLabel = !d.isActive
+                            ? _t(
+                                nl: 'Niet beschikbaar',
+                                en: 'Not available',
+                                fr: 'Indisponible',
+                                es: 'No disponible',
+                              )
+                            : (availabilityState == 'paused'
+                                  ? _t(
+                                      nl: 'Pauze',
+                                      en: 'Paused',
+                                      fr: 'Pause',
+                                      es: 'Pausa',
+                                    )
+                                  : (availabilityState == 'busy'
+                                        ? _t(
+                                            nl: 'Bezet',
+                                            en: 'Busy',
+                                            fr: 'Occupé',
+                                            es: 'Ocupado',
+                                          )
+                                        : (availabilityState == 'offline'
+                                              ? _t(
+                                                  nl: 'Offline',
+                                                  en: 'Offline',
+                                                  fr: 'Hors ligne',
+                                                  es: 'Sin conexión',
+                                                )
+                                              : '')));
                         final docs =
                             docsByDriverId[d.id.trim()] ??
                             const <DriverDocument>[];
@@ -15137,7 +15201,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           return _driverLandscapeReferenceCard(
                             context,
                             driver: d,
-                            status: status,
+                            accountStatus: status,
+                            operationalAvailabilityLabel:
+                                operationalAvailabilityLabel,
                             docs: docs,
                             compliance: compliance,
                             refreshFailed: refreshFailed,
@@ -15239,6 +15305,39 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                              if (operationalAvailabilityLabel
+                                  .trim()
+                                  .isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.withOpacity(0.14),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: Colors.orangeAccent
+                                              .withOpacity(0.42),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        operationalAvailabilityLabel,
+                                        style: const TextStyle(
+                                          color: Colors.orangeAccent,
+                                          fontSize: 11.2,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               const SizedBox(height: 8),
                               _line(
                                 _t(
@@ -28785,6 +28884,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   // Ride mode (driving vs waiting)
   bool _isWaiting = false;
   bool _driverManualPause = false;
+  bool _driverAvailabilitySaving = false;
   DateTime? _waitStartedAt;
   Duration _waitElapsed = Duration.zero;
 
@@ -29379,6 +29479,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     _refreshBookings(trigger: 'init_boot');
     unawaited(_refreshCompletedTodayCount(reason: 'init_boot'));
+    _syncDriverPauseFromProfile(reason: 'init_boot');
     _startBookingPolling(reason: 'init');
     _renderDebugWindowTimer?.cancel();
     _renderDebugWindowTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -29388,6 +29489,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       _mapRedrawCountThisMinute = 0;
       _routeRedrawCountThisMinute = 0;
     });
+  }
+
+  void _syncDriverPauseFromProfile({required String reason}) {
+    final profile = _dashboardActiveDriverProfile();
+    if (profile == null) return;
+    final paused =
+        normalizeDriverAvailabilityState(
+          profile.availabilityStatus,
+          fallback: 'available',
+        ) ==
+        'paused';
+    if (_driverManualPause == paused) return;
+    _driverManualPause = paused;
+    debugPrint(
+      '[DRIVER_AVAILABILITY][SESSION_PATCH] driver=${_shortDriverIdForDiag(profile.id)} availability=${paused ? 'paused' : 'available'}',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -35949,13 +36066,47 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String? _dashboardAvatarNetworkUrl() {
-    final session = activeDriverSessionNotifier.value;
-    final candidate = (session?.driverPhotoUrl ?? '').trim();
-    if (candidate.isEmpty) return null;
-    if (candidate.startsWith('https://') || candidate.startsWith('http://')) {
-      return candidate;
+    bool isHttpUrl(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
     }
-    return null;
+
+    bool isPreferredFluxidiMediaUrl(String value) {
+      final lower = value.trim().toLowerCase();
+      return lower.contains('/public/media/') ||
+          lower.contains('public-media/') ||
+          lower.contains('/public-media/');
+    }
+
+    final profile = _dashboardActiveDriverProfile();
+    final session = activeDriverSessionNotifier.value;
+    final backendPhoto = (profile?.publicPortraitUrl ?? '').trim();
+    final sessionPhoto = (session?.driverPhotoUrl ?? '').trim();
+
+    String source = 'fallback';
+    String? selected;
+    if (backendPhoto.isNotEmpty && isHttpUrl(backendPhoto)) {
+      selected = backendPhoto;
+      source = 'backend';
+    } else if (sessionPhoto.isNotEmpty && isHttpUrl(sessionPhoto)) {
+      selected = sessionPhoto;
+      source = 'session';
+    }
+    if (backendPhoto.isNotEmpty &&
+        isPreferredFluxidiMediaUrl(backendPhoto) &&
+        sessionPhoto.isNotEmpty &&
+        !isPreferredFluxidiMediaUrl(sessionPhoto)) {
+      debugPrint(
+        '[DRIVER_PHOTO_CANONICAL][LEGACY_IGNORED] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} reason=session_legacy_remote_overridden',
+      );
+    }
+    debugPrint(
+      '[DRIVER_PHOTO_CANONICAL][SOURCE] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} source=$source',
+    );
+    debugPrint(
+      '[DRIVER_PHOTO_CANONICAL][DONE] driver=${_shortDriverIdForDiag(profile?.id ?? session?.driverId ?? "")} urlSource=$source',
+    );
+    return selected;
   }
 
   String _dashboardGreeting() {
@@ -36005,6 +36156,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 (_directRideDestinationText ?? '').trim().isNotEmpty));
     if (hasNavLeg) return _DriverDashboardStatus.onTheWay;
 
+    _syncDriverPauseFromProfile(reason: 'dashboard_status_eval');
     if (_driverManualPause) return _DriverDashboardStatus.pause;
     return _DriverDashboardStatus.ready;
   }
@@ -36209,7 +36361,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  void _handleDriverStatusAction() {
+  Future<void> _handleDriverStatusAction() async {
+    if (_driverAvailabilitySaving) return;
     final status = _dashboardDriverStatus();
     final activeRideStatus =
         status == _DriverDashboardStatus.busy ||
@@ -36226,25 +36379,114 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-
-    setState(() {
-      _driverManualPause = !_driverManualPause;
-    });
-    _toast(
-      _driverManualPause
-          ? _tr(
-              nl: 'Status aangepast: Pauze',
-              en: 'Status updated: Pause',
-              fr: 'Statut mis a jour : Pause',
-              es: 'Estado actualizado: Pausa',
-            )
-          : _tr(
-              nl: 'Status aangepast: Klaar',
-              en: 'Status updated: Ready',
-              fr: 'Statut mis a jour : Pret',
-              es: 'Estado actualizado: Listo',
-            ),
+    final profile = _dashboardActiveDriverProfile();
+    if (profile != null && !profile.isActive && _driverManualPause) {
+      _toast(
+        _tr(
+          nl: 'Account is inactief. Vraag je bedrijf om activatie.',
+          en: 'Your account is inactive. Ask your company to reactivate it.',
+          fr: 'Votre compte est inactif. Demandez une réactivation.',
+          es: 'Tu cuenta está inactiva. Solicita reactivación.',
+        ),
+      );
+      return;
+    }
+    final desired = _driverManualPause ? 'available' : 'paused';
+    final safeDriverRef = _shortDriverIdForDiag(
+      profile?.id ?? activeDriverSessionNotifier.value?.driverId ?? '',
     );
+    debugPrint('[DRIVER_AVAILABILITY][PAUSE_START] driver=$safeDriverRef');
+    final token = (activeDriverSessionNotifier.value?.driverSessionToken ?? '')
+        .trim();
+    if (token.isEmpty) {
+      debugPrint(
+        '[DRIVER_AVAILABILITY][FAILED] driver=$safeDriverRef error=missing_driver_session_token',
+      );
+      _toast(
+        _tr(
+          nl: 'Chauffeurssessie ontbreekt. Log opnieuw in.',
+          en: 'Driver session missing. Please log in again.',
+          fr: 'Session chauffeur manquante. Reconnectez-vous.',
+          es: 'Falta sesión de conductor. Inicia sesión de nuevo.',
+        ),
+      );
+      return;
+    }
+    setState(() => _driverAvailabilitySaving = true);
+    try {
+      debugPrint(
+        '[DRIVER_AVAILABILITY][REQUEST] driver=$safeDriverRef status=$desired endpoint=/public/driver/availability',
+      );
+      final result = await syncPublicDriverAvailabilityToBackend(
+        driverSessionToken: token,
+        availabilityStatus: desired,
+      );
+      debugPrint(
+        '[DRIVER_AVAILABILITY][RESPONSE] driver=$safeDriverRef status=${result.statusCode ?? 0} ok=${result.ok}',
+      );
+      if (!result.ok) {
+        debugPrint(
+          '[DRIVER_AVAILABILITY][FAILED] driver=$safeDriverRef error=${result.errorCode}',
+        );
+        _toast(
+          _tr(
+            nl: 'Status kon niet worden opgeslagen. Probeer opnieuw.',
+            en: 'Could not save status. Please try again.',
+            fr: 'Le statut n’a pas pu être enregistré.',
+            es: 'No se pudo guardar el estado.',
+          ),
+        );
+        return;
+      }
+      final savedStatus = normalizeDriverAvailabilityState(
+        result.availabilityStatus,
+        fallback: desired,
+      );
+      final paused = savedStatus == 'paused';
+      if (mounted) {
+        setState(() {
+          _driverManualPause = paused;
+        });
+      } else {
+        _driverManualPause = paused;
+      }
+      if (profile != null) {
+        final updated = profile.copyWith(availabilityStatus: savedStatus);
+        updateDriver(updated.id, updated, syncInventory: false);
+        debugPrint(
+          '[DRIVER_AVAILABILITY][ADMIN_VISIBLE] driver=$safeDriverRef availability=$savedStatus',
+        );
+      }
+      debugPrint(
+        '[DRIVER_AVAILABILITY][SESSION_PATCH] driver=$safeDriverRef availability=$savedStatus',
+      );
+      if (savedStatus == 'paused') {
+        debugPrint(
+          '[DRIVER_AVAILABILITY][DISPATCH_EXCLUDE] driver=$safeDriverRef reason=paused',
+        );
+      }
+      _toast(
+        paused
+            ? _tr(
+                nl: 'Status aangepast: Pauze',
+                en: 'Status updated: Pause',
+                fr: 'Statut mis a jour : Pause',
+                es: 'Estado actualizado: Pausa',
+              )
+            : _tr(
+                nl: 'Status aangepast: Klaar',
+                en: 'Status updated: Ready',
+                fr: 'Statut mis a jour : Pret',
+                es: 'Estado actualizado: Listo',
+              ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _driverAvailabilitySaving = false);
+      } else {
+        _driverAvailabilitySaving = false;
+      }
+    }
   }
 
   void _showDashboardMoreSheet() {
@@ -36344,7 +36586,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                   onTap: () {
                     Navigator.of(ctx).pop();
-                    _handleDriverStatusAction();
+                    unawaited(_handleDriverStatusAction());
                   },
                 ),
                 ListTile(

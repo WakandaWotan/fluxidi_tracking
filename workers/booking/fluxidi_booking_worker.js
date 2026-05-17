@@ -4289,6 +4289,43 @@ function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
   };
 }
 
+function _normalizeDriverAvailabilityStatus(value, fallback = "available") {
+  const normalized = sanitizeTenantString(value, 40).toLowerCase();
+  switch (normalized) {
+    case "available":
+    case "ready":
+    case "online":
+      return "available";
+    case "paused":
+    case "pause":
+    case "unavailable":
+    case "not_available":
+      return "paused";
+    case "offline":
+      return "offline";
+    case "busy":
+    case "on_trip":
+    case "on_the_way":
+    case "waiting":
+      return "busy";
+    default: {
+      const safeFallback = sanitizeTenantString(fallback, 40).toLowerCase();
+      if (
+        safeFallback === "paused" ||
+        safeFallback === "offline" ||
+        safeFallback === "busy"
+      ) {
+        return safeFallback;
+      }
+      return "available";
+    }
+  }
+}
+
+function _driverAvailabilityAllowsDispatch(status) {
+  return _normalizeDriverAvailabilityStatus(status, "available") === "available";
+}
+
 async function _loadDriverIndexRecord(env, scope) {
   if (!env?.BOOKING_KV) return null;
   const key = _companyDriverIndexKey(scope);
@@ -4331,6 +4368,14 @@ async function _loadDriverIndexRecord(env, scope) {
       ),
       phone: _normalizeDriverPhone(entry.phone),
       is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      availability_status: _normalizeDriverAvailabilityStatus(
+        entry.availability_status ?? entry.availabilityStatus ?? entry.driver_status,
+        "available",
+      ),
+      availabilityStatus: _normalizeDriverAvailabilityStatus(
+        entry.availabilityStatus ?? entry.availability_status ?? entry.driver_status,
+        "available",
+      ),
       assigned_vehicle_id: sanitizeTenantString(
         entry.assigned_vehicle_id ?? entry.assignedVehicleId,
         96,
@@ -8881,6 +8926,13 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     return json({ ok: false, error: "invalid_assigned_vehicle_id" }, 400);
   }
   const isActive = _coerceBoolean(body.is_active ?? body.isActive, true);
+  const hasAvailabilityInput =
+    Object.prototype.hasOwnProperty.call(body, "availability_status") ||
+    Object.prototype.hasOwnProperty.call(body, "availabilityStatus") ||
+    Object.prototype.hasOwnProperty.call(body, "driver_status");
+  const availabilityStatusInputRaw = hasAvailabilityInput
+    ? (body.availability_status ?? body.availabilityStatus ?? body.driver_status)
+    : "";
   const driverPhotoUrlInput = _normalizeSafeRemoteMediaRef(
     body.driver_photo_url ??
       body.driverPhotoUrl ??
@@ -8939,6 +8991,14 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       existingDriver.public_photo_enabled ?? existingDriver.publicPhotoEnabled,
       false,
     );
+  const resolvedAvailabilityStatus = _normalizeDriverAvailabilityStatus(
+    hasAvailabilityInput
+      ? availabilityStatusInputRaw
+      : (existingDriver.availability_status ??
+          existingDriver.availabilityStatus ??
+          existingDriver.driver_status),
+    "available",
+  );
   const resolvedDriverPhotoUrl = driverPhotoUrlInput || _normalizeSafeRemoteMediaRef(
     existingDriver.driver_photo_url ??
       existingDriver.driverPhotoUrl ??
@@ -8967,6 +9027,9 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     driver_code_salt: nextDriverCodeSalt,
     phone,
     is_active: isActive,
+    availability_status: resolvedAvailabilityStatus,
+    availabilityStatus: resolvedAvailabilityStatus,
+    driver_status: resolvedAvailabilityStatus,
     assigned_vehicle_id: assignedVehicleId,
     driver_photo_url: resolvedDriverPhotoUrl,
     driverPhotoUrl: resolvedDriverPhotoUrl,
@@ -8995,6 +9058,7 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       company_id: companyId,
       driver_id: driverId,
       is_active: isActive,
+      availability_status: resolvedAvailabilityStatus,
       key,
     },
     200,
@@ -9747,6 +9811,61 @@ async function handlePublicDriverLogin(body, env) {
   );
 }
 
+async function handlePublicDriverAvailabilityUpdate(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const session = await _loadPublicDriverSessionFromRequest(request, env);
+  if (!session) {
+    return _publicDriverAuthFail();
+  }
+  const body = await safeJson(request.clone());
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const desired = _normalizeDriverAvailabilityStatus(
+    body.availability_status ?? body.availabilityStatus ?? body.driver_status,
+    "available",
+  );
+  const scope = {
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  };
+  const existing = await _loadDriverIndexRecord(env, scope);
+  const driverId = sanitizeTenantString(session.driver_id, 96);
+  const existingDriver = existing?.drivers?.[driverId] || null;
+  if (!existingDriver || typeof existingDriver !== "object") {
+    return json({ ok: false, error: "driver_not_found" }, 404);
+  }
+  const isActive = _coerceBoolean(existingDriver.is_active ?? existingDriver.isActive, true);
+  if (!isActive && desired === "available") {
+    return json({ ok: false, error: "driver_inactive" }, 409);
+  }
+  const nowIso = new Date().toISOString();
+  const nextDrivers = { ...(existing?.drivers || {}) };
+  nextDrivers[driverId] = {
+    ...existingDriver,
+    driver_id: driverId,
+    availability_status: desired,
+    availabilityStatus: desired,
+    driver_status: desired,
+    updated_at: nowIso,
+  };
+  await _saveDriverIndexRecord(env, scope, {
+    drivers: nextDrivers,
+    updated_at: nowIso,
+  });
+  return json(
+    {
+      ok: true,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      driver_id: driverId,
+      availability_status: desired,
+      availabilityStatus: desired,
+    },
+    200,
+  );
+}
+
 async function handleCompanyBootstrap(request, env) {
   const session = await _loadCompanySessionFromRequest(request, env);
   if (!session) {
@@ -9943,6 +10062,14 @@ async function handleCompanyBootstrap(request, env) {
       ...(phone ? { phone } : {}),
       is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
       isActive: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+      availability_status: _normalizeDriverAvailabilityStatus(
+        entry.availability_status ?? entry.availabilityStatus ?? entry.driver_status,
+        "available",
+      ),
+      availabilityStatus: _normalizeDriverAvailabilityStatus(
+        entry.availabilityStatus ?? entry.availability_status ?? entry.driver_status,
+        "available",
+      ),
       public_profile_enabled: publicProfileEnabled,
       publicProfileEnabled: publicProfileEnabled,
       public_photo_enabled: publicPhotoEnabled,
@@ -15051,6 +15178,13 @@ GET /oauth/callback
         }
         const body = await safeJson(request);
         return handlePublicDriverLogin(body, env);
+      }
+
+      if (url.pathname === "/public/driver/availability") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicDriverAvailabilityUpdate(request, env);
       }
 
       if (url.pathname === "/driver/bookings") {
@@ -26087,9 +26221,48 @@ async function _loadVehicleInventory(env, { scope = null } = {}) {
     })() };
   const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
   const normalizedScope = scope?.hasScope ? normalizeFleetTenantScope(scope) : null;
+  const driverAvailabilityById = new Map();
+  if (normalizedScope?.hasScope) {
+    try {
+      const driverIndex = await _loadDriverIndexRecord(env, normalizedScope);
+      const entries = Object.values(driverIndex?.drivers || {});
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        const driverId = sanitizeTenantString(entry.driver_id ?? entry.driverId, 96);
+        if (!driverId) continue;
+        const availability = _normalizeDriverAvailabilityStatus(
+          entry.availability_status ?? entry.availabilityStatus ?? entry.driver_status,
+          "available",
+        );
+        driverAvailabilityById.set(driverId, availability);
+      }
+    } catch (_) {
+      // Best effort: inventory loading remains available without this map.
+    }
+  }
   const normalized = vehiclesRaw
     .map((entry) => _normalizeVehicleEntry(entry, { scope: normalizedScope }))
-    .filter((v) => v && v.is_active);
+    .filter((v) => {
+      if (!v || !v.is_active) return false;
+      const assignedDriverId = sanitizeTenantString(
+        v.assigned_driver?.driver_id ??
+          v.assigned_driver?.driverId ??
+          v.assignedDriver?.driver_id ??
+          v.assignedDriver?.driverId ??
+          v.driver_id ??
+          v.driverId,
+        96,
+      );
+      if (!assignedDriverId) return true;
+      const availability = driverAvailabilityById.get(assignedDriverId) || "available";
+      const allowDispatch = _driverAvailabilityAllowsDispatch(availability);
+      if (!allowDispatch) {
+        console.log(
+          `[DRIVER_AVAILABILITY][DISPATCH_EXCLUDE] driver=${_maskPublicDriverLoginValue(assignedDriverId)} reason=${availability}`,
+        );
+      }
+      return allowDispatch;
+    });
   if (normalized.length > 0) return normalized;
 
   // Backward-safe default: preserve existing single-resource behavior when no backend fleet is configured yet.

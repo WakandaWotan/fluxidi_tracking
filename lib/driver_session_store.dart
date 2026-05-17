@@ -160,6 +160,18 @@ String _maskIdForLog(String id) {
   return '${t.substring(0, 2)}…${t.substring(t.length - 2)}';
 }
 
+bool _isHttpPhotoUrl(String value) {
+  final lower = value.trim().toLowerCase();
+  return lower.startsWith('https://') || lower.startsWith('http://');
+}
+
+bool _isPreferredCanonicalPhotoUrl(String value) {
+  final lower = value.trim().toLowerCase();
+  return lower.contains('/public/media/') ||
+      lower.contains('public-media/') ||
+      lower.contains('/public-media/');
+}
+
 /// Local JSON: `<documents>/driver_session/active_driver_session_v1.json`
 class DriverSessionStore {
   DriverSessionStore._();
@@ -320,8 +332,72 @@ class DriverSessionStore {
       return;
     }
     if (_isStillValid(drivers, s)) {
-      _cache = s;
-      activeDriverSessionNotifier.value = s;
+      ActiveDriverSession resolved = s;
+      DriverProfile? matched;
+      for (final driver in drivers) {
+        if (driver.id.trim() == s.driverId.trim()) {
+          matched = driver;
+          break;
+        }
+      }
+      final canonicalPhoto = (matched?.publicPortraitUrl ?? '').trim();
+      final sessionPhoto = (s.driverPhotoUrl ?? '').trim();
+      final legacyLooksPreferred =
+          sessionPhoto.isNotEmpty &&
+          !_isPreferredCanonicalPhotoUrl(sessionPhoto) &&
+          canonicalPhoto.isNotEmpty &&
+          _isPreferredCanonicalPhotoUrl(canonicalPhoto);
+      if (legacyLooksPreferred) {
+        debugPrint(
+          '[DRIVER_PHOTO_CANONICAL][LEGACY_IGNORED] driver=${_maskIdForLog(s.driverId)} reason=session_prefers_legacy_remote',
+        );
+      }
+      final canonicalCandidate =
+          canonicalPhoto.isNotEmpty && _isHttpPhotoUrl(canonicalPhoto)
+          ? canonicalPhoto
+          : (sessionPhoto.isNotEmpty && _isHttpPhotoUrl(sessionPhoto)
+                ? sessionPhoto
+                : null);
+      final source = canonicalCandidate == null
+          ? 'fallback'
+          : (canonicalCandidate == canonicalPhoto ? 'backend' : 'session');
+      debugPrint(
+        '[DRIVER_PHOTO_CANONICAL][SOURCE] driver=${_maskIdForLog(s.driverId)} source=$source',
+      );
+      final shouldPatch =
+          canonicalCandidate != null &&
+          canonicalCandidate.trim() != sessionPhoto;
+      if (shouldPatch) {
+        resolved = ActiveDriverSession(
+          driverId: s.driverId,
+          employeeNumber: s.employeeNumber,
+          fullName: s.fullName,
+          phone: s.phone,
+          loggedInAt: s.loggedInAt,
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+          tenantId: s.tenantId,
+          companyId: s.companyId,
+          companyCode: s.companyCode,
+          assignedVehicleId: s.assignedVehicleId,
+          driverPhotoUrl: canonicalCandidate,
+          companyLogoUrl: s.companyLogoUrl,
+          vehiclePhotoUrl: s.vehiclePhotoUrl,
+          driverSessionToken: s.driverSessionToken,
+          driverSessionExpiresAtUtc: s.driverSessionExpiresAtUtc,
+          linkMethod: s.linkMethod,
+          expiresAt: s.expiresAt,
+        );
+        final file = await _file() ?? await _legacyFile();
+        await file.writeAsString(jsonEncode(resolved.toJson()));
+      }
+      debugPrint(
+        '[DRIVER_PHOTO_CANONICAL][SESSION_PATCH] driver=${_maskIdForLog(s.driverId)} updated=$shouldPatch',
+      );
+      debugPrint(
+        '[DRIVER_PHOTO_CANONICAL][DONE] driver=${_maskIdForLog(s.driverId)} urlSource=$source',
+      );
+      _cache = resolved;
+      activeDriverSessionNotifier.value = resolved;
       return;
     }
     debugPrint('[DRIVER_LOGIN][SESSION_CLEAR] reason=inactive_or_missing');

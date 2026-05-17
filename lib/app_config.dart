@@ -895,6 +895,7 @@ class DriverProfile {
   final bool publicPhotoEnabled;
   final String? publicDisplayName;
   final String? publicPortraitUrl;
+  final String availabilityStatus;
 
   /// See [VehicleProfile.companyId].
   final String? companyId;
@@ -917,6 +918,7 @@ class DriverProfile {
     this.publicPhotoEnabled = false,
     this.publicDisplayName,
     this.publicPortraitUrl,
+    this.availabilityStatus = 'available',
     this.companyId,
   });
 
@@ -936,6 +938,7 @@ class DriverProfile {
     bool? publicPhotoEnabled,
     Object? publicDisplayName = _driverProfileUnset,
     Object? publicPortraitUrl = _driverProfileUnset,
+    String? availabilityStatus,
     String? companyId,
   }) {
     return DriverProfile(
@@ -964,12 +967,56 @@ class DriverProfile {
       publicPortraitUrl: identical(publicPortraitUrl, _driverProfileUnset)
           ? this.publicPortraitUrl
           : publicPortraitUrl as String?,
+      availabilityStatus: normalizeDriverAvailabilityState(
+        availabilityStatus ?? this.availabilityStatus,
+      ),
       companyId: companyId ?? this.companyId,
     );
   }
 }
 
 const Object _driverProfileUnset = Object();
+
+String normalizeDriverAvailabilityState(
+  dynamic raw, {
+  String fallback = 'available',
+}) {
+  final text = (raw ?? '').toString().trim().toLowerCase();
+  switch (text) {
+    case 'available':
+    case 'ready':
+    case 'online':
+      return 'available';
+    case 'paused':
+    case 'pause':
+    case 'not_available':
+    case 'unavailable':
+      return 'paused';
+    case 'offline':
+      return 'offline';
+    case 'busy':
+    case 'on_trip':
+    case 'on_the_way':
+    case 'waiting':
+      return 'busy';
+    default:
+      final normalizedFallback = fallback.toString().trim().toLowerCase();
+      if (normalizedFallback == 'paused' ||
+          normalizedFallback == 'offline' ||
+          normalizedFallback == 'busy') {
+        return normalizedFallback;
+      }
+      return 'available';
+  }
+}
+
+bool driverAvailabilityAllowsDispatch(String availabilityStatus) {
+  final normalized = normalizeDriverAvailabilityState(
+    availabilityStatus,
+    fallback: 'available',
+  );
+  return normalized == 'available';
+}
 
 enum FleetUpsellMode { includedOnly, perVehicleMonthly, tierUpgrade }
 
@@ -1627,6 +1674,7 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'publicPhotoEnabled': d.publicPhotoEnabled,
     'publicDisplayName': d.publicDisplayName,
     'publicPortraitUrl': d.publicPortraitUrl,
+    'availabilityStatus': d.availabilityStatus,
     'companyId': d.companyId,
   };
 }
@@ -1736,6 +1784,10 @@ DriverProfile _decodeDriver(
     final text = raw.toString().trim();
     return text.isEmpty ? null : text;
   }();
+  final availabilityStatus = normalizeDriverAvailabilityState(
+    m['availabilityStatus'] ?? m['availability_status'],
+    fallback: fallback.availabilityStatus,
+  );
 
   final id = (m['id'] ?? fallback.id).toString();
   final employeeNumber = (m['employeeNumber'] ?? fallback.employeeNumber)
@@ -1787,6 +1839,7 @@ DriverProfile _decodeDriver(
     publicPhotoEnabled: publicProfileEnabled ? publicPhotoEnabled : false,
     publicDisplayName: publicDisplayName,
     publicPortraitUrl: publicPortraitUrl,
+    availabilityStatus: availabilityStatus,
     companyId: companyId,
   );
 }
@@ -1931,6 +1984,22 @@ class DriverStatusSaveResult {
   final List<String> payloadFieldNames;
 }
 
+class DriverAvailabilitySaveResult {
+  const DriverAvailabilitySaveResult({
+    required this.ok,
+    required this.statusCode,
+    required this.endpointPath,
+    required this.errorCode,
+    required this.availabilityStatus,
+  });
+
+  final bool ok;
+  final int? statusCode;
+  final String endpointPath;
+  final String errorCode;
+  final String availabilityStatus;
+}
+
 String _safeDriverStatusSaveErrorCode(Object error) {
   final text = error.toString().toLowerCase();
   if (text.contains('401')) return 'unauthorized';
@@ -1940,6 +2009,65 @@ String _safeDriverStatusSaveErrorCode(Object error) {
   if (text.contains('timeout')) return 'timeout';
   if (text.contains('socket') || text.contains('network')) return 'network';
   return 'exception';
+}
+
+Future<DriverAvailabilitySaveResult> syncPublicDriverAvailabilityToBackend({
+  required String driverSessionToken,
+  required String availabilityStatus,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/driver/availability',
+  );
+  final normalized = normalizeDriverAvailabilityState(
+    availabilityStatus,
+    fallback: 'available',
+  );
+  try {
+    final response = await http
+        .post(
+          endpoint,
+          headers: <String, String>{
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${driverSessionToken.trim()}',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'availability_status': normalized,
+            'availabilityStatus': normalized,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    final ok = response.statusCode >= 200 && response.statusCode < 300;
+    var errorCode = '';
+    var responseStatus = normalized;
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        errorCode = (decoded['error'] ?? decoded['reason'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        responseStatus = normalizeDriverAvailabilityState(
+          decoded['availability_status'] ?? decoded['availabilityStatus'],
+          fallback: normalized,
+        );
+      }
+    } catch (_) {}
+    return DriverAvailabilitySaveResult(
+      ok: ok,
+      statusCode: response.statusCode,
+      endpointPath: endpoint.path,
+      errorCode: ok ? '' : (errorCode.isEmpty ? 'request_failed' : errorCode),
+      availabilityStatus: responseStatus,
+    );
+  } catch (error) {
+    return DriverAvailabilitySaveResult(
+      ok: false,
+      statusCode: null,
+      endpointPath: endpoint.path,
+      errorCode: _safeDriverStatusSaveErrorCode(error),
+      availabilityStatus: normalized,
+    );
+  }
 }
 
 Map<String, String> _resolveAdminTenantCompanyScope({
@@ -3985,6 +4113,8 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         publicPortraitUrl: remote.publicPortraitUrl,
         // Backend bootstrap is canonical for active/inactive state.
         isActive: remote.isActive,
+        // Backend bootstrap is canonical for operational availability state.
+        availabilityStatus: remote.availabilityStatus,
       );
     }
 
@@ -4209,6 +4339,10 @@ Future<bool> hydrateCompanyStateFromBootstrap(
             '',
           ]),
           isActive: boolAny(<dynamic>[map['is_active'], map['isActive']], true),
+          availabilityStatus: normalizeDriverAvailabilityState(
+            map['availability_status'] ?? map['availabilityStatus'],
+            fallback: 'available',
+          ),
           companyId: driverCompanyId.isEmpty
               ? (bootstrapScopeCompanyId.isEmpty
                     ? null
