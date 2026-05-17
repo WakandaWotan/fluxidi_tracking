@@ -16575,6 +16575,28 @@ GET /oauth/callback
         return json(out, out.ok ? 200 : 400);
       }
 
+      if (url.pathname === "/admin/booking/demand-index/rebuild" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const dryRun = _coerceBoolean(
+          body?.dryRun ??
+            body?.dry_run ??
+            url.searchParams.get("dryRun") ??
+            url.searchParams.get("dry_run"),
+          false,
+        );
+        const out = await rebuildBookingDemandIndexForScope(
+          env,
+          explicitScope,
+          { dryRun },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       // Dynamic booking routes:
       // GET  /bookings/:id
       // POST /bookings/:id/status
@@ -16814,6 +16836,12 @@ GET /oauth/callback
           }
           rec.updatedAt = new Date().toISOString();
           await env.BOOKING_KV.put(key, JSON.stringify(rec));
+          await upsertBookingDemandIndexBestEffort(
+            env,
+            bookingId,
+            rec,
+            normalizeFleetTenantScope(tenantScope),
+          );
           return json({ ok: true, booking_id: bookingId, assigned_vehicle_id: vehicleId }, 200);
         }
 
@@ -18815,6 +18843,12 @@ async function mollieWebhook(request, env) {
     }
 
     await env.BOOKING_KV.put(key, JSON.stringify(stored), { expirationTtl: 60 * 60 * 24 * 30 });
+    const bookingScope = normalizeFleetTenantScope(resolveBookingTenantScopeFromRecord(stored));
+    if (isTerminalLifecycleStatus(_bookingLifecycleValue(stored))) {
+      await removeBookingDemandIndexBestEffort(env, bookingId, bookingScope);
+    } else {
+      await upsertBookingDemandIndexBestEffort(env, bookingId, stored, bookingScope);
+    }
 
     return { ok: true, received: true, processed: true, bookingId, mollieStatus, action: "status-updated" };
   } catch (e) {
@@ -20302,6 +20336,12 @@ async function handleBooking(payload, env, request) {
             JSON.stringify(provisionalRecord),
           );
           bookingPersisted = true;
+          await upsertBookingDemandIndexBestEffort(
+            env,
+            canonicalBookingId,
+            provisionalRecord,
+            normalizeFleetTenantScope(tenantContext),
+          );
           const pay = await mollieCreatePayment(
             {
               ...payload,
@@ -20347,6 +20387,12 @@ async function handleBooking(payload, env, request) {
             await env.BOOKING_KV.put(
               `booking:${canonicalBookingId}`,
               JSON.stringify(provisionalRecord),
+            );
+            await upsertBookingDemandIndexBestEffort(
+              env,
+              canonicalBookingId,
+              provisionalRecord,
+              normalizeFleetTenantScope(tenantContext),
             );
             console.log(
               `[BOOKING][PAYMENT_CHECKOUT_UNAVAILABLE] booking=${_bookingIntentMask(canonicalBookingId)} payOk=${pay?.ok === true} payError=${safeStr(pay?.error || pay?.message, 80) || "-"} hasCheckout=${!!checkoutUrl} businessDetected=${business_detected === true} invoiceRequested=${invoice_requested === true} branch=calendar_configured_business_unpaid`,
@@ -20412,6 +20458,12 @@ async function handleBooking(payload, env, request) {
           await env.BOOKING_KV.put(
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
+          );
+          await upsertBookingDemandIndexBestEffort(
+            env,
+            canonicalBookingId,
+            provisionalRecord,
+            normalizeFleetTenantScope(tenantContext),
           );
           try {
             const indexResult = await upsertCustomerScopedBookingIndexForBooking(
@@ -21087,6 +21139,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         JSON.stringify(provisionalRecord),
       );
       bookingPersisted = true;
+      await upsertBookingDemandIndexBestEffort(
+        env,
+        canonicalBookingId,
+        provisionalRecord,
+        normalizeFleetTenantScope(tenantContext),
+      );
       try {
         const indexResult = await upsertCustomerScopedBookingIndexForBooking(
           env,
@@ -21407,6 +21465,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
       bookingPersisted = true;
+      await upsertBookingDemandIndexBestEffort(
+        env,
+        booking.bookingId,
+        record,
+        normalizeFleetTenantScope(tenantContext),
+      );
     } catch (persistErr) {
       await releaseAllocatorReservationSafely();
       throw persistErr;
@@ -28475,6 +28539,181 @@ function _assignedVehicleIdFromRecord(rec) {
   );
 }
 
+function bookingDemandIndexKey(scope) {
+  const normalizedScope = _safeResetNormalizedScope(scope);
+  if (!normalizedScope.hasScope) return "";
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:booking:demand:index:v1`;
+}
+
+function bookingDemandItemFromRecord(bookingId, rec, env) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId || !rec || typeof rec !== "object") return null;
+  const demand = _bookingDemandFromRecord(rec, env);
+  const pickupMs = Number(demand?.pickupMs);
+  const serviceMin = Math.max(1, Number(demand?.serviceMin) || 1);
+  const dropoffAtMs = Number(demand?.dropoffAtMs);
+  if (!Number.isFinite(pickupMs) || !Number.isFinite(serviceMin) || !Number.isFinite(dropoffAtMs)) {
+    return null;
+  }
+  const lifecycleRaw = _normLifecycleStatus(_bookingLifecycleValue(rec));
+  const lifecycle = safeStr(lifecycleRaw, 40).toLowerCase() || "pending";
+  const tier = normalizeTier(demand?.tier || "comfort");
+  const pax = _toPositiveInt(demand?.pax, 1);
+  const bags = _toPositiveInt(demand?.bags, 0);
+  const assignedVehicleId = safeStr(_assignedVehicleIdFromRecord(rec), 120) || null;
+  const dropoffPoint = _locationPointFromAny(demand?.dropoffPoint || {});
+  const dropoffLat = Number(dropoffPoint?.lat);
+  const dropoffLng = Number(dropoffPoint?.lng);
+  const updatedAt = safeStr(
+    rec?.updated_at ??
+      rec?.updatedAt ??
+      _pick(rec, ["booking", "updated_at"], null) ??
+      _pick(rec, ["booking", "updatedAt"], null) ??
+      rec?.created_at ??
+      rec?.createdAt,
+    80,
+  ) || new Date().toISOString();
+  return {
+    booking_id: safeBookingId,
+    pickup_ms: pickupMs,
+    service_min: serviceMin,
+    dropoff_at_ms: dropoffAtMs,
+    tier,
+    pax,
+    bags,
+    assigned_vehicle_id: assignedVehicleId,
+    lifecycle,
+    dropoff_point: {
+      lat: Number.isFinite(dropoffLat) ? dropoffLat : null,
+      lng: Number.isFinite(dropoffLng) ? dropoffLng : null,
+      address: safeStr(dropoffPoint?.address, 240) || null,
+    },
+    updated_at: updatedAt,
+  };
+}
+
+async function loadBookingDemandIndex(env, scope) {
+  const key = bookingDemandIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) {
+    return { ok: false, key, indexObj: null, items: [] };
+  }
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!raw || typeof raw !== "object") {
+      return { ok: true, key, indexObj: null, items: [] };
+    }
+    const rawItems = Array.isArray(raw?.items)
+      ? raw.items
+      : (Array.isArray(raw?.bookings) ? raw.bookings : []);
+    const dedup = new Map();
+    for (const entry of rawItems) {
+      if (!entry || typeof entry !== "object") continue;
+      const bookingId = safeStr(entry?.booking_id, 160);
+      if (!bookingId) continue;
+      dedup.set(bookingId, { ...entry, booking_id: bookingId });
+    }
+    return {
+      ok: true,
+      key,
+      indexObj: raw,
+      items: Array.from(dedup.values()),
+    };
+  } catch (_) {
+    return { ok: false, key, indexObj: null, items: [] };
+  }
+}
+
+async function saveBookingDemandIndex(env, scope, indexObj) {
+  const key = bookingDemandIndexKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  const normalizedScope = _safeResetNormalizedScope(scope);
+  const rawItems = Array.isArray(indexObj?.items) ? indexObj.items : [];
+  const dedup = new Map();
+  for (const item of rawItems) {
+    if (!item || typeof item !== "object") continue;
+    const bookingId = safeStr(item?.booking_id, 160);
+    if (!bookingId) continue;
+    dedup.set(bookingId, { ...item, booking_id: bookingId });
+  }
+  const items = Array.from(dedup.values()).sort((a, b) => {
+    const pa = Number(a?.pickup_ms);
+    const pb = Number(b?.pickup_ms);
+    if (Number.isFinite(pa) && Number.isFinite(pb)) return pa - pb;
+    if (Number.isFinite(pa)) return -1;
+    if (Number.isFinite(pb)) return 1;
+    return safeStr(a?.booking_id, 160).localeCompare(safeStr(b?.booking_id, 160));
+  });
+  const payload = {
+    tenant_id: normalizedScope.tenant_id,
+    company_id: normalizedScope.company_id,
+    updated_at: new Date().toISOString(),
+    count: items.length,
+    items,
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(payload));
+  return { ok: true, key, count: items.length };
+}
+
+async function upsertBookingDemandIndexBestEffort(env, bookingId, rec, scopeHint = null) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, reason: "missing_booking_kv" };
+    const item = bookingDemandItemFromRecord(bookingId, rec, env);
+    if (!item) return { ok: false, reason: "invalid_demand_item" };
+    const fallbackScope = resolveBookingTenantScopeFromRecord(rec);
+    const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : fallbackScope);
+    if (!scope?.hasScope) return { ok: false, reason: "missing_scope" };
+    if (isTerminalLifecycleStatus(item.lifecycle)) {
+      return await removeBookingDemandIndexBestEffort(env, bookingId, scope);
+    }
+    const loaded = await loadBookingDemandIndex(env, scope);
+    if (!loaded?.ok) return { ok: false, reason: "load_failed" };
+    const itemsById = new Map((loaded.items || []).map((entry) => [safeStr(entry?.booking_id, 160), entry]));
+    itemsById.set(item.booking_id, item);
+    const result = await saveBookingDemandIndex(env, scope, { items: Array.from(itemsById.values()) });
+    const maskedScope = _bookingIntentScopeMask(scope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][UPSERT] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(item.booking_id)} count=${Number(result?.count || 0)}`,
+    );
+    return { ok: true, key: result?.key || loaded?.key || "", count: Number(result?.count || 0) };
+  } catch (err) {
+    const scope = normalizeFleetTenantScope(scopeHint || {});
+    const maskedScope = _bookingIntentScopeMask(scope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][UPSERT_WARN] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(bookingId)} reason=${safeStr(err?.message || err, 120) || "unknown"}`,
+    );
+    return { ok: false, reason: "exception" };
+  }
+}
+
+async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = null) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, reason: "missing_booking_kv" };
+    const safeBookingId = safeStr(bookingId, 160);
+    if (!safeBookingId) return { ok: false, reason: "missing_booking_id" };
+    const scope = normalizeFleetTenantScope(scopeHint || {});
+    if (!scope?.hasScope) return { ok: false, reason: "missing_scope" };
+    const loaded = await loadBookingDemandIndex(env, scope);
+    if (!loaded?.ok) return { ok: false, reason: "load_failed" };
+    const nextItems = (loaded.items || []).filter((entry) => safeStr(entry?.booking_id, 160) !== safeBookingId);
+    if (nextItems.length === (loaded.items || []).length) {
+      return { ok: true, unchanged: true, key: loaded.key || "", count: nextItems.length };
+    }
+    const result = await saveBookingDemandIndex(env, scope, { items: nextItems });
+    const maskedScope = _bookingIntentScopeMask(scope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][REMOVE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(safeBookingId)} count=${Number(result?.count || 0)}`,
+    );
+    return { ok: true, key: result?.key || loaded?.key || "", count: Number(result?.count || 0) };
+  } catch (err) {
+    const scope = normalizeFleetTenantScope(scopeHint || {});
+    const maskedScope = _bookingIntentScopeMask(scope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][REMOVE_WARN] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(bookingId)} reason=${safeStr(err?.message || err, 120) || "unknown"}`,
+    );
+    return { ok: false, reason: "exception" };
+  }
+}
+
 function _assignedDriverFromVehicle(vehicle) {
   const d = vehicle?.assigned_driver;
   if (!d || typeof d !== "object") return null;
@@ -29708,6 +29947,76 @@ async function debugFleetRecentBookings(url, env, tenantScope = null) {
     limit,
     count: rows.length,
     items: rows,
+  };
+}
+
+async function rebuildBookingDemandIndexForScope(env, scope, { dryRun = false } = {}) {
+  const normalizedScope = normalizeFleetTenantScope(scope || {});
+  if (!normalizedScope?.hasScope) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "Missing BOOKING_KV binding" };
+  }
+  let scanned = 0;
+  let matchedScope = 0;
+  let terminalSkipped = 0;
+  let invalidDemandSkipped = 0;
+  const nextItems = [];
+  let cursor = undefined;
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const item of page?.keys || []) {
+      const key = safeStr(item?.name, 240);
+      if (!key || !key.startsWith("booking:")) continue;
+      scanned += 1;
+      const bookingId = key.slice("booking:".length);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      matchedScope += 1;
+      if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
+        terminalSkipped += 1;
+        continue;
+      }
+      const demandItem = bookingDemandItemFromRecord(bookingId, rec, env);
+      if (!demandItem) {
+        invalidDemandSkipped += 1;
+        continue;
+      }
+      nextItems.push(demandItem);
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  const previous = await loadBookingDemandIndex(env, normalizedScope);
+  const prevCount = Number(previous?.items?.length || 0);
+  const nextCount = nextItems.length;
+  const removedOrRebuilt = Math.max(prevCount, nextCount);
+
+  if (!dryRun) {
+    await saveBookingDemandIndex(env, normalizedScope, { items: nextItems });
+  }
+  const maskedScope = _bookingIntentScopeMask(normalizedScope);
+  console.log(
+    `[BOOKING_DEMAND_INDEX][REBUILD] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} dry_run=${dryRun ? "true" : "false"} scanned=${scanned} matched=${matchedScope} active=${nextCount}`,
+  );
+  return {
+    ok: true,
+    scanned,
+    matched_scope: matchedScope,
+    active_indexed: nextCount,
+    terminal_skipped: terminalSkipped,
+    invalid_demand_skipped: invalidDemandSkipped,
+    removed_or_rebuilt: removedOrRebuilt,
+    dry_run: dryRun === true,
   };
 }
 
@@ -30994,6 +31303,20 @@ async function updateBookingStatusAuthoritative(
     }
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  if (isTerminalLifecycleStatus(normalized)) {
+    await removeBookingDemandIndexBestEffort(
+      env,
+      bookingId,
+      normalizeFleetTenantScope(tenantScope),
+    );
+  } else {
+    await upsertBookingDemandIndexBestEffort(
+      env,
+      bookingId,
+      rec,
+      normalizeFleetTenantScope(tenantScope),
+    );
+  }
   try {
     const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, bookingId, {
       newStatus: normalized,
@@ -31788,6 +32111,11 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
     rec,
     logTag: "RELEASE_ON_DELETE",
   });
+  await removeBookingDemandIndexBestEffort(
+    env,
+    bookingId,
+    normalizeFleetTenantScope(tenantScope),
+  );
   await env.BOOKING_KV.delete(key);
   return { ok: true, booking_id: bookingId, deleted: true };
 }
