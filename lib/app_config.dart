@@ -1280,13 +1280,32 @@ void addDriver(DriverProfile driver) {
   unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
 }
 
-void updateDriver(String id, DriverProfile updated) {
+void updateDriver(
+  String id,
+  DriverProfile updated, {
+  bool syncInventory = true,
+}) {
   final normalizedUpdated = _driverWithNormalizedLoginCode(updated);
+  String maskDriverForLog(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return 'unknown';
+    if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+    return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+  }
+
+  debugPrint(
+    '[UPDATE_DRIVER][CALLED] driver=${maskDriverForLog(id)} isActive=${normalizedUpdated.isActive} syncInventory=$syncInventory',
+  );
   driversNotifier.value = driversNotifier.value
       .map((d) => d.id == id ? normalizedUpdated : d)
       .toList(growable: false);
   _persistLocalTenantState();
-  unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
+  if (syncInventory) {
+    debugPrint(
+      '[UPDATE_DRIVER][BROAD_SYNC_TRIGGERED] reason=driver_save driver=${maskDriverForLog(id)}',
+    );
+    unawaited(syncLocalCompanyInventoryToBackend(reason: 'driver_save'));
+  }
 }
 
 DriverProfile _driverWithNormalizedLoginCode(DriverProfile driver) {
@@ -1881,6 +1900,19 @@ String _maskCompanyScopeForLog(String value) {
   return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
 }
 
+String _maskDriverIdForDiag(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return 'unknown';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+String _shortBodyPreviewForDiag(String value) {
+  final single = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (single.isEmpty) return '—';
+  return single.length <= 140 ? single : '${single.substring(0, 140)}…';
+}
+
 Map<String, String> _resolveAdminTenantCompanyScope({
   String? tenantId,
   String? companyId,
@@ -2260,6 +2292,10 @@ Future<bool> syncDriverIndexEntryToBackend(
     );
     final driverId = driver.id.trim();
     if (driverId.isEmpty) return false;
+    final isActiveValue = isActiveOverride ?? driver.isActive;
+    debugPrint(
+      '[DRIVER_INDEX_UPSERT][REQUEST] driver=${_maskDriverIdForDiag(driverId)} isActive=$isActiveValue tenant=${_maskCompanyScopeForLog(scope["tenant_id"] ?? "")} company=${_maskCompanyScopeForLog(scope["company_id"] ?? "")}',
+    );
     final payload = _encodeDriverForBackendIndexPayload(
       driver,
       tenantId: scope['tenant_id'] ?? '',
@@ -2269,7 +2305,11 @@ Future<bool> syncDriverIndexEntryToBackend(
     final response = await http
         .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
         .timeout(const Duration(seconds: 12));
-    return response.statusCode >= 200 && response.statusCode < 300;
+    final ok = response.statusCode >= 200 && response.statusCode < 300;
+    debugPrint(
+      '[DRIVER_INDEX_UPSERT][RESPONSE] driver=${_maskDriverIdForDiag(driverId)} status=${response.statusCode} ok=$ok bodyPreview=${_shortBodyPreviewForDiag(utf8.decode(response.bodyBytes))}',
+    );
+    return ok;
   } catch (_) {
     return false;
   }
@@ -3637,9 +3677,10 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         publicDisplayName: ((remote.publicDisplayName ?? '').trim().isNotEmpty)
             ? remote.publicDisplayName
             : local.publicDisplayName,
-        publicPortraitUrl: ((remote.publicPortraitUrl ?? '').trim().isNotEmpty)
-            ? remote.publicPortraitUrl
-            : local.publicPortraitUrl,
+        // Keep backend bootstrap canonical for remote-present driver records.
+        publicPortraitUrl: remote.publicPortraitUrl,
+        // Backend bootstrap is canonical for active/inactive state.
+        isActive: remote.isActive,
       );
     }
 
@@ -3887,11 +3928,18 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           publicPortraitUrl: driverPhotoUrl,
         );
         final existingDriver = existingDriversById[driverId];
-        nextDrivers.add(
-          existingDriver == null
-              ? remoteDriver
-              : mergeDriverPreferLocal(remoteDriver, existingDriver),
-        );
+        if (existingDriver != null) {
+          final finalDriver = mergeDriverPreferLocal(
+            remoteDriver,
+            existingDriver,
+          );
+          debugPrint(
+            '[DRIVER_HYDRATE_MERGE][REMOTE_WINS] id=${_maskDriverIdForDiag(driverId)} name=${finalDriver.fullName.trim()} remoteActive=${remoteDriver.isActive} localActive=${existingDriver.isActive} finalActive=${finalDriver.isActive}',
+          );
+          nextDrivers.add(finalDriver);
+          continue;
+        }
+        nextDrivers.add(remoteDriver);
       }
       for (final local in driversNotifier.value) {
         final localId = local.id.trim();
@@ -3901,6 +3949,9 @@ Future<bool> hydrateCompanyStateFromBootstrap(
             localCompany != bootstrapScopeCompanyId) {
           continue;
         }
+        debugPrint(
+          '[DRIVER_HYDRATE_MERGE][LOCAL_ONLY_RETAINED] id=${_maskDriverIdForDiag(localId)} name=${local.fullName.trim()} isActive=${local.isActive} company=${_maskCompanyScopeForLog(localCompany)}',
+        );
         nextDrivers.add(local);
       }
       mappedDriversCount = nextDrivers.length;

@@ -1051,9 +1051,44 @@ class DriverDocumentsStore {
         .toList(growable: false);
   }
 
+  List<DriverDocument> documentsVisibleForCompanyAdminDriver(
+    String driverId, {
+    required String tenantId,
+    required String companyId,
+  }) {
+    final did = driverId.trim();
+    final scopedTenant = tenantId.trim();
+    final scopedCompany = companyId.trim();
+    if (did.isEmpty || scopedTenant.isEmpty || scopedCompany.isEmpty) {
+      return const <DriverDocument>[];
+    }
+    return driverDocumentsNotifier.value
+        .where((d) {
+          if (d.driverId.trim() != did) return false;
+          return d.tenantId.trim() == scopedTenant &&
+              d.companyId.trim() == scopedCompany;
+        })
+        .toList(growable: false);
+  }
+
   /// Driving licence + identity recommended for a simple compliance hint.
   bool hasCoreDocumentGapForDriver(String driverId) {
     final docs = documentsVisibleForDriver(driverId);
+    final types = docs.map((e) => e.documentType.trim()).toSet();
+    return !types.contains(DriverDocumentTypes.drivingLicense) ||
+        !types.contains(DriverDocumentTypes.identityDocument);
+  }
+
+  bool hasCoreDocumentGapForCompanyAdminDriver(
+    String driverId, {
+    required String tenantId,
+    required String companyId,
+  }) {
+    final docs = documentsVisibleForCompanyAdminDriver(
+      driverId,
+      tenantId: tenantId,
+      companyId: companyId,
+    );
     final types = docs.map((e) => e.documentType.trim()).toSet();
     return !types.contains(DriverDocumentTypes.drivingLicense) ||
         !types.contains(DriverDocumentTypes.identityDocument);
@@ -1266,7 +1301,7 @@ class DriverDocumentsStore {
     }
   }
 
-  Future<void> refreshDriverDocumentsFromBackend({
+  Future<bool> refreshDriverDocumentsFromBackend({
     required String bookingBaseUrl,
     required String companySessionToken,
     required String tenantId,
@@ -1286,7 +1321,7 @@ class DriverDocumentsStore {
       debugPrint(
         '[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=missing_scope_or_token',
       );
-      return;
+      return false;
     }
 
     try {
@@ -1383,8 +1418,10 @@ class DriverDocumentsStore {
       debugPrint(
         '[DRIVER_DOCS][BACKEND_REFRESH_OK] remote=${remoteByScopedKey.length} local=${next.length}',
       );
+      return true;
     } catch (_) {
       debugPrint('[DRIVER_DOCS][BACKEND_REFRESH_FAIL] reason=exception');
+      return false;
     }
   }
 
