@@ -15642,6 +15642,8 @@ class CustomerHomePage extends StatelessWidget {
             H >= 700;
         final isPhonePortrait =
             W < H && !isTabletPortrait && !isTabletLandscape;
+        final usesSplitUtilityAndFeatureCards =
+            isPhonePortrait || isTabletPortrait;
         final heroAsset = isTabletLandscape
             ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
             : 'assets/fluxidi/fluxidi_customer_home_hero.png';
@@ -15685,11 +15687,11 @@ class CustomerHomePage extends StatelessWidget {
                   _customerQuickActionGrid(
                     context,
                     mainAxisExtent: customerQuickGridMainAxisExtent,
-                    includeAirportAndHotels: !isPhonePortrait,
-                    forceTwoColumns: isPhonePortrait,
+                    includeAirportAndHotels: !usesSplitUtilityAndFeatureCards,
+                    forceTwoColumns: usesSplitUtilityAndFeatureCards,
                   ),
                   const SizedBox(height: 12),
-                  if (isPhonePortrait) ...[
+                  if (usesSplitUtilityAndFeatureCards) ...[
                     _customerWideCard(
                       context: context,
                       icon: Icons.flight_takeoff_rounded,
