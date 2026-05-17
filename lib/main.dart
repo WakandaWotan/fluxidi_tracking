@@ -565,6 +565,18 @@ _resolveCompanyBootstrapTokenState() async {
   );
 }
 
+Future<bool> _hasUsableCompanyBootstrapToken({
+  required String reason,
+  bool logDegraded = false,
+}) async {
+  final state = await _resolveCompanyBootstrapTokenState();
+  if (!state.hasToken && logDegraded) {
+    debugPrint('[COMPANY_SESSION][DEGRADED_NO_TOKEN] reason=$reason');
+    debugPrint('[COMPANY_SESSION][RECOVERY_REQUIRED] reason=$reason');
+  }
+  return state.hasToken;
+}
+
 bool _hasRicherLocalCompanyInventoryForBackfill() {
   if (vehiclesNotifier.value.length > 1 || driversNotifier.value.length > 1) {
     return true;
@@ -626,16 +638,24 @@ Future<void> main() async {
   await loadLocalTenantState();
   await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
+  var hasBootstrapToken = false;
   if (CompanySessionStore.instance.hasValidCompanyContext) {
-    await _hydrateCompanyBootstrapFromActiveSession(
+    hasBootstrapToken = await _hasUsableCompanyBootstrapToken(
       reason: 'startup_restore',
-      clearOnUnauthorized: true,
+      logDegraded: true,
     );
-    unawaited(
-      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
-    );
+    if (hasBootstrapToken) {
+      await _hydrateCompanyBootstrapFromActiveSession(
+        reason: 'startup_restore',
+        clearOnUnauthorized: true,
+      );
+      unawaited(
+        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+      );
+    }
   }
-  if (CompanySessionStore.instance.hasValidCompanyContext) {
+  if (CompanySessionStore.instance.hasValidCompanyContext &&
+      hasBootstrapToken) {
     setAppRole(AppRole.companyAdmin);
     _startInCompanyAdminHome = true;
     _startInDriverHome = false;
@@ -4601,6 +4621,11 @@ class RoleEntryPage extends StatelessWidget {
       linkMethod: linkMethod,
     );
     if (companySessionToken.isNotEmpty) {
+      final normalizedLinkMethod = linkMethod.trim().toLowerCase();
+      final restoredSource = normalizedLinkMethod.contains('recovery')
+          ? 'recovery'
+          : 'pairing';
+      debugPrint('[COMPANY_SESSION][TOKEN_RESTORED] source=$restoredSource');
       await _hydrateCompanyBootstrapFromActiveSession(
         reason: 'pairing_success',
       );
@@ -4608,6 +4633,11 @@ class RoleEntryPage extends StatelessWidget {
         _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
       );
     }
+    final hasToken = await _hasUsableCompanyBootstrapToken(
+      reason: 'pairing_success',
+      logDegraded: true,
+    );
+    if (!hasToken) return false;
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
     setAppRole(AppRole.companyAdmin);
@@ -4653,6 +4683,11 @@ class RoleEntryPage extends StatelessWidget {
       issuedAt: DateTime.now().toUtc(),
       linkMethod: 'dev_pairing_bypass',
     );
+    final hasToken = await _hasUsableCompanyBootstrapToken(
+      reason: 'dev_pairing_bypass',
+      logDegraded: true,
+    );
+    if (!hasToken) return false;
     unawaited(
       _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
     );
@@ -4714,22 +4749,29 @@ class RoleEntryPage extends StatelessWidget {
   Future<void> _goBusiness(BuildContext context) async {
     await CompanySessionStore.instance.bootstrap();
     if (CompanySessionStore.instance.hasValidCompanyContext) {
-      await _hydrateCompanyBootstrapFromActiveSession(
+      final hasToken = await _hasUsableCompanyBootstrapToken(
         reason: 'role_entry',
-        clearOnUnauthorized: true,
+        logDegraded: true,
       );
-      unawaited(
-        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
-      );
+      if (hasToken) {
+        await _hydrateCompanyBootstrapFromActiveSession(
+          reason: 'role_entry',
+          clearOnUnauthorized: true,
+        );
+        unawaited(
+          _triggerCompanyInventoryBackfillRestore(
+            reason: 'company_home_restore',
+          ),
+        );
+        if (!context.mounted) return;
+        setAppRole(AppRole.companyAdmin);
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const BusinessHomePage()),
+        );
+        return;
+      }
     }
     if (!context.mounted) return;
-    if (CompanySessionStore.instance.hasValidCompanyContext) {
-      setAppRole(AppRole.companyAdmin);
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const BusinessHomePage()),
-      );
-      return;
-    }
     while (true) {
       final activationCode = await _promptCompanyActivationCode(context);
       if (!context.mounted || activationCode == null) return;
@@ -9815,7 +9857,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   fr: 'Équipe',
                                   es: 'Equipo',
                                 ),
-                                onTap: () {
+                                onTap: () async {
+                                  final hasToken =
+                                      await _hasUsableCompanyBootstrapToken(
+                                        reason: 'business_home_manage_drivers',
+                                        logDegraded: true,
+                                      );
+                                  if (!context.mounted) return;
+                                  if (!hasToken) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          _t(
+                                            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+                                            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+                                            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
+                                            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
                                       builder: (_) =>
@@ -11258,7 +11321,31 @@ class _CompanyDriverManagementPageState
   bool _refreshInFlight = false;
   bool _adminDocsRefreshInFlight = false;
   bool _hasSuccessfulRefresh = false;
+  bool _recoveryHintShown = false;
   DateTime? _lastRefreshAtUtc;
+
+  Future<void> _ensureCompanySessionTokenForAdminView({
+    required String reason,
+  }) async {
+    final hasToken = await _hasUsableCompanyBootstrapToken(
+      reason: reason,
+      logDegraded: true,
+    );
+    if (!mounted || hasToken || _recoveryHintShown) return;
+    _recoveryHintShown = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr(
+            nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+            en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
+            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d’abord votre entreprise.',
+            es: 'La sincronización backend requiere una sesión activa de empresa. Vuelve a vincular o recupera la empresa primero.',
+          ),
+        ),
+      ),
+    );
+  }
 
   ({String tenantId, String companyId}) _adminScopeForDriver(
     DriverProfile driver,
@@ -11388,6 +11475,9 @@ class _CompanyDriverManagementPageState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(
+      _ensureCompanySessionTokenForAdminView(reason: 'drivers_page_open'),
+    );
+    unawaited(
       _refreshDriversFromBootstrap(reason: 'drivers_page_open', force: true),
     );
   }
@@ -11395,6 +11485,9 @@ class _CompanyDriverManagementPageState
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      unawaited(
+        _ensureCompanySessionTokenForAdminView(reason: 'drivers_page_resume'),
+      );
       unawaited(_refreshDriversFromBootstrap(reason: 'drivers_page_resume'));
     }
   }
