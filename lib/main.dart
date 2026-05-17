@@ -550,6 +550,21 @@ String _activeCompanyScopeIdForSync() {
   return kTenantId;
 }
 
+Future<({bool hasToken, String source})>
+_resolveCompanyBootstrapTokenState() async {
+  var session = activeCompanySessionNotifier.value;
+  session ??= await CompanySessionStore.instance.loadSession();
+  final resolved = await CompanySessionStore.instance
+      .resolveCompanyBootstrapToken(preferredSession: session);
+  final token = (resolved.token ?? '').trim();
+  const acceptedSources = <String>{'notifier', 'session', 'session_alias'};
+  final source = resolved.source;
+  return (
+    hasToken: token.isNotEmpty && acceptedSources.contains(source),
+    source: source,
+  );
+}
+
 bool _hasRicherLocalCompanyInventoryForBackfill() {
   if (vehiclesNotifier.value.length > 1 || driversNotifier.value.length > 1) {
     return true;
@@ -579,14 +594,25 @@ bool _hasRicherLocalCompanyInventoryForBackfill() {
   return false;
 }
 
-void _triggerCompanyInventoryBackfillRestore({required String reason}) {
+Future<void> _triggerCompanyInventoryBackfillRestore({
+  required String reason,
+}) async {
   if (!_hasRicherLocalCompanyInventoryForBackfill()) return;
+  final tokenState = await _resolveCompanyBootstrapTokenState();
+  if (!tokenState.hasToken) {
+    debugPrint(
+      '[COMPANY_SYNC][SKIP_NO_COMPANY_TOKEN] reason=$reason source=${tokenState.source}',
+    );
+    return;
+  }
   final scopeId = _activeCompanyScopeIdForSync();
   unawaited(
     syncLocalCompanyInventoryToBackend(
       reason: reason,
       tenantId: scopeId,
       companyId: scopeId,
+      requireCompanySessionToken: true,
+      hasCompanySessionToken: true,
     ),
   );
 }
@@ -605,7 +631,9 @@ Future<void> main() async {
       reason: 'startup_restore',
       clearOnUnauthorized: true,
     );
-    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    unawaited(
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+    );
   }
   if (CompanySessionStore.instance.hasValidCompanyContext) {
     setAppRole(AppRole.companyAdmin);
@@ -4576,7 +4604,9 @@ class RoleEntryPage extends StatelessWidget {
       await _hydrateCompanyBootstrapFromActiveSession(
         reason: 'pairing_success',
       );
-      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+      unawaited(
+        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+      );
     }
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
@@ -4623,7 +4653,9 @@ class RoleEntryPage extends StatelessWidget {
       issuedAt: DateTime.now().toUtc(),
       linkMethod: 'dev_pairing_bypass',
     );
-    _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+    unawaited(
+      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+    );
     if (!context.mounted) return false;
     if (!CompanySessionStore.instance.hasValidCompanyContext) return false;
     setAppRole(AppRole.companyAdmin);
@@ -4686,7 +4718,9 @@ class RoleEntryPage extends StatelessWidget {
         reason: 'role_entry',
         clearOnUnauthorized: true,
       );
-      _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore');
+      unawaited(
+        _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
+      );
     }
     if (!context.mounted) return;
     if (CompanySessionStore.instance.hasValidCompanyContext) {

@@ -2373,7 +2373,13 @@ Future<void> syncLocalCompanyInventoryToBackend({
   required String reason,
   String? tenantId,
   String? companyId,
+  bool requireCompanySessionToken = false,
+  bool hasCompanySessionToken = true,
 }) async {
+  if (requireCompanySessionToken && !hasCompanySessionToken) {
+    debugPrint('[COMPANY_SYNC][SKIP_NO_COMPANY_TOKEN] reason=$reason');
+    return;
+  }
   if (_companyInventorySyncInFlight) return;
   final token = _fleetSyncAdminToken.trim();
   if (token.isEmpty) return;
