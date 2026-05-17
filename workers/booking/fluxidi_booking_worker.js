@@ -687,19 +687,30 @@ export class FleetAllocatorDO {
     const occupiedAssignedIds = new Set();
     let overlappingUnassignedDemand = 0;
 
-    // Existing persisted bookings from KV
-    const listed = await this.env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
-    for (const k of listed?.keys || []) {
-      const key = String(k?.name || "");
-      if (!key.startsWith("booking:")) continue;
-      const rec = await this.env.BOOKING_KV.get(key, { type: "json" });
-      if (!rec || typeof rec !== "object") continue;
-      if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, tenantScope)) continue;
-      if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
-      const d = _bookingDemandFromRecord(rec, this.env);
-      if (!Number.isFinite(d.pickupMs)) continue;
+    const indexedDemand = await _loadScopedActiveDemandFromIndex(
+      this.env,
+      tenantScope,
+      { staleAfterMs: _fleetDemandIndexStaleAfterMs(this.env) },
+    );
+    if (!indexedDemand?.ok) {
+      const reason = safeStr(indexedDemand?.reason, 80) || "demand_index_unavailable";
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason,
+        reason_code: reason,
+        block_reason: reason,
+        suitable_vehicle_count: suitableVehicles.length,
+        occupied_assigned_count: 0,
+        overlapping_unassigned_demand: 0,
+        available_slots: 0,
+        index_updated_at: safeStr(indexedDemand?.index_updated_at, 80) || null,
+        demand_index_stale: indexedDemand?.stale === true,
+      });
+    }
+    for (const d of indexedDemand?.items || []) {
       if (!_windowsOverlap(req.pickupMs, req.serviceMin, d.pickupMs, d.serviceMin)) continue;
-      const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
+      const assignedVehicleId = safeStr(d?.assigned_vehicle_id, 120);
       if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
         occupiedAssignedIds.add(assignedVehicleId);
         continue;
@@ -28714,6 +28725,92 @@ async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = nu
   }
 }
 
+function _fleetDemandIndexStaleAfterMs(env, options = {}) {
+  const explicit = Number(options?.staleAfterMs);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+  const fromEnv = Number(env?.FLEET_DEMAND_INDEX_STALE_AFTER_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return Math.max(30 * 1000, Math.min(24 * 60 * 60 * 1000, Math.round(fromEnv)));
+  }
+  return 5 * 60 * 1000;
+}
+
+function _fleetDemandFromIndexItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const bookingId = safeStr(item?.booking_id, 160);
+  if (!bookingId) return null;
+  const pickupMs = Number(item?.pickup_ms);
+  const serviceMin = Math.max(1, Number(item?.service_min) || 1);
+  if (!Number.isFinite(pickupMs) || !Number.isFinite(serviceMin)) return null;
+  const dropoffAtRaw = Number(item?.dropoff_at_ms);
+  const dropoffAtMs = Number.isFinite(dropoffAtRaw)
+    ? dropoffAtRaw
+    : (pickupMs + serviceMin * 60000);
+  const dropoffPoint = _locationPointFromAny(item?.dropoff_point || {});
+  return {
+    booking_id: bookingId,
+    reservation_id: bookingId,
+    reservation_id_preview: _bookingIntentMask(bookingId),
+    pickupMs,
+    pickupAtMs: pickupMs,
+    serviceMin,
+    dropoffAtMs,
+    tier: normalizeTier(item?.tier || "comfort"),
+    pax: _toPositiveInt(item?.pax, 1),
+    bags: _toPositiveInt(item?.bags, 0),
+    assigned_vehicle_id: safeStr(item?.assigned_vehicle_id, 120) || null,
+    lifecycle: safeStr(item?.lifecycle, 40).toLowerCase() || "pending",
+    dropoffPoint,
+    updated_at: safeStr(item?.updated_at, 80) || null,
+  };
+}
+
+async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
+  const normalizedScope = normalizeFleetTenantScope(scope || {});
+  if (!normalizedScope?.hasScope) {
+    return { ok: false, reason: "missing_scope", items: [] };
+  }
+  const loaded = await loadBookingDemandIndex(env, normalizedScope);
+  if (!loaded?.ok) {
+    return { ok: false, reason: "demand_index_unavailable", items: [] };
+  }
+  const indexObj = loaded?.indexObj;
+  if (!indexObj || typeof indexObj !== "object") {
+    return { ok: false, reason: "demand_index_unavailable", items: [] };
+  }
+  if (!Array.isArray(loaded?.items)) {
+    return { ok: false, reason: "demand_index_invalid", items: [] };
+  }
+  const indexUpdatedAt = safeStr(indexObj?.updated_at ?? indexObj?.updatedAt, 80) || null;
+  const staleAfterMs = _fleetDemandIndexStaleAfterMs(env, options);
+  if (staleAfterMs > 0 && indexUpdatedAt) {
+    const updatedMs = Date.parse(indexUpdatedAt);
+    if (Number.isFinite(updatedMs) && (Date.now() - updatedMs) > staleAfterMs) {
+      return {
+        ok: false,
+        reason: "demand_index_stale",
+        items: [],
+        index_updated_at: indexUpdatedAt,
+        stale: true,
+      };
+    }
+  }
+  const items = [];
+  for (const rawItem of loaded.items) {
+    if (isTerminalLifecycleStatus(rawItem?.lifecycle)) continue;
+    const converted = _fleetDemandFromIndexItem(rawItem);
+    if (!converted) continue;
+    if (isTerminalLifecycleStatus(converted?.lifecycle)) continue;
+    items.push(converted);
+  }
+  return {
+    ok: true,
+    items,
+    index_updated_at: indexUpdatedAt,
+    stale: false,
+  };
+}
+
 function _assignedDriverFromVehicle(vehicle) {
   const d = vehicle?.assigned_driver;
   if (!d || typeof d !== "object") return null;
@@ -28921,36 +29018,88 @@ async function _evaluateFleetAvailability(env, req) {
   }
 
   const suitableIds = new Set(suitableVehicles.map((v) => v.vehicle_id));
-  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
   const occupiedAssignedIds = new Set();
   let overlappingUnassignedDemand = 0;
   const overlappingBookings = [];
   const vehicleDemands = new Map();
+  const indexedDemand = await _loadScopedActiveDemandFromIndex(
+    env,
+    fleetScope,
+    { staleAfterMs: _fleetDemandIndexStaleAfterMs(env) },
+  );
+  if (!indexedDemand?.ok) {
+    const indexReason = safeStr(indexedDemand?.reason, 80) || "demand_index_unavailable";
+    return {
+      request: {
+        tier: req?.tier ?? null,
+        pax: req?.pax ?? null,
+        bags: req?.bags ?? null,
+        pickup_ms: Number.isFinite(pickupMs) ? pickupMs : null,
+        pickup_window_end_ms: Number.isFinite(pickupEndMs) ? pickupEndMs : null,
+        service_min: serviceMin,
+      },
+      suitable_vehicle_ids: suitableVehicles.map((v) => v.vehicle_id),
+      overlapping_actionable_bookings: [],
+      occupied_assigned_vehicle_ids: [],
+      overlapping_unassigned_demand: 0,
+      suitable_vehicle_count: suitableVehicles.length,
+      free_vehicle_count: 0,
+      available_slots: 0,
+      would_allow_booking: false,
+      next_vehicle_candidate: null,
+      block_reason: indexReason,
+      reason: indexReason,
+      reason_code: indexReason,
+      available_seconds: null,
+      required_seconds: null,
+      origin_travel_seconds: null,
+      required_buffer_seconds: null,
+      origin_source: "demand_index",
+      origin_has_location: null,
+      pickup_has_location: _isUsableLocationPoint(pickupPoint),
+      origin_address_preview: null,
+      pickup_address_preview: _allocatorAddressPreviewMasked(pickupPoint?.address),
+      origin_age_seconds: null,
+      earliest_available_at_ms: null,
+      earliest_available_at: null,
+      route_failure_reason: indexReason,
+      route_http_status: null,
+      route_error_message: null,
+      route_error_code: indexReason,
+      route_profile: null,
+      route_origin_lat_ok: null,
+      route_origin_lng_ok: null,
+      route_pickup_lat_ok: _isUsableLocationPoint(pickupPoint),
+      route_pickup_lng_ok: _isUsableLocationPoint(pickupPoint),
+      route_origin_coords_usable: null,
+      route_pickup_coords_usable: _isUsableLocationPoint(pickupPoint),
+      route_origin_latlng_preview: null,
+      route_pickup_latlng_preview: null,
+      route_duration_seconds_raw: null,
+      route_response_has_routes: null,
+      route_response_routes_count: null,
+      route_response_has_duration: null,
+      demand_index_reason: indexReason,
+      demand_index_stale: indexedDemand?.stale === true,
+      demand_index_updated_at: safeStr(indexedDemand?.index_updated_at, 80) || null,
+    };
+  }
 
-  for (const k of listed?.keys || []) {
-    const key = String(k?.name || "");
-    if (!key.startsWith("booking:")) continue;
-    const rec = await env.BOOKING_KV.get(key, { type: "json" });
-    if (!rec || typeof rec !== "object") continue;
-    if (!_bookingMatchesFleetScopeOrLegacyGlobal(rec, fleetScope)) continue;
-
-    if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) continue;
-
-    const d = _bookingDemandFromRecord(rec, env);
-    if (!Number.isFinite(d.pickupMs)) continue;
-    const assignedVehicleId = _assignedVehicleIdFromRecord(rec);
+  for (const d of indexedDemand?.items || []) {
+    if (!Number.isFinite(d?.pickupMs)) continue;
+    const assignedVehicleId = safeStr(d?.assigned_vehicle_id, 120);
     if (assignedVehicleId) {
       const demandWithVehicle = {
         ...d,
         assigned_vehicle_id: assignedVehicleId,
-        booking_id: key.slice("booking:".length) || null,
+        booking_id: safeStr(d?.booking_id, 160) || null,
       };
       const arr = vehicleDemands.get(assignedVehicleId) || [];
       arr.push(demandWithVehicle);
       vehicleDemands.set(assignedVehicleId, arr);
     }
     if (!_windowsOverlap(pickupMs, serviceMin, d.pickupMs, d.serviceMin)) continue;
-    const bookingId = key.slice("booking:".length);
+    const bookingId = safeStr(d?.booking_id, 160);
     const demandEndMs = d.pickupMs + Math.max(1, Number(d.serviceMin) || 1) * 60000;
     if (assignedVehicleId && suitableIds.has(assignedVehicleId)) {
       occupiedAssignedIds.add(assignedVehicleId);
