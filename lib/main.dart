@@ -15029,12 +15029,47 @@ class CustomerHomePage extends StatelessWidget {
     return name;
   }
 
-  Widget _customerLanguagePill() {
+  Widget _customerLanguagePill({bool enforceMinTapTarget = false}) {
     final code = currentLanguageCode.toUpperCase();
+    final pillVisual = Container(
+      height: 31,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1524).withOpacity(0.9),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.language_rounded,
+            size: 14,
+            color: kFluxidiYellow.withOpacity(0.95),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            code,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.96),
+              fontWeight: FontWeight.w800,
+              fontSize: 10.8,
+            ),
+          ),
+          const SizedBox(width: 1),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 14,
+            color: kFluxidiYellow.withOpacity(0.9),
+          ),
+        ],
+      ),
+    );
     return PopupMenuButton<String>(
       onSelected: setAppLanguageByCode,
       color: const Color(0xFF111827),
       elevation: 8,
+      padding: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(color: kFluxidiYellow.withOpacity(0.35)),
@@ -15045,40 +15080,13 @@ class CustomerHomePage extends StatelessWidget {
         PopupMenuItem(value: 'fr', child: Text('🇫🇷 FR')),
         PopupMenuItem(value: 'es', child: Text('🇪🇸 ES')),
       ],
-      child: Container(
-        height: 31,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0E1524).withOpacity(0.9),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: kFluxidiYellow.withOpacity(0.45)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.language_rounded,
-              size: 14,
-              color: kFluxidiYellow.withOpacity(0.95),
-            ),
-            const SizedBox(width: 5),
-            Text(
-              code,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.96),
-                fontWeight: FontWeight.w800,
-                fontSize: 10.8,
-              ),
-            ),
-            const SizedBox(width: 1),
-            Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 14,
-              color: kFluxidiYellow.withOpacity(0.9),
-            ),
-          ],
-        ),
-      ),
+      child: enforceMinTapTarget
+          ? SizedBox(
+              width: 44,
+              height: 44,
+              child: Align(alignment: Alignment.topRight, child: pillVisual),
+            )
+          : pillVisual,
     );
   }
 
@@ -15120,6 +15128,7 @@ class CustomerHomePage extends StatelessWidget {
     required double heroHeight,
     required Alignment heroImageAlignment,
     required double heroImageScale,
+    bool enforceLanguagePillTapTarget = false,
   }) {
     final customerName = _customerDisplayName();
     return Container(
@@ -15188,7 +15197,9 @@ class CustomerHomePage extends StatelessWidget {
                     const Spacer(),
                     Align(
                       alignment: Alignment.topRight,
-                      child: _customerLanguagePill(),
+                      child: _customerLanguagePill(
+                        enforceMinTapTarget: enforceLanguagePillTapTarget,
+                      ),
                     ),
                   ],
                 ),
@@ -15722,6 +15733,7 @@ class CustomerHomePage extends StatelessWidget {
                     heroHeight: customerHeroHeight,
                     heroImageAlignment: customerHeroImageAlignment,
                     heroImageScale: customerHeroImageScale,
+                    enforceLanguagePillTapTarget: isTabletLandscape,
                   ),
                   const SizedBox(height: 14),
                   _customerQuickActionGrid(
