@@ -15278,6 +15278,8 @@ class CustomerHomePage extends StatelessWidget {
   Widget _customerQuickActionGrid(
     BuildContext context, {
     required double mainAxisExtent,
+    bool includeAirportAndHotels = true,
+    bool forceTwoColumns = false,
   }) {
     final actions = <({IconData icon, String label, VoidCallback onTap})>[
       (
@@ -15330,35 +15332,41 @@ class CustomerHomePage extends StatelessWidget {
           ),
         ),
       ),
-      (
-        icon: Icons.flight_takeoff_rounded,
-        label: _t(
-          nl: 'Luchthavenritten',
-          en: 'Airport rides',
-          fr: 'Trajets aéroport',
-          es: 'Traslados aeropuerto',
-        ),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => AirportPage(bookingBaseUrl: kBookingBaseUrl),
+    ];
+    if (includeAirportAndHotels) {
+      actions.addAll([
+        (
+          icon: Icons.flight_takeoff_rounded,
+          label: _t(
+            nl: 'Luchthavenritten',
+            en: 'Airport rides',
+            fr: 'Trajets aéroport',
+            es: 'Traslados aeropuerto',
+          ),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => AirportPage(bookingBaseUrl: kBookingBaseUrl),
+            ),
           ),
         ),
-      ),
-      (
-        icon: Icons.hotel_rounded,
-        label: _t(
-          nl: 'Hotels & B&B',
-          en: 'Hotels & B&B',
-          fr: 'Hôtels & B&B',
-          es: 'Hoteles & B&B',
+        (
+          icon: Icons.hotel_rounded,
+          label: _t(
+            nl: 'Hotels & B&B',
+            en: 'Hotels & B&B',
+            fr: 'Hôtels & B&B',
+            es: 'Hoteles & B&B',
+          ),
+          onTap: () => _comingSoon(context),
         ),
-        onTap: () => _comingSoon(context),
-      ),
-    ];
+      ]);
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth >= 430 ? 3 : 2;
+        final crossAxisCount = forceTwoColumns
+            ? 2
+            : (constraints.maxWidth >= 430 ? 3 : 2);
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -15632,6 +15640,8 @@ class CustomerHomePage extends StatelessWidget {
                 screenClass == FluxidiScreenClass.desktop) &&
             W > H &&
             H >= 700;
+        final isPhonePortrait =
+            W < H && !isTabletPortrait && !isTabletLandscape;
         final heroAsset = isTabletLandscape
             ? 'assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.png'
             : 'assets/fluxidi/fluxidi_customer_home_hero.png';
@@ -15675,8 +15685,50 @@ class CustomerHomePage extends StatelessWidget {
                   _customerQuickActionGrid(
                     context,
                     mainAxisExtent: customerQuickGridMainAxisExtent,
+                    includeAirportAndHotels: !isPhonePortrait,
+                    forceTwoColumns: isPhonePortrait,
                   ),
                   const SizedBox(height: 12),
+                  if (isPhonePortrait) ...[
+                    _customerWideCard(
+                      context: context,
+                      icon: Icons.flight_takeoff_rounded,
+                      title: _t(
+                        nl: 'Luchthavenritten',
+                        en: 'Airport rides',
+                        fr: 'Trajets aéroport',
+                        es: 'Traslados aeropuerto',
+                      ),
+                      subtitle: '',
+                      visualAsset:
+                          'assets/fluxidi/airport_portret_background_GSM.png',
+                      visualHeight: customerWideCardHeight,
+                      visualAlignment: const Alignment(0.56, 0.18),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              AirportPage(bookingBaseUrl: kBookingBaseUrl),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _customerWideCard(
+                      context: context,
+                      icon: Icons.hotel_rounded,
+                      title: _t(
+                        nl: 'Hotels & B&B',
+                        en: 'Hotels & B&B',
+                        fr: 'Hôtels & B&B',
+                        es: 'Hoteles & B&B',
+                      ),
+                      subtitle: '',
+                      visualAsset: 'assets/fluxidi/Hotel&B&B_background.png',
+                      visualHeight: customerWideCardHeight,
+                      visualAlignment: const Alignment(0.62, 0.08),
+                      onTap: () => _comingSoon(context),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   _customerWideCard(
                     context: context,
                     icon: Icons.celebration_outlined,
