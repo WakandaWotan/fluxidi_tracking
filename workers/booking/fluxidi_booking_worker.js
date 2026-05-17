@@ -1708,6 +1708,90 @@ function _validateSettingsPayloadScope(payload, scope) {
   return { ok: true };
 }
 
+function stableStringifyForKvCompare(value) {
+  const normalize = (input) => {
+    if (input === null || input === undefined) return null;
+    if (Array.isArray(input)) return input.map((entry) => normalize(entry));
+    if (typeof input !== "object") return input;
+    const out = {};
+    for (const key of Object.keys(input).sort()) {
+      out[key] = normalize(input[key]);
+    }
+    return out;
+  };
+  try {
+    return JSON.stringify(normalize(value));
+  } catch (_) {
+    return "";
+  }
+}
+
+function _normalizeDriverIndexComparableUrl(value) {
+  const raw = sanitizeTenantString(value, 1600);
+  if (!raw || !/^https?:\/\//i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    parsed.searchParams.delete("v");
+    parsed.searchParams.delete("t");
+    parsed.searchParams.delete("cache");
+    const query = parsed.searchParams.toString();
+    return `${parsed.origin}${parsed.pathname}${query ? `?${query}` : ""}`;
+  } catch (_) {
+    return raw;
+  }
+}
+
+function adminSyncComparable(value) {
+  const volatileKeys = new Set([
+    "updated_at",
+    "updatedAt",
+    "synced_at",
+    "syncedAt",
+    "last_synced_at",
+    "lastSyncedAt",
+    "local_updated_at",
+    "localUpdatedAt",
+    "cache_bust",
+    "cacheBust",
+    "cache_buster",
+    "cacheBuster",
+    "photo_cache_bust",
+    "photoCacheBust",
+  ]);
+  const urlComparableKeys = new Set([
+    "driver_photo_url",
+    "driverPhotoUrl",
+    "public_portrait_url",
+    "publicPortraitUrl",
+    "profile_photo_url",
+    "profilePhotoUrl",
+  ]);
+  const normalize = (input, parentKey = "") => {
+    if (input === null || input === undefined) return null;
+    if (Array.isArray(input)) return input.map((entry) => normalize(entry, parentKey));
+    if (typeof input !== "object") {
+      if (typeof input === "string" && urlComparableKeys.has(parentKey)) {
+        return _normalizeDriverIndexComparableUrl(input);
+      }
+      return input;
+    }
+    const out = {};
+    for (const key of Object.keys(input).sort()) {
+      if (volatileKeys.has(key)) continue;
+      out[key] = normalize(input[key], key);
+    }
+    return out;
+  };
+  return normalize(value);
+}
+
+function kvComparableEqual(a, b) {
+  return (
+    stableStringifyForKvCompare(adminSyncComparable(a)) ===
+    stableStringifyForKvCompare(adminSyncComparable(b))
+  );
+}
+
 async function loadBusinessProfile(
   env,
   scope = null,
@@ -3105,6 +3189,30 @@ async function ensurePublicCompanyCodeForScope(env, scope, options = {}) {
   return { ok: false, error: "company_code_generation_failed", attempts: maxAttempts };
 }
 
+const COMPANY_CODE_ENSURE_BACKOFF_MS = 60 * 1000;
+const _companyCodeEnsureBackoffUntilByScope = new Map();
+
+function _companyCodeEnsureBackoffScopeKey(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return "";
+  return `${tenantId}:${companyId}`;
+}
+
+function _isKvQuotaOrTransientFailureReason(reason) {
+  const text = sanitizeTenantString(reason, 240).toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("kv put() limit exceeded") ||
+    text.includes("limit exceeded for the day") ||
+    text.includes("quota") ||
+    text.includes("too many requests") ||
+    text.includes("timeout") ||
+    text.includes("temporar") ||
+    text.includes("overloaded")
+  );
+}
+
 function _looksLikeE164PhoneForAdminUpsert(value) {
   const text = sanitizeTenantString(value, 40);
   return /^\+\d{8,15}$/.test(text);
@@ -4474,16 +4582,85 @@ async function _publicMediaDriverExistsInScope(env, scope, driverId) {
   );
 }
 
+const DRIVER_INDEX_KV_QUOTA_BACKOFF_MS = 60 * 1000;
+const _driverIndexKvQuotaBackoffUntilByScopePayload = new Map();
+
+function _driverIndexQuotaBackoffKey(scope, driversComparable) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return "";
+  const comparableRaw = stableStringifyForKvCompare(adminSyncComparable(driversComparable));
+  let hash = 0;
+  for (let i = 0; i < comparableRaw.length; i += 1) {
+    hash = ((hash * 31) + comparableRaw.charCodeAt(i)) >>> 0;
+  }
+  return `${tenantId}:${companyId}:${comparableRaw.length}:${hash}`;
+}
+
 async function _saveDriverIndexRecord(env, scope, doc) {
   const key = _companyDriverIndexKey(scope);
-  await env.BOOKING_KV.put(
-    key,
-    JSON.stringify({
-      drivers: doc.drivers,
-      updated_at: doc.updated_at,
-    }),
+  const scopeMasked =
+    `${_maskPublicDriverLoginValue(scope?.tenant_id)}:${_maskPublicDriverLoginValue(scope?.company_id)}`;
+  const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  const existingDrivers =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing.drivers && typeof existing.drivers === "object" ? existing.drivers : {})
+      : {};
+  const nextDrivers =
+    doc && typeof doc === "object" && !Array.isArray(doc) && doc.drivers && typeof doc.drivers === "object"
+      ? doc.drivers
+      : {};
+  if (kvComparableEqual(existingDrivers, nextDrivers)) {
+    return { key, changed: false };
+  }
+  const existingCount = Object.keys(existingDrivers).length;
+  const nextCount = Object.keys(nextDrivers).length;
+  const diffReason = existingCount !== nextCount
+    ? "driver_count_changed"
+    : "driver_payload_changed";
+  const backoffKey = _driverIndexQuotaBackoffKey(scope, nextDrivers);
+  const backoffUntilMs = backoffKey
+    ? Number(_driverIndexKvQuotaBackoffUntilByScopePayload.get(backoffKey) || 0)
+    : 0;
+  if (backoffUntilMs > Date.now()) {
+    console.log(
+      `[KV_WRITE][BACKOFF_SKIP] route=/admin/company/drivers/index/upsert scope=${scopeMasked}`,
+    );
+    const backoffError = new Error("kv_quota_backoff");
+    backoffError.code = "kv_quota_backoff";
+    throw backoffError;
+  }
+  console.log(
+    `[KV_WRITE][DIFF_DETECTED] route=/admin/company/drivers/index/upsert scope=${scopeMasked} reason=${diffReason}`,
   );
-  return key;
+  try {
+    await env.BOOKING_KV.put(
+      key,
+      JSON.stringify({
+        drivers: doc.drivers,
+        updated_at: doc.updated_at,
+      }),
+    );
+    if (backoffKey) _driverIndexKvQuotaBackoffUntilByScopePayload.delete(backoffKey);
+  } catch (err) {
+    const errText = sanitizeTenantString(err?.message ?? err, 180).toLowerCase();
+    if (errText.includes("kv put() limit exceeded") || errText.includes("limit exceeded for the day")) {
+      if (backoffKey) {
+        _driverIndexKvQuotaBackoffUntilByScopePayload.set(
+          backoffKey,
+          Date.now() + DRIVER_INDEX_KV_QUOTA_BACKOFF_MS,
+        );
+      }
+      console.log(
+        `[KV_WRITE][FAILED_QUOTA] route=/admin/company/drivers/index/upsert scope=${scopeMasked}`,
+      );
+      const quotaError = new Error("kv_quota_exceeded");
+      quotaError.code = "kv_quota_exceeded";
+      throw quotaError;
+    }
+    throw err;
+  }
+  return { key, changed: true };
 }
 
 function _isCompanyLinkSmsProviderConfigured(env) {
@@ -9047,13 +9224,45 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     publicDisplayName: resolvedPublicDisplayName,
     updated_at: nowIso,
   };
-  const key = await _saveDriverIndexRecord(env, scope, {
-    drivers: nextDrivers,
-    updated_at: nowIso,
-  });
+  let saveResult = null;
+  try {
+    saveResult = await _saveDriverIndexRecord(env, scope, {
+      drivers: nextDrivers,
+      updated_at: nowIso,
+    });
+  } catch (err) {
+    if (err?.code === "kv_quota_exceeded" || err?.code === "kv_quota_backoff") {
+      return json(
+        {
+          ok: false,
+          changed: false,
+          error: err?.code === "kv_quota_backoff" ? "kv_quota_backoff" : "kv_quota_exceeded",
+          tenant_id: tenantId,
+          company_id: companyId,
+          driver_id: driverId,
+        },
+        429,
+      );
+    }
+    throw err;
+  }
+  const key = sanitizeTenantString(saveResult?.key, 240);
+  const changed = saveResult?.changed === true;
+  const scopeMasked =
+    `${_maskPublicDriverLoginValue(tenantId)}:${_maskPublicDriverLoginValue(companyId)}`;
+  if (changed) {
+    console.log(
+      `[KV_WRITE][PUT] route=/admin/company/drivers/index/upsert changed=true scope=${scopeMasked}`,
+    );
+  } else {
+    console.log(
+      `[KV_WRITE][SKIP_UNCHANGED] route=/admin/company/drivers/index/upsert scope=${scopeMasked}`,
+    );
+  }
   return json(
     {
       ok: true,
+      changed,
       tenant_id: tenantId,
       company_id: companyId,
       driver_id: driverId,
@@ -10117,29 +10326,82 @@ async function handleCompanyBootstrap(request, env) {
   let companyCode = sessionCompanyCode;
   let companyPublicSlug = "";
   let companyDisplayCode = "";
-  try {
-    const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
-      session_company_code: session.company_code,
-      business_profile: businessProfile,
-      profile: businessProfile,
-      country: businessProfile?.country,
-      source: "auto_generated",
-    });
-    if (ensuredCode?.ok) {
-      companyCode = sanitizeTenantString(ensuredCode.company_code, 80) || companyCode;
-      companyPublicSlug = sanitizeTenantString(
-        ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
-        80,
-      );
-      companyDisplayCode = sanitizeTenantString(
-        ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
-        240,
+  const scopeMask =
+    `tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)}`;
+  const contextCompanyCode = normalizePublicCompanyCode(
+    session.company_code ??
+      session.companyCode ??
+      businessProfile?.public_company_code ??
+      businessProfile?.publicCompanyCode ??
+      businessProfile?.company_code ??
+      businessProfile?.companyCode,
+  );
+  const ensureBackoffKey = _companyCodeEnsureBackoffScopeKey(scope);
+  const backoffUntilMs = ensureBackoffKey
+    ? Number(_companyCodeEnsureBackoffUntilByScope.get(ensureBackoffKey) || 0)
+    : 0;
+  if (contextCompanyCode) {
+    companyCode = contextCompanyCode;
+    console.log(
+      `[COMPANY_CODE_ENSURE][SKIP_PRESENT] ${scopeMask}`,
+    );
+  } else if (backoffUntilMs > Date.now()) {
+    console.log(
+      `[COMPANY_CODE_ENSURE][BACKOFF_SKIP] ${scopeMask}`,
+    );
+  } else {
+    try {
+      const ensuredCode = await ensurePublicCompanyCodeForScope(env, scope, {
+        session_company_code: session.company_code,
+        business_profile: businessProfile,
+        profile: businessProfile,
+        country: businessProfile?.country,
+        source: "auto_generated",
+      });
+      if (ensuredCode?.ok) {
+        companyCode = sanitizeTenantString(ensuredCode.company_code, 80) || companyCode;
+        companyPublicSlug = sanitizeTenantString(
+          ensuredCode.public_company_slug ?? ensuredCode.publicCompanySlug,
+          80,
+        );
+        companyDisplayCode = sanitizeTenantString(
+          ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
+          240,
+        );
+        if (ensureBackoffKey) _companyCodeEnsureBackoffUntilByScope.delete(ensureBackoffKey);
+        console.log(
+          `[COMPANY_CODE_ENSURE][CREATED] ${scopeMask}`,
+        );
+      } else {
+        const reason = sanitizeTenantString(
+          ensuredCode?.error ?? "company_code_generation_failed",
+          160,
+        ) || "company_code_generation_failed";
+        if (ensureBackoffKey) {
+          _companyCodeEnsureBackoffUntilByScope.set(
+            ensureBackoffKey,
+            Date.now() + COMPANY_CODE_ENSURE_BACKOFF_MS,
+          );
+        }
+        const nonFatalReason = _isKvQuotaOrTransientFailureReason(reason)
+          ? reason
+          : reason;
+        console.log(
+          `[COMPANY_CODE_ENSURE][FAILED_NON_FATAL] ${scopeMask} error=${nonFatalReason}`,
+        );
+      }
+    } catch (err) {
+      const reason = sanitizeTenantString(err?.message ?? err, 160) || "unknown";
+      if (ensureBackoffKey) {
+        _companyCodeEnsureBackoffUntilByScope.set(
+          ensureBackoffKey,
+          Date.now() + COMPANY_CODE_ENSURE_BACKOFF_MS,
+        );
+      }
+      console.log(
+        `[COMPANY_CODE_ENSURE][FAILED_NON_FATAL] ${scopeMask} error=${reason}`,
       );
     }
-  } catch (err) {
-    console.log(
-      `[COMPANY_BOOTSTRAP][WARN] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} reason=company_code_ensure_failed error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
-    );
   }
   if (!companyCode) {
     companyCode = sessionCompanyCode;
@@ -15492,14 +15754,41 @@ GET /oauth/callback
           .map((entry) => _normalizeVehicleEntry(entry, { scope }))
           .filter((v) => v !== null);
         const scopedKey = fleetInventoryScopedKeyForScope(scope);
+        const scopeMasked =
+          `${_maskPublicDriverLoginValue(scope.tenant_id)}:${_maskPublicDriverLoginValue(scope.company_id)}`;
+        const existingFleet = await _loadFleetInventoryRawForScope(env, scope, {
+          allowLegacyFallback: false,
+        });
+        const existingNormalized = (Array.isArray(existingFleet?.vehiclesRaw) ? existingFleet.vehiclesRaw : [])
+          .map((entry) => _normalizeVehicleEntry(entry, { scope }))
+          .filter((v) => v !== null);
+        if (kvComparableEqual(existingNormalized, normalized)) {
+          console.log(
+            `[KV_WRITE][SKIP_UNCHANGED] route=/admin/fleet/vehicles scope=${scopeMasked}`,
+          );
+          return json({
+            ok: true,
+            changed: false,
+            key: scopedKey,
+            source: "scoped",
+            scoped_key: scopedKey,
+            legacy_key: VEHICLE_INVENTORY_KEY,
+            count: normalized.length,
+            vehicles: normalized,
+          }, 200);
+        }
         const payload = {
           version: 1,
           updated_at: new Date().toISOString(),
           vehicles: normalized,
         };
         await env.BOOKING_KV.put(scopedKey, JSON.stringify(payload));
+        console.log(
+          `[KV_WRITE][PUT] route=/admin/fleet/vehicles changed=true scope=${scopeMasked}`,
+        );
         return json({
           ok: true,
+          changed: true,
           key: scopedKey,
           source: "scoped",
           scoped_key: scopedKey,
@@ -15542,11 +15831,32 @@ GET /oauth/callback
         const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
         if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
-        const normalized = await _saveTenantPricingProfile(env, incoming, explicitScope, {
+        const normalizedIncoming = _normalizeTenantPricingProfile(incoming);
+        const existingNormalized = await _loadTenantPricingProfile(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const scopeMasked =
+          `${_maskPublicDriverLoginValue(explicitScope.tenant_id)}:${_maskPublicDriverLoginValue(explicitScope.company_id)}`;
+        if (kvComparableEqual(existingNormalized, normalizedIncoming)) {
+          console.log(
+            `[KV_WRITE][SKIP_UNCHANGED] route=/admin/pricing/profile scope=${scopeMasked}`,
+          );
+          return json({
+            ok: true,
+            changed: false,
+            key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
+            pricing_profile: existingNormalized,
+          }, 200);
+        }
+        const normalized = await _saveTenantPricingProfile(env, normalizedIncoming, explicitScope, {
           allowTenantLegacyWrite: false,
         });
+        console.log(
+          `[KV_WRITE][PUT] route=/admin/pricing/profile changed=true scope=${scopeMasked}`,
+        );
         return json({
           ok: true,
+          changed: true,
           key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
           pricing_profile: normalized,
         }, 200);
@@ -29965,94 +30275,127 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
         _isDashboardTerminalBookingLifecycle(rec?.lifecycleStatus),
     };
   };
-
-  do {
-    const page = await env.BOOKING_KV.list({
-      prefix: "booking:",
-      limit: 1000,
-      cursor,
-    });
-    for (const item of page?.keys || []) {
-      const key = String(item?.name || "");
-      if (!key.startsWith("booking:")) continue;
-      scannedKeys += 1;
-      const bookingId = key.slice("booking:".length);
-      const rec = await env.BOOKING_KV.get(key, { type: "json" });
-      if (!rec || typeof rec !== "object") {
-        excludedInvalidRecord += 1;
-        _debugAddSample({
-          booking_id_preview: _bookingIntentMask(bookingId),
-          included_open: false,
-          reason_code: "excluded_invalid_record",
-        });
-        continue;
-      }
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
-        excludedOutOfScope += 1;
-        _debugAddSample({
-          booking_id_preview: _bookingIntentMask(bookingId),
-          included_open: false,
-          reason_code: "excluded_out_of_scope",
-        });
-        continue;
-      }
-      matchedScope += 1;
-      const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: bookingId });
-      const identityKey = _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
-      const recordUpdatedMs = _dashboardTimestampMs(
-        rec?.updated_at,
-        rec?.updatedAt,
-        rec?.created_at,
-        rec?.createdAt,
-        _pick(rec, ["booking", "updated_at"], null),
-        _pick(rec, ["booking", "updatedAt"], null),
-        _pick(rec, ["booking", "created_at"], null),
-        _pick(rec, ["booking", "createdAt"], null),
-      );
-      const keyIsCanonical = !!_dashboardCanonicalBookingNumber(bookingId);
-      const identityMeta = _dashboardIdentityMeta(rec, bookingId);
-      const hasTerminalLifecycle = _dashboardRecordHasTerminalLifecycle(rec);
-      scopedEntries.push({
-        rec,
-        bookingId,
-        openCheck,
-        identityKey,
-        keyIsCanonical,
-        identityMeta,
-        recordUpdatedMs,
-        hasTerminalLifecycle,
+  const _processDashboardKpiBookingRecord = (bookingId, rec) => {
+    if (!rec || typeof rec !== "object") {
+      excludedInvalidRecord += 1;
+      _debugAddSample({
+        booking_id_preview: _bookingIntentMask(bookingId),
+        included_open: false,
+        reason_code: "excluded_invalid_record",
       });
-      if (openCheck.open !== true && openCheck.reason === "excluded_terminal") {
-        excludedTerminal += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_payment_failed") {
-        excludedPaymentFailed += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_payment_pending") {
-        excludedStalePaymentPending += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_hidden") {
-        excludedHidden += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_missing_pickup_time") {
-        excludedMissingPickupTime += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_past_pickup") {
-        excludedStalePastPickup += 1;
-      } else if (openCheck.open !== true && openCheck.reason === "excluded_non_canonical_provisional_record") {
-        excludedNonCanonicalProvisionalRecord += 1;
-      }
-      if (openCheck.open !== true) {
-        _debugAddSample(_debugSummarizeRecord(rec, bookingId, openCheck.reason, false, {
-          identityKey,
-          identityGroupSize: 1,
-          identityTerminalPresent: hasTerminalLifecycle,
-          identityCanonicalRecordPresent: keyIsCanonical,
-        }));
-      }
+      return;
     }
-    cursor = page?.cursor;
-    if (page?.list_complete !== false) break;
-    if (!cursor) {
-      scanComplete = false;
-      break;
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      excludedOutOfScope += 1;
+      _debugAddSample({
+        booking_id_preview: _bookingIntentMask(bookingId),
+        included_open: false,
+        reason_code: "excluded_out_of_scope",
+      });
+      return;
     }
-  } while (cursor);
+    matchedScope += 1;
+    const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: bookingId });
+    const identityKey = _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
+    const recordUpdatedMs = _dashboardTimestampMs(
+      rec?.updated_at,
+      rec?.updatedAt,
+      rec?.created_at,
+      rec?.createdAt,
+      _pick(rec, ["booking", "updated_at"], null),
+      _pick(rec, ["booking", "updatedAt"], null),
+      _pick(rec, ["booking", "created_at"], null),
+      _pick(rec, ["booking", "createdAt"], null),
+    );
+    const keyIsCanonical = !!_dashboardCanonicalBookingNumber(bookingId);
+    const identityMeta = _dashboardIdentityMeta(rec, bookingId);
+    const hasTerminalLifecycle = _dashboardRecordHasTerminalLifecycle(rec);
+    scopedEntries.push({
+      rec,
+      bookingId,
+      openCheck,
+      identityKey,
+      keyIsCanonical,
+      identityMeta,
+      recordUpdatedMs,
+      hasTerminalLifecycle,
+    });
+    if (openCheck.open !== true && openCheck.reason === "excluded_terminal") {
+      excludedTerminal += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_payment_failed") {
+      excludedPaymentFailed += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_payment_pending") {
+      excludedStalePaymentPending += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_hidden") {
+      excludedHidden += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_missing_pickup_time") {
+      excludedMissingPickupTime += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_past_pickup") {
+      excludedStalePastPickup += 1;
+    } else if (openCheck.open !== true && openCheck.reason === "excluded_non_canonical_provisional_record") {
+      excludedNonCanonicalProvisionalRecord += 1;
+    }
+    if (openCheck.open !== true) {
+      _debugAddSample(_debugSummarizeRecord(rec, bookingId, openCheck.reason, false, {
+        identityKey,
+        identityGroupSize: 1,
+        identityTerminalPresent: hasTerminalLifecycle,
+        identityCanonicalRecordPresent: keyIsCanonical,
+      }));
+    }
+  };
+  const scopedBookingIndexKey = _safeResetScopedBookingIndexKey(tenantScope);
+  let usedScopedIndex = false;
+  if (scopedBookingIndexKey) {
+    try {
+      const rawIndex = await env.BOOKING_KV.get(scopedBookingIndexKey, { type: "json" });
+      const indexedIdsRaw = Array.isArray(rawIndex)
+        ? rawIndex
+        : (Array.isArray(rawIndex?.booking_ids)
+          ? rawIndex.booking_ids
+          : (Array.isArray(rawIndex?.bookings) ? rawIndex.bookings : []));
+      const indexedIds = Array.from(
+        new Set(indexedIdsRaw.map((value) => safeStr(value, 160)).filter((value) => !!value)),
+      );
+      if (rawIndex !== null && rawIndex !== undefined) {
+        usedScopedIndex = true;
+        console.log(
+          `[DASHBOARD_KPI][INDEX_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} ids=${indexedIds.length}`,
+        );
+        for (const bookingId of indexedIds) {
+          scannedKeys += 1;
+          const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+          _processDashboardKpiBookingRecord(bookingId, rec);
+        }
+      }
+    } catch (_) {}
+  }
+  if (!usedScopedIndex) {
+    console.log(
+      `[DASHBOARD_KPI][SCAN_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)}`,
+    );
+    do {
+      const page = await env.BOOKING_KV.list({
+        prefix: "booking:",
+        limit: 1000,
+        cursor,
+      });
+      for (const item of page?.keys || []) {
+        const key = String(item?.name || "");
+        if (!key.startsWith("booking:")) continue;
+        scannedKeys += 1;
+        const bookingId = key.slice("booking:".length);
+        const rec = await env.BOOKING_KV.get(key, { type: "json" });
+        _processDashboardKpiBookingRecord(bookingId, rec);
+      }
+      cursor = page?.cursor;
+      if (page?.list_complete !== false) break;
+      if (!cursor) {
+        scanComplete = false;
+        break;
+      }
+    } while (cursor);
+  }
 
   const identityGroups = new Map();
   for (const entry of scopedEntries) {
@@ -30308,6 +30651,9 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
       excluded_invalid_record: excludedInvalidRecord,
     };
   }
+  console.log(
+    `[DASHBOARD_KPI][NO_MUTATION] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen} scanned=${scannedKeys}`,
+  );
   return response;
 }
 
