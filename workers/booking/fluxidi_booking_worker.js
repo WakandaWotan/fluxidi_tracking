@@ -7769,11 +7769,12 @@ function bookingAssignmentIndexItemFromRecord(bookingId, rec) {
 
 async function readScopedAssignmentBookingIndex(env, key) {
   if (!env?.BOOKING_KV || !safeStr(key, 260)) {
-    return { ok: false, key: safeStr(key, 260), index: null };
+    return { ok: false, key: safeStr(key, 260), index: null, exists: false, valid: false };
   }
   try {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
-    const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const rawObject = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+    const source = rawObject || {};
     const incomingItems = Array.isArray(source.items) ? source.items : [];
     const items = incomingItems
       .map((entry) => {
@@ -7792,6 +7793,8 @@ async function readScopedAssignmentBookingIndex(env, key) {
     return {
       ok: true,
       key,
+      exists: !!rawObject,
+      valid: !rawObject || Array.isArray(rawObject?.items),
       index: {
         version: 1,
         updated_at: safeStr(source?.updated_at ?? source?.updatedAt, 80),
@@ -7799,7 +7802,7 @@ async function readScopedAssignmentBookingIndex(env, key) {
       },
     };
   } catch (_) {
-    return { ok: false, key, index: null };
+    return { ok: false, key, index: null, exists: false, valid: false };
   }
 }
 
@@ -15689,12 +15692,18 @@ GET /oauth/callback
         console.log(
           `[DRIVER_BOOKINGS][REQ] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)}`,
         );
-        const items = await listDriverBookingsAuthoritative(env, {
+        const listOut = await listDriverBookingsAuthoritative(env, {
           limit,
           includeHistory,
           tenantScope,
           driverSession: session,
         });
+        if (!listOut?.ok) {
+          const reason = safeStr(listOut?.error, 80) || "driver_booking_index_unavailable";
+          const statusCode = reason === "driver_booking_index_stale" ? 503 : 503;
+          return json({ ok: false, error: reason }, statusCode);
+        }
+        const items = Array.isArray(listOut?.items) ? listOut.items : [];
         console.log(
           `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${items.length}`,
         );
@@ -30604,53 +30613,145 @@ async function listDriverBookingsAuthoritative(
   env,
   { limit = 50, includeHistory = false, tenantScope = null, driverSession = null } = {},
 ) {
-  if (!tenantScope?.hasScope) return [];
+  if (!tenantScope?.hasScope) return { ok: true, items: [] };
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const lim = Math.min(200, Math.max(1, Number(limit) || 50));
   const sessionDriverId = _scopeText(driverSession?.driver_id, 96);
   const sessionVehicleId = _scopeText(driverSession?.assigned_vehicle_id, 128);
-  if (!sessionDriverId && !sessionVehicleId) return [];
+  if (!sessionDriverId && !sessionVehicleId) return { ok: true, items: [] };
+
+  const sources = [];
+  if (sessionDriverId) {
+    sources.push({
+      kind: "driver",
+      key: driverScopedBookingsIndexKey(tenantScope, sessionDriverId),
+    });
+  }
+  if (sessionVehicleId) {
+    sources.push({
+      kind: "vehicle",
+      key: vehicleScopedBookingsIndexKey(tenantScope, sessionVehicleId),
+    });
+  }
+  const normalizedSources = sources.filter((source) => !!safeStr(source?.key, 260));
+  if (!normalizedSources.length) {
+    return { ok: false, error: "driver_booking_index_unavailable" };
+  }
+
+  const readResults = [];
+  let availableCount = 0;
+  let unavailableCount = 0;
+  let staleUnavailableCount = 0;
+  const staleAfterMs = Math.max(
+    0,
+    Number(env?.DRIVER_BOOKING_INDEX_STALE_AFTER_MS || 0) || 0,
+  );
+  for (const source of normalizedSources) {
+    const read = await readScopedAssignmentBookingIndex(env, source.key);
+    const updatedAtMs = Date.parse(safeStr(read?.index?.updated_at ?? read?.index?.updatedAt, 80));
+    const stale = staleAfterMs > 0 && (!Number.isFinite(updatedAtMs) || (Date.now() - updatedAtMs) > staleAfterMs);
+    const available = !!(read?.ok && read?.exists && read?.valid && read?.index && !stale);
+    if (available) {
+      availableCount += 1;
+    } else {
+      unavailableCount += 1;
+      if (stale) staleUnavailableCount += 1;
+    }
+    readResults.push({ ...source, read, available, stale });
+  }
+  if (!availableCount && normalizedSources.length > 0) {
+    return {
+      ok: false,
+      error: staleUnavailableCount > 0
+        ? "driver_booking_index_stale"
+        : "driver_booking_index_unavailable",
+    };
+  }
+  if (availableCount > 0 && unavailableCount > 0) {
+    console.log(
+      `[DRIVER_BOOKINGS][DEGRADED_INDEX] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} available=${availableCount} unavailable=${unavailableCount} stale=${staleUnavailableCount}`,
+    );
+  }
+
+  const bookingToSourceKeys = new Map();
+  const candidateIds = new Set();
+  for (const source of readResults) {
+    if (!source.available) continue;
+    const items = Array.isArray(source?.read?.index?.items) ? source.read.index.items : [];
+    for (const item of items) {
+      const bookingId = safeStr(item?.booking_id ?? item?.bookingId, 160);
+      if (!bookingId) continue;
+      candidateIds.add(bookingId);
+      const keySet = bookingToSourceKeys.get(bookingId) || new Set();
+      keySet.add(source.key);
+      bookingToSourceKeys.set(bookingId, keySet);
+    }
+  }
 
   const nowMs = Date.now();
   const actionableGraceMs = 6 * 60 * 60 * 1000;
   const cutoffMs = nowMs - actionableGraceMs;
   const out = [];
-  let cursor = undefined;
-  do {
-    const listed = await env.BOOKING_KV.list({
-      prefix: "booking:",
-      limit: 1000,
-      cursor,
-    });
-    for (const k of listed?.keys || []) {
-      const name = String(k?.name || "");
-      if (!name.startsWith("booking:")) continue;
-      const bookingId = name.slice("booking:".length);
-      if (!bookingId) continue;
-      const rec = await env.BOOKING_KV.get(name, { type: "json" });
-      if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
-      const assignedDriverId = bookingAssignedDriverId(rec);
-      const assignedVehicleId = bookingAssignedVehicleId(rec);
-      const driverMatch = !!(sessionDriverId && assignedDriverId && sessionDriverId === assignedDriverId);
-      const vehicleMatch = !!(sessionVehicleId && assignedVehicleId && sessionVehicleId === assignedVehicleId);
-      if (!driverMatch && !vehicleMatch) continue;
-      const row = _flattenBookingForRidesList(bookingId, rec);
-      if (
-        !includeHistory &&
-        (row.status === "COMPLETED" || row.status === "CANCELLED")
-      ) continue;
-      if (!includeHistory) {
-        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-        if (!Number.isFinite(pickupTs)) continue;
-        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+  const staleIdsByKey = new Map();
+  for (const bookingId of candidateIds) {
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
+        const stale = staleIdsByKey.get(indexKey) || new Set();
+        stale.add(bookingId);
+        staleIdsByKey.set(indexKey, stale);
       }
-      out.push(row);
+      continue;
     }
-    cursor = listed?.cursor;
-    if (listed?.list_complete !== false) break;
-    if (!cursor) break;
-  } while (cursor);
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
+        const stale = staleIdsByKey.get(indexKey) || new Set();
+        stale.add(bookingId);
+        staleIdsByKey.set(indexKey, stale);
+      }
+      continue;
+    }
+    const assignedDriverId = bookingAssignedDriverId(rec);
+    const assignedVehicleId = bookingAssignedVehicleId(rec);
+    const driverMatch = !!(sessionDriverId && assignedDriverId && sessionDriverId === assignedDriverId);
+    const vehicleMatch = !!(sessionVehicleId && assignedVehicleId && sessionVehicleId === assignedVehicleId);
+    if (!driverMatch && !vehicleMatch) {
+      for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
+        const stale = staleIdsByKey.get(indexKey) || new Set();
+        stale.add(bookingId);
+        staleIdsByKey.set(indexKey, stale);
+      }
+      continue;
+    }
+    const row = _flattenBookingForRidesList(bookingId, rec);
+    if (
+      !includeHistory &&
+      (row.status === "COMPLETED" || row.status === "CANCELLED")
+    ) continue;
+    if (!includeHistory) {
+      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+      if (!Number.isFinite(pickupTs)) continue;
+      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+    }
+    out.push(row);
+  }
+
+  for (const source of readResults) {
+    const staleIds = staleIdsByKey.get(source.key);
+    if (!source.available || !staleIds || staleIds.size === 0) continue;
+    try {
+      const sourceItems = Array.isArray(source?.read?.index?.items) ? source.read.index.items : [];
+      const nextItems = sourceItems.filter((entry) => {
+        const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+        return bookingId && !staleIds.has(bookingId);
+      });
+      if (nextItems.length !== sourceItems.length) {
+        await saveScopedAssignmentBookingIndex(env, source.key, { items: nextItems });
+      }
+    } catch (_) {
+      // Best-effort stale pruning; never fail the driver bookings response.
+    }
+  }
 
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
@@ -30658,7 +30759,7 @@ async function listDriverBookingsAuthoritative(
     return ta - tb;
   });
 
-  return out.slice(0, lim);
+  return { ok: true, items: out.slice(0, lim) };
 }
 
 const DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES = [
