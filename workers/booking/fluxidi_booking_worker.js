@@ -24337,30 +24337,142 @@ function ensureTrackingScopeForRecord(rec, requestedScope) {
   return null;
 }
 
-async function _resolveTrackingBookingBySessionId(env, sessionOrTripId) {
-  const wanted = String(sessionOrTripId || "").trim();
-  if (!wanted) return null;
-  if (!env?.BOOKING_KV) return null;
-  const listed = await env.BOOKING_KV.list({ prefix: "booking:", limit: 1000 });
-  for (const k of listed?.keys || []) {
-    const key = String(k?.name || "");
-    if (!key.startsWith("booking:")) continue;
-    const rec = await env.BOOKING_KV.get(key, { type: "json" });
-    if (!rec || typeof rec !== "object") continue;
-    const recTripId = safeStr(
-      rec?.trip?.trip_id ||
-        rec?.trip?.session_id ||
-        rec?.tracking_last?.trip_id ||
-        rec?.tracking_last?.session_id,
-      160,
+function _trackingMappingSafePart(value, maxLen = 160) {
+  const text = sanitizeTenantString(value, maxLen);
+  if (!text) return "";
+  return text.replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+
+function trackingSessionBookingMapKey(scope, sessionId) {
+  const tenantId = _trackingMappingSafePart(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = _trackingMappingSafePart(scope?.company_id ?? scope?.companyId, 80);
+  const safeSessionId = _trackingMappingSafePart(sessionId, 160);
+  if (!tenantId || !companyId || !safeSessionId) return "";
+  return `tenant:${tenantId}:company:${companyId}:tracking:session:${safeSessionId}:booking:v1`;
+}
+
+function trackingTripBookingMapKey(scope, tripId) {
+  const tenantId = _trackingMappingSafePart(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = _trackingMappingSafePart(scope?.company_id ?? scope?.companyId, 80);
+  const safeTripId = _trackingMappingSafePart(tripId, 160);
+  if (!tenantId || !companyId || !safeTripId) return "";
+  return `tenant:${tenantId}:company:${companyId}:tracking:trip:${safeTripId}:booking:v1`;
+}
+
+async function _upsertTrackingBookingMappingBestEffort(
+  env,
+  scope,
+  { bookingId = "", sessionId = "", tripId = "", reason = "" } = {},
+) {
+  if (!env?.BOOKING_KV) return;
+  const tenantId = _trackingMappingSafePart(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = _trackingMappingSafePart(scope?.company_id ?? scope?.companyId, 80);
+  const safeBookingId = _trackingMappingSafePart(bookingId, 160);
+  if (!tenantId || !companyId || !safeBookingId) return;
+  const sessionKey = trackingSessionBookingMapKey(
+    { tenant_id: tenantId, company_id: companyId },
+    sessionId,
+  );
+  const tripKey = trackingTripBookingMapKey(
+    { tenant_id: tenantId, company_id: companyId },
+    tripId,
+  );
+  if (!sessionKey && !tripKey) return;
+  const payload = JSON.stringify({
+    booking_id: safeBookingId,
+    updated_at: new Date().toISOString(),
+  });
+  const scopeMask =
+    `tenant=${_maskPublicDriverLoginValue(tenantId)} company=${_maskPublicDriverLoginValue(companyId)}`;
+  const reasonCode = _trackingMappingSafePart(reason, 40) || "unspecified";
+  try {
+    if (tripKey) await env.BOOKING_KV.put(tripKey, payload);
+    if (sessionKey) await env.BOOKING_KV.put(sessionKey, payload);
+    console.log(
+      `[TRACKING_MAPPING][UPSERT] ${scopeMask} reason=${reasonCode} trip=${tripKey ? "1" : "0"} session=${sessionKey ? "1" : "0"} booking=${_bookingIntentMask(safeBookingId)}`,
     );
-    if (!recTripId || recTripId !== wanted) continue;
-    return {
-      booking_id: key.slice("booking:".length),
-      key,
-      rec,
-    };
+  } catch (_) {
+    // Best-effort mapping write only: never fail tracking flow.
   }
+}
+
+async function _resolveTrackingBookingBySessionId(
+  env,
+  requestedScope,
+  { tripId = "", sessionId = "" } = {},
+) {
+  if (!env?.BOOKING_KV) return null;
+  const tenantId = _trackingMappingSafePart(
+    requestedScope?.tenant_id ?? requestedScope?.tenantId,
+    80,
+  );
+  const companyId = _trackingMappingSafePart(
+    requestedScope?.company_id ?? requestedScope?.companyId,
+    80,
+  );
+  const safeTripId = _trackingMappingSafePart(tripId, 160);
+  const safeSessionId = _trackingMappingSafePart(sessionId, 160);
+  if (!tenantId || !companyId || (!safeTripId && !safeSessionId)) return null;
+  const scopeMask =
+    `tenant=${_maskPublicDriverLoginValue(tenantId)} company=${_maskPublicDriverLoginValue(companyId)}`;
+  console.log(
+    `[TRACKING_MAPPING][NO_SCAN] ${scopeMask}`,
+  );
+  const candidates = [
+    {
+      source: "trip",
+      key: trackingTripBookingMapKey(
+        { tenant_id: tenantId, company_id: companyId },
+        safeTripId,
+      ),
+    },
+    {
+      source: "session_as_trip",
+      key: safeSessionId && safeSessionId !== safeTripId
+        ? trackingTripBookingMapKey(
+          { tenant_id: tenantId, company_id: companyId },
+          safeSessionId,
+        )
+        : "",
+    },
+    {
+      source: "session",
+      key: trackingSessionBookingMapKey(
+        { tenant_id: tenantId, company_id: companyId },
+        safeSessionId,
+      ),
+    },
+  ].filter((item) => !!item.key);
+  for (const candidate of candidates) {
+    try {
+      const mapped = await env.BOOKING_KV.get(candidate.key, { type: "json" });
+      const mappedBookingId = _trackingMappingSafePart(
+        mapped?.booking_id ?? mapped?.bookingId,
+        160,
+      );
+      if (!mappedBookingId) continue;
+      const loaded = await loadBookingRecord(env, mappedBookingId);
+      if (!bookingMatchesRequiredTenantCompanyScope(loaded.rec, requestedScope)) {
+        console.log(
+          `[TRACKING_MAPPING][SCOPE_MISMATCH] ${scopeMask} source=${candidate.source} booking=${_bookingIntentMask(mappedBookingId)}`,
+        );
+        continue;
+      }
+      console.log(
+        `[TRACKING_MAPPING][HIT] ${scopeMask} source=${candidate.source} booking=${_bookingIntentMask(mappedBookingId)}`,
+      );
+      return {
+        booking_id: mappedBookingId,
+        key: loaded.key,
+        rec: loaded.rec,
+      };
+    } catch (_) {
+      // Best-effort lookup fallback to next candidate.
+    }
+  }
+  console.log(
+    `[TRACKING_MAPPING][MISS] ${scopeMask}`,
+  );
   return null;
 }
 
@@ -24419,6 +24531,16 @@ async function trackingStart(body, env, requestedScope = null) {
     };
 
     await env.BOOKING_KV.put(key, JSON.stringify(rec));
+    await _upsertTrackingBookingMappingBestEffort(
+      env,
+      requestedScope,
+      {
+        bookingId: booking_id,
+        sessionId: safeStr(body?.session_id || body?.sessionId, 160),
+        tripId: trip_id,
+        reason: "tracking_start",
+      },
+    );
     return { ok: true, booking_id,
       build: FLUXIDI_BUILD, trip_id };
   } catch (err) {
@@ -24431,8 +24553,11 @@ async function trackingPing(body, env, requestedScope = null) {
     const booking_id = safeStr(body?.booking_id || body?.bookingId);
     const session_id = safeStr(
       body?.session_id ||
-        body?.sessionId ||
-        body?.trip_id ||
+        body?.sessionId,
+      160,
+    );
+    const trip_id = safeStr(
+      body?.trip_id ||
         body?.tripId,
       160,
     );
@@ -24448,10 +24573,14 @@ async function trackingPing(body, env, requestedScope = null) {
     let loaded = null;
     if (resolvedBookingId) {
       loaded = await loadBookingRecord(env, resolvedBookingId);
-    } else if (session_id) {
-      const resolved = await _resolveTrackingBookingBySessionId(env, session_id);
+    } else if (session_id || trip_id) {
+      const resolved = await _resolveTrackingBookingBySessionId(
+        env,
+        requestedScope,
+        { tripId: trip_id, sessionId: session_id },
+      );
       if (!resolved?.booking_id || !resolved?.rec) {
-        throw new Error("Booking not found");
+        return { ok: false, error: "missing_tracking_booking_scope" };
       }
       resolvedBookingId = resolved.booking_id;
       loaded = { key: resolved.key, rec: resolved.rec };
@@ -24474,9 +24603,21 @@ async function trackingPing(body, env, requestedScope = null) {
       heading: Number.isFinite(heading) ? heading : null,
       ts: body?.ts || new Date().toISOString(),
       device: body?.device || "driver_phone",
+      ...(trip_id ? { trip_id } : {}),
+      ...(session_id ? { session_id } : {}),
     };
 
     await env.BOOKING_KV.put(key, JSON.stringify(rec));
+    await _upsertTrackingBookingMappingBestEffort(
+      env,
+      requestedScope,
+      {
+        bookingId: resolvedBookingId,
+        sessionId: session_id,
+        tripId: trip_id || safeStr(rec?.trip?.trip_id, 160),
+        reason: "tracking_ping",
+      },
+    );
 
     return { ok: true, booking_id: resolvedBookingId,
       build: FLUXIDI_BUILD, tracking_last: rec.tracking_last };
@@ -24496,8 +24637,11 @@ async function trackingLast(url, env, requestedScope = null) {
     );
     const session_id = safeStr(
       url?.searchParams?.get("session_id") ||
-        url?.searchParams?.get("sessionId") ||
-        url?.searchParams?.get("trip_id") ||
+        url?.searchParams?.get("sessionId"),
+      160,
+    );
+    const trip_id = safeStr(
+      url?.searchParams?.get("trip_id") ||
         url?.searchParams?.get("tripId"),
       160,
     );
@@ -24507,8 +24651,12 @@ async function trackingLast(url, env, requestedScope = null) {
     if (resolvedBookingId) {
       const loaded = await loadBookingRecord(env, resolvedBookingId);
       rec = loaded.rec;
-    } else if (session_id) {
-      const resolved = await _resolveTrackingBookingBySessionId(env, session_id);
+    } else if (session_id || trip_id) {
+      const resolved = await _resolveTrackingBookingBySessionId(
+        env,
+        requestedScope,
+        { tripId: trip_id, sessionId: session_id },
+      );
       if (!resolved?.booking_id || !resolved?.rec) {
         return { ok: false, error: "missing_tracking_booking_scope" };
       }
