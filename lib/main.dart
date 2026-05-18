@@ -20436,9 +20436,17 @@ class CustomerHomePage extends StatelessWidget {
           fr: 'Taxi à proximité',
           es: 'Taxi cerca',
         ),
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const NearbyPartnersPage())),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => NearbyPartnersPage(
+              customerHomeBuilder: (_) => const CustomerHomePage(),
+              regionRegistrationBuilder: (_) =>
+                  const CustomerRegionRegistrationPage(),
+              syncCustomerProfileFromBackend:
+                  _syncCustomerProfileFromBackendBestEffort,
+            ),
+          ),
+        ),
       ),
       (
         icon: Icons.app_registration_outlined,
@@ -20691,7 +20699,15 @@ class CustomerHomePage extends StatelessWidget {
             if (i == 0) return;
             if (i == 1) {
               Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const NearbyPartnersPage()),
+                MaterialPageRoute(
+                  builder: (_) => NearbyPartnersPage(
+                    customerHomeBuilder: (_) => const CustomerHomePage(),
+                    regionRegistrationBuilder: (_) =>
+                        const CustomerRegionRegistrationPage(),
+                    syncCustomerProfileFromBackend:
+                        _syncCustomerProfileFromBackendBestEffort,
+                  ),
+                ),
               );
               return;
             }
@@ -27527,8 +27543,20 @@ class _RegionRadarPainter extends CustomPainter {
   }
 }
 
+typedef CustomerProfileBackendSync =
+    Future<CustomerProfile?> Function({required String reason});
+
 class NearbyPartnersPage extends StatefulWidget {
-  const NearbyPartnersPage({super.key});
+  final WidgetBuilder customerHomeBuilder;
+  final WidgetBuilder regionRegistrationBuilder;
+  final CustomerProfileBackendSync syncCustomerProfileFromBackend;
+
+  const NearbyPartnersPage({
+    super.key,
+    required this.customerHomeBuilder,
+    required this.regionRegistrationBuilder,
+    required this.syncCustomerProfileFromBackend,
+  });
 
   @override
   State<NearbyPartnersPage> createState() => _NearbyPartnersPageState();
@@ -27561,7 +27589,13 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+  }) {
+    final lang = appConfig.currentLanguage;
+    if (lang == AppLanguage.en) return en;
+    if (lang == AppLanguage.fr) return fr;
+    if (lang == AppLanguage.es) return es;
+    return nl;
+  }
 
   @override
   void initState() {
@@ -27658,10 +27692,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       _favoritesLoading = true;
       _favoritesError = null;
     });
-    CustomerProfile? resolvedProfile =
-        await _syncCustomerProfileFromBackendBestEffort(
-          reason: 'favorite_partners_$reason',
-        );
+    CustomerProfile? resolvedProfile = await widget
+        .syncCustomerProfileFromBackend(reason: 'favorite_partners_$reason');
     resolvedProfile ??= await CustomerProfileStore.instance.load();
     final ids = resolvedProfile?.favoritePartnerIds.toSet() ?? <String>{};
     final limitedIds = ids
@@ -27988,7 +28020,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         builder: (_) => PartnerPublicProfilePage(
           partnerId: partnerId,
           companyNameFallback: companyName,
-          customerHomeBuilder: (_) => const CustomerHomePage(),
+          customerHomeBuilder: widget.customerHomeBuilder,
         ),
       ),
     );
@@ -28008,7 +28040,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           persistToCustomerBookings: true,
           onGoToStartPage: () {
             Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+              MaterialPageRoute(builder: widget.customerHomeBuilder),
               (route) => false,
             );
           },
@@ -28857,8 +28889,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  const CustomerRegionRegistrationPage(),
+                              builder: widget.regionRegistrationBuilder,
                             ),
                           );
                         },
