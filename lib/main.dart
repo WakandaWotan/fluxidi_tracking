@@ -5638,22 +5638,172 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     return value;
   }
 
-  ({String companyCode, String driverCode})? _parseDriverLoginQrPayload(
-    String raw,
-  ) {
+  ({String kind, String companyCode, String code, String challengeId})?
+  _parseDriverQrPayload(String raw) {
     final text = raw.trim();
     if (text.isEmpty) return null;
     final uri = Uri.tryParse(text);
     if (uri == null) return null;
     if (uri.scheme.toLowerCase() != 'fluxidi') return null;
-    if (uri.host.toLowerCase() != 'driver-login') return null;
+    final host = uri.host.toLowerCase();
     final companyCode = (uri.queryParameters['company_code'] ?? '')
         .trim()
         .toUpperCase();
-    final driverCode = (uri.queryParameters['driver_code'] ?? '').trim();
-    if (companyCode.isEmpty || driverCode.isEmpty) return null;
+    if (companyCode.isEmpty) return null;
     if (!RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(companyCode)) return null;
-    return (companyCode: companyCode, driverCode: driverCode);
+    if (host == 'driver-link') {
+      final pairingCode = (uri.queryParameters['pairing_code'] ?? '').trim();
+      final challengeId = (uri.queryParameters['challenge_id'] ?? '').trim();
+      if (pairingCode.isEmpty) return null;
+      return (
+        kind: 'driver_link',
+        companyCode: companyCode,
+        code: pairingCode,
+        challengeId: challengeId,
+      );
+    }
+    if (host == 'driver-login') {
+      final driverCode = (uri.queryParameters['driver_code'] ?? '').trim();
+      if (driverCode.isEmpty) return null;
+      return (
+        kind: 'driver_login_legacy',
+        companyCode: companyCode,
+        code: driverCode,
+        challengeId: '',
+      );
+    }
+    return null;
+  }
+
+  Future<bool> _confirmDriverLinkQrUse({required String companyCode}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t(
+            nl: 'Tijdelijke koppel-QR gebruiken?',
+            en: 'Use temporary pairing QR?',
+            fr: 'Utiliser le QR de liaison temporaire ?',
+            es: '¿Usar QR temporal de vinculación?',
+          ),
+        ),
+        content: Text(
+          _t(
+            nl: 'Je gaat koppelen met bedrijfscode $companyCode. Deze QR is éénmalig bruikbaar.',
+            en: 'You are about to pair with company code $companyCode. This QR is one-time use.',
+            fr: 'Vous allez vous lier avec le code entreprise $companyCode. Ce QR est à usage unique.',
+            es: 'Vas a vincularte con el código de empresa $companyCode. Este QR es de un solo uso.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              _t(
+                nl: 'Doorgaan',
+                en: 'Continue',
+                fr: 'Continuer',
+                es: 'Continuar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _verifyDriverLinkFromQr({
+    required String companyCode,
+    required String pairingCode,
+    String challengeId = '',
+  }) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _lookupError = null;
+    });
+    final response = await _verifyDriverPairingCode(
+      companyCode: companyCode,
+      pairingCode: pairingCode,
+      challengeId: challengeId,
+    );
+    if (!mounted) return;
+    if (response['ok'] != true) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final payload = response['payload'] is Map
+        ? Map<String, dynamic>.from(response['payload'] as Map)
+        : <String, dynamic>{};
+    final tenantId = (payload['tenant_id'] ?? '').toString().trim();
+    final companyId = (payload['company_id'] ?? '').toString().trim();
+    final resolvedCompanyCode = (payload['company_code'] ?? '')
+        .toString()
+        .trim();
+    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
+    final ok = payload['ok'] == true;
+    final driverMap = payload['driver'] is Map
+        ? Map<String, dynamic>.from(payload['driver'] as Map)
+        : <String, dynamic>{};
+    final driverId = (driverMap['driver_id'] ?? '').toString().trim();
+    final driverName = (driverMap['driver_name'] ?? '').toString().trim();
+    final employeeNumber = (driverMap['employee_number'] ?? '')
+        .toString()
+        .trim();
+    final assignedVehicleId =
+        (driverMap['assigned_vehicle_id'] ??
+                driverMap['assignedVehicleId'] ??
+                '')
+            .toString()
+            .trim();
+    if (!ok ||
+        role != 'driver' ||
+        tenantId.isEmpty ||
+        companyId.isEmpty ||
+        resolvedCompanyCode.isEmpty ||
+        driverId.isEmpty ||
+        employeeNumber.isEmpty) {
+      setState(() {
+        _busy = false;
+        _lookupError = _driverPairingInvalidText();
+      });
+      return;
+    }
+    final issuedAt = DateTime.tryParse(
+      (payload['issued_at'] ?? '').toString().trim(),
+    );
+    final expiresAt = DateTime.tryParse(
+      (payload['expires_at'] ?? '').toString().trim(),
+    );
+    await DriverSessionStore.instance.saveVerifiedDriverPairingSession(
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: resolvedCompanyCode,
+      driverId: driverId,
+      driverName: driverName,
+      employeeNumber: employeeNumber,
+      assignedVehicleId: assignedVehicleId,
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    setAppRole(AppRole.driver);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+    );
   }
 
   Future<void> _scanDriverLoginQr() async {
@@ -5662,7 +5812,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       MaterialPageRoute(builder: (_) => const DriverLoginQrScannerPage()),
     );
     if (!mounted || raw == null) return;
-    final parsed = _parseDriverLoginQrPayload(raw);
+    final parsed = _parseDriverQrPayload(raw);
     if (parsed == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -5678,20 +5828,44 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       );
       return;
     }
+    if (parsed.kind == 'driver_login_legacy') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Deze QR is verouderd. Maak een tijdelijke koppel-QR.',
+              en: 'This QR is outdated. Create a temporary pairing QR.',
+              fr: 'Ce QR est obsolète. Créez un QR de liaison temporaire.',
+              es: 'Este QR está obsoleto. Crea un QR temporal de vinculación.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final confirmed = await _confirmDriverLinkQrUse(
+      companyCode: parsed.companyCode,
+    );
+    if (!mounted || !confirmed) return;
     _companyCtrl.text = parsed.companyCode;
-    _idCtrl.text = parsed.driverCode;
-    setState(() => _lookupError = null);
+    _idCtrl.text = parsed.code;
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           _t(
-            nl: 'QR gelezen. Controleer en tik op Verbinden.',
-            en: 'QR read. Review and tap Connect.',
-            fr: 'QR lu. Vérifiez puis appuyez sur Connecter.',
-            es: 'QR leído. Revisa y toca Conectar.',
+            nl: 'Tijdelijke koppel-QR gelezen. Controle wordt uitgevoerd...',
+            en: 'Temporary pairing QR read. Verifying...',
+            fr: 'QR de liaison temporaire lu. Vérification...',
+            es: 'QR temporal de vinculación leído. Verificando...',
           ),
         ),
       ),
+    );
+    await _verifyDriverLinkFromQr(
+      companyCode: parsed.companyCode,
+      pairingCode: parsed.code,
+      challengeId: parsed.challengeId,
     );
   }
 
@@ -5830,6 +6004,7 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   Future<Map<String, dynamic>> _verifyDriverPairingCode({
     required String companyCode,
     required String pairingCode,
+    String challengeId = '',
   }) async {
     final uri = Uri.parse('$kBookingBaseUrl/public/company/driver-link/verify');
     try {
@@ -5840,6 +6015,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
             body: jsonEncode(<String, dynamic>{
               'company_code': companyCode,
               'pairing_code': pairingCode,
+              if (challengeId.trim().isNotEmpty) ...{
+                'challenge_id': challengeId.trim(),
+                'challengeId': challengeId.trim(),
+              },
               'device_label': 'Tablet chauffeur',
               'device_type': 'tablet',
             }),
@@ -13569,15 +13748,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   Future<void> _showGeneratedDriverCodeDialog(
     BuildContext context, {
     required String loginCode,
-    required String companyCode,
     required String driverName,
+    required Future<void> Function() onCreateTemporaryQr,
   }) async {
     final trimmedCode = loginCode.trim();
     if (trimmedCode.isEmpty) return;
-    final trimmedCompanyCode = companyCode.trim();
-    final qrPayload = trimmedCompanyCode.isNotEmpty
-        ? 'fluxidi://driver-login?company_code=${Uri.encodeComponent(trimmedCompanyCode)}&driver_code=${Uri.encodeComponent(trimmedCode)}&v=1'
-        : trimmedCode;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -13647,18 +13822,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               _t(
-                nl: trimmedCompanyCode.isNotEmpty
-                    ? 'De QR bevat bedrijfscode en chauffeurcode.'
-                    : 'De QR bevat alleen de chauffeurcode. Vul de bedrijfscode apart in.',
-                en: trimmedCompanyCode.isNotEmpty
-                    ? 'The QR contains company code and driver code.'
-                    : 'The QR contains only the driver code. Enter the company code separately.',
-                fr: trimmedCompanyCode.isNotEmpty
-                    ? 'Le QR contient le code entreprise et le code chauffeur.'
-                    : 'Le QR contient uniquement le code chauffeur. Saisissez le code entreprise séparément.',
-                es: trimmedCompanyCode.isNotEmpty
-                    ? 'El QR contiene código de empresa y código de conductor.'
-                    : 'El QR contiene solo el código de conductor. Introduce el código de empresa por separado.',
+                nl: 'Voor QR-koppeling maak je een tijdelijke koppel-QR.',
+                en: 'For QR pairing, create a temporary pairing QR.',
+                fr: 'Pour le couplage QR, créez un QR de liaison temporaire.',
+                es: 'Para vinculación por QR, crea un QR temporal de vinculación.',
               ),
               style: TextStyle(
                 color: Colors.white.withOpacity(0.72),
@@ -13666,24 +13833,6 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 height: 1.3,
               ),
             ),
-            if (trimmedCode.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: QrImageView(
-                    data: qrPayload,
-                    version: QrVersions.auto,
-                    size: 140,
-                    backgroundColor: Colors.white,
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
         actions: [
@@ -13707,6 +13856,21 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             icon: const Icon(Icons.copy_outlined, size: 16),
             label: Text(
               _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await onCreateTemporaryQr();
+            },
+            icon: const Icon(Icons.qr_code_2_outlined, size: 16),
+            label: Text(
+              _t(
+                nl: 'Tijdelijke koppel-QR maken',
+                en: 'Create temporary pairing QR',
+                fr: 'Créer un QR de liaison temporaire',
+                es: 'Crear QR temporal de vinculación',
+              ),
             ),
           ),
           FilledButton(
@@ -14805,6 +14969,301 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     return (tenantId: kTenantId, companyId: kTenantId);
   }
 
+  String _temporaryDriverLinkExpiryLabel({
+    required String expiresAt,
+    int? expiresInSeconds,
+  }) {
+    final iso = expiresAt.trim();
+    if (iso.isNotEmpty) {
+      return _t(
+        nl: 'Geldig tot $iso',
+        en: 'Valid until $iso',
+        fr: 'Valide jusqu’à $iso',
+        es: 'Válido hasta $iso',
+      );
+    }
+    final seconds = expiresInSeconds ?? 0;
+    if (seconds > 0) {
+      final minutes = (seconds / 60).ceil();
+      return _t(
+        nl: 'Geldig ongeveer $minutes minuten',
+        en: 'Valid for about $minutes minutes',
+        fr: 'Valide environ $minutes minutes',
+        es: 'Válido durante aproximadamente $minutes minutos',
+      );
+    }
+    return _t(
+      nl: 'Tijdelijke code verloopt binnenkort.',
+      en: 'Temporary code expires soon.',
+      fr: 'Le code temporaire expire bientôt.',
+      es: 'El código temporal caduca pronto.',
+    );
+  }
+
+  Future<void> _showTemporaryDriverLinkQrDialog(
+    BuildContext context, {
+    required String companyCode,
+    required String pairingCode,
+    required String challengeId,
+    required String driverName,
+    required String expiresAt,
+    int? expiresInSeconds,
+  }) async {
+    final payload =
+        'fluxidi://driver-link?company_code=${Uri.encodeComponent(companyCode)}&pairing_code=${Uri.encodeComponent(pairingCode)}&challenge_id=${Uri.encodeComponent(challengeId)}&v=1';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF141B2F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t(
+            nl: 'Tijdelijke koppel-QR',
+            en: 'Temporary pairing QR',
+            fr: 'QR de liaison temporaire',
+            es: 'QR temporal de vinculación',
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              driverName.trim().isEmpty
+                  ? _t(
+                      nl: 'Chauffeur',
+                      en: 'Driver',
+                      fr: 'Chauffeur',
+                      es: 'Conductor',
+                    )
+                  : _displayDriverName(driverName),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.86),
+                fontSize: 12.8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Deze QR is éénmalig bruikbaar.',
+                en: 'This QR is one-time use.',
+                fr: 'Ce QR est à usage unique.',
+                es: 'Este QR es de un solo uso.',
+              ),
+              style: TextStyle(
+                color: Colors.orangeAccent.withOpacity(0.95),
+                fontSize: 12.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _temporaryDriverLinkExpiryLabel(
+                expiresAt: expiresAt,
+                expiresInSeconds: expiresInSeconds,
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.74),
+                fontSize: 11.8,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: QrImageView(
+                  data: payload,
+                  version: QrVersions.auto,
+                  size: 160,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F1322),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _gold.withOpacity(0.38)),
+              ),
+              child: SelectableText(
+                pairingCode,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  letterSpacing: 0.4,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: pairingCode));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _t(
+                      nl: 'Tijdelijke koppelcode gekopieerd.',
+                      en: 'Temporary pairing code copied.',
+                      fr: 'Code de liaison temporaire copié.',
+                      es: 'Código temporal de vinculación copiado.',
+                    ),
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.copy_outlined, size: 16),
+            label: Text(
+              _t(nl: 'Kopieren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openTemporaryDriverLinkQr(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final driverId = driver.id.trim();
+    debugPrint('[DRIVER_LINK_QR][START] driver=${_maskDriverForLog(driverId)}');
+    if (driverId.isEmpty) {
+      debugPrint('[DRIVER_LINK_QR][NO_DRIVER_ID]');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Deze chauffeur heeft nog geen geldige driver-id.',
+              en: 'This driver does not have a valid driver ID yet.',
+              fr: 'Ce chauffeur n’a pas encore d’identifiant chauffeur valide.',
+              es: 'Este conductor aún no tiene un ID de conductor válido.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final publicCompanyCode = _resolvePublicCompanyCodeForDriverQr();
+    debugPrint(
+      '[DRIVER_LINK_QR][PUBLIC_CODE] found=${_isValidPublicCompanyCodeForDriverQr(publicCompanyCode)} code=${_maskScopeForLog(publicCompanyCode)}',
+    );
+    if (!_isValidPublicCompanyCodeForDriverQr(publicCompanyCode)) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Geen geldige publieke bedrijfscode beschikbaar voor tijdelijke koppel-QR.',
+              en: 'No valid public company code available for temporary pairing QR.',
+              fr: 'Aucun code entreprise public valide disponible pour le QR de liaison temporaire.',
+              es: 'No hay un código público de empresa válido para el QR temporal de vinculación.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final scope = _activeCompanyScopeForDriverDelete(driver);
+    debugPrint(
+      '[DRIVER_LINK_QR][SCOPE] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
+    );
+    debugPrint('[DRIVER_LINK_QR][CREATE_REQ]');
+    final created = await createDriverLinkCode(
+      driverId: driverId,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      companyCode: publicCompanyCode,
+    );
+    final ok = created != null && created['ok'] == true;
+    final hasPairing = (created?['pairing_code'] ?? '')
+        .toString()
+        .trim()
+        .isNotEmpty;
+    final hasChallenge = (created?['challenge_id'] ?? '')
+        .toString()
+        .trim()
+        .isNotEmpty;
+    final hasExpires =
+        (created?['expires_at'] ?? '').toString().trim().isNotEmpty ||
+        (created?['expires_in_seconds'] ?? '').toString().trim().isNotEmpty;
+    debugPrint(
+      '[DRIVER_LINK_QR][CREATE_RES] ok=$ok has_pairing=$hasPairing has_challenge=$hasChallenge has_expires=$hasExpires',
+    );
+    if (!ok) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Tijdelijke koppel-QR kon niet worden aangemaakt.',
+              en: 'Could not create temporary pairing QR.',
+              fr: 'Impossible de créer le QR de liaison temporaire.',
+              es: 'No se pudo crear el QR temporal de vinculación.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final companyCode = (created['company_code'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+    final pairingCode = (created['pairing_code'] ?? '').toString().trim();
+    final challengeId = (created['challenge_id'] ?? '').toString().trim();
+    final expiresAt = (created['expires_at'] ?? '').toString().trim();
+    final expiresInSeconds = created['expires_in_seconds'] is int
+        ? created['expires_in_seconds'] as int
+        : int.tryParse((created['expires_in_seconds'] ?? '').toString().trim());
+    if (companyCode.isEmpty || pairingCode.isEmpty || challengeId.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Tijdelijke koppel-QR response is ongeldig.',
+              en: 'Temporary pairing QR response is invalid.',
+              fr: 'La réponse du QR de liaison temporaire est invalide.',
+              es: 'La respuesta del QR temporal de vinculación no es válida.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    debugPrint('[DRIVER_LINK_QR][SHOW_DIALOG]');
+    await _showTemporaryDriverLinkQrDialog(
+      context,
+      companyCode: companyCode,
+      pairingCode: pairingCode,
+      challengeId: challengeId,
+      driverName: driver.fullName,
+      expiresAt: expiresAt,
+      expiresInSeconds: expiresInSeconds,
+    );
+  }
+
   Future<void> _rotateDriverCode(
     BuildContext context,
     DriverProfile driver,
@@ -14856,12 +15315,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     );
     unawaited(onRequestMutationRefresh?.call(reason: 'drivers_code_rotate'));
     if (!context.mounted) return;
-    final publicCompanyCodeForQr = _resolvePublicCompanyCodeForDriverQr();
     await _showGeneratedDriverCodeDialog(
       context,
       loginCode: loginCode,
-      companyCode: publicCompanyCodeForQr,
       driverName: driver.fullName,
+      onCreateTemporaryQr: () => _openTemporaryDriverLinkQr(context, driver),
     );
   }
 
@@ -16267,6 +16725,33 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
+                      onPressed: () =>
+                          _openTemporaryDriverLinkQr(context, driver),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: _gold.withOpacity(0.98),
+                        side: BorderSide(color: _gold.withOpacity(0.34)),
+                        backgroundColor: const Color(0xFF16120A),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.qr_code_2_outlined, size: 20),
+                      label: Text(
+                        _t(
+                          nl: 'Tijdelijke koppel-QR',
+                          en: 'Temporary pairing QR',
+                          fr: 'QR de liaison temporaire',
+                          es: 'QR temporal de vinculación',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
                       onPressed: () => _openEditDriverDialog(context, driver),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 52),
@@ -16595,6 +17080,97 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
+                  _openPortraitDriverCodeActions(context, driver);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPortraitDriverCodeActions(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF101113),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(
+                  nl: 'Chauffeur koppelen',
+                  en: 'Pair driver',
+                  fr: 'Associer le chauffeur',
+                  es: 'Vincular conductor',
+                ),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Gebruik de tijdelijke QR voor veilig éénmalig koppelen. De chauffeurcode is alleen manuele fallback.',
+                  en: 'Use the temporary QR for secure one-time pairing. Driver code is manual fallback only.',
+                  fr: 'Utilisez le QR temporaire pour un couplage sécurisé à usage unique. Le code chauffeur reste un fallback manuel.',
+                  es: 'Usa el QR temporal para una vinculación segura de un solo uso. El código de conductor es solo respaldo manual.',
+                ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.74),
+                  fontSize: 12,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.qr_code_2_outlined,
+                  color: _gold.withOpacity(0.98),
+                ),
+                title: Text(
+                  _t(
+                    nl: 'Tijdelijke koppel-QR',
+                    en: 'Temporary pairing QR',
+                    fr: 'QR de liaison temporaire',
+                    es: 'QR temporal de vinculación',
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _openTemporaryDriverLinkQr(context, driver);
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.key_outlined,
+                  color: _gold.withOpacity(0.98),
+                ),
+                title: Text(
+                  _t(
+                    nl: 'Nieuwe chauffeurcode genereren',
+                    en: 'Generate new driver code',
+                    fr: 'Generer un nouveau code chauffeur',
+                    es: 'Generar nuevo codigo de conductor',
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
                   _rotateDriverCode(context, driver);
                 },
               ),
@@ -16667,7 +17243,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   ),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
-                    _rotateDriverCode(context, driver);
+                    _openPortraitDriverCodeActions(context, driver);
                   },
                 ),
               ),
@@ -18863,6 +19439,45 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                             en: 'Generate new driver code',
                                             fr: 'Generer un nouveau code chauffeur',
                                             es: 'Generar nuevo codigo de conductor',
+                                          ),
+                                        ),
+                                      ),
+                                      OutlinedButton.icon(
+                                        onPressed: () =>
+                                            _openTemporaryDriverLinkQr(
+                                              context,
+                                              d,
+                                            ),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: _gold.withOpacity(
+                                            0.98,
+                                          ),
+                                          side: BorderSide(
+                                            color: _gold.withOpacity(0.34),
+                                          ),
+                                          backgroundColor: const Color(
+                                            0xFF16120A,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 8,
+                                          ),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.qr_code_2_outlined,
+                                          size: 16,
+                                        ),
+                                        label: Text(
+                                          _t(
+                                            nl: 'Tijdelijke koppel-QR',
+                                            en: 'Temporary pairing QR',
+                                            fr: 'QR de liaison temporaire',
+                                            es: 'QR temporal de vinculación',
                                           ),
                                         ),
                                       ),

@@ -2678,6 +2678,116 @@ Future<Map<String, dynamic>?> rotateDriverLoginCode({
   }
 }
 
+Future<Map<String, dynamic>?> createDriverLinkCode({
+  required String driverId,
+  required String tenantId,
+  required String companyId,
+  required String companyCode,
+  int? expiresInSeconds,
+}) async {
+  try {
+    final normalizedDriverId = driverId.trim();
+    final normalizedCompanyCode = companyCode.trim().toUpperCase();
+    if (normalizedDriverId.isEmpty || normalizedCompanyCode.isEmpty)
+      return null;
+    final scope = _resolveAdminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final endpoint = _withAdminTenantCompanyScope(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/company/driver-link-code/create',
+      ),
+      tenantId: scope['tenant_id'],
+      companyId: scope['company_id'],
+    );
+    final payload = <String, dynamic>{
+      ...scope,
+      'driver_id': normalizedDriverId,
+      'driverId': normalizedDriverId,
+      'company_code': normalizedCompanyCode,
+      'companyCode': normalizedCompanyCode,
+      if (expiresInSeconds != null && expiresInSeconds > 0) ...{
+        'expires_in_seconds': expiresInSeconds,
+        'expiresInSeconds': expiresInSeconds,
+      },
+    };
+    final response = await http
+        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      var preview = utf8.decode(response.bodyBytes);
+      preview = preview.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (preview.length > 160) {
+        preview = preview.substring(0, 160);
+      }
+      preview = preview
+          .replaceAll(
+            RegExp(r'"pairing_code"\s*:\s*"[^"]*"', caseSensitive: false),
+            '"pairing_code":"***"',
+          )
+          .replaceAll(
+            RegExp(r'"challenge_id"\s*:\s*"[^"]*"', caseSensitive: false),
+            '"challenge_id":"***"',
+          )
+          .replaceAll(
+            RegExp(r'"driver_id"\s*:\s*"[^"]*"', caseSensitive: false),
+            '"driver_id":"***"',
+          );
+      debugPrint(
+        '[DRIVER_LINK_QR][CREATE_HTTP_FAIL] status=${response.statusCode} body_prefix=$preview',
+      );
+      return null;
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['ok'] != true) {
+      final errorCode = (map['error'] ?? map['reason'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      debugPrint('[DRIVER_LINK_QR][CREATE_OK_FALSE] error=$errorCode');
+      return null;
+    }
+    final resolvedCompanyCode =
+        (map['company_code'] ?? map['companyCode'] ?? '')
+            .toString()
+            .trim()
+            .toUpperCase();
+    final pairingCode = (map['pairing_code'] ?? map['pairingCode'] ?? '')
+        .toString()
+        .trim();
+    final challengeId = (map['challenge_id'] ?? map['challengeId'] ?? '')
+        .toString()
+        .trim();
+    final expiresAt = (map['expires_at'] ?? map['expiresAt'] ?? '')
+        .toString()
+        .trim();
+    final resolvedExpiresIn = int.tryParse(
+      (map['expires_in_seconds'] ?? map['expiresInSeconds'] ?? '')
+          .toString()
+          .trim(),
+    );
+    if (resolvedCompanyCode.isEmpty ||
+        pairingCode.isEmpty ||
+        challengeId.isEmpty) {
+      return null;
+    }
+    return <String, dynamic>{
+      'ok': true,
+      'company_code': resolvedCompanyCode,
+      'pairing_code': pairingCode,
+      'challenge_id': challengeId,
+      'expires_at': expiresAt,
+      if (resolvedExpiresIn != null) 'expires_in_seconds': resolvedExpiresIn,
+    };
+  } catch (error) {
+    debugPrint('[DRIVER_LINK_QR][CREATE_ERROR] type=${error.runtimeType}');
+    return null;
+  }
+}
+
 Future<void> syncLocalCompanyInventoryToBackend({
   required String reason,
   String? tenantId,
