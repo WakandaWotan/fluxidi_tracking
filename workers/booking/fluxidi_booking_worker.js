@@ -8009,10 +8009,11 @@ function bookingListIndexItemFromRecord(bookingId, rec) {
 
 async function readCompanyBookingsListIndex(env, scope) {
   const key = companyBookingsListIndexKey(scope);
-  if (!key || !env?.BOOKING_KV) return { ok: false, key, index: null };
+  if (!key || !env?.BOOKING_KV) return { ok: false, key, index: null, exists: false, valid: false };
   try {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
-    const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const rawObject = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+    const source = rawObject || {};
     const rawItems = Array.isArray(source?.items) ? source.items : [];
     const items = rawItems
       .map((entry) => (entry && typeof entry === "object" ? entry : null))
@@ -8037,6 +8038,8 @@ async function readCompanyBookingsListIndex(env, scope) {
     return {
       ok: true,
       key,
+      exists: !!rawObject,
+      valid: !rawObject || Array.isArray(rawObject?.items),
       index: {
         version: 1,
         updated_at: safeStr(source?.updated_at ?? source?.updatedAt, 80),
@@ -8044,7 +8047,7 @@ async function readCompanyBookingsListIndex(env, scope) {
       },
     };
   } catch (_) {
-    return { ok: false, key, index: null };
+    return { ok: false, key, index: null, exists: false, valid: false };
   }
 }
 
@@ -8202,6 +8205,17 @@ async function rebuildCompanyBookingsListIndexForScope(env, scope, { dryRun = fa
     removed_or_rebuilt: removedOrRebuilt,
     dry_run: dryRun === true,
   };
+}
+
+function _companyBookingsListIndexStaleAfterMs(env, options = {}) {
+  const raw = Number(
+    options?.staleAfterMs ??
+      env?.COMPANY_BOOKINGS_LIST_INDEX_STALE_AFTER_MS ??
+      0,
+  );
+  if (!Number.isFinite(raw)) return 0;
+  const normalized = Math.trunc(raw);
+  return normalized > 0 ? normalized : 0;
 }
 
 async function hydrateCustomerBookingsFromScopedIndex(
@@ -16071,11 +16085,22 @@ GET /oauth/callback
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const items = await listBookingsAuthoritative(env, {
+        const listOut = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
           tenantScope,
         });
+        if (!listOut?.ok) {
+          const reason = safeStr(listOut?.error, 80) || "company_bookings_list_index_unavailable";
+          if (
+            reason === "company_bookings_list_index_unavailable" ||
+            reason === "company_bookings_list_index_stale"
+          ) {
+            return json({ ok: false, error: reason }, 503);
+          }
+          return json({ ok: false, error: reason }, 400);
+        }
+        const items = Array.isArray(listOut?.items) ? listOut.items : [];
         return json({ ok: true, items, count: items.length }, 200);
       }
 
@@ -17498,11 +17523,22 @@ GET /oauth/callback
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const items = await listBookingsAuthoritative(env, {
+        const listOut = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
           tenantScope,
         });
+        if (!listOut?.ok) {
+          const reason = safeStr(listOut?.error, 80) || "company_bookings_list_index_unavailable";
+          if (
+            reason === "company_bookings_list_index_unavailable" ||
+            reason === "company_bookings_list_index_stale"
+          ) {
+            return json({ ok: false, error: reason }, 503);
+          }
+          return json({ ok: false, error: reason }, 400);
+        }
+        const items = Array.isArray(listOut?.items) ? listOut.items : [];
         return json({ ok: true, items, count: items.length }, 200);
       }
 
@@ -30973,46 +31009,75 @@ async function listBookingsAuthoritative(
   env,
   { limit = 50, includeHistory = false, tenantScope = null } = {},
 ) {
-  if (!tenantScope?.hasScope) return [];
+  if (!tenantScope?.hasScope) return { ok: true, items: [] };
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
+  const staleAfterMs = _companyBookingsListIndexStaleAfterMs(env);
+  const indexUpdatedAtMs = Date.parse(safeStr(indexRead?.index?.updated_at ?? indexRead?.index?.updatedAt, 80));
+  const indexStale = staleAfterMs > 0 && (!Number.isFinite(indexUpdatedAtMs) || (Date.now() - indexUpdatedAtMs) > staleAfterMs);
+  if (!indexRead?.ok || !indexRead?.exists || !indexRead?.valid || !indexRead?.index) {
+    return { ok: false, error: "company_bookings_list_index_unavailable" };
+  }
+  if (indexStale) {
+    return { ok: false, error: "company_bookings_list_index_stale" };
+  }
+
   const nowMs = Date.now();
   const actionableGraceMs = 6 * 60 * 60 * 1000; // keep slightly-past rides visible for operational safety
   const cutoffMs = nowMs - actionableGraceMs;
   const out = [];
-  let cursor = undefined;
-  do {
-    const listed = await env.BOOKING_KV.list({
-      prefix: "booking:",
-      limit: 1000,
-      cursor,
-    });
-    for (const k of listed?.keys || []) {
-      const name = String(k?.name || "");
-      if (!name.startsWith("booking:")) continue;
-      const bookingId = name.slice("booking:".length);
-      if (!bookingId) continue;
-      const rec = await env.BOOKING_KV.get(name, { type: "json" });
-      if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
-      const row = _flattenBookingForRidesList(bookingId, rec);
-      if (
-        !includeHistory &&
-        (row.status === "COMPLETED" || row.status === "CANCELLED")
-      ) continue;
-      if (!includeHistory) {
-        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-        // For "available rides", require a valid pickup datetime.
-        // Historical/debug records with missing/invalid pickup should stay out of operational list.
-        if (!Number.isFinite(pickupTs)) continue;
-        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
-      }
-      out.push(row);
+  const sourceItems = Array.isArray(indexRead?.index?.items) ? indexRead.index.items : [];
+  const candidateIds = new Set();
+  const staleIds = new Set();
+  for (const entry of sourceItems) {
+    const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+    if (!bookingId) {
+      staleIds.add("");
+      continue;
     }
-    cursor = listed?.cursor;
-    if (listed?.list_complete !== false) break;
-    if (!cursor) break;
-  } while (cursor);
+    candidateIds.add(bookingId);
+  }
+
+  for (const bookingId of candidateIds) {
+    const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      staleIds.add(bookingId);
+      continue;
+    }
+    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      staleIds.add(bookingId);
+      continue;
+    }
+    const row = _flattenBookingForRidesList(bookingId, rec);
+    if (
+      !includeHistory &&
+      (row.status === "COMPLETED" || row.status === "CANCELLED")
+    ) continue;
+    if (!includeHistory) {
+      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+      // For "available rides", require a valid pickup datetime.
+      // Historical/debug records with missing/invalid pickup should stay out of operational list.
+      if (!Number.isFinite(pickupTs)) continue;
+      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+    }
+    out.push(row);
+  }
+
+  if (staleIds.size > 0) {
+    try {
+      const nextItems = sourceItems.filter((entry) => {
+        const bookingId = safeStr(entry?.booking_id ?? entry?.bookingId, 160);
+        if (!bookingId) return false;
+        return !staleIds.has(bookingId);
+      });
+      if (nextItems.length !== sourceItems.length) {
+        await saveCompanyBookingsListIndex(env, tenantScope, { items: nextItems });
+      }
+    } catch (_) {
+      // Best-effort stale pruning only.
+    }
+  }
 
   out.sort((a, b) => {
     const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
@@ -31020,7 +31085,7 @@ async function listBookingsAuthoritative(
     return ta - tb;
   });
 
-  return out.slice(0, lim);
+  return { ok: true, items: out.slice(0, lim) };
 }
 
 async function listDriverBookingsAuthoritative(
