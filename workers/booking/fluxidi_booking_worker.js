@@ -7944,6 +7944,23 @@ function companyBookingsListIndexKey(scope) {
 function bookingListIndexItemFromRecord(bookingId, rec) {
   const safeBookingId = safeStr(bookingId, 160);
   if (!safeBookingId || !rec || typeof rec !== "object") return null;
+  const hiddenFlags = [
+    rec?.company_bookings_hidden,
+    rec?.hidden_from_company_bookings,
+    _pick(rec, ["booking", "company_bookings_hidden"], null),
+    _pick(rec, ["booking", "hidden_from_company_bookings"], null),
+    rec?.hidden,
+    rec?.is_hidden,
+    rec?.customer_hidden,
+    rec?.archived,
+    rec?.deleted,
+    _pick(rec, ["booking", "hidden"], null),
+    _pick(rec, ["booking", "is_hidden"], null),
+    _pick(rec, ["booking", "customer_hidden"], null),
+    _pick(rec, ["booking", "archived"], null),
+    _pick(rec, ["booking", "deleted"], null),
+  ];
+  if (hiddenFlags.some((value) => _dashboardBoolLike(value))) return null;
   const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
   const createdAt = safeStr(
     rec?.created_at ?? rec?.createdAt ?? bookingObj?.created_at ?? bookingObj?.createdAt,
@@ -17729,6 +17746,89 @@ GET /oauth/callback
             normalizeFleetTenantScope(tenantScope),
           );
           return json({ ok: true, booking_id: bookingId, assigned_vehicle_id: vehicleId }, 200);
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "company-hide" &&
+          request.method === "POST"
+        ) {
+          _requireAdmin(request, url, env);
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const out = await companyHideBookingAuthoritative(
+            bookingId,
+            env,
+            tenantScope,
+            { reason: "company_admin_list_cleanup" },
+          );
+          return json(
+            out,
+            out?.error === "active_booking_cannot_be_hidden"
+              ? 409
+              :
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404)),
+          );
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "company-unhide" &&
+          request.method === "POST"
+        ) {
+          _requireAdmin(request, url, env);
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const out = await companyUnhideBookingAuthoritative(
+            bookingId,
+            env,
+            tenantScope,
+          );
+          return json(
+            out,
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404)),
+          );
+        }
+
+        if (
+          pathParts.length === 3 &&
+          pathParts[2] === "archive" &&
+          request.method === "POST"
+        ) {
+          _requireAdmin(request, url, env);
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          const { rec } = await loadBookingRecord(env, bookingId);
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
+          const out = await archiveBookingAuthoritative(bookingId, env, tenantScope, {
+            reason: "company_admin_review_cleanup",
+          });
+          return json(
+            out,
+            out?.error === "missing_tenant_scope"
+              ? 400
+              : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 404)),
+          );
         }
 
         if (
@@ -31301,6 +31401,26 @@ async function listBookingsAuthoritative(
       staleIds.add(bookingId);
       continue;
     }
+    const hiddenFlags = [
+      rec?.company_bookings_hidden,
+      rec?.hidden_from_company_bookings,
+      _pick(rec, ["booking", "company_bookings_hidden"], null),
+      _pick(rec, ["booking", "hidden_from_company_bookings"], null),
+      rec?.hidden,
+      rec?.is_hidden,
+      rec?.customer_hidden,
+      rec?.archived,
+      rec?.deleted,
+      _pick(rec, ["booking", "hidden"], null),
+      _pick(rec, ["booking", "is_hidden"], null),
+      _pick(rec, ["booking", "customer_hidden"], null),
+      _pick(rec, ["booking", "archived"], null),
+      _pick(rec, ["booking", "deleted"], null),
+    ];
+    if (hiddenFlags.some((value) => _dashboardBoolLike(value))) {
+      staleIds.add(bookingId);
+      continue;
+    }
     const row = _flattenBookingForRidesList(bookingId, rec);
     if (
       !includeHistory &&
@@ -33681,6 +33801,187 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
   );
   await env.BOOKING_KV.delete(key);
   return { ok: true, booking_id: bookingId, deleted: true };
+}
+
+async function archiveBookingAuthoritative(
+  bookingId,
+  env,
+  tenantScope = null,
+  { reason = "company_admin_review_cleanup" } = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  const nowIso = new Date().toISOString();
+  const reasonCode = safeStr(reason, 80) || "company_admin_review_cleanup";
+  rec.hidden = true;
+  rec.is_hidden = true;
+  rec.archived = true;
+  rec.deleted = false;
+  rec.archived_at = nowIso;
+  rec.archivedAt = nowIso;
+  rec.archived_reason = reasonCode;
+  rec.archivedReason = reasonCode;
+  rec.status = "ARCHIVED";
+  rec.stage = "ARCHIVED";
+  rec.lifecycle_status = "archived";
+  rec.lifecycleStatus = "archived";
+  rec.booking_status = "archived";
+  rec.bookingStatus = "archived";
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.hidden = true;
+    rec.booking.is_hidden = true;
+    rec.booking.archived = true;
+    rec.booking.deleted = false;
+    rec.booking.archived_at = nowIso;
+    rec.booking.archivedAt = nowIso;
+    rec.booking.archived_reason = reasonCode;
+    rec.booking.archivedReason = reasonCode;
+    rec.booking.status = "ARCHIVED";
+    rec.booking.stage = "ARCHIVED";
+    rec.booking.lifecycle_status = "archived";
+    rec.booking.lifecycleStatus = "archived";
+    rec.booking.booking_status = "archived";
+    rec.booking.bookingStatus = "archived";
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  await removeBookingDemandIndexBestEffort(
+    env,
+    bookingId,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  await removeCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+  );
+  await upsertDriverVehicleBookingIndexesBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  await releaseAllocatorReservationForBooking({
+    env,
+    bookingId,
+    rec,
+    logTag: "RELEASE_ON_ARCHIVE",
+  });
+  return { ok: true, booking_id: bookingId, archived: true };
+}
+
+async function companyHideBookingAuthoritative(
+  bookingId,
+  env,
+  tenantScope = null,
+  { reason = "company_admin_list_cleanup" } = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  const lifecycleRaw = _bookingLifecycleValue(rec);
+  const lifecycleTerminal = isTerminalLifecycleStatus(lifecycleRaw);
+  if (!lifecycleTerminal) {
+    const row = _flattenBookingForRidesList(bookingId, rec);
+    const pickupTs = row?.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+    const cutoffMs = Date.now() - (6 * 60 * 60 * 1000);
+    const hasRoute =
+      safeStr(row?.from, 240).trim().length > 0 &&
+      safeStr(row?.to, 240).trim().length > 0;
+    const stalePickup = Number.isFinite(pickupTs) && pickupTs < cutoffMs;
+    const missingCritical = !Number.isFinite(pickupTs) || !hasRoute;
+    if (!stalePickup && !missingCritical) {
+      return { ok: false, error: "active_booking_cannot_be_hidden" };
+    }
+  }
+  const nowIso = new Date().toISOString();
+  const reasonCode = safeStr(reason, 80) || "company_admin_list_cleanup";
+  rec.company_bookings_hidden = true;
+  rec.hidden_from_company_bookings = true;
+  rec.company_bookings_hidden_at = nowIso;
+  rec.companyBookingsHiddenAt = nowIso;
+  rec.company_bookings_hidden_reason = reasonCode;
+  rec.companyBookingsHiddenReason = reasonCode;
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.company_bookings_hidden = true;
+    rec.booking.hidden_from_company_bookings = true;
+    rec.booking.company_bookings_hidden_at = nowIso;
+    rec.booking.companyBookingsHiddenAt = nowIso;
+    rec.booking.company_bookings_hidden_reason = reasonCode;
+    rec.booking.companyBookingsHiddenReason = reasonCode;
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  await removeCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+  );
+  return { ok: true, booking_id: bookingId, archived: false, company_hidden: true };
+}
+
+async function companyUnhideBookingAuthoritative(
+  bookingId,
+  env,
+  tenantScope = null,
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
+  const { key, rec } = await loadBookingRecord(env, bookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  rec.company_bookings_hidden = false;
+  rec.hidden_from_company_bookings = false;
+  rec.company_bookings_hidden_at = null;
+  rec.companyBookingsHiddenAt = null;
+  rec.company_bookings_hidden_reason = null;
+  rec.companyBookingsHiddenReason = null;
+  rec.updatedAt = new Date().toISOString();
+  rec.updated_at = rec.updatedAt;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.company_bookings_hidden = false;
+    rec.booking.hidden_from_company_bookings = false;
+    rec.booking.company_bookings_hidden_at = null;
+    rec.booking.companyBookingsHiddenAt = null;
+    rec.booking.company_bookings_hidden_reason = null;
+    rec.booking.companyBookingsHiddenReason = null;
+    rec.booking.updatedAt = rec.updatedAt;
+    rec.booking.updated_at = rec.updatedAt;
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  return { ok: true, booking_id: bookingId, hidden_from_company_bookings: false };
 }
 
 async function cleanupBookingCalendarEvents(env, rec, tenantScope = null) {
