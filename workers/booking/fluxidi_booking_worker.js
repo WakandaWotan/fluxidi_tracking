@@ -14399,15 +14399,26 @@ async function sha256Hex(input) {
 
 async function countRegionInterestContacts(env, { country, postcode }) {
   if (!env?.BOOKING_KV) return 0;
-  const prefix = regionInterestContactPrefix({ country, postcode });
-  if (!prefix) return 0;
-  let count = 0;
-  let cursor = undefined;
-  do {
-    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
-    count += Array.isArray(listed?.keys) ? listed.keys.length : 0;
-    cursor = listed?.list_complete ? undefined : listed?.cursor;
-  } while (cursor);
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  if (!normalizedCountry || !normalizedPostcode) return 0;
+  const loaded = await loadRegionInterestCounter(env, {
+    country: normalizedCountry,
+    postcode: normalizedPostcode,
+  });
+  if (!loaded?.ok || !loaded?.exists || !loaded?.valid || !loaded?.counter) {
+    console.log(
+      `[REGION_INTEREST_COUNTER][MISSING] country=${normalizedCountry} postcode=${normalizedPostcode}`,
+    );
+    return 0;
+  }
+  const count = Math.max(0, Math.trunc(Number(loaded.counter.count) || 0));
+  const health = safeStr(loaded?.counter?.counter_health, 24).toLowerCase();
+  if (health && health !== "ok") {
+    console.log(
+      `[REGION_INTEREST_COUNTER][NON_OK] country=${normalizedCountry} postcode=${normalizedPostcode} health=${health}`,
+    );
+  }
   return count;
 }
 
