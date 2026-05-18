@@ -24351,6 +24351,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   late CustomerBookingView _view = widget.initialView;
   bool _refreshing = false;
   bool _cancelling = false;
+  bool _ratingSubmitting = false;
   String? _refreshError;
   late bool _usingLocalCache = widget.startsFromLocalCache;
 
@@ -24627,6 +24628,318 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           ),
         ),
       );
+    }
+  }
+
+  bool get _canRateCompletedBooking {
+    final normalized = _normalizeCustomerLifecycleStatus(_view.lifecycleStatus);
+    return normalized == 'COMPLETED';
+  }
+
+  Map<String, dynamic>? _existingCustomerRatingBlock() {
+    final candidates = <dynamic>[
+      _cancelScopeValueAtPath(_view.source, 'customer_rating'),
+      _cancelScopeValueAtPath(_view.source, 'customerRating'),
+      _cancelScopeValueAtPath(_view.source, 'record.customer_rating'),
+      _cancelScopeValueAtPath(_view.source, 'record.customerRating'),
+      _cancelScopeValueAtPath(_view.source, 'record.booking.customer_rating'),
+      _cancelScopeValueAtPath(_view.source, 'record.booking.customerRating'),
+      _cancelScopeValueAtPath(_view.source, 'booking.customer_rating'),
+      _cancelScopeValueAtPath(_view.source, 'booking.customerRating'),
+    ];
+    for (final raw in candidates) {
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw);
+      }
+    }
+    return null;
+  }
+
+  int? _existingCustomerRatingValue() {
+    final block = _existingCustomerRatingBlock();
+    if (block == null) return null;
+    final raw = block['rating'] ?? block['stars'];
+    if (raw is int && raw >= 1 && raw <= 5) return raw;
+    if (raw is num) {
+      final rounded = raw.round();
+      if (rounded >= 1 && rounded <= 5) return rounded;
+    }
+    final parsed = int.tryParse((raw ?? '').toString().trim());
+    if (parsed == null || parsed < 1 || parsed > 5) return null;
+    return parsed;
+  }
+
+  String _existingCustomerRatingComment() {
+    final block = _existingCustomerRatingBlock();
+    if (block == null) return '';
+    return (block['comment'] ?? block['review'] ?? '').toString().trim();
+  }
+
+  String _customerRatingErrorMessage(String code) {
+    switch (code) {
+      case 'unauthorized':
+        return _t(
+          nl: 'Meld je opnieuw aan om je rit te beoordelen.',
+          en: 'Sign in again to rate your ride.',
+          fr: 'Reconnectez-vous pour évaluer votre course.',
+          es: 'Vuelve a iniciar sesión para valorar tu viaje.',
+        );
+      case 'booking_not_completed':
+        return _t(
+          nl: 'Je kunt alleen een voltooide rit beoordelen.',
+          en: 'You can only rate a completed ride.',
+          fr: 'Vous pouvez uniquement évaluer une course terminée.',
+          es: 'Solo puedes valorar un viaje completado.',
+        );
+      case 'forbidden':
+        return _t(
+          nl: 'Je kunt alleen je eigen rit beoordelen.',
+          en: 'You can only rate your own ride.',
+          fr: 'Vous pouvez uniquement évaluer votre propre course.',
+          es: 'Solo puedes valorar tu propio viaje.',
+        );
+      case 'invalid_rating':
+        return _t(
+          nl: 'Kies een beoordeling tussen 1 en 5 sterren.',
+          en: 'Choose a rating between 1 and 5 stars.',
+          fr: 'Choisissez une note entre 1 et 5 étoiles.',
+          es: 'Elige una valoración entre 1 y 5 estrellas.',
+        );
+      default:
+        return _t(
+          nl: 'Beoordeling opslaan is mislukt. Probeer opnieuw.',
+          en: 'Saving your rating failed. Please try again.',
+          fr: "L'enregistrement de votre évaluation a échoué. Réessayez.",
+          es: 'No se pudo guardar tu valoración. Inténtalo de nuevo.',
+        );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _openCustomerRatingSheet({
+    required int initialRating,
+    required String initialComment,
+  }) async {
+    final controller = TextEditingController(text: initialComment);
+    var selectedRating = initialRating.clamp(1, 5);
+    try {
+      return await showModalBottomSheet<Map<String, dynamic>>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0xFF101113),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (context, setModalState) {
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 14,
+                  bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Beoordeel rit',
+                        en: 'Rate ride',
+                        fr: 'Évaluer la course',
+                        es: 'Valorar viaje',
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: List<Widget>.generate(5, (index) {
+                        final star = index + 1;
+                        return IconButton(
+                          onPressed: () {
+                            setModalState(() {
+                              selectedRating = star;
+                            });
+                          },
+                          icon: Icon(
+                            selectedRating >= star
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            color: const Color(0xFFE5B641),
+                            size: 28,
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: controller,
+                      minLines: 2,
+                      maxLines: 4,
+                      maxLength: 500,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: _t(
+                          nl: 'Opmerking (optioneel)',
+                          en: 'Comment (optional)',
+                          fr: 'Commentaire (optionnel)',
+                          es: 'Comentario (opcional)',
+                        ),
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        filled: true,
+                        fillColor: const Color(0xFF16120A),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: kFluxidiYellow.withOpacity(0.22),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop(<String, dynamic>{
+                            'rating': selectedRating,
+                            'comment': controller.text.trim(),
+                          });
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: kFluxidiYellow,
+                          foregroundColor: Colors.black,
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Beoordeling opslaan',
+                            en: 'Save rating',
+                            fr: "Enregistrer l'évaluation",
+                            es: 'Guardar valoración',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _openRatingFlow() async {
+    if (!_canRateCompletedBooking || _ratingSubmitting) return;
+    final initialRating = _existingCustomerRatingValue() ?? 5;
+    final initialComment = _existingCustomerRatingComment();
+    final draft = await _openCustomerRatingSheet(
+      initialRating: initialRating,
+      initialComment: initialComment,
+    );
+    if (draft == null || !mounted) return;
+    final rating = (draft['rating'] is num)
+        ? (draft['rating'] as num).toInt()
+        : int.tryParse((draft['rating'] ?? '').toString().trim());
+    if (rating == null || rating < 1 || rating > 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_customerRatingErrorMessage('invalid_rating'))),
+      );
+      return;
+    }
+    final comment = (draft['comment'] ?? '').toString().trim();
+    final bookingId = widget.bookingId.trim();
+    if (bookingId.isEmpty) return;
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final token = (session?.customerSessionToken ?? '').trim();
+    if (session == null || token.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_customerRatingErrorMessage('unauthorized'))),
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _ratingSubmitting = true;
+    });
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/public/customer/bookings/${Uri.encodeComponent(bookingId)}/rating',
+      );
+      final res = await http
+          .post(
+            uri,
+            headers: <String, String>{
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'rating': rating,
+              if (comment.isNotEmpty) 'comment': comment,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decoded = null;
+      }
+      final map = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : const <String, dynamic>{};
+      final ok =
+          res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true;
+      if (!ok) {
+        final errorCode = (map['error'] ?? 'unknown').toString().trim();
+        throw Exception(errorCode.isEmpty ? 'unknown' : errorCode);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bedankt voor je beoordeling.',
+              en: 'Thanks for your rating.',
+              fr: 'Merci pour votre évaluation.',
+              es: 'Gracias por tu valoración.',
+            ),
+          ),
+        ),
+      );
+      await _refresh();
+    } catch (err) {
+      if (!mounted) return;
+      final errorText = err.toString();
+      String errorCode = 'unknown';
+      if (errorText.contains('booking_not_completed')) {
+        errorCode = 'booking_not_completed';
+      } else if (errorText.contains('unauthorized')) {
+        errorCode = 'unauthorized';
+      } else if (errorText.contains('forbidden')) {
+        errorCode = 'forbidden';
+      } else if (errorText.contains('invalid_rating')) {
+        errorCode = 'invalid_rating';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_customerRatingErrorMessage(errorCode))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _ratingSubmitting = false;
+        });
+      }
     }
   }
 
@@ -25742,6 +26055,81 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             es: 'Cancelar reserva',
                           ),
                         ),
+                      ),
+                    ),
+                  ],
+                  if (_canRateCompletedBooking) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      width: double.infinity,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_existingCustomerRatingValue() != null) ...[
+                            Text(
+                              _t(
+                                nl: 'Jouw beoordeling: ${_existingCustomerRatingValue()}/5',
+                                en: 'Your rating: ${_existingCustomerRatingValue()}/5',
+                                fr: 'Votre évaluation : ${_existingCustomerRatingValue()}/5',
+                                es: 'Tu valoración: ${_existingCustomerRatingValue()}/5',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.84),
+                                fontSize: 12.4,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (_existingCustomerRatingComment()
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _existingCustomerRatingComment(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.66),
+                                  fontSize: 11.8,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                          ],
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: _ratingSubmitting
+                                  ? null
+                                  : _openRatingFlow,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: kFluxidiYellow,
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 11,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              icon: _ratingSubmitting
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.star_rounded),
+                              label: Text(
+                                _t(
+                                  nl: 'Beoordeel rit',
+                                  en: 'Rate ride',
+                                  fr: 'Évaluer la course',
+                                  es: 'Valorar viaje',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

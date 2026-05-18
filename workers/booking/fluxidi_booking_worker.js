@@ -7303,6 +7303,122 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   return json({ ok: true, profile: merged }, 200);
 }
 
+async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, body) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const session = await _loadCustomerSessionFromRequest(request, env);
+  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  const customerTenantId = sanitizeTenantString(session.tenant_id, 80);
+  const customerCompanyId = sanitizeTenantString(session.company_id, 80);
+  if (!customerTenantId || !customerCompanyId) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const forbiddenKeys = [
+    "driver_id",
+    "driverId",
+    "tenant_id",
+    "tenantId",
+    "company_id",
+    "companyId",
+  ];
+  for (const key of forbiddenKeys) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      return json({ ok: false, error: "forbidden_fields_not_allowed" }, 400);
+    }
+  }
+  const parsedRating = Number.parseInt(
+    String(body.rating ?? body.stars ?? "").trim(),
+    10,
+  );
+  if (!Number.isFinite(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+    return json({ ok: false, error: "invalid_rating" }, 400);
+  }
+  const comment = sanitizeTenantString(body.comment ?? body.review ?? body.feedback, 500);
+  let loaded = null;
+  try {
+    loaded = await loadBookingRecord(env, bookingId);
+  } catch (_) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const rec = loaded?.rec;
+  if (!rec || typeof rec !== "object") {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  const sessionScope = {
+    tenant_id: customerTenantId,
+    company_id: customerCompanyId,
+    hasScope: true,
+  };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, sessionScope)) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  const identityMatch = await _bookingMatchesCustomerSessionIdentity(rec, {
+    customer_id: session.customer_id,
+    email_hash: session.email_hash,
+    phone_hash: session.phone_hash,
+  });
+  if (!identityMatch?.matched) {
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  const lifecycle = _normLifecycleStatus(_bookingLifecycleValue(rec));
+  if (lifecycle !== "COMPLETED") {
+    return json({ ok: false, error: "booking_not_completed" }, 409);
+  }
+  const nowIso = new Date().toISOString();
+  const assignedDriverId = safeStr(bookingAssignedDriverId(rec), 96) || null;
+  const normalizedBookingId = safeStr(bookingId, 160);
+  const ratingBlock = {
+    rating: parsedRating,
+    comment,
+    rated_at: nowIso,
+    ratedAt: nowIso,
+    source: "customer_completed_booking",
+    booking_id: normalizedBookingId,
+    bookingId: normalizedBookingId,
+    tenant_id: customerTenantId,
+    tenantId: customerTenantId,
+    company_id: customerCompanyId,
+    companyId: customerCompanyId,
+    driver_id: assignedDriverId,
+    driverId: assignedDriverId,
+  };
+  rec.customer_rating = ratingBlock;
+  rec.customerRating = ratingBlock;
+  rec.updatedAt = nowIso;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.customer_rating = ratingBlock;
+    rec.booking.customerRating = ratingBlock;
+    rec.booking.updatedAt = nowIso;
+  }
+  await env.BOOKING_KV.put(loaded.key, JSON.stringify(rec));
+  console.log(
+    `[CUSTOMER_RATING][UPSERT] booking=${_bookingIntentMask(bookingId)} rating=${parsedRating} has_comment=${comment ? "true" : "false"}`,
+  );
+  return json(
+    {
+      ok: true,
+      booking_id: normalizedBookingId,
+      customer_rating: {
+        rating: parsedRating,
+        comment,
+        rated_at: nowIso,
+        source: "customer_completed_booking",
+        driver_id: assignedDriverId,
+      },
+      customerRating: {
+        rating: parsedRating,
+        comment,
+        ratedAt: nowIso,
+        source: "customer_completed_booking",
+        driverId: assignedDriverId,
+      },
+    },
+    200,
+  );
+}
+
 function _customerBookingIdsFromRecord(rec) {
   const ids = new Set();
   const addId = (value) => {
@@ -16142,6 +16258,28 @@ GET /oauth/callback
           return handlePublicCustomerProfilePost(request, env, body);
         }
         return json({ ok: false, error: "method_not_allowed" }, 405);
+      }
+
+      const publicCustomerBookingRatingMatch = url.pathname.match(
+        /^\/public\/customer\/bookings\/([^/]+)\/rating$/,
+      );
+      if (publicCustomerBookingRatingMatch) {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        const bookingId = decodeURIComponent(
+          publicCustomerBookingRatingMatch[1] || "",
+        ).trim();
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        return handlePublicCustomerBookingRatingUpsert(
+          request,
+          env,
+          bookingId,
+          body,
+        );
       }
 
       if (url.pathname === "/public/customer/session/bootstrap") {
