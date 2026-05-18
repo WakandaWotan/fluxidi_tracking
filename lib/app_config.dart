@@ -1104,6 +1104,20 @@ const String kPublicBookingBaseUrl = String.fromEnvironment(
   'PUBLIC_BOOKING_BASE_URL',
   defaultValue: 'https://fluxidi-booking-api.fluxidi.workers.dev',
 );
+const String kBookingBaseUrlOverride = String.fromEnvironment(
+  'BOOKING_BASE_URL',
+  defaultValue: '',
+);
+const String kMapboxToken = String.fromEnvironment(
+  'MAPBOX_TOKEN',
+  defaultValue: '',
+);
+
+String get kBookingBaseUrl {
+  final v = kBookingBaseUrlOverride.trim();
+  if (v.isNotEmpty) return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
+  return appConfig.bookingBaseUrl;
+}
 
 enum AppRole { customer, driver, companyAdmin, dispatcher }
 
