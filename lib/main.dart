@@ -13499,6 +13499,38 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Laat de chauffeur deze QR scannen of de code overnemen.',
+                en: 'Let the driver scan this QR or copy the code.',
+                fr: 'Laissez le chauffeur scanner ce QR ou reprendre le code.',
+                es: 'Permite que el conductor escanee este QR o copie el código.',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.72),
+                fontSize: 11.8,
+                height: 1.3,
+              ),
+            ),
+            if (trimmedCode.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: QrImageView(
+                    data: trimmedCode,
+                    version: QrVersions.auto,
+                    size: 140,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
