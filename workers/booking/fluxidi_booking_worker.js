@@ -14160,6 +14160,7 @@ function pickFirstValidEmail(...candidates) {
 }
 
 const REGION_INTEREST_CONTACT_PREFIX = "region_interest_v1/contact";
+const REGION_INTEREST_COUNTER_PREFIX = "region_interest_v1/counter";
 
 function normalizeRegionInterestCountry(value) {
   const raw = safeStr(value, 8).toUpperCase().replace(/[^A-Z]/g, "");
@@ -14201,6 +14202,155 @@ function regionInterestContactKey({ country, postcode, emailHash }) {
 function regionInterestContactPrefix({ country, postcode }) {
   if (!country || !postcode) return "";
   return `${REGION_INTEREST_CONTACT_PREFIX}/${country}/${postcode}/`;
+}
+
+function regionInterestCounterKey({ country, postcode }) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  if (!normalizedCountry || !normalizedPostcode) return "";
+  return `${REGION_INTEREST_COUNTER_PREFIX}/${normalizedCountry}/${normalizedPostcode}`;
+}
+
+async function loadRegionInterestCounter(env, { country, postcode }) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  const key = regionInterestCounterKey({ country: normalizedCountry, postcode: normalizedPostcode });
+  if (!env?.BOOKING_KV || !key) {
+    return { ok: false, key, exists: false, valid: false, counter: null };
+  }
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    if (raw == null) {
+      return { ok: true, key, exists: false, valid: false, counter: null };
+    }
+    const count = Number(raw?.count);
+    const valid =
+      raw &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      normalizeRegionInterestCountry(raw?.country) === normalizedCountry &&
+      normalizeRegionInterestPostcode(raw?.postcode) === normalizedPostcode &&
+      Number.isFinite(count) &&
+      count >= 0;
+    return {
+      ok: true,
+      key,
+      exists: true,
+      valid,
+      counter: valid ? raw : null,
+    };
+  } catch (_) {
+    return { ok: false, key, exists: false, valid: false, counter: null };
+  }
+}
+
+async function saveRegionInterestCounter(env, { country, postcode }, counter) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  const key = regionInterestCounterKey({ country: normalizedCountry, postcode: normalizedPostcode });
+  if (!env?.BOOKING_KV || !key) {
+    return { ok: false, key };
+  }
+  const count = Math.max(0, Math.trunc(Number(counter?.count) || 0));
+  const nowIso = new Date().toISOString();
+  const payload = {
+    version: 1,
+    country: normalizedCountry,
+    postcode: normalizedPostcode,
+    count,
+    updated_at: safeStr(counter?.updated_at ?? counter?.updatedAt, 80) || nowIso,
+    rebuilt_at: safeStr(counter?.rebuilt_at ?? counter?.rebuiltAt, 80) || nowIso,
+    source: "counter",
+    counter_health: safeStr(counter?.counter_health, 24) || "ok",
+  };
+  if (payload.counter_health !== "ok" && counter?.counter_dirty_reason) {
+    payload.counter_dirty_reason = safeStr(counter.counter_dirty_reason, 80) || "mutation";
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(payload));
+  return { ok: true, key, counter: payload };
+}
+
+async function markRegionInterestCounterDirtyBestEffort(env, { country, postcode }, reason = "") {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  const key = regionInterestCounterKey({ country: normalizedCountry, postcode: normalizedPostcode });
+  if (!env?.BOOKING_KV || !key) {
+    return { ok: false, key, reason: "missing_kv_or_scope" };
+  }
+  const nowIso = new Date().toISOString();
+  const reasonCode = safeStr(reason, 80) || "mutation";
+  try {
+    const loaded = await loadRegionInterestCounter(env, {
+      country: normalizedCountry,
+      postcode: normalizedPostcode,
+    });
+    const baseCount = Number(loaded?.counter?.count);
+    const payload = {
+      version: 1,
+      country: normalizedCountry,
+      postcode: normalizedPostcode,
+      count: Number.isFinite(baseCount) && baseCount >= 0 ? Math.trunc(baseCount) : 0,
+      updated_at: nowIso,
+      rebuilt_at:
+        safeStr(loaded?.counter?.rebuilt_at ?? loaded?.counter?.rebuiltAt, 80) || nowIso,
+      source: "counter",
+      counter_health: "dirty",
+      counter_dirty_reason: reasonCode,
+    };
+    await env.BOOKING_KV.put(key, JSON.stringify(payload));
+    return { ok: true, key };
+  } catch (_) {
+    return { ok: false, key, reason: "exception" };
+  }
+}
+
+async function upsertRegionInterestCounterOnContactWriteBestEffort(
+  env,
+  { country, postcode, contactKey } = {},
+) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  if (!env?.BOOKING_KV || !normalizedCountry || !normalizedPostcode) {
+    return { ok: false, skipped: true, reason: "missing_kv_or_scope" };
+  }
+  const safeContactKey = safeStr(contactKey, 320);
+  if (!safeContactKey || !safeContactKey.startsWith(REGION_INTEREST_CONTACT_PREFIX)) {
+    return { ok: false, skipped: true, reason: "invalid_contact_key" };
+  }
+  try {
+    const loaded = await loadRegionInterestCounter(env, {
+      country: normalizedCountry,
+      postcode: normalizedPostcode,
+    });
+    if (loaded?.exists && !loaded?.valid) {
+      await markRegionInterestCounterDirtyBestEffort(
+        env,
+        { country: normalizedCountry, postcode: normalizedPostcode },
+        "invalid_counter_shape",
+      );
+      return { ok: false, skipped: true, reason: "invalid_counter_shape" };
+    }
+    const prevCount = Number(loaded?.counter?.count);
+    const nextCount =
+      (Number.isFinite(prevCount) && prevCount >= 0 ? Math.trunc(prevCount) : 0) + 1;
+    const saved = await saveRegionInterestCounter(
+      env,
+      { country: normalizedCountry, postcode: normalizedPostcode },
+      {
+        count: nextCount,
+        rebuilt_at: safeStr(loaded?.counter?.rebuilt_at ?? loaded?.counter?.rebuiltAt, 80),
+        counter_health: "ok",
+      },
+    );
+    return { ok: true, key: saved?.key, count: nextCount };
+  } catch (_) {
+    await markRegionInterestCounterDirtyBestEffort(
+      env,
+      { country: normalizedCountry, postcode: normalizedPostcode },
+      "increment_failed",
+    );
+    return { ok: false, reason: "exception" };
+  }
 }
 
 function toPublicDisplayCount(count) {
@@ -14261,6 +14411,59 @@ async function countRegionInterestContacts(env, { country, postcode }) {
   return count;
 }
 
+async function rebuildRegionInterestCounterForRegion(
+  env,
+  { country, postcode } = {},
+  { dryRun = false } = {},
+) {
+  const normalizedCountry = normalizeRegionInterestCountry(country);
+  const normalizedPostcode = normalizeRegionInterestPostcode(postcode);
+  const prefix = regionInterestContactPrefix({
+    country: normalizedCountry,
+    postcode: normalizedPostcode,
+  });
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_booking_kv" };
+  if (!prefix) return { ok: false, error: "invalid_region_interest_scope" };
+  let scanned = 0;
+  let count = 0;
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    const keys = Array.isArray(listed?.keys) ? listed.keys : [];
+    scanned += keys.length;
+    for (const item of keys) {
+      const key = safeStr(item?.name, 320);
+      if (!key || !key.startsWith(prefix)) continue;
+      count += 1;
+    }
+    cursor = listed?.list_complete ? undefined : listed?.cursor;
+  } while (cursor);
+
+  if (!dryRun) {
+    const nowIso = new Date().toISOString();
+    await saveRegionInterestCounter(
+      env,
+      { country: normalizedCountry, postcode: normalizedPostcode },
+      {
+        count,
+        updated_at: nowIso,
+        rebuilt_at: nowIso,
+        source: "counter",
+        counter_health: "ok",
+      },
+    );
+  }
+
+  return {
+    ok: true,
+    country: normalizedCountry,
+    postcode: normalizedPostcode,
+    scanned,
+    count,
+    dry_run: dryRun === true,
+  };
+}
+
 async function handleRegionInterestPost(request, env) {
   if (!env?.BOOKING_KV) {
     return json({ ok: false, error: "missing_booking_kv" }, 500);
@@ -14296,6 +14499,8 @@ async function handleRegionInterestPost(request, env) {
 
   const nowIso = new Date().toISOString();
   const existing = await env.BOOKING_KV.get(key, { type: "json" });
+  const existedBeforeWrite =
+    !!existing && typeof existing === "object" && !Array.isArray(existing);
   const createdAt =
     safeStr(existing?.created_at, 80) ||
     safeStr(existing?.createdAt, 80) ||
@@ -14314,6 +14519,13 @@ async function handleRegionInterestPost(request, env) {
     email_hash: emailHash,
   };
   await env.BOOKING_KV.put(key, JSON.stringify(record));
+  if (!existedBeforeWrite) {
+    await upsertRegionInterestCounterOnContactWriteBestEffort(env, {
+      country,
+      postcode,
+      contactKey: key,
+    });
+  }
 
   const count = await countRegionInterestContacts(env, { country, postcode });
   return json(
@@ -15604,6 +15816,35 @@ GET /oauth/callback
       }
       if (url.pathname === "/region-interest/radar" && request.method === "GET") {
         return handleRegionInterestRadarGet(url, env);
+      }
+      if (url.pathname === "/admin/region-interest/counter/rebuild" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const country = normalizeRegionInterestCountry(
+          body?.country ?? url.searchParams.get("country"),
+        );
+        const postcode = normalizeRegionInterestPostcode(
+          body?.postcode ??
+            body?.postal_code ??
+            url.searchParams.get("postcode") ??
+            url.searchParams.get("postal_code"),
+        );
+        if (!country || !postcode) {
+          return json({ ok: false, error: "invalid_region_interest_scope" }, 400);
+        }
+        const dryRun = _coerceBoolean(
+          body?.dryRun ??
+            body?.dry_run ??
+            url.searchParams.get("dryRun") ??
+            url.searchParams.get("dry_run"),
+          false,
+        );
+        const out = await rebuildRegionInterestCounterForRegion(
+          env,
+          { country, postcode },
+          { dryRun },
+        );
+        return json(out, out?.ok ? 200 : 400);
       }
 
       // AVAILABILITY
