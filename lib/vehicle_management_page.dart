@@ -1957,9 +1957,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     required String value,
     required IconData icon,
     required Color accent,
+    bool compact = false,
   }) {
+    final tilePadding = compact
+        ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
+        : const EdgeInsets.fromLTRB(12, 9, 12, 9);
+    final iconBubble = compact ? 58.0 : 46.0;
+    final iconSize = compact ? 34.0 : 28.0;
+    final gap = compact ? 16.0 : 12.0;
+    final labelFontSize = compact ? 14.0 : 12.5;
+    final valueFontSize = compact ? 30.0 : 23.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      padding: tilePadding,
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(12),
@@ -1968,36 +1977,39 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       child: Row(
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: iconBubble,
+            height: iconBubble,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: accent.withOpacity(0.15),
               border: Border.all(color: accent.withOpacity(0.5)),
             ),
-            child: Icon(icon, size: 14, color: accent),
+            child: Icon(icon, size: iconSize, color: accent),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: gap),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: valueFontSize,
+                    height: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 2),
                 Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 10.8,
+                    color: Colors.white.withOpacity(0.68),
+                    fontSize: labelFontSize,
                     fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
                   ),
                 ),
               ],
@@ -2043,6 +2055,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         body: ValueListenableBuilder<List<VehicleProfile>>(
           valueListenable: vehiclesNotifier,
           builder: (context, vehicles, _) {
+            final media = MediaQuery.of(context);
+            final isTabletLandscape =
+                media.size.width >= 900 &&
+                media.orientation == Orientation.landscape;
             final visible = vehicles
                 .where((v) => _vehicleVisibleInManagementUi(v))
                 .toList(growable: false);
@@ -2051,6 +2067,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             final linkedCount = visible
                 .where((v) => (v.driverId?.trim().isNotEmpty ?? false))
                 .length;
+            final summaryAspectRatio = isTabletLandscape ? 2.7 : 2.05;
             return CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(
@@ -2111,7 +2128,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             crossAxisCount: 3,
                             crossAxisSpacing: 8,
                             mainAxisSpacing: 8,
-                            childAspectRatio: 1.8,
+                            childAspectRatio: summaryAspectRatio,
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             children: [
@@ -2125,6 +2142,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 value: '$totalCount',
                                 icon: Icons.directions_car_filled_outlined,
                                 accent: _gold,
+                                compact: isTabletLandscape,
                               ),
                               _summaryTile(
                                 label: _t(
@@ -2136,6 +2154,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 value: '$activeCount',
                                 icon: Icons.verified_outlined,
                                 accent: const Color(0xFF34D29A),
+                                compact: isTabletLandscape,
                               ),
                               _summaryTile(
                                 label: _t(
@@ -2147,6 +2166,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                 value: '$linkedCount',
                                 icon: Icons.link_rounded,
                                 accent: const Color(0xFF6BCBFF),
+                                compact: isTabletLandscape,
                               ),
                             ],
                           ),
@@ -2563,8 +2583,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                       ),
                                       backgroundColor: _panelBg,
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
+                                        horizontal: 10,
+                                        vertical: 8,
                                       ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(
@@ -2602,8 +2622,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                       ),
                                       backgroundColor: const Color(0xFF2A1518),
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
+                                        horizontal: 10,
+                                        vertical: 8,
                                       ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(
