@@ -27128,6 +27128,7 @@ class NearbyPartnersPage extends StatefulWidget {
 class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   final TextEditingController _postalCodeCtrl = TextEditingController();
   static const List<int> _gpsRadiusOptionsKm = <int>[5, 10, 20, 30];
+  static const int _favoritePartnersDisplayLimit = 12;
   bool _searching = false;
   bool _searchingByLocation = false;
   bool _searched = false;
@@ -27136,6 +27137,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   String _normalizedPostcode = '';
   String _locationSearchLabel = '';
   List<Map<String, dynamic>> _partners = const <Map<String, dynamic>>[];
+  Set<String> _favoritePartnerIds = <String>{};
+  List<Map<String, dynamic>> _favoritePartnerProfiles =
+      const <Map<String, dynamic>>[];
+  bool _favoritesLoading = false;
+  String? _favoritesError;
   static const Color _bg = Color(0xFF07080C);
   static const Color _card = Color(0xFF101113);
   static const Color _panel = Color(0xFF16120A);
@@ -27149,9 +27155,143 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshFavoritePartners(reason: 'nearby_init'));
+  }
+
+  @override
   void dispose() {
     _postalCodeCtrl.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic> _safeMap(dynamic value) {
+    if (value is Map) {
+      return value.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return <String, dynamic>{};
+  }
+
+  Set<String> _favoritePartnerIdsFromAnyMap(Map<String, dynamic> source) {
+    const keys = <String>[
+      'favorite_partner_ids',
+      'favoritePartnerIds',
+      'favourite_partner_ids',
+      'favouritePartnerIds',
+    ];
+    for (final key in keys) {
+      final raw = source[key];
+      if (raw is! List) continue;
+      final out = <String>{};
+      for (final item in raw) {
+        final value = item.toString().trim();
+        if (value.isEmpty) continue;
+        out.add(value);
+      }
+      return out;
+    }
+    return <String>{};
+  }
+
+  Future<Map<String, dynamic>?> _fetchFavoritePartnerProfile(
+    String partnerId,
+  ) async {
+    final safePartnerId = partnerId.trim();
+    if (safePartnerId.isEmpty) return null;
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/partners/profile?partner_id=${Uri.encodeQueryComponent(safePartnerId)}',
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) return null;
+      final decoded = jsonDecode(res.body);
+      final root = _safeMap(decoded);
+      final profile = _safeMap(root['profile']);
+      if (profile.isEmpty) return null;
+      final coverage = _safeMap(profile['coverage']);
+      final media = _safeMap(profile['media']);
+      return <String, dynamic>{
+        'partner_id':
+            _mapTextAny(profile, const [
+              'partner_id',
+              'partnerId',
+            ]).trim().isNotEmpty
+            ? _mapTextAny(profile, const ['partner_id', 'partnerId']).trim()
+            : safePartnerId,
+        'company_name': _mapTextAny(profile, const [
+          'company_name',
+          'companyName',
+        ]),
+        'is_active':
+            profile['is_active'] == true || profile['isActive'] == true,
+        'logo_url': _mapTextAny(media, const ['logo_url', 'logoUrl']),
+        'hero_photo_url': _mapTextAny(media, const [
+          'hero_photo_url',
+          'heroPhotoUrl',
+        ]),
+        'supported_postcodes': coverage['postcodes'] is List
+            ? List<dynamic>.from(coverage['postcodes'] as List)
+            : const <dynamic>[],
+        'region_label': _mapTextAny(coverage, const [
+          'region_label',
+          'regionLabel',
+        ]),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _refreshFavoritePartners({required String reason}) async {
+    if (!mounted) return;
+    setState(() {
+      _favoritesLoading = true;
+      _favoritesError = null;
+    });
+    CustomerProfile? resolvedProfile =
+        await _syncCustomerProfileFromBackendBestEffort(
+          reason: 'favorite_partners_$reason',
+        );
+    resolvedProfile ??= await CustomerProfileStore.instance.load();
+    final ids = resolvedProfile?.favoritePartnerIds.toSet() ?? <String>{};
+    final limitedIds = ids
+        .take(_favoritePartnersDisplayLimit)
+        .toList(growable: false);
+    debugPrint('[FAVORITE_PARTNERS][LOAD] ids=${limitedIds.length}');
+    if (limitedIds.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _favoritePartnerIds = ids;
+        _favoritePartnerProfiles = const <Map<String, dynamic>>[];
+        _favoritesLoading = false;
+        _favoritesError = null;
+      });
+      return;
+    }
+    final loaded = await Future.wait(
+      limitedIds.map(_fetchFavoritePartnerProfile),
+    );
+    final okProfiles = loaded.whereType<Map<String, dynamic>>().toList(
+      growable: false,
+    );
+    final failCount = loaded.length - okProfiles.length;
+    debugPrint('[FAVORITE_PARTNERS][PROFILE_OK] count=${okProfiles.length}');
+    debugPrint('[FAVORITE_PARTNERS][PROFILE_FAIL] count=$failCount');
+    if (!mounted) return;
+    setState(() {
+      _favoritePartnerIds = ids;
+      _favoritePartnerProfiles = okProfiles;
+      _favoritesLoading = false;
+      _favoritesError = failCount > 0 && okProfiles.isEmpty
+          ? _t(
+              nl: 'Sommige favorieten zijn tijdelijk niet beschikbaar.',
+              en: 'Some favorites are temporarily unavailable.',
+              fr: 'Certains favoris sont temporairement indisponibles.',
+              es: 'Algunos favoritos no están disponibles temporalmente.',
+            )
+          : null;
+    });
   }
 
   Future<void> _searchPartners() async {
@@ -27430,11 +27570,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     return clean.startsWith('https://');
   }
 
-  void _openPartnerProfile(Map<String, dynamic> p) {
+  Future<void> _openPartnerProfile(Map<String, dynamic> p) async {
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
     if (partnerId.isEmpty) return;
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PartnerPublicProfilePage(
           partnerId: partnerId,
@@ -27442,6 +27582,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         ),
       ),
     );
+    if (!mounted) return;
+    await _refreshFavoritePartners(reason: 'after_partner_profile');
   }
 
   void _openPartnerBooking(Map<String, dynamic> p) {
@@ -27777,6 +27919,231 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     );
   }
 
+  Widget _favoritePartnerCard(Map<String, dynamic> p, {double? width}) {
+    final company = _mapTextAny(p, const ['company_name', 'companyName']);
+    final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    final logoCandidate = _mapTextAny(p, const ['logo_url', 'logoUrl']);
+    final logoUrl = _isPublicHttpsUrl(logoCandidate) ? logoCandidate : '';
+    final regionLabel = _mapTextAny(p, const ['region_label', 'regionLabel']);
+    return SizedBox(
+      width: width,
+      child: _premiumCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: _gold.withOpacity(0.14),
+                  foregroundImage: logoUrl.isNotEmpty
+                      ? NetworkImage(logoUrl)
+                      : null,
+                  child: logoUrl.isEmpty
+                      ? Icon(
+                          Icons.local_taxi_outlined,
+                          size: 18,
+                          color: _gold.withOpacity(0.96),
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        company.isEmpty ? partnerId : company,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.8,
+                        ),
+                      ),
+                      if (regionLabel.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          regionLabel,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.64),
+                            fontSize: 11.2,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => _openPartnerProfile(p),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _gold.withOpacity(0.98),
+                      side: BorderSide(color: _gold.withOpacity(0.34)),
+                      backgroundColor: _gold.withOpacity(0.10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Bekijk profiel',
+                        en: 'View profile',
+                        fr: 'Voir le profil',
+                        es: 'Ver perfil',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.1,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => _openPartnerBooking(p),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _gold,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Boek rit',
+                        en: 'Book ride',
+                        fr: 'Réserver',
+                        es: 'Reservar',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _favoritePartnersSection() {
+    return _premiumCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: "Mijn favoriete taxi's",
+              en: 'My favorite taxis',
+              fr: 'Mes taxis favoris',
+              es: 'Mis taxis favoritos',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.8,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_favoritesLoading)
+            Text(
+              _t(
+                nl: 'Favorieten laden...',
+                en: 'Loading favorites...',
+                fr: 'Chargement des favoris...',
+                es: 'Cargando favoritos...',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.72),
+                fontSize: 12.3,
+              ),
+            )
+          else if (_favoritePartnerIds.isEmpty)
+            Text(
+              _t(
+                nl: 'Nog geen favoriete taxibedrijven. Open een partnerprofiel en tik op Favoriet.',
+                en: 'No favorite taxi companies yet. Open a partner profile and tap Favorite.',
+                fr: 'Aucune compagnie de taxi favorite pour le moment. Ouvrez un profil partenaire et touchez Favori.',
+                es: 'Aún no tienes taxis favoritos. Abre un perfil de socio y toca Favorito.',
+              ),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.72),
+                fontSize: 12.3,
+              ),
+            )
+          else ...[
+            if (_favoritesError != null &&
+                _favoritesError!.trim().isNotEmpty) ...[
+              Text(
+                _favoritesError!,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.64),
+                  fontSize: 11.6,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (_favoritePartnerProfiles.isEmpty)
+              Text(
+                _t(
+                  nl: 'Favoriete partnerprofielen worden nog bijgewerkt.',
+                  en: 'Favorite partner profiles are still being refreshed.',
+                  fr: 'Les profils favoris sont encore en cours d’actualisation.',
+                  es: 'Los perfiles favoritos todavía se están actualizando.',
+                ),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.72),
+                  fontSize: 12.1,
+                ),
+              )
+            else
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final useGrid = constraints.maxWidth >= 720;
+                  if (!useGrid) {
+                    return Column(
+                      children: _favoritePartnerProfiles
+                          .map(
+                            (p) => Padding(
+                              padding: const EdgeInsets.only(bottom: 9),
+                              child: _favoritePartnerCard(p),
+                            ),
+                          )
+                          .toList(growable: false),
+                    );
+                  }
+                  final itemWidth = (constraints.maxWidth - 10) / 2;
+                  return Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: _favoritePartnerProfiles
+                        .map((p) => _favoritePartnerCard(p, width: itemWidth))
+                        .toList(growable: false),
+                  );
+                },
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
@@ -27835,6 +28202,8 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
+              _favoritePartnersSection(),
               const SizedBox(height: 12),
               _premiumCard(
                 child: Column(
