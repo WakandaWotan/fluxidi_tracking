@@ -29973,14 +29973,36 @@ async function saveBookingDemandIndex(env, scope, indexObj) {
     if (Number.isFinite(pb)) return 1;
     return safeStr(a?.booking_id, 160).localeCompare(safeStr(b?.booking_id, 160));
   });
+  const isEmpty = items.length === 0;
+  const source = safeStr(indexObj?.source, 64);
+  const reason = safeStr(indexObj?.reason, 80);
+  const updatedAt = new Date().toISOString();
   const payload = {
     tenant_id: normalizedScope.tenant_id,
     company_id: normalizedScope.company_id,
-    updated_at: new Date().toISOString(),
+    updated_at: updatedAt,
+    updatedAt,
+    index_updated_at: updatedAt,
+    indexUpdatedAt: updatedAt,
     count: items.length,
+    active_count: items.length,
+    activeCount: items.length,
+    empty: isEmpty,
+    demand_index_empty: isEmpty,
+    demandIndexEmpty: isEmpty,
+    demand_index_marker_version: 1,
+    demandIndexMarkerVersion: 1,
+    source: source || (isEmpty ? "empty_write" : "upsert"),
+    reason: reason || (isEmpty ? "empty_index" : "active_index"),
     items,
   };
   await env.BOOKING_KV.put(key, JSON.stringify(payload));
+  if (isEmpty) {
+    const maskedScope = _bookingIntentScopeMask(normalizedScope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][EMPTY_WRITE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} source=${payload.source}`,
+    );
+  }
   return { ok: true, key, count: items.length };
 }
 
@@ -29993,13 +30015,19 @@ async function upsertBookingDemandIndexBestEffort(env, bookingId, rec, scopeHint
     const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : fallbackScope);
     if (!scope?.hasScope) return { ok: false, reason: "missing_scope" };
     if (isTerminalLifecycleStatus(item.lifecycle)) {
-      return await removeBookingDemandIndexBestEffort(env, bookingId, scope);
+      return await removeBookingDemandIndexBestEffort(env, bookingId, scope, {
+        source: "terminal_lifecycle",
+      });
     }
     const loaded = await loadBookingDemandIndex(env, scope);
     if (!loaded?.ok) return { ok: false, reason: "load_failed" };
     const itemsById = new Map((loaded.items || []).map((entry) => [safeStr(entry?.booking_id, 160), entry]));
     itemsById.set(item.booking_id, item);
-    const result = await saveBookingDemandIndex(env, scope, { items: Array.from(itemsById.values()) });
+    const result = await saveBookingDemandIndex(env, scope, {
+      items: Array.from(itemsById.values()),
+      source: "upsert_active",
+      reason: "booking_upsert",
+    });
     const maskedScope = _bookingIntentScopeMask(scope);
     console.log(
       `[BOOKING_DEMAND_INDEX][UPSERT] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(item.booking_id)} count=${Number(result?.count || 0)}`,
@@ -30015,7 +30043,7 @@ async function upsertBookingDemandIndexBestEffort(env, bookingId, rec, scopeHint
   }
 }
 
-async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = null) {
+async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = null, options = {}) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_booking_kv" };
     const safeBookingId = safeStr(bookingId, 160);
@@ -30025,10 +30053,27 @@ async function removeBookingDemandIndexBestEffort(env, bookingId, scopeHint = nu
     const loaded = await loadBookingDemandIndex(env, scope);
     if (!loaded?.ok) return { ok: false, reason: "load_failed" };
     const nextItems = (loaded.items || []).filter((entry) => safeStr(entry?.booking_id, 160) !== safeBookingId);
+    if (nextItems.length === 0) {
+      const result = await saveBookingDemandIndex(env, scope, {
+        items: [],
+        source: safeStr(options?.source, 64) || "remove_empty",
+        reason: "active_demand_zero",
+      });
+      return {
+        ok: true,
+        unchanged: nextItems.length === (loaded.items || []).length,
+        key: result?.key || loaded.key || "",
+        count: Number(result?.count || 0),
+      };
+    }
     if (nextItems.length === (loaded.items || []).length) {
       return { ok: true, unchanged: true, key: loaded.key || "", count: nextItems.length };
     }
-    const result = await saveBookingDemandIndex(env, scope, { items: nextItems });
+    const result = await saveBookingDemandIndex(env, scope, {
+      items: nextItems,
+      source: safeStr(options?.source, 64) || "remove_active",
+      reason: "booking_remove",
+    });
     const maskedScope = _bookingIntentScopeMask(scope);
     console.log(
       `[BOOKING_DEMAND_INDEX][REMOVE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} booking=${_bookingIntentMask(safeBookingId)} count=${Number(result?.count || 0)}`,
@@ -30052,6 +30097,34 @@ function _fleetDemandIndexStaleAfterMs(env, options = {}) {
     return Math.max(30 * 1000, Math.min(24 * 60 * 60 * 1000, Math.round(fromEnv)));
   }
   return 5 * 60 * 1000;
+}
+
+function _fleetDemandIndexEmptyMarkerStaleAfterMs(env, options = {}) {
+  const explicit = Number(options?.emptyMarkerStaleAfterMs);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return Math.max(5 * 60 * 1000, Math.min(7 * 24 * 60 * 60 * 1000, Math.round(explicit)));
+  }
+  const fromEnv = Number(env?.FLEET_DEMAND_INDEX_EMPTY_STALE_AFTER_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return Math.max(5 * 60 * 1000, Math.min(7 * 24 * 60 * 60 * 1000, Math.round(fromEnv)));
+  }
+  return 12 * 60 * 60 * 1000;
+}
+
+function _isExplicitDemandIndexEmptyMarker(indexObj, loadedItems) {
+  if (!indexObj || typeof indexObj !== "object") return false;
+  if (!Array.isArray(loadedItems) || loadedItems.length !== 0) return false;
+  const explicitEmpty = (
+    indexObj.empty === true ||
+    indexObj.demand_index_empty === true ||
+    indexObj.demandIndexEmpty === true ||
+    Number(indexObj.demand_index_marker_version ?? indexObj.demandIndexMarkerVersion) >= 1
+  );
+  if (!explicitEmpty) return false;
+  const activeCount = Number(
+    indexObj.active_count ?? indexObj.activeCount ?? indexObj.count ?? 0,
+  );
+  return Number.isFinite(activeCount) && activeCount === 0;
 }
 
 function _fleetDemandFromIndexItem(item) {
@@ -30100,11 +30173,24 @@ async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
   if (!Array.isArray(loaded?.items)) {
     return { ok: false, reason: "demand_index_invalid", items: [] };
   }
-  const indexUpdatedAt = safeStr(indexObj?.updated_at ?? indexObj?.updatedAt, 80) || null;
-  const staleAfterMs = _fleetDemandIndexStaleAfterMs(env, options);
-  if (staleAfterMs > 0 && indexUpdatedAt) {
-    const updatedMs = Date.parse(indexUpdatedAt);
-    if (Number.isFinite(updatedMs) && (Date.now() - updatedMs) > staleAfterMs) {
+  const indexUpdatedAt = safeStr(
+    indexObj?.index_updated_at ??
+      indexObj?.indexUpdatedAt ??
+      indexObj?.updated_at ??
+      indexObj?.updatedAt,
+    80,
+  ) || null;
+  const isExplicitEmptyMarker = _isExplicitDemandIndexEmptyMarker(indexObj, loaded.items);
+  const staleAfterMs = isExplicitEmptyMarker
+    ? _fleetDemandIndexEmptyMarkerStaleAfterMs(env, options)
+    : _fleetDemandIndexStaleAfterMs(env, options);
+  const updatedMs = Date.parse(indexUpdatedAt || "");
+  if (staleAfterMs > 0) {
+    if (!Number.isFinite(updatedMs)) {
+      const maskedScope = _bookingIntentScopeMask(normalizedScope);
+      console.log(
+        `[BOOKING_DEMAND_INDEX][STALE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} reason=missing_updated_at`,
+      );
       return {
         ok: false,
         reason: "demand_index_stale",
@@ -30113,6 +30199,32 @@ async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
         stale: true,
       };
     }
+    if ((Date.now() - updatedMs) > staleAfterMs) {
+      const maskedScope = _bookingIntentScopeMask(normalizedScope);
+      console.log(
+        `[BOOKING_DEMAND_INDEX][STALE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} reason=demand_index_stale`,
+      );
+      return {
+        ok: false,
+        reason: "demand_index_stale",
+        items: [],
+        index_updated_at: indexUpdatedAt,
+        stale: true,
+      };
+    }
+  }
+  if (isExplicitEmptyMarker) {
+    const maskedScope = _bookingIntentScopeMask(normalizedScope);
+    console.log(
+      `[BOOKING_DEMAND_INDEX][EMPTY_READ_OK] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"}`,
+    );
+    return {
+      ok: true,
+      items: [],
+      index_updated_at: indexUpdatedAt,
+      stale: false,
+      empty_marker: true,
+    };
   }
   const items = [];
   for (const rawItem of loaded.items) {
@@ -31470,7 +31582,11 @@ async function rebuildBookingDemandIndexForScope(env, scope, { dryRun = false } 
   const removedOrRebuilt = Math.max(prevCount, nextCount);
 
   if (!dryRun) {
-    await saveBookingDemandIndex(env, normalizedScope, { items: nextItems });
+    await saveBookingDemandIndex(env, normalizedScope, {
+      items: nextItems,
+      source: nextCount === 0 ? "rebuild_empty" : "admin_rebuild",
+      reason: nextCount === 0 ? "rebuild_empty_index" : "rebuild_active_index",
+    });
   }
   const maskedScope = _bookingIntentScopeMask(normalizedScope);
   console.log(
