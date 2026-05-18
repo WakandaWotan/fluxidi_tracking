@@ -13426,13 +13426,70 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     );
   }
 
+  String _normalizePublicCompanyCodeForDriverQr(String raw) {
+    return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _isValidPublicCompanyCodeForDriverQr(String value) {
+    final code = _normalizePublicCompanyCodeForDriverQr(value);
+    if (code.isEmpty) return false;
+    return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+  }
+
+  String _resolvePublicCompanyCodeForDriverQr() {
+    String? readFirstValidFromMap(Map<String, dynamic>? map) {
+      if (map == null) return null;
+      for (final key in const <String>[
+        'public_company_code',
+        'publicCompanyCode',
+        'company_code',
+        'companyCode',
+      ]) {
+        final normalized = _normalizePublicCompanyCodeForDriverQr(
+          (map[key] ?? '').toString(),
+        );
+        if (_isValidPublicCompanyCodeForDriverQr(normalized)) {
+          return normalized;
+        }
+      }
+      return null;
+    }
+
+    final backendMap = localBackendBusinessProfileNotifier.value?.toJson();
+    final profileMap = companyProfileNotifier.value?.toJson();
+    final sessionCode = _normalizePublicCompanyCodeForDriverQr(
+      activeCompanySessionNotifier.value?.companyCode ?? '',
+    );
+
+    if (_isValidPublicCompanyCodeForDriverQr(sessionCode)) {
+      return sessionCode;
+    }
+
+    final backendCode = readFirstValidFromMap(
+      backendMap is Map<String, dynamic> ? backendMap : null,
+    );
+    if (backendCode != null) return backendCode;
+
+    final profileCode = readFirstValidFromMap(
+      profileMap is Map<String, dynamic> ? profileMap : null,
+    );
+    if (profileCode != null) return profileCode;
+
+    return '';
+  }
+
   Future<void> _showGeneratedDriverCodeDialog(
     BuildContext context, {
     required String loginCode,
+    required String companyCode,
     required String driverName,
   }) async {
     final trimmedCode = loginCode.trim();
     if (trimmedCode.isEmpty) return;
+    final trimmedCompanyCode = companyCode.trim();
+    final qrPayload = trimmedCompanyCode.isNotEmpty
+        ? 'fluxidi://driver-login?company_code=${Uri.encodeComponent(trimmedCompanyCode)}&driver_code=${Uri.encodeComponent(trimmedCode)}&v=1'
+        : trimmedCode;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -13502,10 +13559,18 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               _t(
-                nl: 'Laat de chauffeur deze QR scannen of de code overnemen.',
-                en: 'Let the driver scan this QR or copy the code.',
-                fr: 'Laissez le chauffeur scanner ce QR ou reprendre le code.',
-                es: 'Permite que el conductor escanee este QR o copie el código.',
+                nl: trimmedCompanyCode.isNotEmpty
+                    ? 'De QR bevat bedrijfscode en chauffeurcode.'
+                    : 'De QR bevat alleen de chauffeurcode. Vul de bedrijfscode apart in.',
+                en: trimmedCompanyCode.isNotEmpty
+                    ? 'The QR contains company code and driver code.'
+                    : 'The QR contains only the driver code. Enter the company code separately.',
+                fr: trimmedCompanyCode.isNotEmpty
+                    ? 'Le QR contient le code entreprise et le code chauffeur.'
+                    : 'Le QR contient uniquement le code chauffeur. Saisissez le code entreprise séparément.',
+                es: trimmedCompanyCode.isNotEmpty
+                    ? 'El QR contiene código de empresa y código de conductor.'
+                    : 'El QR contiene solo el código de conductor. Introduce el código de empresa por separado.',
               ),
               style: TextStyle(
                 color: Colors.white.withOpacity(0.72),
@@ -13523,7 +13588,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: QrImageView(
-                    data: trimmedCode,
+                    data: qrPayload,
                     version: QrVersions.auto,
                     size: 140,
                     backgroundColor: Colors.white,
@@ -14703,9 +14768,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     );
     unawaited(onRequestMutationRefresh?.call(reason: 'drivers_code_rotate'));
     if (!context.mounted) return;
+    final publicCompanyCodeForQr = _resolvePublicCompanyCodeForDriverQr();
     await _showGeneratedDriverCodeDialog(
       context,
       loginCode: loginCode,
+      companyCode: publicCompanyCodeForQr,
       driverName: driver.fullName,
     );
   }
