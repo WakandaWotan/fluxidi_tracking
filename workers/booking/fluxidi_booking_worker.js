@@ -10883,19 +10883,43 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
   }
   const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
   if (!companyRecord || companyRecord.linking_enabled !== true) {
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=company_unavailable company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
+  const explicitChallengeId = sanitizeTenantString(
+    body.challenge_id ?? body.challengeId,
+    120,
+  ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  const mode = explicitChallengeId ? "challenge_id" : "active_key";
+  console.info(
+    `[DRIVER_LINK_VERIFY][MODE] mode=${mode} company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+  );
   const activeKey = _companyDriverLinkActiveKey(codeValidation.code);
-  const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
-  const challengeId = sanitizeTenantString(active?.challenge_id ?? active?.challengeId, 120)
-    .replace(/[^a-zA-Z0-9_-]+/g, "");
+  let challengeId = explicitChallengeId;
   if (!challengeId) {
+    const active = await env.BOOKING_KV.get(activeKey, { type: "json" });
+    challengeId = sanitizeTenantString(
+      active?.challenge_id ?? active?.challengeId,
+      120,
+    ).replace(/[^a-zA-Z0-9_-]+/g, "");
+  }
+  if (!challengeId) {
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=challenge_missing company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const challengeKey = _companyDriverLinkChallengeKey(challengeId);
   const challenge = await env.BOOKING_KV.get(challengeKey, { type: "json" });
   if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
-    await env.BOOKING_KV.delete(activeKey);
+    if (!explicitChallengeId) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=challenge_not_found company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const nowMs = Date.now();
@@ -10918,19 +10942,39 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
     sanitizeTenantString(challenge.tenant_id, 80) !== sanitizeTenantString(companyRecord.tenant_id, 80) ||
     sanitizeTenantString(challenge.company_id, 80) !== sanitizeTenantString(companyRecord.company_id, 80)
   ) {
-    await env.BOOKING_KV.delete(activeKey);
+    if (!explicitChallengeId) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=scope_mismatch company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   if (sanitizeTenantString(challenge.consumed_at, 80)) {
-    await env.BOOKING_KV.delete(activeKey);
+    if (!explicitChallengeId) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=already_consumed company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   if (!Number.isFinite(expiresAtMs) || nowMs >= expiresAtMs) {
-    await env.BOOKING_KV.delete(activeKey);
+    if (!explicitChallengeId) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=expired company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   if (attempts >= maxAttempts) {
-    await env.BOOKING_KV.delete(activeKey);
+    if (!explicitChallengeId) {
+      await env.BOOKING_KV.delete(activeKey);
+    }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=max_attempts company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   const expectedHash = sanitizeTenantString(challenge.pairing_code_hash, 200).toLowerCase();
@@ -10945,8 +10989,13 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
       expirationTtl: remainingSeconds,
     });
     if (nextAttempts >= maxAttempts) {
-      await env.BOOKING_KV.delete(activeKey);
+      if (!explicitChallengeId) {
+        await env.BOOKING_KV.delete(activeKey);
+      }
     }
+    console.info(
+      `[DRIVER_LINK_VERIFY][RESULT] ok=false reason=pairing_mismatch company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+    );
     return json({ ok: false, error: "verification_failed" }, 403);
   }
   challenge.attempts = attempts + 1;
@@ -10959,6 +11008,9 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
     expirationTtl: remainingSeconds,
   });
   await env.BOOKING_KV.delete(activeKey);
+  console.info(
+    `[DRIVER_LINK_VERIFY][RESULT] ok=true reason=verified company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
+  );
   return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso), 200);
 }
 
