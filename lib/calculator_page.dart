@@ -217,6 +217,8 @@ class _CalculatorScopeSelection {
   final bool isMissing;
 }
 
+enum BookingEntryContext { customer, companyAdmin, driver }
+
 _CalculatorScopeSelection _selectCalculatorBookingScope({
   required String publicPartnerId,
 }) {
@@ -280,6 +282,7 @@ class CalculatorPage extends StatefulWidget {
     this.onGoToStartPage,
     this.publicPartnerId,
     this.publicPartnerName,
+    this.entryContext = BookingEntryContext.customer,
   });
 
   final String
@@ -289,6 +292,7 @@ class CalculatorPage extends StatefulWidget {
   final VoidCallback? onGoToStartPage;
   final String? publicPartnerId;
   final String? publicPartnerName;
+  final BookingEntryContext entryContext;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
@@ -802,7 +806,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
-  void _openBookingConfirmation() {
+  Future<void> _openBookingConfirmation() async {
     final quote = _lastQuote;
     if (quote == null) return;
     final availability = _quoteAvailabilityValue(quote);
@@ -817,7 +821,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final payload = _lastQuoteRequestPayload != null
         ? Map<String, dynamic>.from(_lastQuoteRequestPayload!)
         : _buildQuotePayload(dt);
-    Navigator.of(context).push(
+    final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => _BookingConfirmationPage(
           bookingBaseUrl: widget.bookingBaseUrl,
@@ -826,6 +830,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           quote: quote,
           payload: payload,
           persistToCustomerBookings: widget.persistToCustomerBookings,
+          entryContext: widget.entryContext,
           onGoToStartPage: widget.onGoToStartPage,
           currencySymbol: _currencySymbol,
           distanceUnitLabel: appConfig.distanceUnitLabel,
@@ -834,6 +839,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
         ),
       ),
     );
+    if (created == true && mounted) {
+      Navigator.of(context).pop(true);
+    }
   }
 
   @override
@@ -2628,6 +2636,7 @@ class _BookingConfirmationPage extends StatefulWidget {
     required this.quote,
     required this.payload,
     required this.persistToCustomerBookings,
+    required this.entryContext,
     this.onGoToStartPage,
     required this.currencySymbol,
     required this.distanceUnitLabel,
@@ -2641,6 +2650,7 @@ class _BookingConfirmationPage extends StatefulWidget {
   final Map<String, dynamic> quote;
   final Map<String, dynamic> payload;
   final bool persistToCustomerBookings;
+  final BookingEntryContext entryContext;
   final VoidCallback? onGoToStartPage;
   final String currencySymbol;
   final String distanceUnitLabel;
@@ -2668,6 +2678,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   String? _ownPaymentBookingId;
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
+  bool get _allowsCustomerSessionLink =>
+      widget.entryContext == BookingEntryContext.customer;
+  bool get _shouldReturnToOriginAfterSuccess =>
+      widget.entryContext != BookingEntryContext.customer;
 
   void _goToCustomerStartHome() {
     if (!mounted) return;
@@ -2680,7 +2694,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   void initState() {
     super.initState();
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentChanged);
-    unawaited(_prefillFromCustomerProfile());
+    if (_allowsCustomerSessionLink) {
+      unawaited(_prefillFromCustomerProfile());
+    }
   }
 
   Future<void> _prefillFromCustomerProfile() async {
@@ -3315,18 +3331,28 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         paymentUrl: safeCheckoutUrl,
         publicRef: publicRef,
       );
+      if (_shouldReturnToOriginAfterSuccess && mounted) {
+        Navigator.of(context).pop(true);
+      }
     } else if (safeCheckoutUrl.isNotEmpty) {
       await _showBookingSuccessDialog(
         requiresPayment: true,
         paymentUrl: safeCheckoutUrl,
         publicRef: publicRef,
       );
+      if (_shouldReturnToOriginAfterSuccess && mounted) {
+        Navigator.of(context).pop(true);
+      }
     } else if (mounted) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(successMessage)));
       await Future<void>.delayed(const Duration(milliseconds: 600));
-      _goToCustomerStartHome();
+      if (_shouldReturnToOriginAfterSuccess && mounted) {
+        Navigator.of(context).pop(true);
+      } else {
+        _goToCustomerStartHome();
+      }
     }
   }
 
@@ -3440,14 +3466,32 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       ).showSnackBar(SnackBar(content: Text(chooseCompanyMessage)));
       return;
     }
-    final customerSession = await CustomerSessionStore.instance
-        .loadValidSession();
-    final sessionPhoneE164 = (customerSession?.phoneE164 ?? '').trim();
-    final useSessionPhoneForBooking = sessionPhoneE164.isNotEmpty;
+    final customerSession = _allowsCustomerSessionLink
+        ? await CustomerSessionStore.instance.loadValidSession()
+        : null;
+    final sessionPhoneE164 = _allowsCustomerSessionLink
+        ? (customerSession?.phoneE164 ?? '').trim()
+        : '';
+    final useSessionPhoneForBooking =
+        _allowsCustomerSessionLink && sessionPhoneE164.isNotEmpty;
     final payloadPhone = useSessionPhoneForBooking ? sessionPhoneE164 : phone;
     debugPrint(
       '[BOOK][CUSTOMER_SESSION_PHONE] used=${useSessionPhoneForBooking ? "true" : "false"}',
     );
+
+    final createdByRole = switch (widget.entryContext) {
+      BookingEntryContext.customer => 'customer',
+      BookingEntryContext.companyAdmin => 'company_admin',
+      BookingEntryContext.driver => 'driver',
+    };
+    final bookingSource = switch (widget.entryContext) {
+      BookingEntryContext.customer => 'flutter_app',
+      BookingEntryContext.companyAdmin => 'company_admin_app',
+      BookingEntryContext.driver => 'driver_app',
+    };
+    final customerLinkMode = _allowsCustomerSessionLink
+        ? 'customer_session_or_contact'
+        : 'explicit_only';
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
@@ -3465,10 +3509,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         if (publicPartnerName.isNotEmpty)
           'publicPartnerName': publicPartnerName,
       },
-      'booking_source': 'flutter_app',
+      'booking_source': bookingSource,
       'entry_channel': 'flutter_calculator',
+      'created_by_role': createdByRole,
+      'customer_link_mode': customerLinkMode,
+      'suppress_device_customer_session_link': !_allowsCustomerSessionLink,
       'source_context': <String, dynamic>{
-        'role': 'customer_or_app',
+        'role': createdByRole,
         'language': widget.language.name,
         'surface': 'calculator_confirmation',
       },
@@ -4039,9 +4086,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           ),
           const SizedBox(height: 9),
           _sectionCard(
-            title: widget.strings.bookingCustomerSectionTitle.of(
-              widget.language,
-            ),
+            title: _allowsCustomerSessionLink
+                ? widget.strings.bookingCustomerSectionTitle.of(widget.language)
+                : _localizedText(
+                    nl: 'Passagiersgegevens',
+                    en: 'Passenger details',
+                    fr: 'Détails du passager',
+                    es: 'Datos del pasajero',
+                  ),
             child: Column(
               children: [
                 _input(

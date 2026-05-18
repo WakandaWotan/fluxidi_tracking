@@ -20395,6 +20395,23 @@ async function handleBooking(payload, env, request) {
     const business_detected = !!biz.vat_number;
     const customerContact = normalizeCustomerContact(payload);
     const customerEmailLanguage = normalizeCustomerEmailLanguage(payload);
+    const payloadLinkModeRaw = safeStr(
+      payload?.customer_link_mode ?? payload?.customerLinkMode,
+      40,
+    ).toLowerCase();
+    const suppressDeviceCustomerSessionLink =
+      payload?.suppress_device_customer_session_link === true ||
+      payload?.suppressDeviceCustomerSessionLink === true;
+    const customerLinkMode = suppressDeviceCustomerSessionLink
+      ? "explicit_only"
+      : (payloadLinkModeRaw || "customer_session_or_contact");
+    const explicitPayloadCustomerId = _normalizeCustomerIdentityId(
+      payload?.customer_id ??
+        payload?.customerId ??
+        payload?.customer?.customer_id ??
+        payload?.customer?.customerId,
+    );
+    const allowImplicitCustomerPhoneLink = customerLinkMode !== "explicit_only";
     let linkedCustomerId = "";
     let linkedPhoneHash = "";
     let customerPhoneLinkReason = "no_customer_phone";
@@ -20404,64 +20421,73 @@ async function handleBooking(payload, env, request) {
     let customerPhoneLookupStep = "-";
     let customerPhoneLookupErrorName = "-";
     let customerPhoneLookupErrorMessage = "-";
-    try {
-      customerPhoneLookupStep = "normalize_phone";
-      const normalizedCustomerPhone = _normalizeCustomerPhone(customerContact.phone);
-      customerPhoneLinkHasPhone = !!safeStr(customerContact.phone, 80);
-      customerPhoneLinkIsE164 = _looksLikeE164Phone(normalizedCustomerPhone);
-      if (customerPhoneLinkIsE164) {
-        customerPhoneLookupStep = "hash_phone";
-        const phoneHash = sanitizeTenantString(await _sha256Hex(normalizedCustomerPhone), 200).toLowerCase();
-        customerPhoneLookupStep = "build_index_key";
-        const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
-        if (phoneIndexKey) {
-          customerPhoneLookupStep = "read_global_phone_index";
-          const indexRaw = await env.BOOKING_KV.get(phoneIndexKey);
-          const indexRawText = safeStr(indexRaw, 400).trim();
-          customerPhoneLinkHasIndex = indexRawText.length > 0;
-          customerPhoneLookupStep = "parse_index";
-          let parsedIndex = null;
-          if (indexRaw && typeof indexRaw === "object") {
-            parsedIndex = indexRaw;
-            customerPhoneLinkHasIndex = true;
-          } else if (indexRawText.length > 0) {
-            if (indexRawText.startsWith("{") || indexRawText.startsWith("[")) {
-              try {
-                parsedIndex = JSON.parse(indexRawText);
-              } catch (_) {
-                customerPhoneLinkReason = "index_parse_error";
+    if (explicitPayloadCustomerId) {
+      linkedCustomerId = explicitPayloadCustomerId;
+      customerPhoneLinkReason = "explicit_customer_id";
+      customerPhoneLookupStep = "payload_explicit";
+    } else if (!allowImplicitCustomerPhoneLink) {
+      customerPhoneLinkReason = "suppressed_explicit_only";
+      customerPhoneLookupStep = "skipped_explicit_only";
+    } else {
+      try {
+        customerPhoneLookupStep = "normalize_phone";
+        const normalizedCustomerPhone = _normalizeCustomerPhone(customerContact.phone);
+        customerPhoneLinkHasPhone = !!safeStr(customerContact.phone, 80);
+        customerPhoneLinkIsE164 = _looksLikeE164Phone(normalizedCustomerPhone);
+        if (customerPhoneLinkIsE164) {
+          customerPhoneLookupStep = "hash_phone";
+          const phoneHash = sanitizeTenantString(await _sha256Hex(normalizedCustomerPhone), 200).toLowerCase();
+          customerPhoneLookupStep = "build_index_key";
+          const phoneIndexKey = _globalCustomerPhoneIndexKey(phoneHash);
+          if (phoneIndexKey) {
+            customerPhoneLookupStep = "read_global_phone_index";
+            const indexRaw = await env.BOOKING_KV.get(phoneIndexKey);
+            const indexRawText = safeStr(indexRaw, 400).trim();
+            customerPhoneLinkHasIndex = indexRawText.length > 0;
+            customerPhoneLookupStep = "parse_index";
+            let parsedIndex = null;
+            if (indexRaw && typeof indexRaw === "object") {
+              parsedIndex = indexRaw;
+              customerPhoneLinkHasIndex = true;
+            } else if (indexRawText.length > 0) {
+              if (indexRawText.startsWith("{") || indexRawText.startsWith("[")) {
+                try {
+                  parsedIndex = JSON.parse(indexRawText);
+                } catch (_) {
+                  customerPhoneLinkReason = "index_parse_error";
+                }
+              } else {
+                parsedIndex = indexRawText;
+              }
+            }
+            const resolvedCustomerId = _normalizeCustomerIdentityId(
+              parsedIndex?.customer_id ?? parsedIndex?.customerId ?? parsedIndex,
+            );
+            if (resolvedCustomerId) {
+              customerPhoneLookupStep = "extract_customer_id";
+              linkedCustomerId = resolvedCustomerId;
+              linkedPhoneHash = phoneHash;
+              customerPhoneLinkReason = "linked";
+            } else if (customerPhoneLinkHasIndex) {
+              if (customerPhoneLinkReason !== "index_parse_error") {
+                customerPhoneLinkReason = "index_invalid_shape";
               }
             } else {
-              parsedIndex = indexRawText;
-            }
-          }
-          const resolvedCustomerId = _normalizeCustomerIdentityId(
-            parsedIndex?.customer_id ?? parsedIndex?.customerId ?? parsedIndex,
-          );
-          if (resolvedCustomerId) {
-            customerPhoneLookupStep = "extract_customer_id";
-            linkedCustomerId = resolvedCustomerId;
-            linkedPhoneHash = phoneHash;
-            customerPhoneLinkReason = "linked";
-          } else if (customerPhoneLinkHasIndex) {
-            if (customerPhoneLinkReason !== "index_parse_error") {
-              customerPhoneLinkReason = "index_invalid_shape";
+              customerPhoneLinkReason = "no_global_phone_index";
             }
           } else {
             customerPhoneLinkReason = "no_global_phone_index";
           }
-        } else {
-          customerPhoneLinkReason = "no_global_phone_index";
+        } else if (customerPhoneLinkHasPhone) {
+          customerPhoneLinkReason = "normalized_not_e164";
         }
-      } else if (customerPhoneLinkHasPhone) {
-        customerPhoneLinkReason = "normalized_not_e164";
+      } catch (_lookupErr) {
+        customerPhoneLinkReason = "lookup_error";
+        customerPhoneLookupErrorName = safeStr(_lookupErr?.name || "Error", 40) || "Error";
+        customerPhoneLookupErrorMessage =
+          safeStr(_lookupErr?.message || _lookupErr, 120) || "lookup_failed";
+        // Best-effort link only.
       }
-    } catch (_lookupErr) {
-      customerPhoneLinkReason = "lookup_error";
-      customerPhoneLookupErrorName = safeStr(_lookupErr?.name || "Error", 40) || "Error";
-      customerPhoneLookupErrorMessage =
-        safeStr(_lookupErr?.message || _lookupErr, 120) || "lookup_failed";
-      // Best-effort link only.
     }
 
     // Business rule: if VAT is provided => upfront payment required (Mollie test/live).
@@ -21336,10 +21362,12 @@ async function handleBooking(payload, env, request) {
             trip: null,
           };
           _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
-          await _ensureFallbackScopedCustomerIdentityForBookingRecord({
-            bookingId: canonicalBookingId,
-            rec: provisionalRecord,
-          });
+          if (allowImplicitCustomerPhoneLink) {
+            await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+              bookingId: canonicalBookingId,
+              rec: provisionalRecord,
+            });
+          }
           await env.BOOKING_KV.put(
             `booking:${canonicalBookingId}`,
             JSON.stringify(provisionalRecord),
@@ -22193,10 +22221,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         trip: null,
       };
       _enrichBookingRecordWithLinkedCustomer(provisionalRecord, linkedCustomerId, linkedPhoneHash);
-      await _ensureFallbackScopedCustomerIdentityForBookingRecord({
-        bookingId: canonicalBookingId,
-        rec: provisionalRecord,
-      });
+      if (allowImplicitCustomerPhoneLink) {
+        await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+          bookingId: canonicalBookingId,
+          rec: provisionalRecord,
+        });
+      }
       await env.BOOKING_KV.put(
         `booking:${canonicalBookingId}`,
         JSON.stringify(provisionalRecord),
@@ -22538,10 +22568,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       trip: null
     };
     _enrichBookingRecordWithLinkedCustomer(record, linkedCustomerId, linkedPhoneHash);
-    await _ensureFallbackScopedCustomerIdentityForBookingRecord({
-      bookingId: booking.bookingId,
-      rec: record,
-    });
+    if (allowImplicitCustomerPhoneLink) {
+      await _ensureFallbackScopedCustomerIdentityForBookingRecord({
+        bookingId: booking.bookingId,
+        rec: record,
+      });
+    }
 
     try {
       await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));

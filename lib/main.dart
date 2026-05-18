@@ -7371,6 +7371,67 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return '${_kpiCurrency.toUpperCase()} $normalized';
   }
 
+  Future<int?> _loadOpenBookingsFallbackCount({
+    required Map<String, String> headers,
+    required String reason,
+  }) async {
+    // Keep fallback lightweight: company list index-backed endpoint only.
+    final listUri = _withActiveBookingScope(
+      kBookingBaseUrl,
+      kListBookingsPath,
+      extraQuery: <String, String>{
+        'limit': '200',
+        'include_history': '1',
+        't': '${DateTime.now().millisecondsSinceEpoch}',
+      },
+    );
+    try {
+      final res = await http
+          .get(listUri, headers: headers)
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list status=${res.statusCode} trigger=$reason',
+        );
+        return null;
+      }
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=invalid_payload trigger=$reason',
+        );
+        return null;
+      }
+      final rawItems = (decoded['items'] is List)
+          ? (decoded['items'] as List)
+          : ((decoded['bookings'] is List)
+                ? (decoded['bookings'] as List)
+                : null);
+      if (rawItems == null) {
+        debugPrint(
+          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=missing_items trigger=$reason',
+        );
+        return null;
+      }
+      var openCount = 0;
+      for (final raw in rawItems) {
+        if (raw is! Map) continue;
+        final item = _CompanyBookingOverviewItem.fromMap(
+          raw.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        if (item.bucket == _CompanyBookingsFilter.open) {
+          openCount += 1;
+        }
+      }
+      return openCount;
+    } catch (e) {
+      debugPrint(
+        '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=fetch_failed trigger=$reason error=$e',
+      );
+      return null;
+    }
+  }
+
   Future<void> _refreshDashboardKpis({required String reason}) async {
     if (_kpiRefreshInFlight) return;
     _kpiRefreshInFlight = true;
@@ -7418,6 +7479,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
           );
         }
+        nextOpenBookings ??= await _loadOpenBookingsFallbackCount(
+          headers: headers,
+          reason: reason,
+        );
 
         final tripRes = responses[1];
         if (tripRes.statusCode == 200) {
@@ -7455,7 +7520,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       }
       if (!mounted) return;
       setState(() {
-        _openBookingsCount = nextOpenBookings;
+        _openBookingsCount = nextOpenBookings ?? _openBookingsCount;
         _completedRidesCount = nextCompletedRides;
         _unpaidCompletedRidesCount = nextUnpaidCompleted;
         _monthlyIncomeCents = nextMonthlyIncomeCents;
@@ -7466,16 +7531,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     }
   }
 
-  void _openCalculator(BuildContext context) {
-    Navigator.of(context).push(
+  Future<void> _openCalculator(BuildContext context) async {
+    final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
+          entryContext: BookingEntryContext.companyAdmin,
         ),
       ),
     );
+    if (created == true) {
+      await _refreshDashboardKpis(reason: 'calculator_created');
+    }
   }
 
   Future<void> _openDriverCockpitView(BuildContext context) async {
@@ -43724,23 +43793,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  void _openCalculatorFromDashboard() {
+  Future<void> _openCalculatorFromDashboard() async {
     if (!_canAccessCustomerBookingScreens()) {
       _denyRoleAccess();
       return;
     }
-    Navigator.of(context).push(
+    final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
+          entryContext: BookingEntryContext.driver,
         ),
       ),
     );
+    if (created == true && mounted) {
+      await _refreshBookings(force: true, trigger: 'calculator_created');
+    }
   }
 
-  void _openCalculator() {
+  Future<void> _openCalculator() async {
     if (!_canAccessCustomerBookingScreens()) {
       Navigator.pop(context);
       _denyRoleAccess();
@@ -43749,15 +43822,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Close drawer first for a clean transition.
     Navigator.pop(context);
 
-    Navigator.of(context).push(
+    final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (ctx) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: false,
+          entryContext: BookingEntryContext.driver,
         ),
       ),
     );
+    if (created == true && mounted) {
+      await _refreshBookings(force: true, trigger: 'calculator_created');
+    }
   }
 
   void _openBusinessSettings() {
