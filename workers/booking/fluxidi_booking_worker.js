@@ -15827,6 +15827,40 @@ GET /oauth/callback
         return json(out, 200);
       }
 
+      if (
+        url.pathname === "/admin/dashboard/bookings-kpis/rebuild" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const dryRun = _coerceBoolean(
+          body?.dryRun ??
+            body?.dry_run ??
+            url.searchParams.get("dryRun") ??
+            url.searchParams.get("dry_run"),
+          false,
+        );
+        const compare = _coerceBoolean(
+          body?.compare ??
+            body?.debugCompare ??
+            body?.debug_compare ??
+            url.searchParams.get("compare") ??
+            url.searchParams.get("debugCompare") ??
+            url.searchParams.get("debug_compare"),
+          false,
+        );
+        const out = await rebuildDashboardBookingsKpiProjectionForScope(
+          env,
+          explicitScope,
+          { dryRun, compare },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
@@ -19116,6 +19150,12 @@ async function mollieWebhook(request, env) {
     } else {
       await upsertBookingDemandIndexBestEffort(env, bookingId, stored, bookingScope);
     }
+    await upsertDashboardBookingsKpiProjectionBestEffort(
+      env,
+      bookingId,
+      stored,
+      bookingScope,
+    );
 
     return { ok: true, received: true, processed: true, bookingId, mollieStatus, action: "status-updated" };
   } catch (e) {
@@ -20615,6 +20655,12 @@ async function handleBooking(payload, env, request) {
             provisionalRecord,
             normalizeFleetTenantScope(tenantContext),
           );
+          await upsertDashboardBookingsKpiProjectionBestEffort(
+            env,
+            canonicalBookingId,
+            provisionalRecord,
+            normalizeFleetTenantScope(tenantContext),
+          );
           const pay = await mollieCreatePayment(
             {
               ...payload,
@@ -20668,6 +20714,12 @@ async function handleBooking(payload, env, request) {
               normalizeFleetTenantScope(tenantContext),
             );
             await upsertDriverVehicleBookingIndexesBestEffort(
+              env,
+              canonicalBookingId,
+              provisionalRecord,
+              normalizeFleetTenantScope(tenantContext),
+            );
+            await upsertDashboardBookingsKpiProjectionBestEffort(
               env,
               canonicalBookingId,
               provisionalRecord,
@@ -20745,6 +20797,12 @@ async function handleBooking(payload, env, request) {
             normalizeFleetTenantScope(tenantContext),
           );
           await upsertDriverVehicleBookingIndexesBestEffort(
+            env,
+            canonicalBookingId,
+            provisionalRecord,
+            normalizeFleetTenantScope(tenantContext),
+          );
+          await upsertDashboardBookingsKpiProjectionBestEffort(
             env,
             canonicalBookingId,
             provisionalRecord,
@@ -21436,6 +21494,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         provisionalRecord,
         normalizeFleetTenantScope(tenantContext),
       );
+      await upsertDashboardBookingsKpiProjectionBestEffort(
+        env,
+        canonicalBookingId,
+        provisionalRecord,
+        normalizeFleetTenantScope(tenantContext),
+      );
       try {
         const indexResult = await upsertCustomerScopedBookingIndexForBooking(
           env,
@@ -21763,6 +21827,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         normalizeFleetTenantScope(tenantContext),
       );
       await upsertDriverVehicleBookingIndexesBestEffort(
+        env,
+        booking.bookingId,
+        record,
+        normalizeFleetTenantScope(tenantContext),
+      );
+      await upsertDashboardBookingsKpiProjectionBestEffort(
         env,
         booking.bookingId,
         record,
@@ -31236,6 +31306,538 @@ function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
   return { open: true, reason: "considered_open" };
 }
 
+function dashboardBookingsKpiAggregateKey(scope) {
+  const normalized = _safeResetNormalizedScope(scope);
+  if (!normalized?.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:dashboard:bookings_kpis:v1`;
+}
+
+function dashboardBookingsKpiContributionKey(scope, bookingId) {
+  const normalized = _safeResetNormalizedScope(scope);
+  const safeBookingId = sanitizeTenantString(bookingId, 160);
+  if (!normalized?.hasScope || !safeBookingId) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:dashboard:bookings_kpi_contrib:${safeBookingId}:v1`;
+}
+
+function _dashboardBookingsKpiContributionPrefix(scope) {
+  const normalized = _safeResetNormalizedScope(scope);
+  if (!normalized?.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:dashboard:bookings_kpi_contrib:`;
+}
+
+function _dashboardProjectionBaseCounters() {
+  return {
+    considered_open: 0,
+    excluded_terminal: 0,
+    excluded_payment_failed: 0,
+    excluded_stale_payment_pending: 0,
+    excluded_hidden: 0,
+    excluded_missing_pickup_time: 0,
+    excluded_stale_past_pickup: 0,
+    excluded_non_canonical_provisional_record: 0,
+    excluded_reference_only_provisional_record: 0,
+    excluded_duplicate_identity: 0,
+    excluded_terminal_identity: 0,
+    excluded_out_of_scope: 0,
+    excluded_invalid_record: 0,
+  };
+}
+
+function _dashboardProjectionReasonToCounter(reasonCode) {
+  if (reasonCode === "excluded_terminal") return "excluded_terminal";
+  if (reasonCode === "excluded_payment_failed") return "excluded_payment_failed";
+  if (reasonCode === "excluded_stale_payment_pending") return "excluded_stale_payment_pending";
+  if (reasonCode === "excluded_hidden") return "excluded_hidden";
+  if (reasonCode === "excluded_missing_pickup_time") return "excluded_missing_pickup_time";
+  if (reasonCode === "excluded_stale_past_pickup") return "excluded_stale_past_pickup";
+  if (reasonCode === "excluded_non_canonical_provisional_record") return "excluded_non_canonical_provisional_record";
+  if (reasonCode === "excluded_out_of_scope") return "excluded_out_of_scope";
+  if (reasonCode === "excluded_invalid_record") return "excluded_invalid_record";
+  return "";
+}
+
+function _dashboardContributionIsReferenceOnlyProvisionalOpenCandidate(contribution) {
+  if (!contribution?.open_candidate) return false;
+  return contribution?.reference_only_provisional_open_candidate === true;
+}
+
+function _buildDashboardBookingsKpiAggregateFromContributions(contributions = [], options = {}) {
+  const counters = _dashboardProjectionBaseCounters();
+  const identityGroups = new Map();
+  for (const entry of contributions || []) {
+    if (!entry || typeof entry !== "object") continue;
+    const reasonCounter = _dashboardProjectionReasonToCounter(safeStr(entry?.open_reason, 80));
+    if (reasonCounter) counters[reasonCounter] += 1;
+    const identityKey = safeStr(entry?.identity_key, 180) || safeStr(entry?.booking_id, 160) || "unknown";
+    if (!identityGroups.has(identityKey)) identityGroups.set(identityKey, []);
+    identityGroups.get(identityKey).push(entry);
+  }
+
+  for (const [identityKey, group] of identityGroups.entries()) {
+    if (!Array.isArray(group) || group.length === 0) continue;
+    const identityTerminalPresent = group.some((entry) => entry?.has_terminal_lifecycle === true);
+    const identityCanonicalRecordPresent = group.some((entry) => entry?.key_is_canonical === true);
+    const identityHasCanonicalBookingNumber = group.some(
+      (entry) => entry?.identity_meta?.has_canonical_booking_number === true || entry?.key_is_canonical === true,
+    );
+    const identityReferenceOnly =
+      identityCanonicalRecordPresent !== true &&
+      (safeStr(identityKey, 180).startsWith("ref:") ||
+        group.some((entry) => entry?.identity_meta?.has_public_booking_reference === true));
+    const openEntries = group.filter((entry) => entry?.open_candidate === true);
+    if (identityTerminalPresent) {
+      counters.excluded_terminal_identity += 1;
+      counters.excluded_duplicate_identity += openEntries.length;
+      continue;
+    }
+    if (!openEntries.length) continue;
+    const openEntriesAreReferenceOnlyProvisional = openEntries.every(
+      _dashboardContributionIsReferenceOnlyProvisionalOpenCandidate,
+    );
+    if (
+      identityReferenceOnly === true &&
+      identityHasCanonicalBookingNumber !== true &&
+      identityCanonicalRecordPresent !== true &&
+      openEntriesAreReferenceOnlyProvisional
+    ) {
+      counters.excluded_reference_only_provisional_record += openEntries.length;
+      continue;
+    }
+    openEntries.sort((a, b) => {
+      const keyCanonicalA = a?.key_is_canonical === true ? 1 : 0;
+      const keyCanonicalB = b?.key_is_canonical === true ? 1 : 0;
+      if (keyCanonicalA !== keyCanonicalB) return keyCanonicalB - keyCanonicalA;
+      const canonicalMetaA = a?.identity_meta?.has_canonical_booking_number === true ? 1 : 0;
+      const canonicalMetaB = b?.identity_meta?.has_canonical_booking_number === true ? 1 : 0;
+      if (canonicalMetaA !== canonicalMetaB) return canonicalMetaB - canonicalMetaA;
+      const updatedA = Number.isFinite(Number(a?.record_updated_ms)) ? Number(a.record_updated_ms) : -1;
+      const updatedB = Number.isFinite(Number(b?.record_updated_ms)) ? Number(b.record_updated_ms) : -1;
+      return updatedB - updatedA;
+    });
+    counters.considered_open += 1;
+    counters.excluded_duplicate_identity += Math.max(0, openEntries.length - 1);
+  }
+
+  const nowIso = new Date().toISOString();
+  return {
+    version: 1,
+    updated_at: nowIso,
+    rebuilt_at: safeStr(options?.rebuilt_at, 80) || undefined,
+    source: "projection",
+    projection_complete: options?.projection_complete !== false,
+    projection_health: safeStr(options?.projection_health, 40) || "ok",
+    evaluated_at: nowIso,
+    stale_sensitive: (contributions || []).some((entry) => entry?.stale_sensitive === true),
+    counters,
+  };
+}
+
+function computeDashboardBookingKpiContribution(bookingId, rec, scope, options = {}) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId || !rec || typeof rec !== "object") return null;
+  const tenantScope = normalizeFleetTenantScope(scope || {});
+  if (!tenantScope?.hasScope) return null;
+  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) return null;
+  const nowMs = Number.isFinite(Number(options?.nowMs)) ? Number(options.nowMs) : Date.now();
+  const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: safeBookingId });
+  const identityKey = _dashboardBookingIdentityKey(rec, safeBookingId) || safeBookingId;
+  const identityMeta = _dashboardIdentityMeta(rec, safeBookingId);
+  const keyIsCanonical = !!_dashboardCanonicalBookingNumber(safeBookingId);
+  const recordUpdatedMs = _dashboardTimestampMs(
+    rec?.updated_at,
+    rec?.updatedAt,
+    rec?.created_at,
+    rec?.createdAt,
+    _pick(rec, ["booking", "updated_at"], null),
+    _pick(rec, ["booking", "updatedAt"], null),
+    _pick(rec, ["booking", "created_at"], null),
+    _pick(rec, ["booking", "createdAt"], null),
+  );
+  const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const rawStatus = _normalizeDashboardBookingLifecycle(
+    rec?.status ?? bookingObj?.status,
+  );
+  const statusCandidates = [
+    rec?.status,
+    rec?.stage,
+    rec?.lifecycle_status,
+    rec?.lifecycleStatus,
+    rec?.booking_status,
+    rec?.bookingStatus,
+    bookingObj?.status,
+    bookingObj?.stage,
+    bookingObj?.lifecycle_status,
+    bookingObj?.lifecycleStatus,
+    bookingObj?.booking_status,
+    bookingObj?.bookingStatus,
+  ]
+    .map((value) => _normalizeDashboardBookingLifecycle(value))
+    .filter((value) => !!value);
+  const stageMissing = !safeStr(rec?.stage ?? bookingObj?.stage, 40);
+  const lifecycleMissing = !safeStr(
+    rec?.lifecycle_status ??
+      rec?.lifecycleStatus ??
+      bookingObj?.lifecycle_status ??
+      bookingObj?.lifecycleStatus,
+    40,
+  );
+  const bookingStatusMissing = !safeStr(
+    rec?.booking_status ??
+      rec?.bookingStatus ??
+      bookingObj?.booking_status ??
+      bookingObj?.bookingStatus,
+    64,
+  );
+  const paymentStatusCandidates = [
+    rec?.payment_status,
+    rec?.paymentStatus,
+    bookingObj?.payment_status,
+    bookingObj?.paymentStatus,
+  ]
+    .map((value) => _normalizeDashboardBookingLifecycle(value))
+    .filter((value) => !!value);
+  const paymentStatusPaid = paymentStatusCandidates.some(
+    (value) => value === "paid" || value === "settled",
+  );
+  const statusOnlyPending =
+    statusCandidates.length > 0 &&
+    statusCandidates.every((value) => value === "pending");
+  const bookingIdFieldRaw = safeStr(
+    rec?.id ?? rec?.booking_id ?? rec?.bookingId ?? bookingObj?.id ?? bookingObj?.booking_id ?? bookingObj?.bookingId,
+    160,
+  );
+  const internalOrUuidLike =
+    identityMeta.internal_id_like === true ||
+    _dashboardUuidLikeId(safeBookingId) ||
+    _dashboardUuidLikeId(bookingIdFieldRaw) ||
+    /^u_[0-9a-z_]+$/i.test(safeStr(safeBookingId, 160)) ||
+    /^u_[0-9a-z_]+$/i.test(bookingIdFieldRaw);
+  const referenceOnlyProvisionalOpenCandidate = (
+    rawStatus === "pending" &&
+    statusOnlyPending &&
+    stageMissing &&
+    lifecycleMissing &&
+    bookingStatusMissing &&
+    paymentStatusPaid &&
+    internalOrUuidLike
+  );
+  const openReason = safeStr(openCheck?.reason, 80) || "excluded_invalid_record";
+  return {
+    version: 1,
+    booking_id: safeBookingId,
+    tenant_id: safeStr(tenantScope?.tenant_id, 80),
+    company_id: safeStr(tenantScope?.company_id, 80),
+    open_candidate: openCheck?.open === true,
+    open_reason: openReason,
+    identity_key: safeStr(identityKey, 180) || safeBookingId,
+    key_is_canonical: keyIsCanonical === true,
+    has_terminal_lifecycle: _dashboardRecordHasTerminalLifecycle(rec) === true,
+    identity_meta: {
+      has_public_booking_reference: identityMeta?.has_public_booking_reference === true,
+      has_canonical_booking_number: identityMeta?.has_canonical_booking_number === true,
+      internal_id_like: identityMeta?.internal_id_like === true,
+    },
+    record_updated_ms: Number.isFinite(recordUpdatedMs) ? Math.max(0, Math.trunc(recordUpdatedMs)) : 0,
+    reference_only_provisional_open_candidate: referenceOnlyProvisionalOpenCandidate === true,
+    stale_sensitive:
+      openReason === "excluded_stale_payment_pending" ||
+      openReason === "excluded_stale_past_pickup",
+    evaluated_at: new Date().toISOString(),
+  };
+}
+
+async function loadDashboardBookingsKpiAggregate(env, scope) {
+  const key = dashboardBookingsKpiAggregateKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key, aggregate: null };
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const aggregate = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+    return { ok: true, key, aggregate };
+  } catch (_) {
+    return { ok: false, key, aggregate: null };
+  }
+}
+
+async function saveDashboardBookingsKpiAggregate(env, scope, aggregate) {
+  const key = dashboardBookingsKpiAggregateKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  await env.BOOKING_KV.put(key, JSON.stringify(aggregate && typeof aggregate === "object" ? aggregate : {}));
+  return { ok: true, key };
+}
+
+async function loadDashboardBookingKpiContribution(env, scope, bookingId) {
+  const key = dashboardBookingsKpiContributionKey(scope, bookingId);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key, contribution: null };
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    const contribution = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+    return { ok: true, key, contribution };
+  } catch (_) {
+    return { ok: false, key, contribution: null };
+  }
+}
+
+async function saveDashboardBookingKpiContribution(env, scope, bookingId, contribution) {
+  const key = dashboardBookingsKpiContributionKey(scope, bookingId);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  await env.BOOKING_KV.put(key, JSON.stringify(contribution && typeof contribution === "object" ? contribution : {}));
+  return { ok: true, key };
+}
+
+async function removeDashboardBookingKpiContribution(env, scope, bookingId) {
+  const key = dashboardBookingsKpiContributionKey(scope, bookingId);
+  if (!key || !env?.BOOKING_KV) return { ok: false, key };
+  await env.BOOKING_KV.delete(key);
+  return { ok: true, key };
+}
+
+async function _loadAllDashboardBookingsKpiContributionsForScope(env, scope) {
+  const prefix = _dashboardBookingsKpiContributionPrefix(scope);
+  if (!prefix || !env?.BOOKING_KV) return [];
+  const out = [];
+  let cursor = undefined;
+  do {
+    const page = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    for (const item of page?.keys || []) {
+      const key = safeStr(item?.name, 320);
+      if (!key || !key.startsWith(prefix)) continue;
+      const contribution = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!contribution || typeof contribution !== "object" || Array.isArray(contribution)) continue;
+      out.push(contribution);
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+  return out;
+}
+
+async function _refreshDashboardBookingsKpiAggregateFromContribStore(env, scope, options = {}) {
+  const contributions = await _loadAllDashboardBookingsKpiContributionsForScope(env, scope);
+  const aggregate = _buildDashboardBookingsKpiAggregateFromContributions(contributions, {
+    rebuilt_at: options?.rebuilt_at,
+    projection_complete: true,
+    projection_health: options?.projection_health || "ok",
+  });
+  await saveDashboardBookingsKpiAggregate(env, scope, aggregate);
+  return { aggregate, contributionsCount: contributions.length };
+}
+
+async function _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { reason = "" } = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  const key = dashboardBookingsKpiAggregateKey(scope);
+  if (!key) return { ok: false, reason: "missing_scope" };
+  const nowIso = new Date().toISOString();
+  const reasonCode = safeStr(reason, 80) || "mutation";
+  try {
+    const loaded = await loadDashboardBookingsKpiAggregate(env, scope);
+    const existing = loaded?.aggregate && typeof loaded.aggregate === "object" ? loaded.aggregate : {};
+    const next = {
+      ...existing,
+      version: 1,
+      source: "projection",
+      updated_at: nowIso,
+      evaluated_at: nowIso,
+      projection_complete: false,
+      projection_health: "dirty",
+      projection_dirty_reason: reasonCode,
+      stale_sensitive: true,
+    };
+    await saveDashboardBookingsKpiAggregate(env, scope, next);
+    return { ok: true, key };
+  } catch (_) {
+    return { ok: false, reason: "exception" };
+  }
+}
+
+async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, rec, scopeHint = null) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+    const recordScope = resolveBookingTenantScopeFromRecord(rec);
+    const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
+    if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
+    const contribution = computeDashboardBookingKpiContribution(bookingId, rec, scope);
+    if (!contribution) return { ok: false, skipped: true, reason: "invalid_contribution" };
+    const saved = await saveDashboardBookingKpiContribution(env, scope, bookingId, contribution);
+    await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { reason: "contribution_upsert" });
+    return {
+      ok: true,
+      booking_id: safeStr(bookingId, 160),
+      contribution_key: safeStr(saved?.key, 320) || "",
+      contribution_updated: true,
+      aggregate_dirty: true,
+    };
+  } catch (_) {
+    return { ok: false, reason: "exception" };
+  }
+}
+
+async function removeDashboardBookingsKpiProjectionBestEffort(env, bookingId, recOrScopeHint = null) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+    const rec = recOrScopeHint && typeof recOrScopeHint === "object" ? recOrScopeHint : null;
+    const scope = normalizeFleetTenantScope(
+      rec?.hasScope
+        ? rec
+        : (rec ? resolveBookingTenantScopeFromRecord(rec) : recOrScopeHint),
+    );
+    if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
+    const removed = await removeDashboardBookingKpiContribution(env, scope, bookingId);
+    await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { reason: "contribution_remove" });
+    return {
+      ok: true,
+      booking_id: safeStr(bookingId, 160),
+      contribution_key: safeStr(removed?.key, 320) || "",
+      contribution_removed: true,
+      aggregate_dirty: true,
+    };
+  } catch (_) {
+    return { ok: false, reason: "exception" };
+  }
+}
+
+async function rebuildDashboardBookingsKpiProjectionForScope(
+  env,
+  scope,
+  { dryRun = false, compare = false } = {},
+) {
+  const tenantScope = normalizeFleetTenantScope(scope || {});
+  if (!tenantScope?.hasScope) return { ok: false, error: "missing_tenant_scope" };
+  if (!env?.BOOKING_KV) return { ok: false, error: "Missing BOOKING_KV binding" };
+
+  let scanned = 0;
+  let matchedScope = 0;
+  let excludedOutOfScope = 0;
+  const contributions = [];
+  let cursor = undefined;
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const item of page?.keys || []) {
+      const key = safeStr(item?.name, 240);
+      if (!key || !key.startsWith("booking:")) continue;
+      scanned += 1;
+      const bookingId = key.slice("booking:".length);
+      if (!bookingId) continue;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+        excludedOutOfScope += 1;
+        continue;
+      }
+      matchedScope += 1;
+      const contribution = computeDashboardBookingKpiContribution(bookingId, rec, tenantScope);
+      if (!contribution) continue;
+      contributions.push(contribution);
+    }
+    cursor = page?.cursor;
+    if (page?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  const aggregate = _buildDashboardBookingsKpiAggregateFromContributions(contributions, {
+    rebuilt_at: new Date().toISOString(),
+    projection_complete: true,
+    projection_health: "ok",
+  });
+  aggregate.counters.excluded_out_of_scope = Math.max(
+    0,
+    Math.trunc(Number(excludedOutOfScope) || 0),
+  );
+
+  let contributionsWrittenOrRebuilt = contributions.length;
+  if (!dryRun) {
+    const prefix = _dashboardBookingsKpiContributionPrefix(tenantScope);
+    if (prefix) {
+      let clearCursor = undefined;
+      do {
+        const page = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor: clearCursor });
+        for (const item of page?.keys || []) {
+          const key = safeStr(item?.name, 320);
+          if (!key || !key.startsWith(prefix)) continue;
+          await env.BOOKING_KV.delete(key);
+        }
+        clearCursor = page?.cursor;
+        if (page?.list_complete !== false) break;
+        if (!clearCursor) break;
+      } while (clearCursor);
+    }
+    for (const contribution of contributions) {
+      await saveDashboardBookingKpiContribution(
+        env,
+        tenantScope,
+        contribution?.booking_id,
+        contribution,
+      );
+    }
+    await saveDashboardBookingsKpiAggregate(env, tenantScope, aggregate);
+  }
+
+  let compareResult = undefined;
+  if (compare) {
+    const current = await computeDashboardBookingsKpis(env, {
+      tenantScope,
+      debug: false,
+      debugLimit: 50,
+    });
+    compareResult = {
+      ok: current?.ok === true,
+      considered_open_match: Number(current?.considered_open || 0) === Number(aggregate?.counters?.considered_open || 0),
+      excluded_terminal_match: Number(current?.excluded_terminal || 0) === Number(aggregate?.counters?.excluded_terminal || 0),
+      excluded_payment_failed_match: Number(current?.excluded_payment_failed || 0) === Number(aggregate?.counters?.excluded_payment_failed || 0),
+      excluded_stale_payment_pending_match: Number(current?.excluded_stale_payment_pending || 0) === Number(aggregate?.counters?.excluded_stale_payment_pending || 0),
+      excluded_hidden_match: Number(current?.excluded_hidden || 0) === Number(aggregate?.counters?.excluded_hidden || 0),
+      excluded_missing_pickup_time_match: Number(current?.excluded_missing_pickup_time || 0) === Number(aggregate?.counters?.excluded_missing_pickup_time || 0),
+      excluded_stale_past_pickup_match: Number(current?.excluded_stale_past_pickup || 0) === Number(aggregate?.counters?.excluded_stale_past_pickup || 0),
+      excluded_non_canonical_provisional_record_match:
+        Number(current?.excluded_non_canonical_provisional_record || 0) ===
+        Number(aggregate?.counters?.excluded_non_canonical_provisional_record || 0),
+      excluded_reference_only_provisional_record_match:
+        Number(current?.excluded_reference_only_provisional_record || 0) ===
+        Number(aggregate?.counters?.excluded_reference_only_provisional_record || 0),
+      excluded_duplicate_identity_match:
+        Number(current?.excluded_duplicate_identity || 0) ===
+        Number(aggregate?.counters?.excluded_duplicate_identity || 0),
+      excluded_terminal_identity_match:
+        Number(current?.excluded_terminal_identity || 0) ===
+        Number(aggregate?.counters?.excluded_terminal_identity || 0),
+      excluded_out_of_scope_match:
+        Number(current?.excluded_out_of_scope || 0) === Number(aggregate?.counters?.excluded_out_of_scope || 0),
+      excluded_invalid_record_match:
+        Number(current?.excluded_invalid_record || 0) === Number(aggregate?.counters?.excluded_invalid_record || 0),
+      scan_considered_open: Number(current?.considered_open || 0),
+      projection_considered_open: Number(aggregate?.counters?.considered_open || 0),
+    };
+  }
+
+  return {
+    ok: true,
+    scanned,
+    matched_scope: matchedScope,
+    projected_open: Number(aggregate?.counters?.considered_open || 0),
+    excluded_terminal: Number(aggregate?.counters?.excluded_terminal || 0),
+    excluded_payment_failed: Number(aggregate?.counters?.excluded_payment_failed || 0),
+    excluded_stale_payment_pending: Number(aggregate?.counters?.excluded_stale_payment_pending || 0),
+    excluded_hidden: Number(aggregate?.counters?.excluded_hidden || 0),
+    excluded_missing_pickup_time: Number(aggregate?.counters?.excluded_missing_pickup_time || 0),
+    excluded_stale_past_pickup: Number(aggregate?.counters?.excluded_stale_past_pickup || 0),
+    excluded_non_canonical_provisional_record:
+      Number(aggregate?.counters?.excluded_non_canonical_provisional_record || 0),
+    excluded_reference_only_provisional_record:
+      Number(aggregate?.counters?.excluded_reference_only_provisional_record || 0),
+    excluded_duplicate_identity: Number(aggregate?.counters?.excluded_duplicate_identity || 0),
+    excluded_terminal_identity: Number(aggregate?.counters?.excluded_terminal_identity || 0),
+    excluded_out_of_scope: Number(aggregate?.counters?.excluded_out_of_scope || 0),
+    excluded_invalid_record: Number(aggregate?.counters?.excluded_invalid_record || 0),
+    contributions_written_or_rebuilt: contributionsWrittenOrRebuilt,
+    dry_run: dryRun === true,
+    ...(compare ? { compare_result: compareResult } : {}),
+  };
+}
+
 async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, debugLimit = 50 } = {}) {
   if (!tenantScope?.hasScope) return missingTenantScopeError();
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
@@ -31950,6 +32552,12 @@ async function updateBookingStatusAuthoritative(
     rec,
     normalizeFleetTenantScope(tenantScope),
   );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
   try {
     const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, bookingId, {
       newStatus: normalized,
@@ -32325,6 +32933,12 @@ async function updateBookingPaymentAuthoritative(
   }
 
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    bookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
   if (normalizedStatus === "paid") {
     await syncScopedTrackingTripKpiBestEffort({
       env,
@@ -32750,6 +33364,11 @@ async function deleteBookingAuthoritative(bookingId, env, tenantScope = null) {
     normalizeFleetTenantScope(tenantScope),
   );
   await removeDriverVehicleBookingIndexesBestEffort(
+    env,
+    bookingId,
+    rec,
+  );
+  await removeDashboardBookingsKpiProjectionBestEffort(
     env,
     bookingId,
     rec,
