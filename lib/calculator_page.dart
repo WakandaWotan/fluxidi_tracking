@@ -51,6 +51,33 @@ bool _calcBusinessBool(dynamic value) {
   return text == '1' || text == 'true' || text == 'yes' || text == 'ja';
 }
 
+String _availabilityReasonCodeFromMap(Map<String, dynamic>? availability) {
+  if (availability == null) return '';
+  final candidates = <dynamic>[
+    availability['block_reason'],
+    availability['blockReason'],
+    availability['reason_code'],
+    availability['reasonCode'],
+    availability['reason'],
+  ];
+  for (final value in candidates) {
+    final normalized = (value?.toString().trim().toLowerCase() ?? '');
+    if (normalized.isNotEmpty) return normalized;
+  }
+  return '';
+}
+
+bool _isDemandIndexTechnicalAvailabilityReason(String reasonCode) {
+  switch (reasonCode.trim().toLowerCase()) {
+    case 'demand_index_stale':
+    case 'demand_index_unavailable':
+    case 'demand_index_invalid':
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool _hasExplicitPrivateBookingIntent(Map<String, dynamic> source) {
   final business = _calcBusinessBool(
     source['business_detected'] ??
@@ -779,6 +806,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return null;
   }
 
+  bool _quoteAvailabilityUsesDemandIndexTechnicalState(
+    Map<String, dynamic> quote,
+  ) {
+    final reasonCode = _availabilityReasonCodeFromMap(
+      _quoteAvailabilityMap(quote),
+    );
+    return _isDemandIndexTechnicalAvailabilityReason(reasonCode);
+  }
+
   String _availabilityAvailableMessage() {
     return _labelFor(
       nl: 'Voertuig beschikbaar rond dit tijdstip.',
@@ -789,6 +825,21 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   String _availabilityUnavailableMessage() {
+    return _availabilityUnavailableMessageForQuote();
+  }
+
+  String _availabilityUnavailableMessageForQuote([
+    Map<String, dynamic>? quote,
+  ]) {
+    if (quote != null &&
+        _quoteAvailabilityUsesDemandIndexTechnicalState(quote)) {
+      return _labelFor(
+        nl: 'Beschikbaarheid wordt vernieuwd. Bereken opnieuw of probeer straks opnieuw.',
+        en: 'Availability is being refreshed. Recalculate or try again shortly.',
+        fr: 'La disponibilité est en cours d’actualisation. Recalculez ou réessayez dans un instant.',
+        es: 'La disponibilidad se está actualizando. Vuelve a calcular o inténtalo de nuevo en breve.',
+      );
+    }
     return _labelFor(
       nl: 'Geen voertuig beschikbaar op dit tijdstip. Kies een ander tijdstip en bereken opnieuw.',
       en: 'No vehicle is available at this time. Choose another time and recalculate.',
@@ -797,7 +848,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
-  String _bookCtaUnavailableLabel() {
+  String _bookCtaUnavailableLabel([Map<String, dynamic>? quote]) {
+    if (quote != null &&
+        _quoteAvailabilityUsesDemandIndexTechnicalState(quote)) {
+      return _labelFor(
+        nl: 'Bereken opnieuw',
+        en: 'Recalculate',
+        fr: 'Recalculez',
+        es: 'Vuelve a calcular',
+      );
+    }
     return _labelFor(
       nl: 'Kies ander tijdstip',
       en: 'Choose another time',
@@ -812,7 +872,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     final availability = _quoteAvailabilityValue(quote);
     if (availability == false) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_availabilityUnavailableMessage())),
+        SnackBar(content: Text(_availabilityUnavailableMessageForQuote(quote))),
       );
       return;
     }
@@ -1365,7 +1425,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         ? null
         : (availability
               ? _availabilityAvailableMessage()
-              : _availabilityUnavailableMessage());
+              : _availabilityUnavailableMessageForQuote(q));
     final distanceLabel = showTotalMetrics
         ? _labelFor(
             nl: 'Afstand totaal',
@@ -2501,7 +2561,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         final quoteUnavailable =
                             _quoteAvailabilityValue(_lastQuote!) == false;
                         final ctaLabel = quoteUnavailable
-                            ? _bookCtaUnavailableLabel()
+                            ? _bookCtaUnavailableLabel(_lastQuote!)
                             : _s.calculatorBookNowLabel.of(_lang);
                         return GestureDetector(
                           onTap: _openBookingConfirmation,
@@ -3356,19 +3416,35 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     }
   }
 
-  bool _quoteAvailabilityBlocksBooking() {
+  Map<String, dynamic>? _quoteAvailabilityMap() {
     final rawAvailability = widget.quote['availability'];
-    final availability = rawAvailability is Map<String, dynamic>
-        ? rawAvailability
-        : (rawAvailability is Map
-              ? Map<String, dynamic>.from(rawAvailability)
-              : null);
+    if (rawAvailability is Map<String, dynamic>) return rawAvailability;
+    if (rawAvailability is Map)
+      return Map<String, dynamic>.from(rawAvailability);
+    return null;
+  }
+
+  bool _quoteAvailabilityUsesDemandIndexTechnicalState() {
+    final reasonCode = _availabilityReasonCodeFromMap(_quoteAvailabilityMap());
+    return _isDemandIndexTechnicalAvailabilityReason(reasonCode);
+  }
+
+  bool _quoteAvailabilityBlocksBooking() {
+    final availability = _quoteAvailabilityMap();
     if (availability == null) return false;
     if (availability['checked'] != true) return false;
     return availability['available'] == false;
   }
 
   String _availabilityUnavailableMessage() {
+    if (_quoteAvailabilityUsesDemandIndexTechnicalState()) {
+      return _localizedText(
+        nl: 'Beschikbaarheid wordt vernieuwd. Bereken opnieuw of probeer straks opnieuw.',
+        en: 'Availability is being refreshed. Recalculate or try again shortly.',
+        fr: 'La disponibilité est en cours d’actualisation. Recalculez ou réessayez dans un instant.',
+        es: 'La disponibilidad se está actualizando. Vuelve a calcular o inténtalo de nuevo en breve.',
+      );
+    }
     return _localizedText(
       nl: 'Geen voertuig beschikbaar op dit tijdstip. Kies een ander tijdstip en bereken opnieuw.',
       en: 'No vehicle is available at this time. Choose another time and recalculate.',
