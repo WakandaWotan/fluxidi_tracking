@@ -15065,6 +15065,13 @@ function regionInterestStatusFromCount(_) {
   return "partners_wanted";
 }
 
+function maskRegionInterestPostcodeForLog(value) {
+  const normalized = normalizeRegionInterestPostcode(value);
+  if (!normalized) return "-";
+  if (normalized.length <= 3) return `${normalized.slice(0, 1)}***`;
+  return `${normalized.slice(0, 2)}***${normalized.slice(-1)}`;
+}
+
 function regionInterestInputTooLong(rawBody = {}) {
   const limits = {
     country: 16,
@@ -15233,15 +15240,76 @@ async function handleRegionInterestPost(request, env) {
     email_hash: emailHash,
   };
   await env.BOOKING_KV.put(key, JSON.stringify(record));
+  const postcodeMasked = maskRegionInterestPostcodeForLog(postcode);
+  let counterAction = "none";
+  let counterOk = true;
+  let rebuildResult = null;
   if (!existedBeforeWrite) {
+    counterAction = "increment";
     await upsertRegionInterestCounterOnContactWriteBestEffort(env, {
       country,
       postcode,
       contactKey: key,
     });
+    const loadedAfterIncrement = await loadRegionInterestCounter(env, {
+      country,
+      postcode,
+    });
+    const healthAfterIncrement = safeStr(
+      loadedAfterIncrement?.counter?.counter_health,
+      24,
+    ).toLowerCase();
+    counterOk =
+      !!loadedAfterIncrement?.ok &&
+      !!loadedAfterIncrement?.exists &&
+      !!loadedAfterIncrement?.valid &&
+      !!loadedAfterIncrement?.counter &&
+      (!healthAfterIncrement || healthAfterIncrement === "ok");
+  } else {
+    const loadedCounter = await loadRegionInterestCounter(env, {
+      country,
+      postcode,
+    });
+    const counterHealth = safeStr(
+      loadedCounter?.counter?.counter_health,
+      24,
+    ).toLowerCase();
+    const counterIsHealthy =
+      !!loadedCounter?.ok &&
+      !!loadedCounter?.exists &&
+      !!loadedCounter?.valid &&
+      !!loadedCounter?.counter &&
+      (!counterHealth || counterHealth === "ok");
+    if (!counterIsHealthy) {
+      counterAction = "rebuild";
+      rebuildResult = await rebuildRegionInterestCounterForRegion(
+        env,
+        { country, postcode },
+        { dryRun: false },
+      );
+      counterOk =
+        rebuildResult?.ok === true &&
+        Number.isFinite(Number(rebuildResult?.count)) &&
+        Number(rebuildResult.count) >= 0;
+      console.log(
+        `[REGION_RADAR][SUBMIT_COUNTER_REBUILD] country=${country} postcode_masked=${postcodeMasked} ok=${rebuildResult?.ok === true} count=${Number.isFinite(Number(rebuildResult?.count)) ? Math.max(0, Math.trunc(Number(rebuildResult.count))) : 0}`,
+      );
+    } else {
+      counterOk = true;
+      counterAction = "none";
+    }
   }
 
-  const count = await countRegionInterestContacts(env, { country, postcode });
+  console.log(
+    `[REGION_RADAR][SUBMIT_COUNTER_CHECK] country=${country} postcode_masked=${postcodeMasked} existed=${existedBeforeWrite} counter_ok=${counterOk} action=${counterAction}`,
+  );
+
+  const count =
+    rebuildResult?.ok === true &&
+      Number.isFinite(Number(rebuildResult?.count)) &&
+      Number(rebuildResult.count) >= 0
+      ? Math.max(0, Math.trunc(Number(rebuildResult.count)))
+      : await countRegionInterestContacts(env, { country, postcode });
   return json(
     {
       ok: true,
