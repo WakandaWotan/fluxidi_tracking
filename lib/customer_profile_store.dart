@@ -413,12 +413,24 @@ class CustomerProfileStore {
       return const <String>[];
     }
 
-    final backendFavoritePartnerIds = readStringListAny(const [
+    const favoritePartnerIdKeys = <String>[
       'favorite_partner_ids',
       'favoritePartnerIds',
       'favourite_partner_ids',
       'favouritePartnerIds',
-    ]);
+    ];
+    final backendFavoritePartnerIds = readStringListAny(favoritePartnerIdKeys);
+    final backendFavoriteKeyPresent = favoritePartnerIdKeys.any(
+      profile.containsKey,
+    );
+    final existingFavoritePartnerIds =
+        existing?.favoritePartnerIds ?? const <String>[];
+    final resolvedFavoritePartnerIds = backendFavoriteKeyPresent
+        ? backendFavoritePartnerIds
+        : existingFavoritePartnerIds;
+    debugPrint(
+      '[CUSTOMER_PROFILE][MERGE_FAVORITES] key_present=$backendFavoriteKeyPresent backend_count=${backendFavoritePartnerIds.length} existing_count=${existingFavoritePartnerIds.length} chosen_source=${backendFavoriteKeyPresent ? "backend" : "existing"}',
+    );
     final backendCreatedAt = readAny(const ['created_at', 'createdAt']);
     final backendUpdatedAt = readAny(const ['updated_at', 'updatedAt']);
     final sessionPhone = (sessionPhoneE164 ?? '').trim();
@@ -455,9 +467,7 @@ class CustomerProfileStore {
         existing?.companyName ?? '',
       ),
       vatNumber: pickPreferBackend(backendVatNumber, existing?.vatNumber ?? ''),
-      favoritePartnerIds: backendFavoritePartnerIds.isNotEmpty
-          ? backendFavoritePartnerIds
-          : (existing?.favoritePartnerIds ?? const <String>[]),
+      favoritePartnerIds: resolvedFavoritePartnerIds,
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
           : (backendCreatedAt.isNotEmpty ? backendCreatedAt : nowIso),
