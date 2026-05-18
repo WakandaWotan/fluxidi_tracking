@@ -28259,6 +28259,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     var localSaved = false;
     var remoteSaved = false;
     try {
+      debugPrint(
+        '[FAVORITE_SYNC][REQUEST] requested_count=${nextFavorites.length}',
+      );
       final existingProfile = await CustomerProfileStore.instance.load();
       await CustomerProfileStore.instance.save(
         name: existingProfile?.name ?? '',
@@ -28287,10 +28290,25 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       );
       if (remoteProfile != null) {
         final remoteFavorites = _favoritePartnerIdsFromAnyMap(remoteProfile);
+        final remoteFavoriteKeys = remoteProfile.keys
+            .where(
+              (k) =>
+                  k == 'favorite_partner_ids' ||
+                  k == 'favoritePartnerIds' ||
+                  k == 'favourite_partner_ids' ||
+                  k == 'favouritePartnerIds',
+            )
+            .toList(growable: false);
         remoteSaved =
-            remoteFavorites.isNotEmpty &&
             remoteFavorites.length == nextFavorites.length &&
-            remoteFavorites.containsAll(nextFavorites);
+            remoteFavorites.containsAll(nextFavorites) &&
+            nextFavorites.containsAll(remoteFavorites);
+        debugPrint(
+          '[FAVORITE_SYNC][RESPONSE] remote_count=${remoteFavorites.length} matched=$remoteSaved keys=${remoteFavoriteKeys.join(",")}',
+        );
+        if (remoteFavoriteKeys.isEmpty) {
+          debugPrint('[FAVORITE_SYNC][NO_FAVORITE_KEYS]');
+        }
       }
     } catch (_) {
       // Local persistence already handled best-effort above.

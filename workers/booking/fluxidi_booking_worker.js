@@ -7108,6 +7108,18 @@ function _sanitizePublicCustomerProfilePayload(body) {
   const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
   const phoneNormalized = _normalizeCustomerPhone(source.phone);
   const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
+  const favoritePartnerIds = _normalizeFavoritePartnerIds(
+    source.favorite_partner_ids ??
+    source.favoritePartnerIds ??
+    source.favourite_partner_ids ??
+    source.favouritePartnerIds,
+  );
+  const hasFavoritePartnerIds = (
+    Object.prototype.hasOwnProperty.call(source, "favorite_partner_ids") ||
+    Object.prototype.hasOwnProperty.call(source, "favoritePartnerIds") ||
+    Object.prototype.hasOwnProperty.call(source, "favourite_partner_ids") ||
+    Object.prototype.hasOwnProperty.call(source, "favouritePartnerIds")
+  );
   return {
     name,
     phone,
@@ -7118,7 +7130,31 @@ function _sanitizePublicCustomerProfilePayload(body) {
     companyName,
     vat_number: vatNumber,
     vatNumber,
+    favorite_partner_ids: favoritePartnerIds,
+    favoritePartnerIds: favoritePartnerIds,
+    has_favorite_partner_ids: hasFavoritePartnerIds,
+    hasFavoritePartnerIds,
   };
+}
+
+function _normalizeFavoritePartnerIds(input) {
+  const MAX_COUNT = 100;
+  const MAX_ID_LENGTH = 160;
+  const SAFE_PARTNER_ID_RE = /^[A-Za-z0-9:_./-]+$/;
+  const values = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(",")
+      : [];
+  const unique = new Set();
+  for (const raw of values) {
+    if (unique.size >= MAX_COUNT) break;
+    const normalized = sanitizeTenantString(raw, MAX_ID_LENGTH);
+    if (!normalized) continue;
+    if (!SAFE_PARTNER_ID_RE.test(normalized)) continue;
+    unique.add(normalized);
+  }
+  return Array.from(unique);
 }
 
 function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile) {
@@ -7143,6 +7179,12 @@ function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile)
     160,
   );
   const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const favoritePartnerIds = _normalizeFavoritePartnerIds(
+    source.favorite_partner_ids ??
+    source.favoritePartnerIds ??
+    source.favourite_partner_ids ??
+    source.favouritePartnerIds,
+  );
   const createdAt = sanitizeTenantString(source.created_at ?? source.createdAt, 80);
   const updatedAt = sanitizeTenantString(source.updated_at ?? source.updatedAt, 80);
   return {
@@ -7157,6 +7199,8 @@ function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile)
     companyName,
     vat_number: vatNumber,
     vatNumber,
+    favorite_partner_ids: favoritePartnerIds,
+    favoritePartnerIds: favoritePartnerIds,
     created_at: createdAt,
     createdAt,
     updated_at: updatedAt,
@@ -7211,6 +7255,21 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   }
   const existing = _projectPublicCustomerProfileResponse(customerId, existingRaw);
   const incoming = _sanitizePublicCustomerProfilePayload(body);
+  const nextFavoritePartnerIds = incoming.has_favorite_partner_ids
+    ? incoming.favorite_partner_ids
+    : _normalizeFavoritePartnerIds(existing.favorite_partner_ids ?? existing.favoritePartnerIds);
+  const existingFavoritePartnerIds = _normalizeFavoritePartnerIds(
+    existing.favorite_partner_ids ?? existing.favoritePartnerIds,
+  );
+  const favoritesChanged = (
+    existingFavoritePartnerIds.length !== nextFavoritePartnerIds.length ||
+    existingFavoritePartnerIds.some((id, idx) => id !== nextFavoritePartnerIds[idx])
+  );
+  if (favoritesChanged) {
+    console.log(
+      `[CUSTOMER_PROFILE][FAVORITES_UPDATE] count=${nextFavoritePartnerIds.length}`,
+    );
+  }
   const sessionPhone = _customerSessionPreferredPhoneE164(session);
   const nowIso = new Date().toISOString();
   const merged = {
@@ -7226,6 +7285,8 @@ async function handlePublicCustomerProfilePost(request, env, body) {
     companyName: incoming.company_name || existing.company_name || "",
     vat_number: incoming.vat_number || existing.vat_number || "",
     vatNumber: incoming.vat_number || existing.vat_number || "",
+    favorite_partner_ids: nextFavoritePartnerIds,
+    favoritePartnerIds: nextFavoritePartnerIds,
     created_at: existing.created_at || nowIso,
     createdAt: existing.created_at || nowIso,
     updated_at: nowIso,
