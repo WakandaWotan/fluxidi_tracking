@@ -16,6 +16,7 @@ class CustomerProfile {
     required this.preferredPostcode,
     required this.companyName,
     required this.vatNumber,
+    this.favoritePartnerIds = const <String>[],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -27,6 +28,7 @@ class CustomerProfile {
   final String preferredPostcode;
   final String companyName;
   final String vatNumber;
+  final List<String> favoritePartnerIds;
   final String createdAt;
   final String updatedAt;
 
@@ -45,6 +47,23 @@ class CustomerProfile {
         if (text.isNotEmpty) return text;
       }
       return '';
+    }
+
+    List<String> readStringListAny(List<String> keys) {
+      for (final key in keys) {
+        final raw = json[key];
+        if (raw is! List) continue;
+        final seen = <String>{};
+        final out = <String>[];
+        for (final item in raw) {
+          final value = item.toString().trim();
+          if (value.isEmpty || seen.contains(value)) continue;
+          seen.add(value);
+          out.add(value);
+        }
+        return out;
+      }
+      return const <String>[];
     }
 
     return CustomerProfile(
@@ -67,6 +86,12 @@ class CustomerProfile {
       ]),
       companyName: read('companyName'),
       vatNumber: read('vatNumber'),
+      favoritePartnerIds: readStringListAny(const [
+        'favorite_partner_ids',
+        'favoritePartnerIds',
+        'favourite_partner_ids',
+        'favouritePartnerIds',
+      ]),
       createdAt: read('createdAt'),
       updatedAt: read('updatedAt'),
     );
@@ -82,6 +107,8 @@ class CustomerProfile {
       'preferred_postcode': preferredPostcode,
       'companyName': companyName,
       'vatNumber': vatNumber,
+      'favorite_partner_ids': favoritePartnerIds,
+      'favoritePartnerIds': favoritePartnerIds,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
     };
@@ -267,11 +294,19 @@ class CustomerProfileStore {
     String companyName = '',
     String vatNumber = '',
     String? sessionCustomerId,
+    Set<String>? favoritePartnerIds,
   }) async {
     final existing = await load();
     final now = DateTime.now().toIso8601String();
     final sessionId = (sessionCustomerId ?? '').trim();
     final existingId = existing?.customerId.trim() ?? '';
+    final resolvedFavoritePartnerIds =
+        (favoritePartnerIds
+                  ?.map((id) => id.trim())
+                  .where((id) => id.isNotEmpty)
+                  .toSet() ??
+              (existing?.favoritePartnerIds.toSet() ?? <String>{}))
+          ..removeWhere((id) => id.isEmpty);
     final profile = CustomerProfile(
       customerId: sessionId.isNotEmpty
           ? sessionId
@@ -282,6 +317,7 @@ class CustomerProfileStore {
       preferredPostcode: preferredPostcode.trim().toUpperCase(),
       companyName: companyName.trim(),
       vatNumber: vatNumber.trim(),
+      favoritePartnerIds: resolvedFavoritePartnerIds.toList(growable: false),
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
           : now,
@@ -360,6 +396,29 @@ class CustomerProfileStore {
     ]).toUpperCase();
     final backendCompanyName = readAny(const ['company_name', 'companyName']);
     final backendVatNumber = readAny(const ['vat_number', 'vatNumber']);
+    List<String> readStringListAny(List<String> keys) {
+      for (final key in keys) {
+        final value = profile[key];
+        if (value is! List) continue;
+        final seen = <String>{};
+        final out = <String>[];
+        for (final item in value) {
+          final text = item.toString().trim();
+          if (text.isEmpty || seen.contains(text)) continue;
+          seen.add(text);
+          out.add(text);
+        }
+        return out;
+      }
+      return const <String>[];
+    }
+
+    final backendFavoritePartnerIds = readStringListAny(const [
+      'favorite_partner_ids',
+      'favoritePartnerIds',
+      'favourite_partner_ids',
+      'favouritePartnerIds',
+    ]);
     final backendCreatedAt = readAny(const ['created_at', 'createdAt']);
     final backendUpdatedAt = readAny(const ['updated_at', 'updatedAt']);
     final sessionPhone = (sessionPhoneE164 ?? '').trim();
@@ -396,6 +455,9 @@ class CustomerProfileStore {
         existing?.companyName ?? '',
       ),
       vatNumber: pickPreferBackend(backendVatNumber, existing?.vatNumber ?? ''),
+      favoritePartnerIds: backendFavoritePartnerIds.isNotEmpty
+          ? backendFavoritePartnerIds
+          : (existing?.favoritePartnerIds ?? const <String>[]),
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
           : (backendCreatedAt.isNotEmpty ? backendCreatedAt : nowIso),

@@ -896,6 +896,8 @@ class DriverProfile {
   final String? publicDisplayName;
   final String? publicPortraitUrl;
   final String availabilityStatus;
+  final double? ratingAvg;
+  final int? ratingCount;
 
   /// See [VehicleProfile.companyId].
   final String? companyId;
@@ -919,6 +921,8 @@ class DriverProfile {
     this.publicDisplayName,
     this.publicPortraitUrl,
     this.availabilityStatus = 'available',
+    this.ratingAvg,
+    this.ratingCount,
     this.companyId,
   });
 
@@ -939,6 +943,8 @@ class DriverProfile {
     Object? publicDisplayName = _driverProfileUnset,
     Object? publicPortraitUrl = _driverProfileUnset,
     String? availabilityStatus,
+    Object? ratingAvg = _driverProfileUnset,
+    Object? ratingCount = _driverProfileUnset,
     String? companyId,
   }) {
     return DriverProfile(
@@ -970,6 +976,12 @@ class DriverProfile {
       availabilityStatus: normalizeDriverAvailabilityState(
         availabilityStatus ?? this.availabilityStatus,
       ),
+      ratingAvg: identical(ratingAvg, _driverProfileUnset)
+          ? this.ratingAvg
+          : ratingAvg as double?,
+      ratingCount: identical(ratingCount, _driverProfileUnset)
+          ? this.ratingCount
+          : ratingCount as int?,
       companyId: companyId ?? this.companyId,
     );
   }
@@ -1675,6 +1687,8 @@ Map<String, dynamic> _encodeDriver(DriverProfile d) {
     'publicDisplayName': d.publicDisplayName,
     'publicPortraitUrl': d.publicPortraitUrl,
     'availabilityStatus': d.availabilityStatus,
+    'ratingAvg': d.ratingAvg,
+    'ratingCount': d.ratingCount,
     'companyId': d.companyId,
   };
 }
@@ -1788,6 +1802,31 @@ DriverProfile _decodeDriver(
     m['availabilityStatus'] ?? m['availability_status'],
     fallback: fallback.availabilityStatus,
   );
+  final double? ratingAvg = () {
+    final raw =
+        m['ratingAvg'] ??
+        m['rating_avg'] ??
+        m['average_rating'] ??
+        m['averageRating'] ??
+        m['driver_rating_avg'] ??
+        m['driverRatingAvg'];
+    if (raw is num) return raw.toDouble();
+    final parsed = double.tryParse((raw ?? '').toString().trim());
+    return parsed != null && parsed.isFinite ? parsed : fallback.ratingAvg;
+  }();
+  final int? ratingCount = () {
+    final raw =
+        m['ratingCount'] ??
+        m['rating_count'] ??
+        m['reviews_count'] ??
+        m['reviewsCount'] ??
+        m['driver_rating_count'] ??
+        m['driverRatingCount'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.round();
+    final parsed = int.tryParse((raw ?? '').toString().trim());
+    return parsed ?? fallback.ratingCount;
+  }();
 
   final id = (m['id'] ?? fallback.id).toString();
   final employeeNumber = (m['employeeNumber'] ?? fallback.employeeNumber)
@@ -1840,6 +1879,8 @@ DriverProfile _decodeDriver(
     publicDisplayName: publicDisplayName,
     publicPortraitUrl: publicPortraitUrl,
     availabilityStatus: availabilityStatus,
+    ratingAvg: ratingAvg,
+    ratingCount: ratingCount,
     companyId: companyId,
   );
 }
@@ -3661,6 +3702,23 @@ Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
     return '';
   }
 
+  List<String> readListAny(List<String> keys) {
+    for (final key in keys) {
+      final raw = payload[key];
+      if (raw is! List) continue;
+      final seen = <String>{};
+      final out = <String>[];
+      for (final item in raw) {
+        final value = item.toString().trim();
+        if (value.isEmpty || seen.contains(value)) continue;
+        seen.add(value);
+        out.add(value);
+      }
+      return out;
+    }
+    return const <String>[];
+  }
+
   return <String, dynamic>{
     'name': readAny(const ['name']),
     'phone': readAny(const ['phone']),
@@ -3671,6 +3729,12 @@ Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
     ]),
     'company_name': readAny(const ['company_name', 'companyName']),
     'vat_number': readAny(const ['vat_number', 'vatNumber']),
+    'favorite_partner_ids': readListAny(const [
+      'favorite_partner_ids',
+      'favoritePartnerIds',
+      'favourite_partner_ids',
+      'favouritePartnerIds',
+    ]),
   };
 }
 
@@ -4115,6 +4179,8 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         isActive: remote.isActive,
         // Backend bootstrap is canonical for operational availability state.
         availabilityStatus: remote.availabilityStatus,
+        ratingAvg: remote.ratingAvg ?? local.ratingAvg,
+        ratingCount: remote.ratingCount ?? local.ratingCount,
       );
     }
 
@@ -4343,6 +4409,30 @@ Future<bool> hydrateCompanyStateFromBootstrap(
             map['availability_status'] ?? map['availabilityStatus'],
             fallback: 'available',
           ),
+          ratingAvg: () {
+            final raw =
+                map['rating_avg'] ??
+                map['ratingAvg'] ??
+                map['average_rating'] ??
+                map['averageRating'] ??
+                map['driver_rating_avg'] ??
+                map['driverRatingAvg'];
+            if (raw is num) return raw.toDouble();
+            final parsed = double.tryParse((raw ?? '').toString().trim());
+            return parsed != null && parsed.isFinite ? parsed : null;
+          }(),
+          ratingCount: () {
+            final raw =
+                map['rating_count'] ??
+                map['ratingCount'] ??
+                map['reviews_count'] ??
+                map['reviewsCount'] ??
+                map['driver_rating_count'] ??
+                map['driverRatingCount'];
+            if (raw is int) return raw;
+            if (raw is num) return raw.round();
+            return int.tryParse((raw ?? '').toString().trim());
+          }(),
           companyId: driverCompanyId.isEmpty
               ? (bootstrapScopeCompanyId.isEmpty
                     ? null

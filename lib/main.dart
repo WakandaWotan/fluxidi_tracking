@@ -17108,12 +17108,33 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                     );
                                   }
 
-                                  final ratingLabel = _t(
-                                    nl: '—',
-                                    en: '—',
-                                    fr: '—',
-                                    es: '—',
-                                  );
+                                  final ratingLabel = () {
+                                    final avg = d.ratingAvg;
+                                    final count = d.ratingCount ?? 0;
+                                    if (avg != null && count > 0) {
+                                      final rounded = avg.toStringAsFixed(1);
+                                      final value =
+                                          (appConfig.currentLanguage ==
+                                              AppLanguage.en)
+                                          ? rounded
+                                          : rounded.replaceAll('.', ',');
+                                      final reviewsWord = _t(
+                                        nl: count == 1
+                                            ? 'beoordeling'
+                                            : 'beoordelingen',
+                                        en: count == 1 ? 'review' : 'reviews',
+                                        fr: 'avis',
+                                        es: count == 1 ? 'reseña' : 'reseñas',
+                                      );
+                                      return '$value · $count $reviewsWord';
+                                    }
+                                    return _t(
+                                      nl: 'Nog geen score',
+                                      en: 'No rating yet',
+                                      fr: 'Pas encore de note',
+                                      es: 'Sin puntuación todavía',
+                                    );
+                                  }();
                                   final pauseMeta = pausedForDispatch
                                       ? _t(
                                           nl: 'Niet beschikbaar voor dispatch',
@@ -28111,6 +28132,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   String? _error;
   Map<String, dynamic>? _profile;
   bool _showAllCoveragePostcodes = false;
+  Set<String> _favoritePartnerIds = <String>{};
+  bool _favoriteBusy = false;
+
+  bool get _isFavorite {
+    final partnerId = widget.partnerId.trim();
+    if (partnerId.isEmpty) return false;
+    return _favoritePartnerIds.contains(partnerId);
+  }
 
   String _t({
     required String nl,
@@ -28123,6 +28152,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   void initState() {
     super.initState();
     _load();
+    unawaited(_loadFavoritePartnerIds());
+  }
+
+  Future<void> _loadFavoritePartnerIds() async {
+    try {
+      final profile = await CustomerProfileStore.instance.load();
+      if (!mounted) return;
+      setState(() {
+        _favoritePartnerIds = profile?.favoritePartnerIds.toSet() ?? <String>{};
+      });
+    } catch (_) {
+      // Keep profile view resilient when local customer profile is unavailable.
+    }
   }
 
   Future<void> _load() async {
@@ -28158,6 +28200,120 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           es: 'El perfil publico del socio no esta disponible actualmente.',
         );
       });
+    }
+  }
+
+  Set<String> _favoritePartnerIdsFromAnyMap(Map<String, dynamic> source) {
+    final candidates = <dynamic>[
+      source['favorite_partner_ids'],
+      source['favoritePartnerIds'],
+      source['favourite_partner_ids'],
+      source['favouritePartnerIds'],
+    ];
+    for (final candidate in candidates) {
+      if (candidate is! List) continue;
+      final out = <String>{};
+      for (final item in candidate) {
+        final value = item.toString().trim();
+        if (value.isEmpty) continue;
+        out.add(value);
+      }
+      return out;
+    }
+    return <String>{};
+  }
+
+  Future<void> _toggleFavoritePartner() async {
+    final partnerId = widget.partnerId.trim();
+    if (partnerId.isEmpty || _favoriteBusy) return;
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final sessionToken = (session?.customerSessionToken ?? '').trim();
+    if (session == null || sessionToken.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Log in of herstel je klantprofiel om favorieten te bewaren.',
+              en: 'Log in or recover your customer profile to save favorites.',
+              fr: 'Connectez-vous ou récupérez votre profil client pour enregistrer des favoris.',
+              es: 'Inicia sesión o recupera tu perfil de cliente para guardar favoritos.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final nextFavorites = _favoritePartnerIds.toSet();
+    if (nextFavorites.contains(partnerId)) {
+      nextFavorites.remove(partnerId);
+    } else {
+      nextFavorites.add(partnerId);
+    }
+    if (!mounted) return;
+    setState(() {
+      _favoriteBusy = true;
+      _favoritePartnerIds = nextFavorites;
+    });
+
+    var localSaved = false;
+    var remoteSaved = false;
+    try {
+      final existingProfile = await CustomerProfileStore.instance.load();
+      await CustomerProfileStore.instance.save(
+        name: existingProfile?.name ?? '',
+        phone: existingProfile?.phone ?? '',
+        email: existingProfile?.email ?? '',
+        preferredPostcode: existingProfile?.preferredPostcode ?? '',
+        companyName: existingProfile?.companyName ?? '',
+        vatNumber: existingProfile?.vatNumber ?? '',
+        sessionCustomerId: (session.customerId).trim(),
+        favoritePartnerIds: nextFavorites,
+      );
+      localSaved = true;
+
+      final remoteProfile = await upsertPublicCustomerProfile(
+        customerSessionToken: sessionToken,
+        payload: <String, dynamic>{
+          'name': existingProfile?.name ?? '',
+          'phone': existingProfile?.phone ?? '',
+          'email': existingProfile?.email ?? '',
+          'preferred_postcode': existingProfile?.preferredPostcode ?? '',
+          'company_name': existingProfile?.companyName ?? '',
+          'vat_number': existingProfile?.vatNumber ?? '',
+          'favorite_partner_ids': nextFavorites.toList(growable: false),
+          'favoritePartnerIds': nextFavorites.toList(growable: false),
+        },
+      );
+      if (remoteProfile != null) {
+        final remoteFavorites = _favoritePartnerIdsFromAnyMap(remoteProfile);
+        remoteSaved =
+            remoteFavorites.isNotEmpty &&
+            remoteFavorites.length == nextFavorites.length &&
+            remoteFavorites.containsAll(nextFavorites);
+      }
+    } catch (_) {
+      // Local persistence already handled best-effort above.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _favoriteBusy = false;
+        });
+        if (localSaved && !remoteSaved) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Favoriet lokaal bewaard. Synchronisatie volgt later.',
+                  en: 'Favorite saved locally. Sync will follow later.',
+                  fr: 'Favori enregistré localement. La synchronisation suivra plus tard.',
+                  es: 'Favorito guardado localmente. La sincronización llegará más tarde.',
+                ),
+              ),
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -28229,6 +28385,77 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       if (out.isNotEmpty) return out;
     }
     return const <String>[];
+  }
+
+  double? _asDoubleRating(dynamic value) {
+    if (value is num) {
+      final candidate = value.toDouble();
+      return candidate.isFinite ? candidate : null;
+    }
+    final parsed = double.tryParse((value ?? '').toString().trim());
+    if (parsed == null || !parsed.isFinite) return null;
+    return parsed;
+  }
+
+  int? _asIntCount(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse((value ?? '').toString().trim());
+  }
+
+  double? _ratingAverageFromMap(Map item) {
+    final candidates = <dynamic>[
+      item['rating_avg'],
+      item['ratingAvg'],
+      item['average_rating'],
+      item['averageRating'],
+      item['driver_rating_avg'],
+      item['driverRatingAvg'],
+    ];
+    for (final value in candidates) {
+      final parsed = _asDoubleRating(value);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  int? _ratingCountFromMap(Map item) {
+    final candidates = <dynamic>[
+      item['rating_count'],
+      item['ratingCount'],
+      item['reviews_count'],
+      item['reviewsCount'],
+      item['driver_rating_count'],
+      item['driverRatingCount'],
+    ];
+    for (final value in candidates) {
+      final parsed = _asIntCount(value);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  String _localizedRatingDisplay({required double? avg, required int? count}) {
+    final safeCount = count == null ? 0 : (count < 0 ? 0 : count);
+    if (avg != null && safeCount > 0) {
+      final rounded = avg.toStringAsFixed(1);
+      final value = (appConfig.currentLanguage == AppLanguage.en)
+          ? rounded
+          : rounded.replaceAll('.', ',');
+      final reviewWord = _t(
+        nl: safeCount == 1 ? 'beoordeling' : 'beoordelingen',
+        en: safeCount == 1 ? 'review' : 'reviews',
+        fr: safeCount == 1 ? 'avis' : 'avis',
+        es: safeCount == 1 ? 'reseña' : 'reseñas',
+      );
+      return '★ $value · $safeCount $reviewWord';
+    }
+    return _t(
+      nl: '★ Nog geen score',
+      en: '★ No rating yet',
+      fr: '★ Pas encore de note',
+      es: '★ Sin puntuación todavía',
+    );
   }
 
   String _publicProfileLabel(String key) {
@@ -28867,6 +29094,35 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         appBar: AppBar(
           backgroundColor: _bg,
           title: Text(_publicProfileLabel('profile')),
+          actions: [
+            if (!_loading && _error == null)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: TextButton.icon(
+                  onPressed: _favoriteBusy ? null : _toggleFavoritePartner,
+                  style: TextButton.styleFrom(
+                    foregroundColor: _isFavorite
+                        ? const Color(0xFFFF7A90)
+                        : _gold.withOpacity(0.95),
+                  ),
+                  icon: Icon(
+                    _isFavorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    size: 17,
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Favoriet',
+                      en: 'Favorite',
+                      fr: 'Favori',
+                      es: 'Favorito',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+          ],
         ),
         bottomNavigationBar: !_loading && _error == null && hasBookCta
             ? SafeArea(
@@ -29406,6 +29662,12 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                   'portrait_url',
                                   'portraitUrl',
                                 ]);
+                                final ratingAvg = _ratingAverageFromMap(d);
+                                final ratingCount = _ratingCountFromMap(d);
+                                final ratingLabel = _localizedRatingDisplay(
+                                  avg: ratingAvg,
+                                  count: ratingCount,
+                                );
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 8),
                                   padding: const EdgeInsets.all(10),
@@ -29444,6 +29706,17 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                               style: const TextStyle(
                                                 color: Colors.white,
                                                 fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              ratingLabel,
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(
+                                                  0.76,
+                                                ),
+                                                fontSize: 12.0,
+                                                fontWeight: FontWeight.w600,
                                               ),
                                             ),
                                             const SizedBox(height: 5),
