@@ -56,6 +56,7 @@ import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'airport/airport_page.dart';
+import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
 import 'nearby_partners_page.dart';
 
@@ -5637,6 +5638,63 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     return value;
   }
 
+  ({String companyCode, String driverCode})? _parseDriverLoginQrPayload(
+    String raw,
+  ) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final uri = Uri.tryParse(text);
+    if (uri == null) return null;
+    if (uri.scheme.toLowerCase() != 'fluxidi') return null;
+    if (uri.host.toLowerCase() != 'driver-login') return null;
+    final companyCode = (uri.queryParameters['company_code'] ?? '')
+        .trim()
+        .toUpperCase();
+    final driverCode = (uri.queryParameters['driver_code'] ?? '').trim();
+    if (companyCode.isEmpty || driverCode.isEmpty) return null;
+    if (!RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(companyCode)) return null;
+    return (companyCode: companyCode, driverCode: driverCode);
+  }
+
+  Future<void> _scanDriverLoginQr() async {
+    if (_busy) return;
+    final raw = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const DriverLoginQrScannerPage()),
+    );
+    if (!mounted || raw == null) return;
+    final parsed = _parseDriverLoginQrPayload(raw);
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Ongeldige Fluxidi QR-code.',
+              en: 'Invalid Fluxidi QR code.',
+              fr: 'Code QR Fluxidi invalide.',
+              es: 'Código QR de Fluxidi no válido.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    _companyCtrl.text = parsed.companyCode;
+    _idCtrl.text = parsed.driverCode;
+    setState(() => _lookupError = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'QR gelezen. Controleer en tik op Verbinden.',
+            en: 'QR read. Review and tap Connect.',
+            fr: 'QR lu. Vérifiez puis appuyez sur Connecter.',
+            es: 'QR leído. Revisa y toca Conectar.',
+          ),
+        ),
+      ),
+    );
+  }
+
   String _normalizeLoginCode(String raw) => raw.trim().toLowerCase();
 
   String _maskLoginCode(String raw) {
@@ -6202,6 +6260,36 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                             }
                             return null;
                           },
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: _busy
+                              ? null
+                              : () => unawaited(_scanDriverLoginQr()),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFE5B641),
+                            side: const BorderSide(
+                              color: Color(0xFFE5B641),
+                              width: 1.2,
+                            ),
+                            minimumSize: const Size.fromHeight(48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: const Icon(
+                            Icons.qr_code_scanner_rounded,
+                            size: 20,
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Scan bedrijfs QR',
+                              en: 'Scan company QR',
+                              fr: 'Scanner QR entreprise',
+                              es: 'Escanear QR de empresa',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
                         if (_lookupError != null) ...[
                           const SizedBox(height: 10),
