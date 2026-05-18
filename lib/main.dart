@@ -24352,6 +24352,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   bool _refreshing = false;
   bool _cancelling = false;
   bool _ratingSubmitting = false;
+  bool _ratingSessionChecked = false;
+  bool _hasValidRatingSession = false;
   String? _refreshError;
   late bool _usingLocalCache = widget.startsFromLocalCache;
 
@@ -24365,7 +24367,18 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_refreshRatingSessionState());
     unawaited(_refresh());
+  }
+
+  Future<void> _refreshRatingSessionState() async {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final token = (session?.customerSessionToken ?? '').trim();
+    if (!mounted) return;
+    setState(() {
+      _ratingSessionChecked = true;
+      _hasValidRatingSession = token.isNotEmpty;
+    });
   }
 
   Future<void> _refresh() async {
@@ -24679,8 +24692,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     switch (code) {
       case 'unauthorized':
         return _t(
-          nl: 'Meld je opnieuw aan om je rit te beoordelen.',
-          en: 'Sign in again to rate your ride.',
+          nl: 'Verifieer je klantprofiel om deze rit te beoordelen.',
+          en: 'Verify your customer profile to rate this ride.',
           fr: 'Reconnectez-vous pour évaluer votre course.',
           es: 'Vuelve a iniciar sesión para valorar tu viaje.',
         );
@@ -24693,8 +24706,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         );
       case 'forbidden':
         return _t(
-          nl: 'Je kunt alleen je eigen rit beoordelen.',
-          en: 'You can only rate your own ride.',
+          nl: 'Deze rit hoort niet bij het actieve klantprofiel. Verifieer je boeking opnieuw.',
+          en: 'This ride does not belong to the active customer profile. Verify your booking again.',
           fr: 'Vous pouvez uniquement évaluer votre propre course.',
           es: 'Solo puedes valorar tu propio viaje.',
         );
@@ -24713,6 +24726,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           es: 'No se pudo guardar tu valoración. Inténtalo de nuevo.',
         );
     }
+  }
+
+  String _ratingUiSafeError(dynamic value) {
+    final raw = (value ?? '').toString();
+    final compact = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (compact.isEmpty) return 'unknown';
+    return compact.length > 120 ? compact.substring(0, 120) : compact;
   }
 
   Future<Map<String, dynamic>?> _openCustomerRatingSheet({
@@ -24860,6 +24880,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     if (bookingId.isEmpty) return;
     final session = await CustomerSessionStore.instance.loadValidSession();
     final token = (session?.customerSessionToken ?? '').trim();
+    debugPrint(
+      '[CUSTOMER_RATING_UI][SUBMIT_START] booking=${_safeRefPreview(bookingId)} completed=${_canRateCompletedBooking ? 'true' : 'false'} has_session=${token.isNotEmpty ? 'true' : 'false'}',
+    );
     if (session == null || token.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -24900,6 +24923,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           : const <String, dynamic>{};
       final ok =
           res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true;
+      debugPrint(
+        '[CUSTOMER_RATING_UI][SUBMIT_RESULT] status=${res.statusCode} ok=${ok ? 'true' : 'false'} error=${_ratingUiSafeError(map['error'])}',
+      );
       if (!ok) {
         final errorCode = (map['error'] ?? 'unknown').toString().trim();
         throw Exception(errorCode.isEmpty ? 'unknown' : errorCode);
@@ -24919,6 +24945,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       );
       await _refresh();
     } catch (err) {
+      debugPrint(
+        '[CUSTOMER_RATING_UI][SUBMIT_ERROR] error=${_ratingUiSafeError(err)}',
+      );
       if (!mounted) return;
       final errorText = err.toString();
       String errorCode = 'unknown';
@@ -26129,6 +26158,22 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               ),
                             ),
                           ),
+                          if (_ratingSessionChecked &&
+                              !_hasValidRatingSession) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _t(
+                                nl: 'Verifieer je klantprofiel om deze rit te beoordelen.',
+                                en: 'Verify your customer profile to rate this ride.',
+                                fr: 'Vérifiez votre profil client pour évaluer cette course.',
+                                es: 'Verifica tu perfil de cliente para valorar este viaje.',
+                              ),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 11.8,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -29757,6 +29802,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   @override
   Widget build(BuildContext context) {
     final p = _profileMap(_profile);
+    final companyRatingAvg = _ratingAverageFromMap(p);
+    final companyRatingCount = _ratingCountFromMap(p);
+    final hasCompanyRating =
+        companyRatingAvg != null && (companyRatingCount ?? 0) > 0;
+    final companyRatingLabel = _localizedRatingDisplay(
+      avg: companyRatingAvg,
+      count: companyRatingCount,
+    );
     final companyName =
         _profileTextAny(p, const ['company_name', 'companyName']).isNotEmpty
         ? _profileTextAny(p, const ['company_name', 'companyName'])
@@ -30144,6 +30197,11 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                       spacing: 6,
                       runSpacing: 6,
                       children: [
+                        if (hasCompanyRating)
+                          _chip(
+                            companyRatingLabel,
+                            color: const Color(0xFFE0BE64),
+                          ),
                         if (verified || professionalBadge)
                           _chip(
                             _verifiedPartnerTrustLabel(),

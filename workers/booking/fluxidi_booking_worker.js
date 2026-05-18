@@ -7303,16 +7303,260 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   return json({ ok: true, profile: merged }, 200);
 }
 
+function _customerRatingValueFromAnyBlock(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const candidate = Number(
+    raw.rating ??
+      raw.stars ??
+      raw.value ??
+      raw.score,
+  );
+  if (!Number.isFinite(candidate)) return null;
+  const rounded = Math.trunc(candidate);
+  if (rounded < 1 || rounded > 5) return null;
+  return rounded;
+}
+
+function _existingCustomerRatingValueFromBookingRecord(rec) {
+  const candidates = [
+    rec?.customer_rating,
+    rec?.customerRating,
+    rec?.booking?.customer_rating,
+    rec?.booking?.customerRating,
+  ];
+  for (const block of candidates) {
+    const value = _customerRatingValueFromAnyBlock(block);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function _ratingCompanyAggregateKvKey(scope) {
+  const normalized = normalizeFleetTenantScope(scope);
+  if (!normalized?.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:ratings:company:v1`;
+}
+
+function _ratingDriverAggregateKvKey(scope, driverId) {
+  const normalized = normalizeFleetTenantScope(scope);
+  const normalizedDriverId = sanitizeTenantString(driverId, 96);
+  if (!normalized?.hasScope || !normalizedDriverId) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:ratings:driver:${normalizedDriverId}:v1`;
+}
+
+function _normalizeStoredRatingAggregate(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const countCandidate = Number(raw.rating_count ?? raw.ratingCount ?? raw.count);
+  const sumCandidate = Number(raw.rating_sum ?? raw.ratingSum ?? raw.sum);
+  const count = Number.isFinite(countCandidate) ? Math.max(0, Math.trunc(countCandidate)) : 0;
+  let sum = Number.isFinite(sumCandidate) ? sumCandidate : 0;
+  if (!Number.isFinite(sum) || sum < 0) sum = 0;
+  if (count === 0) sum = 0;
+  const avg = count > 0 ? Number((sum / count).toFixed(4)) : 0;
+  const updatedAt = sanitizeTenantString(raw.updated_at ?? raw.updatedAt, 80) || "";
+  const source = sanitizeTenantString(raw.source, 80) || "customer_completed_booking";
+  return {
+    count,
+    rating_count: count,
+    sum: Number(sum.toFixed(4)),
+    rating_sum: Number(sum.toFixed(4)),
+    avg,
+    rating_avg: avg,
+    updated_at: updatedAt,
+    source,
+  };
+}
+
+function _buildRatingAggregateDocument({
+  count = 0,
+  sum = 0,
+  source = "customer_completed_booking",
+  updatedAt = "",
+} = {}) {
+  const normalizedCount = Number.isFinite(Number(count)) ? Math.max(0, Math.trunc(Number(count))) : 0;
+  let normalizedSum = Number.isFinite(Number(sum)) ? Number(sum) : 0;
+  if (!Number.isFinite(normalizedSum) || normalizedSum < 0 || normalizedCount === 0) {
+    normalizedSum = 0;
+  }
+  const roundedSum = Number(normalizedSum.toFixed(4));
+  const avg = normalizedCount > 0 ? Number((roundedSum / normalizedCount).toFixed(4)) : 0;
+  const normalizedSource = sanitizeTenantString(source, 80) || "customer_completed_booking";
+  const normalizedUpdatedAt = sanitizeTenantString(updatedAt, 80) || new Date().toISOString();
+  return {
+    count: normalizedCount,
+    rating_count: normalizedCount,
+    sum: roundedSum,
+    rating_sum: roundedSum,
+    avg,
+    rating_avg: avg,
+    updated_at: normalizedUpdatedAt,
+    source: normalizedSource,
+  };
+}
+
+function _publicRatingFieldsFromAggregate(aggregate, { includeReviewsCount = true } = {}) {
+  const normalized = _normalizeStoredRatingAggregate(aggregate);
+  if (!normalized || normalized.rating_count <= 0) return {};
+  const base = {
+    rating_avg: normalized.rating_avg,
+    ratingAvg: normalized.rating_avg,
+    rating_count: normalized.rating_count,
+    ratingCount: normalized.rating_count,
+  };
+  if (!includeReviewsCount) return base;
+  return {
+    ...base,
+    reviews_count: normalized.rating_count,
+    reviewsCount: normalized.rating_count,
+  };
+}
+
+async function _loadStoredRatingAggregateByKey(env, key) {
+  if (!env?.BOOKING_KV || !key) return null;
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  return _normalizeStoredRatingAggregate(raw);
+}
+
+async function _upsertRatingAggregateDeltaBestEffort(env, key, { deltaCount = 0, deltaSum = 0, source = "customer_completed_booking" } = {}) {
+  if (!env?.BOOKING_KV || !key) return null;
+  const normalizedDeltaCount = Number.isFinite(Number(deltaCount)) ? Math.trunc(Number(deltaCount)) : 0;
+  const normalizedDeltaSum = Number.isFinite(Number(deltaSum)) ? Number(deltaSum) : 0;
+  if (normalizedDeltaCount === 0 && normalizedDeltaSum === 0) {
+    return _loadStoredRatingAggregateByKey(env, key);
+  }
+  const current = await _loadStoredRatingAggregateByKey(env, key);
+  const currentCount = current?.rating_count ?? 0;
+  const currentSum = current?.rating_sum ?? 0;
+  const nextCount = currentCount + normalizedDeltaCount;
+  const nextSum = currentSum + normalizedDeltaSum;
+  const next = _buildRatingAggregateDocument({
+    count: nextCount,
+    sum: nextSum,
+    source,
+  });
+  await env.BOOKING_KV.put(key, JSON.stringify(next));
+  return next;
+}
+
+async function _loadDriverRatingAggregatesByDriverIds(env, scope, driverIds) {
+  const out = {};
+  if (!env?.BOOKING_KV || !Array.isArray(driverIds) || driverIds.length === 0) return out;
+  const uniqueDriverIds = Array.from(
+    new Set(
+      driverIds
+        .map((id) => sanitizeTenantString(id, 96))
+        .filter((id) => !!id),
+    ),
+  );
+  for (const driverId of uniqueDriverIds) {
+    const key = _ratingDriverAggregateKvKey(scope, driverId);
+    if (!key) continue;
+    try {
+      const aggregate = await _loadStoredRatingAggregateByKey(env, key);
+      if (aggregate && aggregate.rating_count > 0) out[driverId] = aggregate;
+    } catch (_) {}
+  }
+  return out;
+}
+
+function _normalizeDriverRatingLookupName(value) {
+  const text = sanitizeTenantString(value, 160).toLowerCase().trim();
+  if (!text) return "";
+  return text.replace(/\s+/g, " ");
+}
+
+async function _loadPublicDriverRatingAggregateLookup(env, scope) {
+  if (!env?.BOOKING_KV) return { byDriverId: {}, byName: {} };
+  const index = await _loadDriverIndexRecord(env, scope);
+  const entries = Object.values(index?.drivers || {});
+  if (entries.length === 0) return { byDriverId: {}, byName: {} };
+  const driverIds = [];
+  const displayNameByDriverId = {};
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const driverId = sanitizeTenantString(entry.driver_id ?? entry.driverId ?? entry.id, 96);
+    if (!driverId) continue;
+    driverIds.push(driverId);
+    displayNameByDriverId[driverId] = _normalizeDriverRatingLookupName(
+      entry.public_display_name ??
+        entry.publicDisplayName ??
+        entry.display_name ??
+        entry.displayName ??
+        entry.driver_name ??
+        entry.driverName,
+    );
+  }
+  const byDriverId = await _loadDriverRatingAggregatesByDriverIds(env, scope, driverIds);
+  const byName = {};
+  for (const [driverId, aggregate] of Object.entries(byDriverId)) {
+    const normalizedName = displayNameByDriverId[driverId] || "";
+    if (!normalizedName) continue;
+    if (!byName[normalizedName] || (byName[normalizedName]?.rating_count ?? 0) < aggregate.rating_count) {
+      byName[normalizedName] = aggregate;
+    }
+  }
+  return { byDriverId, byName };
+}
+
+function _scopeFromCanonicalPublicPartnerId(partnerId) {
+  const text = _safePublicText(partnerId, 120);
+  const match = /^company:([^:]+):([^:]+)$/i.exec(text || "");
+  if (!match) {
+    return { tenant_id: "", company_id: "", hasScope: false };
+  }
+  return normalizeFleetTenantScope({
+    tenant_id: sanitizeTenantString(match[1], 80),
+    company_id: sanitizeTenantString(match[2], 80),
+  });
+}
+
+async function _resolvePublicPartnerRatingScope(env, partnerId) {
+  try {
+    const resolved = await resolvePublicPartnerBookingScope(env, partnerId);
+    if (resolved?.ok && resolved?.scope?.hasScope) {
+      return normalizeFleetTenantScope(resolved.scope);
+    }
+  } catch (_) {}
+  return _scopeFromCanonicalPublicPartnerId(partnerId);
+}
+
+function _mergePublicDriverRatingAggregates(drivers, lookup) {
+  if (!Array.isArray(drivers) || drivers.length === 0) return [];
+  const byDriverId = lookup?.byDriverId && typeof lookup.byDriverId === "object" ? lookup.byDriverId : {};
+  const byName = lookup?.byName && typeof lookup.byName === "object" ? lookup.byName : {};
+  return drivers.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const normalizedDriverId = sanitizeTenantString(row.driver_id ?? row.driverId, 96);
+    const normalizedDisplayName = _normalizeDriverRatingLookupName(
+      row.display_name ?? row.displayName,
+    );
+    const aggregate = (
+      (normalizedDriverId ? byDriverId[normalizedDriverId] : null) ||
+      (normalizedDisplayName ? byName[normalizedDisplayName] : null)
+    );
+    if (!aggregate) return row;
+    return {
+      ...row,
+      ..._publicRatingFieldsFromAggregate(aggregate, { includeReviewsCount: true }),
+    };
+  });
+}
+
 async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, body) {
+  const maskedBooking = _bookingIntentMask(bookingId);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "recovery_unavailable" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
   const session = await _loadCustomerSessionFromRequest(request, env);
-  if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+  if (!session) {
+    console.log(`[CUSTOMER_RATING][REJECT] reason=unauthorized booking=${maskedBooking}`);
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
   const customerTenantId = sanitizeTenantString(session.tenant_id, 80);
   const customerCompanyId = sanitizeTenantString(session.company_id, 80);
   if (!customerTenantId || !customerCompanyId) {
+    console.log(`[CUSTOMER_RATING][REJECT] reason=unauthorized booking=${maskedBooking}`);
     return json({ ok: false, error: "unauthorized" }, 401);
   }
   const forbiddenKeys = [
@@ -7325,6 +7569,7 @@ async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, 
   ];
   for (const key of forbiddenKeys) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
+      console.log(`[CUSTOMER_RATING][REJECT] reason=forbidden_field booking=${maskedBooking}`);
       return json({ ok: false, error: "forbidden_fields_not_allowed" }, 400);
     }
   }
@@ -7333,6 +7578,7 @@ async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, 
     10,
   );
   if (!Number.isFinite(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+    console.log(`[CUSTOMER_RATING][REJECT] reason=invalid_rating booking=${maskedBooking}`);
     return json({ ok: false, error: "invalid_rating" }, 400);
   }
   const comment = sanitizeTenantString(body.comment ?? body.review ?? body.feedback, 500);
@@ -7351,21 +7597,38 @@ async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, 
     company_id: customerCompanyId,
     hasScope: true,
   };
-  if (!bookingMatchesRequiredTenantCompanyScope(rec, sessionScope)) {
-    return json({ ok: false, error: "forbidden" }, 403);
-  }
-  const identityMatch = await _bookingMatchesCustomerSessionIdentity(rec, {
-    customer_id: session.customer_id,
-    email_hash: session.email_hash,
-    phone_hash: session.phone_hash,
+  const ownership = await bookingBelongsToCustomerSessionForWrite(env, rec, {
+    session,
+    sessionScope,
+    bookingId,
   });
-  if (!identityMatch?.matched) {
+  if (!ownership?.matched) {
+    const safeProof = sanitizeTenantString(ownership?.proof, 40) || "none";
+    const safeScopeProof =
+      sanitizeTenantString(ownership?.scope_proof ?? ownership?.scopeProof, 40) ||
+      "none";
+    console.log(
+      `[CUSTOMER_RATING][REJECT] reason=forbidden booking=${maskedBooking} proof=${safeProof} scope_proof=${safeScopeProof}`,
+    );
     return json({ ok: false, error: "forbidden" }, 403);
   }
+  const bookingWriteScope = normalizeFleetTenantScope(
+    resolveBookingTenantScopeFromRecord(rec),
+  );
+  const writeTenantId = sanitizeTenantString(
+    bookingWriteScope?.tenant_id || customerTenantId,
+    80,
+  );
+  const writeCompanyId = sanitizeTenantString(
+    bookingWriteScope?.company_id || customerCompanyId,
+    80,
+  );
   const lifecycle = _normLifecycleStatus(_bookingLifecycleValue(rec));
   if (lifecycle !== "COMPLETED") {
+    console.log(`[CUSTOMER_RATING][REJECT] reason=booking_not_completed booking=${maskedBooking}`);
     return json({ ok: false, error: "booking_not_completed" }, 409);
   }
+  const previousRatingValue = _existingCustomerRatingValueFromBookingRecord(rec);
   const nowIso = new Date().toISOString();
   const assignedDriverId = safeStr(bookingAssignedDriverId(rec), 96) || null;
   const normalizedBookingId = safeStr(bookingId, 160);
@@ -7377,10 +7640,10 @@ async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, 
     source: "customer_completed_booking",
     booking_id: normalizedBookingId,
     bookingId: normalizedBookingId,
-    tenant_id: customerTenantId,
-    tenantId: customerTenantId,
-    company_id: customerCompanyId,
-    companyId: customerCompanyId,
+    tenant_id: writeTenantId,
+    tenantId: writeTenantId,
+    company_id: writeCompanyId,
+    companyId: writeCompanyId,
     driver_id: assignedDriverId,
     driverId: assignedDriverId,
   };
@@ -7393,8 +7656,61 @@ async function handlePublicCustomerBookingRatingUpsert(request, env, bookingId, 
     rec.booking.updatedAt = nowIso;
   }
   await env.BOOKING_KV.put(loaded.key, JSON.stringify(rec));
+  const baseDeltaCount = previousRatingValue == null ? 1 : 0;
+  const baseDeltaSum =
+    previousRatingValue == null ? parsedRating : (parsedRating - previousRatingValue);
+  const aggregateScope = normalizeFleetTenantScope({
+    tenant_id: writeTenantId,
+    company_id: writeCompanyId,
+  });
+  const maskedCompany = _maskPublicDriverLoginValue(writeCompanyId);
+  const maskedDriver = assignedDriverId ? _maskPublicDriverLoginValue(assignedDriverId) : "none";
+  try {
+    const companyAggregateKey = _ratingCompanyAggregateKvKey(aggregateScope);
+    if (companyAggregateKey) {
+      let companyDeltaCount = baseDeltaCount;
+      let companyDeltaSum = baseDeltaSum;
+      if (previousRatingValue != null) {
+        const existingCompanyAggregate = await _loadStoredRatingAggregateByKey(env, companyAggregateKey);
+        if (!existingCompanyAggregate || Number(existingCompanyAggregate.rating_count || 0) <= 0) {
+          companyDeltaCount = 1;
+          companyDeltaSum = parsedRating;
+        }
+      }
+      await _upsertRatingAggregateDeltaBestEffort(env, companyAggregateKey, {
+        deltaCount: companyDeltaCount,
+        deltaSum: companyDeltaSum,
+        source: "customer_completed_booking",
+      });
+    }
+    if (assignedDriverId) {
+      const driverAggregateKey = _ratingDriverAggregateKvKey(aggregateScope, assignedDriverId);
+      if (driverAggregateKey) {
+        let driverDeltaCount = baseDeltaCount;
+        let driverDeltaSum = baseDeltaSum;
+        if (previousRatingValue != null) {
+          const existingDriverAggregate = await _loadStoredRatingAggregateByKey(env, driverAggregateKey);
+          if (!existingDriverAggregate || Number(existingDriverAggregate.rating_count || 0) <= 0) {
+            driverDeltaCount = 1;
+            driverDeltaSum = parsedRating;
+          }
+        }
+        await _upsertRatingAggregateDeltaBestEffort(env, driverAggregateKey, {
+          deltaCount: driverDeltaCount,
+          deltaSum: driverDeltaSum,
+          source: "customer_completed_booking",
+        });
+      }
+    }
+    console.log(
+      `[CUSTOMER_RATING][AGGREGATE_UPDATE] company=${maskedCompany} driver=${maskedDriver} rating=${parsedRating} delta_count=${baseDeltaCount}`,
+    );
+  } catch (err) {
+    const safeReason = sanitizeTenantString(err?.message ?? err, 160) || "unknown";
+    console.log(`[CUSTOMER_RATING][AGGREGATE_WARN] reason=${safeReason}`);
+  }
   console.log(
-    `[CUSTOMER_RATING][UPSERT] booking=${_bookingIntentMask(bookingId)} rating=${parsedRating} has_comment=${comment ? "true" : "false"}`,
+    `[CUSTOMER_RATING][UPSERT] booking=${_bookingIntentMask(bookingId)} rating=${parsedRating} has_comment=${comment ? "true" : "false"} proof=${sanitizeTenantString(ownership?.proof, 40) || "none"} scope_proof=${sanitizeTenantString(ownership?.scope_proof ?? ownership?.scopeProof, 40) || "none"}`,
   );
   return json(
     {
@@ -7584,6 +7900,188 @@ async function _bookingMatchesCustomerSessionIdentity(rec, identity) {
     }
   }
   return { matched: false, mode: "legacy_contact_mismatch" };
+}
+
+async function bookingBelongsToCustomerSessionForWrite(
+  env,
+  rec,
+  { session = null, sessionScope = null, bookingId = "" } = {},
+) {
+  if (!session || typeof session !== "object") {
+    return { matched: false, proof: "missing_session", scope_proof: "none" };
+  }
+  const sessionTenantId = sanitizeTenantString(
+    sessionScope?.tenant_id ?? sessionScope?.tenantId ?? session?.tenant_id ?? session?.tenantId,
+    80,
+  );
+  const sessionCompanyId = sanitizeTenantString(
+    sessionScope?.company_id ?? sessionScope?.companyId ?? session?.company_id ?? session?.companyId,
+    80,
+  );
+  const sessionCustomerId = _normalizeCustomerIdentityId(
+    session?.customer_id ?? session?.customerId,
+  );
+  if (!sessionTenantId || !sessionCompanyId) {
+    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
+  }
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const recordTenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
+  const recordCompanyId = sanitizeTenantString(recordScope?.company_id, 80);
+  if (!recordTenantId || !recordCompanyId) {
+    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
+  }
+  const isGlobalSession =
+    sessionTenantId.toLowerCase() === "global" &&
+    sessionCompanyId.toLowerCase() === "global";
+  const allowedScopes = [];
+  if (!isGlobalSession) {
+    allowedScopes.push({
+      tenant_id: sessionTenantId,
+      company_id: sessionCompanyId,
+      source: "session_scope",
+    });
+  }
+  if (isGlobalSession && sessionCustomerId) {
+    try {
+      const globalScopeLinksRead = await _readGlobalCustomerScopeLinks(
+        env,
+        sessionCustomerId,
+      );
+      const linkedScopes = Array.isArray(globalScopeLinksRead?.scopes)
+        ? globalScopeLinksRead.scopes
+        : [];
+      for (const linkedScope of linkedScopes) {
+        const tenantId = sanitizeTenantString(
+          linkedScope?.tenant_id ?? linkedScope?.tenantId,
+          80,
+        );
+        const companyId = sanitizeTenantString(
+          linkedScope?.company_id ?? linkedScope?.companyId,
+          80,
+        );
+        if (!tenantId || !companyId) continue;
+        allowedScopes.push({
+          tenant_id: tenantId,
+          company_id: companyId,
+          source: "allowed_scope",
+        });
+      }
+    } catch (_) {
+      // Best-effort linked-scope lookup.
+    }
+  }
+  const matchedAllowedScope = allowedScopes.find(
+    (scope) =>
+      scope.tenant_id === recordTenantId && scope.company_id === recordCompanyId,
+  );
+  const scopeCheckSessionMasked = _bookingIntentScopeMask({
+    tenant_id: sessionTenantId,
+    company_id: sessionCompanyId,
+  });
+  const scopeCheckRecordMasked = _bookingIntentScopeMask({
+    tenant_id: recordTenantId,
+    company_id: recordCompanyId,
+  });
+  console.log(
+    `[CUSTOMER_RATING][SCOPE_CHECK] booking=${_bookingIntentMask(bookingId)} rec_scope=${scopeCheckRecordMasked.tenant || "-"}/${scopeCheckRecordMasked.company || "-"} session_scope=${scopeCheckSessionMasked.tenant || "-"}/${scopeCheckSessionMasked.company || "-"} allowed_scopes=${allowedScopes.length} result=${matchedAllowedScope ? "match" : "mismatch"}`,
+  );
+  if (!matchedAllowedScope) {
+    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
+  }
+  const strictScope = {
+    tenant_id: recordTenantId,
+    company_id: recordCompanyId,
+    hasScope: true,
+  };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, strictScope)) {
+    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
+  }
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  if (
+    sessionCustomerId &&
+    bookingCustomerIds.length > 0 &&
+    bookingCustomerIds.includes(sessionCustomerId)
+  ) {
+    return {
+      matched: true,
+      proof: "customer_id",
+      scope_proof: matchedAllowedScope.source || "session_scope",
+    };
+  }
+
+  const sessionEmailHash = sanitizeTenantString(
+    session?.email_hash ?? session?.emailHash,
+    200,
+  ).toLowerCase();
+  const sessionPhoneHash = sanitizeTenantString(
+    session?.phone_hash ?? session?.phoneHash,
+    200,
+  ).toLowerCase();
+  if (sessionEmailHash || sessionPhoneHash) {
+    const contacts = _bookingCustomerContacts(rec);
+    const emails = Array.isArray(contacts?.emails) ? contacts.emails : [];
+    for (const email of emails) {
+      const normalized = _normalizeCustomerEmail(email);
+      if (!normalized || !sessionEmailHash) continue;
+      const hashed = (await _sha256Hex(normalized)).toLowerCase();
+      if (_constantTimeEquals(hashed, sessionEmailHash)) {
+        return {
+          matched: true,
+          proof: "verified_contact",
+          scope_proof: matchedAllowedScope.source || "session_scope",
+        };
+      }
+    }
+    const phones = Array.isArray(contacts?.phones) ? contacts.phones : [];
+    for (const phone of phones) {
+      const normalized = _normalizeCustomerPhone(phone);
+      if (!normalized || !sessionPhoneHash) continue;
+      const hashed = (await _sha256Hex(normalized)).toLowerCase();
+      if (_constantTimeEquals(hashed, sessionPhoneHash)) {
+        return {
+          matched: true,
+          proof: "verified_contact",
+          scope_proof: matchedAllowedScope.source || "session_scope",
+        };
+      }
+    }
+  }
+
+  const safeBookingId = safeStr(bookingId, 160);
+  if (safeBookingId && sessionCustomerId) {
+    try {
+      const indexRead = await readCustomerScopedBookingIndex(env, {
+        tenant_id: recordTenantId,
+        company_id: recordCompanyId,
+        customer_id: sessionCustomerId,
+      });
+      const entries = Array.isArray(indexRead?.index?.items)
+        ? indexRead.index.items
+        : [];
+      const hasBooking = entries.some(
+        (entry) =>
+          safeStr(entry?.booking_id ?? entry?.bookingId, 160) === safeBookingId,
+      );
+      if (hasBooking) {
+        return {
+          matched: true,
+          proof: "scoped_index",
+          scope_proof: matchedAllowedScope.source || "session_scope",
+        };
+      }
+    } catch (_) {
+      // Index lookup is best-effort; fall through to deny.
+    }
+  }
+
+  if (
+    sessionCustomerId &&
+    bookingCustomerIds.length > 0 &&
+    !bookingCustomerIds.includes(sessionCustomerId)
+  ) {
+    return { matched: false, proof: "customer_id_mismatch", scope_proof: "none" };
+  }
+  return { matched: false, proof: "none", scope_proof: "none" };
 }
 
 function _logCustomerBookingIndexUpsert({
@@ -10885,6 +11383,13 @@ async function handleCompanyBootstrap(request, env) {
 
   const driverIndex = await _loadDriverIndexRecord(env, scope);
   const driverEntries = Object.values(driverIndex?.drivers || {});
+  const driverRatingAggregates = await _loadDriverRatingAggregatesByDriverIds(
+    env,
+    scope,
+    driverEntries
+      .map((entry) => sanitizeTenantString(entry?.driver_id ?? entry?.driverId ?? entry?.id, 96))
+      .filter((driverId) => !!driverId),
+  );
   const drivers = [];
   for (const entry of driverEntries) {
     if (!entry || typeof entry !== "object") continue;
@@ -10957,6 +11462,7 @@ async function handleCompanyBootstrap(request, env) {
       explicitHasLoginCode ||
       legacyLoginSecret.length > 0 ||
       sanitizeTenantString(entry.driver_code_hash ?? entry.driverCodeHash, 200).length > 0;
+    const ratingAggregate = driverRatingAggregates[driverId] || null;
     drivers.push({
       driver_id: driverId,
       driverId: driverId,
@@ -11015,6 +11521,9 @@ async function handleCompanyBootstrap(request, env) {
         : {}),
       has_login_code: hasLoginCode,
       hasLoginCode: hasLoginCode,
+      ..._publicRatingFieldsFromAggregate(ratingAggregate, {
+        includeReviewsCount: false,
+      }),
       ...((driverCodeLast4 || loginCodeLast4)
         ? {
             driver_code_last4: driverCodeLast4,
@@ -17627,6 +18136,28 @@ GET /oauth/callback
           false,
         );
         const out = await rebuildBookingDemandIndexForScope(
+          env,
+          explicitScope,
+          { dryRun },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
+      if (url.pathname === "/admin/booking/rating-aggregates/rebuild" && request.method === "POST") {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const dryRun = _coerceBoolean(
+          body?.dryRun ??
+            body?.dry_run ??
+            url.searchParams.get("dryRun") ??
+            url.searchParams.get("dry_run"),
+          false,
+        );
+        const out = await rebuildRatingAggregatesForScope(
           env,
           explicitScope,
           { dryRun },
@@ -27746,7 +28277,7 @@ async function getPublicPartnerProfileById(env, partnerId) {
   const profile = profiles.find((p) => p.partner_id === needle);
   if (!profile) return null;
   if (!_isPublicPartnerProfileVisible(profile)) return null;
-  const normalizedProfile = {
+  let normalizedProfile = {
     partner_id: profile.partner_id,
     company_name: profile.company_name,
     profile_enabled: true,
@@ -27766,6 +28297,24 @@ async function getPublicPartnerProfileById(env, partnerId) {
     trust: profile.trust,
     booking_capabilities: profile.booking_capabilities,
   };
+  try {
+    const ratingScope = await _resolvePublicPartnerRatingScope(env, needle);
+    if (ratingScope?.hasScope) {
+      const companyAggregateKey = _ratingCompanyAggregateKvKey(ratingScope);
+      const companyAggregate = companyAggregateKey
+        ? await _loadStoredRatingAggregateByKey(env, companyAggregateKey)
+        : null;
+      const driverLookup = await _loadPublicDriverRatingAggregateLookup(env, ratingScope);
+      normalizedProfile = {
+        ...normalizedProfile,
+        ..._publicRatingFieldsFromAggregate(companyAggregate, { includeReviewsCount: true }),
+        drivers: _mergePublicDriverRatingAggregates(
+          Array.isArray(normalizedProfile.drivers) ? normalizedProfile.drivers : [],
+          driverLookup,
+        ),
+      };
+    }
+  } catch (_) {}
   return {
     profile: normalizedProfile,
     meta: {
@@ -31527,6 +32076,126 @@ async function debugFleetRecentBookings(url, env, tenantScope = null) {
     limit,
     count: rows.length,
     items: rows,
+  };
+}
+
+async function rebuildRatingAggregatesForScope(env, scope, { dryRun = false } = {}) {
+  const normalizedScope = normalizeFleetTenantScope(scope || {});
+  if (!normalizedScope?.hasScope) {
+    return { ok: false, error: "missing_tenant_scope" };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "Missing BOOKING_KV binding" };
+  }
+  let scanned = 0;
+  let matchedScope = 0;
+  let ratingsCounted = 0;
+  let invalidRatingSkipped = 0;
+  let companyCount = 0;
+  let companySum = 0;
+  const driverTotals = new Map();
+  let cursor = undefined;
+  do {
+    const listed = await env.BOOKING_KV.list({
+      prefix: "booking:",
+      limit: 1000,
+      cursor,
+    });
+    for (const keyEntry of listed?.keys || []) {
+      const key = safeStr(keyEntry?.name, 240);
+      if (!key || !key.startsWith("booking:")) continue;
+      scanned += 1;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(rec, normalizedScope)) continue;
+      matchedScope += 1;
+      const rating = _existingCustomerRatingValueFromBookingRecord(rec);
+      if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+        invalidRatingSkipped += 1;
+        continue;
+      }
+      ratingsCounted += 1;
+      companyCount += 1;
+      companySum += Number(rating);
+      const driverId = sanitizeTenantString(bookingAssignedDriverId(rec), 96);
+      if (!driverId) continue;
+      const current = driverTotals.get(driverId) || { count: 0, sum: 0 };
+      current.count += 1;
+      current.sum += Number(rating);
+      driverTotals.set(driverId, current);
+    }
+    cursor = listed?.cursor;
+    if (listed?.list_complete !== false) break;
+    if (!cursor) break;
+  } while (cursor);
+
+  const companyAggregateKey = _ratingCompanyAggregateKvKey(normalizedScope);
+  const nextDriverAggregateByKey = new Map();
+  const driverCounts = {};
+  const sortedDriverIds = Array.from(driverTotals.keys()).sort();
+  for (const driverId of sortedDriverIds) {
+    const stats = driverTotals.get(driverId) || { count: 0, sum: 0 };
+    driverCounts[driverId] = Number(stats.count || 0);
+    const driverKey = _ratingDriverAggregateKvKey(normalizedScope, driverId);
+    if (!driverKey) continue;
+    nextDriverAggregateByKey.set(
+      driverKey,
+      _buildRatingAggregateDocument({
+        count: stats.count,
+        sum: stats.sum,
+        source: "customer_completed_booking",
+      }),
+    );
+  }
+  const companyAggregateDoc = _buildRatingAggregateDocument({
+    count: companyCount,
+    sum: companySum,
+    source: "customer_completed_booking",
+  });
+
+  if (!dryRun) {
+    if (companyAggregateKey) {
+      await env.BOOKING_KV.put(companyAggregateKey, JSON.stringify(companyAggregateDoc));
+    }
+    for (const [driverKey, payload] of nextDriverAggregateByKey.entries()) {
+      await env.BOOKING_KV.put(driverKey, JSON.stringify(payload));
+    }
+    const driverPrefix =
+      `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:ratings:driver:`;
+    let cleanupCursor = undefined;
+    do {
+      const listed = await env.BOOKING_KV.list({
+        prefix: driverPrefix,
+        limit: 1000,
+        cursor: cleanupCursor,
+      });
+      for (const keyEntry of listed?.keys || []) {
+        const key = safeStr(keyEntry?.name, 240);
+        if (!key || !key.startsWith(driverPrefix)) continue;
+        if (nextDriverAggregateByKey.has(key)) continue;
+        await env.BOOKING_KV.delete(key);
+      }
+      cleanupCursor = listed?.cursor;
+      if (listed?.list_complete !== false) break;
+      if (!cleanupCursor) break;
+    } while (cleanupCursor);
+  }
+
+  const maskedScope = _bookingIntentScopeMask(normalizedScope);
+  console.log(
+    `[CUSTOMER_RATING_AGGREGATE][REBUILD] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} dry_run=${dryRun ? "true" : "false"} scanned=${scanned} matched=${matchedScope} ratings=${ratingsCounted} drivers=${sortedDriverIds.length}`,
+  );
+  return {
+    ok: true,
+    scanned,
+    matched_scope: matchedScope,
+    ratings_counted: ratingsCounted,
+    company_count: companyCount,
+    company_sum: Number(companyAggregateDoc.rating_sum || 0),
+    company_avg: Number(companyAggregateDoc.rating_avg || 0),
+    driver_counts: driverCounts,
+    invalid_rating_skipped: invalidRatingSkipped,
+    dry_run: dryRun === true,
   };
 }
 
