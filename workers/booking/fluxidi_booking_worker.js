@@ -15822,7 +15822,15 @@ GET /oauth/callback
           debugLimit: 50,
         });
         if (!out?.ok) {
-          return json(out, out?.error === "tenant_scope_conflict" ? 409 : 400);
+          const errorCode = safeStr(out?.error, 80);
+          const projectionUnavailable =
+            errorCode === "dashboard_bookings_kpi_index_unavailable" ||
+            errorCode === "dashboard_bookings_kpi_index_dirty" ||
+            errorCode === "dashboard_bookings_kpi_index_stale";
+          return json(
+            out,
+            projectionUnavailable ? 503 : (out?.error === "tenant_scope_conflict" ? 409 : 400),
+          );
         }
         return json(out, 200);
       }
@@ -31838,444 +31846,74 @@ async function rebuildDashboardBookingsKpiProjectionForScope(
   };
 }
 
+function _dashboardBookingsKpiProjectionStaleAfterMs(env, options = {}) {
+  const raw = Number(
+    options?.staleAfterMs ??
+      env?.DASHBOARD_BOOKINGS_KPI_PROJECTION_STALE_AFTER_MS ??
+      0,
+  );
+  if (!Number.isFinite(raw)) return 0;
+  const normalized = Math.trunc(raw);
+  return normalized > 0 ? normalized : 0;
+}
+
 async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, debugLimit = 50 } = {}) {
   if (!tenantScope?.hasScope) return missingTenantScopeError();
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const debugEnabled = debug === true;
   const effectiveDebugLimit = Math.max(1, Math.min(200, Number(debugLimit) || 50));
-
-  const nowMs = Date.now();
-  let scannedKeys = 0;
-  let matchedScope = 0;
-  let consideredOpen = 0;
-  let excludedTerminal = 0;
-  let excludedPaymentFailed = 0;
-  let excludedStalePaymentPending = 0;
-  let excludedHidden = 0;
-  let excludedMissingPickupTime = 0;
-  let excludedStalePastPickup = 0;
-  let excludedNonCanonicalProvisionalRecord = 0;
-  let excludedDuplicateIdentity = 0;
-  let excludedTerminalIdentity = 0;
-  let excludedReferenceOnlyProvisionalRecord = 0;
-  let excludedOutOfScope = 0;
-  let excludedInvalidRecord = 0;
-  let cursor = undefined;
-  let scanComplete = true;
-  const debugConsideredOpen = [];
-  const debugSample = [];
-  const scopedEntries = [];
-  const _debugAddSample = (entry) => {
-    if (!debugEnabled) return;
-    if (debugSample.length >= effectiveDebugLimit) return;
-    debugSample.push(entry);
-  };
-  const _debugSummarizeRecord = (rec, bookingId, reasonCode, includedOpen, extra = {}) => {
-    const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-    const identityMeta = _dashboardIdentityMeta(rec, bookingId);
-    const identityKeyRaw =
-      safeStr(extra?.identityKey, 180) || _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
-    const identityGroupSize = Math.max(1, Number(extra?.identityGroupSize) || 1);
-    return {
-      record_key_preview: identityMeta.record_key_preview,
-      identity_key_preview: _bookingIntentMask(identityKeyRaw),
-      identity_group_size: identityGroupSize,
-      identity_terminal_present: extra?.identityTerminalPresent === true,
-      identity_canonical_record_present: extra?.identityCanonicalRecordPresent === true,
-      identity_reference_only: extra?.identityReferenceOnly === true,
-      identity_has_canonical_booking_number: extra?.identityHasCanonicalBookingNumber === true,
-      booking_id_preview: _bookingIntentMask(bookingId),
-      booking_id_field_preview: identityMeta.booking_id_field_preview,
-      public_reference_preview: identityMeta.public_reference_preview,
-      has_public_booking_reference: identityMeta.has_public_booking_reference === true,
-      has_canonical_booking_number: identityMeta.has_canonical_booking_number === true,
-      record_shape_hint: identityMeta.record_shape_hint,
-      included_open: includedOpen === true,
-      reason_code: reasonCode,
-      status: safeStr(rec?.status, 40) || null,
-      stage: safeStr(rec?.stage, 40) || null,
-      lifecycle_status:
-        safeStr(rec?.lifecycle_status, 40) || safeStr(rec?.lifecycleStatus, 40) || null,
-      booking_status:
-        safeStr(rec?.booking_status, 64) ||
-        safeStr(rec?.bookingStatus, 64) ||
-        safeStr(bookingObj?.booking_status, 64) ||
-        safeStr(bookingObj?.bookingStatus, 64) ||
-        null,
-      payment_status:
-        safeStr(rec?.payment_status, 64) ||
-        safeStr(rec?.paymentStatus, 64) ||
-        safeStr(bookingObj?.payment_status, 64) ||
-        safeStr(bookingObj?.paymentStatus, 64) ||
-        null,
-      paid_at_present: !!safeStr(
-        rec?.paid_at ??
-          rec?.paidAt ??
-          bookingObj?.paid_at ??
-          bookingObj?.paidAt,
-        80,
-      ),
-      pickup_iso:
-        safeStr(
-          bookingObj?.pickupStartIso ??
-            bookingObj?.pickup_iso ??
-            bookingObj?.pickup_at ??
-            bookingObj?.pickup_time ??
-            rec?.pickup_iso ??
-            rec?.pickupIso ??
-            rec?.pickup_at ??
-            rec?.pickupAt ??
-            rec?.pickup_time ??
-            rec?.pickupTime ??
-            rec?.scheduled_pickup_at ??
-            rec?.scheduledPickupAt ??
-            _pick(rec, ["payload", "pickup_iso"], null) ??
-            _pick(rec, ["payload", "pickup_at"], null) ??
-            _pick(rec, ["payload", "pickup_time"], null) ??
-            _pick(rec, ["booking", "payload", "pickup_iso"], null) ??
-            _pick(rec, ["booking", "payload", "pickup_at"], null) ??
-            _pick(rec, ["booking", "payload", "pickup_time"], null) ??
-            _pick(rec, ["quote", "pickup_iso"], null),
-          80,
-        ) || null,
-      created_at:
-        safeStr(
-          rec?.created_at ??
-            rec?.createdAt ??
-            bookingObj?.created_at ??
-            bookingObj?.createdAt,
-          80,
-        ) || null,
-      updated_at:
-        safeStr(
-          rec?.updated_at ??
-            rec?.updatedAt ??
-            bookingObj?.updated_at ??
-            bookingObj?.updatedAt,
-          80,
-        ) || null,
-      terminal_lifecycle:
-        _isDashboardTerminalBookingLifecycle(rec?.status) ||
-        _isDashboardTerminalBookingLifecycle(rec?.stage) ||
-        _isDashboardTerminalBookingLifecycle(rec?.lifecycle_status) ||
-        _isDashboardTerminalBookingLifecycle(rec?.lifecycleStatus),
-    };
-  };
-  const _processDashboardKpiBookingRecord = (bookingId, rec) => {
-    if (!rec || typeof rec !== "object") {
-      excludedInvalidRecord += 1;
-      _debugAddSample({
-        booking_id_preview: _bookingIntentMask(bookingId),
-        included_open: false,
-        reason_code: "excluded_invalid_record",
-      });
-      return;
-    }
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
-      excludedOutOfScope += 1;
-      _debugAddSample({
-        booking_id_preview: _bookingIntentMask(bookingId),
-        included_open: false,
-        reason_code: "excluded_out_of_scope",
-      });
-      return;
-    }
-    matchedScope += 1;
-    const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: bookingId });
-    const identityKey = _dashboardBookingIdentityKey(rec, bookingId) || bookingId;
-    const recordUpdatedMs = _dashboardTimestampMs(
-      rec?.updated_at,
-      rec?.updatedAt,
-      rec?.created_at,
-      rec?.createdAt,
-      _pick(rec, ["booking", "updated_at"], null),
-      _pick(rec, ["booking", "updatedAt"], null),
-      _pick(rec, ["booking", "created_at"], null),
-      _pick(rec, ["booking", "createdAt"], null),
-    );
-    const keyIsCanonical = !!_dashboardCanonicalBookingNumber(bookingId);
-    const identityMeta = _dashboardIdentityMeta(rec, bookingId);
-    const hasTerminalLifecycle = _dashboardRecordHasTerminalLifecycle(rec);
-    scopedEntries.push({
-      rec,
-      bookingId,
-      openCheck,
-      identityKey,
-      keyIsCanonical,
-      identityMeta,
-      recordUpdatedMs,
-      hasTerminalLifecycle,
-    });
-    if (openCheck.open !== true && openCheck.reason === "excluded_terminal") {
-      excludedTerminal += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_payment_failed") {
-      excludedPaymentFailed += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_payment_pending") {
-      excludedStalePaymentPending += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_hidden") {
-      excludedHidden += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_missing_pickup_time") {
-      excludedMissingPickupTime += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_stale_past_pickup") {
-      excludedStalePastPickup += 1;
-    } else if (openCheck.open !== true && openCheck.reason === "excluded_non_canonical_provisional_record") {
-      excludedNonCanonicalProvisionalRecord += 1;
-    }
-    if (openCheck.open !== true) {
-      _debugAddSample(_debugSummarizeRecord(rec, bookingId, openCheck.reason, false, {
-        identityKey,
-        identityGroupSize: 1,
-        identityTerminalPresent: hasTerminalLifecycle,
-        identityCanonicalRecordPresent: keyIsCanonical,
-      }));
-    }
-  };
-  const scopedBookingIndexKey = _safeResetScopedBookingIndexKey(tenantScope);
-  let usedScopedIndex = false;
-  if (scopedBookingIndexKey) {
-    try {
-      const rawIndex = await env.BOOKING_KV.get(scopedBookingIndexKey, { type: "json" });
-      const indexedIdsRaw = Array.isArray(rawIndex)
-        ? rawIndex
-        : (Array.isArray(rawIndex?.booking_ids)
-          ? rawIndex.booking_ids
-          : (Array.isArray(rawIndex?.bookings) ? rawIndex.bookings : []));
-      const indexedIds = Array.from(
-        new Set(indexedIdsRaw.map((value) => safeStr(value, 160)).filter((value) => !!value)),
-      );
-      if (rawIndex !== null && rawIndex !== undefined) {
-        usedScopedIndex = true;
-        console.log(
-          `[DASHBOARD_KPI][INDEX_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} ids=${indexedIds.length}`,
-        );
-        for (const bookingId of indexedIds) {
-          scannedKeys += 1;
-          const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
-          _processDashboardKpiBookingRecord(bookingId, rec);
-        }
-      }
-    } catch (_) {}
+  const loaded = await loadDashboardBookingsKpiAggregate(env, tenantScope);
+  const aggregate = loaded?.aggregate && typeof loaded.aggregate === "object" ? loaded.aggregate : null;
+  if (!loaded?.ok || !aggregate) {
+    return { ok: false, error: "dashboard_bookings_kpi_index_unavailable" };
   }
-  if (!usedScopedIndex) {
-    console.log(
-      `[DASHBOARD_KPI][SCAN_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)}`,
-    );
-    do {
-      const page = await env.BOOKING_KV.list({
-        prefix: "booking:",
-        limit: 1000,
-        cursor,
-      });
-      for (const item of page?.keys || []) {
-        const key = String(item?.name || "");
-        if (!key.startsWith("booking:")) continue;
-        scannedKeys += 1;
-        const bookingId = key.slice("booking:".length);
-        const rec = await env.BOOKING_KV.get(key, { type: "json" });
-        _processDashboardKpiBookingRecord(bookingId, rec);
-      }
-      cursor = page?.cursor;
-      if (page?.list_complete !== false) break;
-      if (!cursor) {
-        scanComplete = false;
-        break;
-      }
-    } while (cursor);
+  const source = safeStr(aggregate?.source, 40).toLowerCase();
+  const projectionHealth = safeStr(aggregate?.projection_health, 40).toLowerCase() || "unknown";
+  const projectionComplete = aggregate?.projection_complete === true;
+  const dirtyReason = safeStr(aggregate?.projection_dirty_reason, 120);
+  if (source !== "projection") {
+    return { ok: false, error: "dashboard_bookings_kpi_index_unavailable" };
+  }
+  if (!projectionComplete || projectionHealth === "dirty" || !!dirtyReason || projectionHealth !== "ok") {
+    return { ok: false, error: "dashboard_bookings_kpi_index_dirty" };
   }
 
-  const identityGroups = new Map();
-  for (const entry of scopedEntries) {
-    const key = safeStr(entry?.identityKey, 180) || safeStr(entry?.bookingId, 160) || "unknown";
-    if (!identityGroups.has(key)) identityGroups.set(key, []);
-    identityGroups.get(key).push(entry);
-  }
-
-  for (const [identityKey, group] of identityGroups.entries()) {
-    if (!Array.isArray(group) || group.length === 0) continue;
-    const identityGroupSize = group.length;
-    const identityTerminalPresent = group.some((entry) => entry?.hasTerminalLifecycle === true);
-    const identityCanonicalRecordPresent = group.some((entry) => entry?.keyIsCanonical === true);
-    const identityHasCanonicalBookingNumber = group.some(
-      (entry) => entry?.identityMeta?.has_canonical_booking_number === true || entry?.keyIsCanonical === true,
-    );
-    const identityReferenceOnly =
-      identityCanonicalRecordPresent !== true &&
-      (safeStr(identityKey, 180).startsWith("ref:") ||
-        group.some((entry) => entry?.identityMeta?.has_public_booking_reference === true));
-
-    if (identityTerminalPresent) {
-      excludedTerminalIdentity += 1;
-      for (const entry of group) {
-        if (entry?.openCheck?.open === true) {
-          excludedDuplicateIdentity += 1;
-          _debugAddSample(_debugSummarizeRecord(
-            entry.rec,
-            entry.bookingId,
-            "excluded_duplicate_terminal_identity",
-            false,
-            {
-              identityKey,
-              identityGroupSize,
-              identityTerminalPresent: true,
-              identityCanonicalRecordPresent,
-              identityReferenceOnly,
-              identityHasCanonicalBookingNumber,
-            },
-          ));
-        }
-      }
-      continue;
-    }
-
-    const openEntries = group.filter((entry) => entry?.openCheck?.open === true);
-    if (!openEntries.length) continue;
-    const openEntriesAreReferenceOnlyProvisional = openEntries.every((entry) => {
-      const rec = entry?.rec || {};
-      const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
-      const rawStatus = _normalizeDashboardBookingLifecycle(
-        rec?.status ?? bookingObj?.status,
-      );
-      const statusCandidates = [
-        rec?.status,
-        rec?.stage,
-        rec?.lifecycle_status,
-        rec?.lifecycleStatus,
-        rec?.booking_status,
-        rec?.bookingStatus,
-        bookingObj?.status,
-        bookingObj?.stage,
-        bookingObj?.lifecycle_status,
-        bookingObj?.lifecycleStatus,
-        bookingObj?.booking_status,
-        bookingObj?.bookingStatus,
-      ]
-        .map((value) => _normalizeDashboardBookingLifecycle(value))
-        .filter((value) => !!value);
-      const stageMissing = !safeStr(rec?.stage ?? bookingObj?.stage, 40);
-      const lifecycleMissing = !safeStr(
-        rec?.lifecycle_status ??
-          rec?.lifecycleStatus ??
-          bookingObj?.lifecycle_status ??
-          bookingObj?.lifecycleStatus,
-        40,
-      );
-      const bookingStatusMissing = !safeStr(
-        rec?.booking_status ??
-          rec?.bookingStatus ??
-          bookingObj?.booking_status ??
-          bookingObj?.bookingStatus,
-        64,
-      );
-      const paymentStatusCandidates = [
-        rec?.payment_status,
-        rec?.paymentStatus,
-        bookingObj?.payment_status,
-        bookingObj?.paymentStatus,
-      ]
-        .map((value) => _normalizeDashboardBookingLifecycle(value))
-        .filter((value) => !!value);
-      const paymentStatusPaid = paymentStatusCandidates.some(
-        (value) => value === "paid" || value === "settled",
-      );
-      const statusOnlyPending =
-        statusCandidates.length > 0 &&
-        statusCandidates.every((value) => value === "pending");
-      const bookingIdFieldRaw = safeStr(
-        rec?.id ?? rec?.booking_id ?? rec?.bookingId ?? bookingObj?.id ?? bookingObj?.booking_id ?? bookingObj?.bookingId,
-        160,
-      );
-      const internalOrUuidLike =
-        entry?.identityMeta?.internal_id_like === true ||
-        _dashboardUuidLikeId(entry?.bookingId) ||
-        _dashboardUuidLikeId(bookingIdFieldRaw) ||
-        /^u_[0-9a-z_]+$/i.test(safeStr(entry?.bookingId, 160)) ||
-        /^u_[0-9a-z_]+$/i.test(bookingIdFieldRaw);
-      return (
-        rawStatus === "pending" &&
-        statusOnlyPending &&
-        stageMissing &&
-        lifecycleMissing &&
-        bookingStatusMissing &&
-        paymentStatusPaid &&
-        internalOrUuidLike
-      );
-    });
-    if (
-      identityReferenceOnly === true &&
-      identityHasCanonicalBookingNumber !== true &&
-      identityCanonicalRecordPresent !== true &&
-      openEntriesAreReferenceOnlyProvisional
-    ) {
-      for (const entry of openEntries) {
-        excludedReferenceOnlyProvisionalRecord += 1;
-        _debugAddSample(_debugSummarizeRecord(
-          entry.rec,
-          entry.bookingId,
-          "excluded_reference_only_provisional_record",
-          false,
-          {
-            identityKey,
-            identityGroupSize,
-            identityTerminalPresent: false,
-            identityCanonicalRecordPresent,
-            identityReferenceOnly,
-            identityHasCanonicalBookingNumber,
-          },
-        ));
-      }
-      continue;
-    }
-    openEntries.sort((a, b) => {
-      const keyCanonicalA = a?.keyIsCanonical === true ? 1 : 0;
-      const keyCanonicalB = b?.keyIsCanonical === true ? 1 : 0;
-      if (keyCanonicalA !== keyCanonicalB) return keyCanonicalB - keyCanonicalA;
-      const canonicalMetaA = a?.identityMeta?.has_canonical_booking_number === true ? 1 : 0;
-      const canonicalMetaB = b?.identityMeta?.has_canonical_booking_number === true ? 1 : 0;
-      if (canonicalMetaA !== canonicalMetaB) return canonicalMetaB - canonicalMetaA;
-      const updatedA = Number.isFinite(a?.recordUpdatedMs) ? a.recordUpdatedMs : -1;
-      const updatedB = Number.isFinite(b?.recordUpdatedMs) ? b.recordUpdatedMs : -1;
-      return updatedB - updatedA;
-    });
-    const winner = openEntries[0];
-    consideredOpen += 1;
-    const includedEntry = _debugSummarizeRecord(
-      winner.rec,
-      winner.bookingId,
-      "included_actionable_open",
-      true,
-      {
-        identityKey,
-        identityGroupSize,
-        identityTerminalPresent: false,
-        identityCanonicalRecordPresent,
-        identityReferenceOnly,
-        identityHasCanonicalBookingNumber,
-      },
-    );
-    if (debugEnabled && debugConsideredOpen.length < 500) {
-      debugConsideredOpen.push(includedEntry);
-    }
-    _debugAddSample(includedEntry);
-
-    for (let i = 1; i < openEntries.length; i += 1) {
-      const dup = openEntries[i];
-      excludedDuplicateIdentity += 1;
-      _debugAddSample(_debugSummarizeRecord(
-        dup.rec,
-        dup.bookingId,
-        "excluded_duplicate_identity",
-        false,
-        {
-          identityKey,
-          identityGroupSize,
-          identityTerminalPresent: false,
-          identityCanonicalRecordPresent,
-          identityReferenceOnly,
-          identityHasCanonicalBookingNumber,
-        },
-      ));
+  const staleAfterMs = _dashboardBookingsKpiProjectionStaleAfterMs(env);
+  const evaluatedAt = safeStr(aggregate?.evaluated_at ?? aggregate?.evaluatedAt, 80);
+  const updatedAt = safeStr(aggregate?.updated_at ?? aggregate?.updatedAt, 80);
+  const referenceTs = Date.parse(evaluatedAt || updatedAt);
+  if (staleAfterMs > 0) {
+    if (!Number.isFinite(referenceTs) || (Date.now() - referenceTs) > staleAfterMs) {
+      return { ok: false, error: "dashboard_bookings_kpi_index_stale" };
     }
   }
+
+  const counters = aggregate?.counters && typeof aggregate.counters === "object"
+    ? aggregate.counters
+    : {};
+  const consideredOpen = Number(counters?.considered_open || 0);
+  const excludedTerminal = Number(counters?.excluded_terminal || 0);
+  const excludedPaymentFailed = Number(counters?.excluded_payment_failed || 0);
+  const excludedStalePaymentPending = Number(counters?.excluded_stale_payment_pending || 0);
+  const excludedHidden = Number(counters?.excluded_hidden || 0);
+  const excludedMissingPickupTime = Number(counters?.excluded_missing_pickup_time || 0);
+  const excludedStalePastPickup = Number(counters?.excluded_stale_past_pickup || 0);
+  const excludedNonCanonicalProvisionalRecord = Number(counters?.excluded_non_canonical_provisional_record || 0);
+  const excludedReferenceOnlyProvisionalRecord = Number(counters?.excluded_reference_only_provisional_record || 0);
+  const excludedDuplicateIdentity = Number(counters?.excluded_duplicate_identity || 0);
+  const excludedTerminalIdentity = Number(counters?.excluded_terminal_identity || 0);
+  const excludedOutOfScope = Number(counters?.excluded_out_of_scope || 0);
+  const excludedInvalidRecord = Number(counters?.excluded_invalid_record || 0);
+  const scanStats = aggregate?.scan_stats && typeof aggregate.scan_stats === "object"
+    ? aggregate.scan_stats
+    : {};
+  const totalScanned = Number(
+    aggregate?.total_scanned ??
+      scanStats?.scanned_keys ??
+      aggregate?.contributions_written_or_rebuilt ??
+      0,
+  );
+  const matchedScope = Number(scanStats?.matched_scope ?? aggregate?.matched_scope ?? 0);
 
   const response = {
     ok: true,
@@ -32296,12 +31934,12 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
     excluded_terminal_identity: excludedTerminalIdentity,
     excluded_out_of_scope: excludedOutOfScope,
     excluded_invalid_record: excludedInvalidRecord,
-    total_scanned: scannedKeys,
+    total_scanned: Number.isFinite(totalScanned) ? Math.max(0, Math.trunc(totalScanned)) : 0,
     excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-    scan_complete: scanComplete,
+    scan_complete: projectionComplete,
     scan_stats: {
-      scanned_keys: scannedKeys,
-      matched_scope: matchedScope,
+      scanned_keys: Number.isFinite(totalScanned) ? Math.max(0, Math.trunc(totalScanned)) : 0,
+      matched_scope: Number.isFinite(matchedScope) ? Math.max(0, Math.trunc(matchedScope)) : 0,
       considered_open: consideredOpen,
       excluded_terminal: excludedTerminal,
       excluded_payment_failed: excludedPaymentFailed,
@@ -32316,29 +31954,27 @@ async function computeDashboardBookingsKpis(env, { tenantScope, debug = false, d
       excluded_out_of_scope: excludedOutOfScope,
       excluded_invalid_record: excludedInvalidRecord,
     },
+    source: "projection",
+    projection_health: projectionHealth,
+    projection_complete: projectionComplete,
+    projection_updated_at: updatedAt || null,
+    projection_rebuilt_at: safeStr(aggregate?.rebuilt_at ?? aggregate?.rebuiltAt, 80) || null,
+    projection_evaluated_at: evaluatedAt || null,
   };
   if (debugEnabled) {
     response.debug_enabled = true;
     response.debug_limit = effectiveDebugLimit;
-    response.debug_considered_open = debugConsideredOpen;
-    response.debug_sample = debugSample;
-    response.debug_excluded_summary = {
-      excluded_terminal: excludedTerminal,
-      excluded_payment_failed: excludedPaymentFailed,
-      excluded_stale_payment_pending: excludedStalePaymentPending,
-      excluded_hidden: excludedHidden,
-      excluded_missing_pickup_time: excludedMissingPickupTime,
-      excluded_stale_past_pickup: excludedStalePastPickup,
-      excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
-      excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
-      excluded_duplicate_identity: excludedDuplicateIdentity,
-      excluded_terminal_identity: excludedTerminalIdentity,
-      excluded_out_of_scope: excludedOutOfScope,
-      excluded_invalid_record: excludedInvalidRecord,
+    response.debug_note = "debug samples require /admin/dashboard/bookings-kpis/rebuild?compare=1";
+    response.debug_projection = {
+      source: source || null,
+      projection_health: projectionHealth || null,
+      projection_complete: projectionComplete,
+      projection_dirty_reason: dirtyReason || null,
+      stale_after_ms: staleAfterMs,
     };
   }
   console.log(
-    `[DASHBOARD_KPI][NO_MUTATION] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen} scanned=${scannedKeys}`,
+    `[DASHBOARD_KPI][PROJECTION_USED] tenant=${_maskPublicDriverLoginValue(tenantScope.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope.company_id)} open=${consideredOpen}`,
   );
   return response;
 }
