@@ -3459,6 +3459,27 @@ async function handleStart(req, url, env, origin) {
   const company_id = scope.company_id;
   const owner_driver_id = safeStr(body["driver_id"], 96) ?? actor.actor_driver_id ?? null;
   const owner_vehicle_id = safeStr(body["vehicle_id"], 96) ?? actor.actor_vehicle_id ?? null;
+  const directStartOwnerCheck = _trackingOwnershipAllowed({
+    actorDriverId: actor.actor_driver_id,
+    actorVehicleId: actor.actor_vehicle_id,
+    ownerDriverId: owner_driver_id,
+    ownerVehicleId: owner_vehicle_id,
+  });
+  const directStartOwnershipPassed =
+    directStartOwnerCheck.allowed &&
+    (directStartOwnerCheck.reason === "driver_match" ||
+      directStartOwnerCheck.reason === "vehicle_match");
+  if (actor.actor_role === "driver") {
+    _logTrackingOwnershipCheck({
+      target: "session_start_payload",
+      targetId: booking_id,
+      actor,
+      ownerDriverId: directStartOwnerCheck.candidateDriver,
+      ownerVehicleId: directStartOwnerCheck.candidateVehicle,
+      allowed: directStartOwnerCheck.allowed,
+      reason: directStartOwnerCheck.reason,
+    });
+  }
 
   if (actor.actor_role === "driver" && !actor.actor_driver_id) {
     _logTrackingOwnershipBlock({
@@ -3476,6 +3497,7 @@ async function handleStart(req, url, env, origin) {
       env.FLUXIDI_TRACKING,
       scopedBookingSessionKey(scope, booking_id),
     );
+    let assignmentOwnershipPassed = false;
     if (existingBookingMap && !recordMatchesTenantCompanyScope(existingBookingMap, scope)) {
       throw new Error("invalid booking scope");
     }
@@ -3487,18 +3509,47 @@ async function handleStart(req, url, env, origin) {
       if (existingSession && !recordMatchesTenantCompanyScope(existingSession, scope)) {
         throw new Error("invalid session scope");
       }
+      const assignmentOwnerDriverId = _trackingOwnershipValue(
+        existingBookingMap.owner_driver_id ??
+          existingBookingMap.assigned_driver_id ??
+          existingBookingMap.assignedDriverId ??
+          existingBookingMap.driver_id ??
+          existingBookingMap.driverId ??
+          existingBookingMap?.assigned_driver?.driver_id ??
+          existingBookingMap?.assigned_driver?.driverId ??
+          existingBookingMap?.assignedDriver?.driver_id ??
+          existingBookingMap?.assignedDriver?.driverId ??
+          existingSession?.owner_driver_id ??
+          existingSession?.assigned_driver_id ??
+          existingSession?.assignedDriverId ??
+          existingSession?.driver_id ??
+          existingSession?.driverId ??
+          existingSession?.assigned_driver?.driver_id ??
+          existingSession?.assigned_driver?.driverId ??
+          existingSession?.assignedDriver?.driver_id ??
+          existingSession?.assignedDriver?.driverId,
+      );
+      const assignmentOwnerVehicleId = _trackingOwnershipValue(
+        existingBookingMap.owner_vehicle_id ??
+          existingBookingMap.assigned_vehicle_id ??
+          existingBookingMap.assignedVehicleId ??
+          existingBookingMap.vehicle_id ??
+          existingBookingMap.vehicleId ??
+          existingSession?.owner_vehicle_id ??
+          existingSession?.assigned_vehicle_id ??
+          existingSession?.assignedVehicleId ??
+          existingSession?.vehicle_id ??
+          existingSession?.vehicleId,
+      );
       const ownerCheck = _trackingOwnershipAllowed({
         actorDriverId: actor.actor_driver_id,
         actorVehicleId: actor.actor_vehicle_id,
-        ownerDriverId:
-          existingBookingMap.owner_driver_id ??
-          existingSession?.owner_driver_id ??
-          existingSession?.driver_id,
-        ownerVehicleId:
-          existingBookingMap.owner_vehicle_id ??
-          existingSession?.owner_vehicle_id ??
-          existingSession?.vehicle_id,
+        ownerDriverId: assignmentOwnerDriverId,
+        ownerVehicleId: assignmentOwnerVehicleId,
       });
+      assignmentOwnershipPassed =
+        ownerCheck.allowed &&
+        (ownerCheck.reason === "driver_match" || ownerCheck.reason === "vehicle_match");
       _logTrackingOwnershipCheck({
         target: "session_start_booking",
         targetId: booking_id,
@@ -3536,7 +3587,24 @@ async function handleStart(req, url, env, origin) {
         allowed: vehicleOwnership.allowed,
         reason: vehicleOwnership.reason,
       });
-      if (!vehicleOwnership.allowed && vehicleOwnership.certainMismatch) {
+      const ownershipProofPassed = assignmentOwnershipPassed || directStartOwnershipPassed;
+      if (
+        !vehicleOwnership.allowed &&
+        vehicleOwnership.certainMismatch &&
+        vehicleOwnership.reason === "vehicle_owner_mismatch" &&
+        ownershipProofPassed
+      ) {
+        console.log(
+          `[TRACKING_OWNERSHIP][REPAIR_OWNER_VEHICLE] target=session_start_vehicle vehicle=${actor.actor_vehicle_id} driver=${actor.actor_driver_id} reason=assignment_match_overrides_stale_owner_map`,
+        );
+        await _rememberVehicleOwnerBestEffort(env, {
+          tenant_id,
+          company_id,
+          driver_id: actor.actor_driver_id,
+          vehicle_id: actor.actor_vehicle_id,
+        });
+      }
+      if (!vehicleOwnership.allowed && vehicleOwnership.certainMismatch && !ownershipProofPassed) {
         _logTrackingOwnershipBlock({
           target: "session_start_vehicle",
           targetId: actor.actor_vehicle_id,

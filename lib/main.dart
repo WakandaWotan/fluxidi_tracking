@@ -876,9 +876,12 @@ bool _canActiveDriverOperateBooking(Map<String, dynamic> booking) {
   return _bookingBelongsToActiveDriver(booking);
 }
 
-Map<String, dynamic> _driverMutationActorFields({String? actorVehicleId}) {
+Map<String, dynamic> _driverMutationActorFields({
+  String? actorDriverId,
+  String? actorVehicleId,
+}) {
   if (appRoleNotifier.value != AppRole.driver) return const <String, dynamic>{};
-  final driverId = resolvedDriverTrackingId.trim();
+  final driverId = (actorDriverId ?? _resolvedActiveDriverIdForScope()).trim();
   final vehicleId = (actorVehicleId ?? '').trim();
   return <String, dynamic>{
     'actor_role': 'driver',
@@ -31051,6 +31054,58 @@ class _DriverHomePageState extends State<DriverHomePage>
     };
   }
 
+  String _resolvedAssignedVehicleIdFromBookingItem(BookingItem b) {
+    final booking = _bookingScopeViewFor(b);
+    return (_bookingScopeFirstText(booking, const [
+              ['assigned_vehicle_id'],
+              ['assignedVehicleId'],
+              ['vehicle_id'],
+              ['vehicleId'],
+              ['details', 'assigned_vehicle_id'],
+              ['details', 'assignedVehicleId'],
+              ['details', 'vehicle_id'],
+              ['details', 'vehicleId'],
+              ['booking', 'assigned_vehicle_id'],
+              ['booking', 'assignedVehicleId'],
+              ['booking', 'vehicle_id'],
+              ['booking', 'vehicleId'],
+              ['record', 'assigned_vehicle_id'],
+              ['record', 'assignedVehicleId'],
+              ['record', 'vehicle_id'],
+              ['record', 'vehicleId'],
+              ['record', 'booking', 'assigned_vehicle_id'],
+              ['record', 'booking', 'assignedVehicleId'],
+              ['record', 'booking', 'vehicle_id'],
+              ['record', 'booking', 'vehicleId'],
+            ]) ??
+            '')
+        .trim();
+  }
+
+  ({String actorVehicleId, String source}) _plannedTripActorVehicleContext(
+    BookingItem b,
+  ) {
+    final assignedVehicleId = _resolvedAssignedVehicleIdFromBookingItem(b);
+    if (assignedVehicleId.isNotEmpty) {
+      return (actorVehicleId: assignedVehicleId, source: 'assigned_vehicle');
+    }
+    final sessionVehicleId =
+        activeDriverSessionNotifier.value?.assignedVehicleId?.trim() ?? '';
+    if (sessionVehicleId.isNotEmpty) {
+      return (actorVehicleId: sessionVehicleId, source: 'session_vehicle');
+    }
+    final linkedVehicleIds = _activeDriverLinkedVehicleIds().toList(
+      growable: false,
+    )..sort();
+    if (linkedVehicleIds.isNotEmpty) {
+      return (actorVehicleId: linkedVehicleIds.first, source: 'linked_vehicle');
+    }
+    return (
+      actorVehicleId: _directRideVehicleId().trim(),
+      source: 'fallback_direct',
+    );
+  }
+
   bool _canOperateBookingWithGuard(
     Map<String, dynamic> booking, {
     required String action,
@@ -31816,16 +31871,30 @@ class _DriverHomePageState extends State<DriverHomePage>
         Navigator.of(context).pop();
       }
       final uri = _withActiveBookingScope(kWorkerBaseUrl, kStartTripPath);
-      final actorVehicleId = _directRideVehicleId();
+      final actorDriverId = _resolvedActiveDriverIdForScope().trim();
+      final vehicleContext = _plannedTripActorVehicleContext(b);
+      final actorVehicleId = vehicleContext.actorVehicleId.trim();
+      debugPrint(
+        '[PLANNED_TRIP][START][IDENTITY] booking=${_shortDriverIdForDiag(b.bookingId)} driver=${_shortDriverIdForDiag(actorDriverId)} vehicle=${_shortDriverIdForDiag(actorVehicleId)} vehicle_source=${vehicleContext.source}',
+      );
       final payload = {
         'booking_id': b.bookingId,
-        'driver_id': kDriverId,
+        'driver_id': actorDriverId,
+        'driverId': actorDriverId,
+        'actor_driver_id': actorDriverId,
+        'actorDriverId': actorDriverId,
         'vehicle_id': actorVehicleId,
+        'vehicleId': actorVehicleId,
+        'actor_vehicle_id': actorVehicleId,
+        'actorVehicleId': actorVehicleId,
         ..._activeBookingScopeQuery(),
         // Optional context (helps debugging / future UI)
         'pickup': (b.from ?? '').toString(),
         'dropoff': (b.to ?? '').toString(),
-        ..._driverMutationActorFields(actorVehicleId: actorVehicleId),
+        ..._driverMutationActorFields(
+          actorDriverId: actorDriverId,
+          actorVehicleId: actorVehicleId,
+        ),
       };
 
       final res = await http
