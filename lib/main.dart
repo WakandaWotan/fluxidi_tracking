@@ -59,6 +59,8 @@ import 'airport/airport_page.dart';
 import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
 import 'nearby_partners_page.dart';
+import 'navigation/driver_navigation_formatters.dart';
+import 'navigation/driver_navigation_models.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/direct_ride_destination_dialog.dart';
@@ -30444,12 +30446,6 @@ String? _paymentFieldWithMolliePaidFallback({
   return value?.trim();
 }
 
-class _LonLat {
-  final double lon;
-  final double lat;
-  const _LonLat(this.lon, this.lat);
-}
-
 class _ExternalNavTarget {
   final double? lat;
   final double? lon;
@@ -30461,45 +30457,9 @@ class _ExternalNavTarget {
   bool get hasQuery => (query ?? '').trim().isNotEmpty;
 }
 
-class _NavStep {
-  final double lat;
-  final double lon;
-  final String instruction;
-  final String street;
-  final String type;
-  final String modifier;
-  final double distanceAlongRouteM;
-  final double? distanceM;
-  final int? durationSec;
-
-  const _NavStep({
-    required this.lat,
-    required this.lon,
-    required this.instruction,
-    required this.street,
-    required this.type,
-    required this.modifier,
-    required this.distanceAlongRouteM,
-    this.distanceM,
-    this.durationSec,
-  });
-}
-
-class _RouteSnap {
-  final _LonLat point;
-  final double distanceFromRouteM;
-  final double distanceAlongRouteM;
-  final int segmentIndex;
-  final double segmentT;
-
-  const _RouteSnap({
-    required this.point,
-    required this.distanceFromRouteM,
-    required this.distanceAlongRouteM,
-    required this.segmentIndex,
-    required this.segmentT,
-  });
-}
+typedef _LonLat = DriverLonLat;
+typedef _NavStep = DriverNavStep;
+typedef _RouteSnap = DriverRouteSnap;
 
 class _RoutePreviewData {
   final String staticMapUrl;
@@ -36632,121 +36592,19 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _navDistanceText(double meters) {
-    if (meters < 1000) return '${meters.round()} m';
-    return '${(meters / 1000.0).toStringAsFixed(1).replaceAll('.', ',')} km';
+    return driverNavDistanceText(meters);
   }
 
   bool _navTypeIsArrival(String? type) {
-    final t = (type ?? '').toLowerCase();
-    return t.contains('arrive') || t.contains('destination');
+    return driverNavTypeIsArrival(type);
   }
 
   bool _navTypeIsRoundabout(String? type) {
-    final t = (type ?? '').toLowerCase();
-    return t.contains('roundabout') || t.contains('rotary');
+    return driverNavTypeIsRoundabout(type);
   }
 
   String _shortNavAction(String instruction, String? type, String? modifier) {
-    if (_navTypeIsArrival(type)) {
-      return _tr(
-        nl: 'bestemming bereikt',
-        en: 'destination reached',
-        fr: 'destination atteinte',
-        es: 'destino alcanzado',
-      );
-    }
-    if (_navTypeIsRoundabout(type)) {
-      return _tr(
-        nl: 'neem de rotonde',
-        en: 'take the roundabout',
-        fr: 'prenez le rond-point',
-        es: 'toma la rotonda',
-      );
-    }
-    final mod = (modifier ?? '').toLowerCase();
-    if (mod.contains('slight left')) {
-      return _tr(
-        nl: 'flauw linksaf',
-        en: 'slight left',
-        fr: 'légèrement à gauche',
-        es: 'ligeramente a la izquierda',
-      );
-    }
-    if (mod.contains('slight right')) {
-      return _tr(
-        nl: 'flauw rechtsaf',
-        en: 'slight right',
-        fr: 'légèrement à droite',
-        es: 'ligeramente a la derecha',
-      );
-    }
-    if (mod.contains('left')) {
-      return _tr(
-        nl: 'linksaf',
-        en: 'turn left',
-        fr: 'tournez à gauche',
-        es: 'gira a la izquierda',
-      );
-    }
-    if (mod.contains('right')) {
-      return _tr(
-        nl: 'rechtsaf',
-        en: 'turn right',
-        fr: 'tournez à droite',
-        es: 'gira a la derecha',
-      );
-    }
-    if (mod.contains('straight') || mod.contains('forward')) {
-      return _tr(
-        nl: 'rechtdoor',
-        en: 'continue straight',
-        fr: 'continuez tout droit',
-        es: 'sigue recto',
-      );
-    }
-
-    final lower = instruction.toLowerCase();
-    if (lower.contains('links') ||
-        lower.contains('left') ||
-        lower.contains('gauche')) {
-      return _tr(
-        nl: 'linksaf',
-        en: 'turn left',
-        fr: 'tournez à gauche',
-        es: 'gira a la izquierda',
-      );
-    }
-    if (lower.contains('rechts') ||
-        lower.contains('right') ||
-        lower.contains('droite')) {
-      return _tr(
-        nl: 'rechtsaf',
-        en: 'turn right',
-        fr: 'tournez à droite',
-        es: 'gira a la derecha',
-      );
-    }
-    if (lower.contains('rotonde') ||
-        lower.contains('roundabout') ||
-        lower.contains('rond-point')) {
-      return _tr(
-        nl: 'neem de rotonde',
-        en: 'take the roundabout',
-        fr: 'prenez le rond-point',
-        es: 'toma la rotonda',
-      );
-    }
-    if (lower.contains('rechtdoor') ||
-        lower.contains('continue') ||
-        lower.contains('straight')) {
-      return _tr(
-        nl: 'rechtdoor',
-        en: 'continue straight',
-        fr: 'continuez tout droit',
-        es: 'sigue recto',
-      );
-    }
-    return instruction;
+    return driverShortNavAction(instruction, type, modifier, tr: _tr);
   }
 
   IconData _maneuverIconData(
@@ -36754,28 +36612,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     String? modifier,
     String instruction,
   ) {
-    if (_navTypeIsArrival(type)) return Icons.flag_rounded;
-    if (_navTypeIsRoundabout(type)) return Icons.roundabout_right_rounded;
-    final combined = '${modifier ?? ''} $instruction'.toLowerCase();
-    if (combined.contains('slight left')) return Icons.turn_slight_left_rounded;
-    if (combined.contains('slight right'))
-      return Icons.turn_slight_right_rounded;
-    if (combined.contains('left') ||
-        combined.contains('links') ||
-        combined.contains('gauche')) {
-      return Icons.turn_left_rounded;
-    }
-    if (combined.contains('right') ||
-        combined.contains('rechts') ||
-        combined.contains('droite')) {
-      return Icons.turn_right_rounded;
-    }
-    if ((type ?? '').toLowerCase().contains('exit') ||
-        combined.contains('exit') ||
-        combined.contains('afrit')) {
-      return Icons.call_split_rounded;
-    }
-    return Icons.straight_rounded;
+    return driverManeuverIconData(type, modifier, instruction);
   }
 
   Future<void> _drawPins(_LonLat pickup, _LonLat dropoff) async {
