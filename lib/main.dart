@@ -62,6 +62,7 @@ import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_models.dart';
+import 'navigation/driver_navigation_route_parser.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/direct_ride_destination_dialog.dart';
@@ -35957,68 +35958,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final j = jsonDecode(res.body) as Map<String, dynamic>;
-    final routes = (j['routes'] as List<dynamic>? ?? []);
-    if (routes.isEmpty) throw Exception('No route returned.');
-    final r0 = routes.first as Map<String, dynamic>;
-    final distance = (r0['distance'] as num?)?.toDouble() ?? 0.0;
-    final duration = (r0['duration'] as num?)?.toInt() ?? 0;
-    final geom = (r0['geometry'] as Map<String, dynamic>?) ?? {};
-    final line = (geom['coordinates'] as List<dynamic>? ?? []);
-    final out = <_LonLat>[];
-    for (final c in line) {
-      final pair = c as List<dynamic>;
-      out.add(
-        _LonLat((pair[0] as num).toDouble(), (pair[1] as num).toDouble()),
-      );
-    }
-    final navSteps = <_NavStep>[];
-    final legs = (r0['legs'] as List<dynamic>? ?? const <dynamic>[]);
-    for (final legAny in legs) {
-      final leg = (legAny is Map<String, dynamic>)
-          ? legAny
-          : <String, dynamic>{};
-      final steps = (leg['steps'] as List<dynamic>? ?? const <dynamic>[]);
-      for (final stepAny in steps) {
-        final step = (stepAny is Map<String, dynamic>)
-            ? stepAny
-            : <String, dynamic>{};
-        final maneuver = (step['maneuver'] is Map<String, dynamic>)
-            ? (step['maneuver'] as Map<String, dynamic>)
-            : <String, dynamic>{};
-        final loc =
-            (maneuver['location'] as List<dynamic>? ?? const <dynamic>[]);
-        if (loc.length < 2) continue;
-        final lon = (loc[0] as num?)?.toDouble();
-        final lat = (loc[1] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
-        final rawInstruction = (maneuver['instruction'] ?? '')
-            .toString()
-            .trim();
-        final instruction = _localizeNavInstructionMvp(rawInstruction);
-        final street = (step['name'] ?? '').toString().trim();
-        final type = (maneuver['type'] ?? '').toString().trim();
-        final modifier = (maneuver['modifier'] ?? '').toString().trim();
-        final stepDistance = (step['distance'] as num?)?.toDouble();
-        final stepDuration = (step['duration'] as num?)?.toInt();
-        if (instruction.isEmpty && street.isEmpty) continue;
-        navSteps.add(
-          _NavStep(
-            lat: lat,
-            lon: lon,
-            instruction: instruction,
-            street: street,
-            type: type,
-            modifier: modifier,
-            distanceAlongRouteM: _distanceAlongRouteForCoords(
-              out,
-              _LonLat(lon, lat),
-            ),
-            distanceM: stepDistance,
-            durationSec: stepDuration,
-          ),
-        );
-      }
-    }
+    final parsed = parseDriverDirectionsResponse(
+      response: j,
+      localizeInstruction: _localizeNavInstructionMvp,
+      distanceAlongRouteForCoords: _distanceAlongRouteForCoords,
+    );
+    final out = parsed.coords;
+    final navSteps = parsed.navSteps;
     _routeSteps = navSteps;
     _nextStepIndex = 0;
     if (navSteps.isNotEmpty) {
@@ -36035,7 +35981,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _nextNavModifier = null;
     }
     debugPrint('[NAV_STEPS] count=${navSteps.length}');
-    return (out, distance, duration);
+    return (out, parsed.distanceMeters, parsed.durationSeconds);
   }
 
   String _mapboxDirectionsLanguageCode() {
@@ -36047,52 +35993,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _localizeNavInstructionMvp(String raw) {
-    if (raw.isEmpty) return raw;
-    final lang = appConfig.currentLanguage;
-    if (lang == AppLanguage.en) return raw;
-    final lower = raw.toLowerCase();
-
-    if (lower.contains('your destination is on the left')) {
-      return _tr(
-        nl: 'Je bestemming bevindt zich links',
-        en: 'Your destination is on the left',
-        fr: 'Votre destination se trouve sur la gauche',
-        es: 'Tu destino está a la izquierda',
-      );
-    }
-    if (lower.contains('your destination is on the right')) {
-      return _tr(
-        nl: 'Je bestemming bevindt zich rechts',
-        en: 'Your destination is on the right',
-        fr: 'Votre destination se trouve sur la droite',
-        es: 'Tu destino está a la derecha',
-      );
-    }
-    if (lower.startsWith('turn left') || lower.contains(' turn left')) {
-      return _tr(
-        nl: 'Sla linksaf',
-        en: 'Turn left',
-        fr: 'Tournez à gauche',
-        es: 'Gira a la izquierda',
-      );
-    }
-    if (lower.startsWith('turn right') || lower.contains(' turn right')) {
-      return _tr(
-        nl: 'Sla rechtsaf',
-        en: 'Turn right',
-        fr: 'Tournez à droite',
-        es: 'Gira a la derecha',
-      );
-    }
-    if (lower.startsWith('continue') || lower.contains(' continue')) {
-      return _tr(
-        nl: 'Rijd rechtdoor',
-        en: 'Continue',
-        fr: 'Continuez',
-        es: 'Continúa',
-      );
-    }
-    return raw;
+    return localizeDriverNavInstructionMvp(
+      raw: raw,
+      languageCode: _mapboxDirectionsLanguageCode(),
+      tr: _tr,
+    );
   }
 
   String _nextRidePreviewCacheKey(BookingItem booking) {
