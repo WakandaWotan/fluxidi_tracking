@@ -60,6 +60,7 @@ import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
 import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
+import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_models.dart';
 import 'navigation/driver_navigation_route_parser.dart';
@@ -35941,13 +35942,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     _LonLat from,
     _LonLat to,
   ) async {
-    final coords = '${from.lon},${from.lat};${to.lon},${to.lat}';
     final lang = _mapboxDirectionsLanguageCode();
-    final uri = Uri.parse(
-      'https://api.mapbox.com/directions/v5/mapbox/driving/$coords'
-      '?alternatives=false&geometries=geojson&overview=full&steps=true'
-      '&language=$lang'
-      '&access_token=$kMapboxToken',
+    final uri = buildDriverDirectionsUri(
+      from: from,
+      to: to,
+      languageCode: lang,
+      accessToken: kMapboxToken,
     );
 
     final res = await http.get(uri).timeout(const Duration(seconds: 15));
