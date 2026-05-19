@@ -687,7 +687,7 @@ export class FleetAllocatorDO {
     const occupiedAssignedIds = new Set();
     let overlappingUnassignedDemand = 0;
 
-    const indexedDemand = await _loadScopedActiveDemandFromIndex(
+    const indexedDemand = await _loadScopedActiveDemandWithRepair(
       this.env,
       tenantScope,
       { staleAfterMs: _fleetDemandIndexStaleAfterMs(this.env) },
@@ -706,6 +706,11 @@ export class FleetAllocatorDO {
         available_slots: 0,
         index_updated_at: safeStr(indexedDemand?.index_updated_at, 80) || null,
         demand_index_stale: indexedDemand?.stale === true,
+        demand_index_rebuilt: indexedDemand?.demand_index_rebuilt === true,
+        demand_index_stale_before_rebuild:
+          indexedDemand?.demand_index_stale_before_rebuild === true,
+        demand_index_reason_before_rebuild:
+          safeStr(indexedDemand?.demand_index_reason_before_rebuild, 80) || null,
       });
     }
     for (const d of indexedDemand?.items || []) {
@@ -9815,6 +9820,13 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           || safeStr(vehicleCapacity?.reason, 80)
           || (available ? "vehicle_capacity_ok" : "vehicle_capacity_exceeded"),
         block_reason: safeStr(vehicleCapacity?.block_reason, 80) || null,
+        demand_index_rebuilt: vehicleCapacity?.demand_index_rebuilt === true,
+        demand_index_stale_before_rebuild:
+          vehicleCapacity?.demand_index_stale_before_rebuild === true,
+        demand_index_reason_before_rebuild:
+          safeStr(vehicleCapacity?.demand_index_reason_before_rebuild, 80) || null,
+        demand_index_stale: vehicleCapacity?.demand_index_stale === true,
+        demand_index_updated_at: safeStr(vehicleCapacity?.demand_index_updated_at, 80) || null,
         availability_mode: availabilityMode,
         available_seconds: Number.isFinite(Number(vehicleCapacity?.available_seconds))
           ? Number(vehicleCapacity.available_seconds)
@@ -17217,6 +17229,49 @@ GET /oauth/callback
         });
         if (!out?.ok) {
           const errorCode = safeStr(out?.error, 80);
+          if (errorCode === "dashboard_bookings_kpi_index_stale") {
+            const rebuilt = await rebuildDashboardBookingsKpiProjectionForScope(
+              env,
+              scopedRoute.scope,
+              { dryRun: false, compare: false },
+            );
+            if (rebuilt?.ok === true) {
+              const repaired = await computeDashboardBookingsKpis(env, {
+                tenantScope: scopedRoute.scope,
+                debug: debugEnabled,
+                debugLimit: 50,
+              });
+              if (repaired?.ok) {
+                return json(
+                  {
+                    ...repaired,
+                    projection_rebuilt: true,
+                    projection_stale_before_rebuild: true,
+                  },
+                  200,
+                );
+              }
+            }
+            return json(
+              {
+                ok: true,
+                degraded: true,
+                reason: "dashboard_bookings_kpi_index_stale",
+                tenant_id: scopedRoute.scope?.tenant_id || null,
+                company_id: scopedRoute.scope?.company_id || null,
+                generated_at: new Date().toISOString(),
+                open_bookings_count: 0,
+                considered_open: 0,
+                scan_complete: false,
+                source: "projection_degraded",
+                projection_health: "stale",
+                projection_rebuilt: rebuilt?.ok === true,
+                projection_stale_before_rebuild: true,
+                projection_rebuild_attempted: true,
+              },
+              200,
+            );
+          }
           const projectionUnavailable =
             errorCode === "dashboard_bookings_kpi_index_unavailable" ||
             errorCode === "dashboard_bookings_kpi_index_dirty" ||
@@ -30203,6 +30258,13 @@ async function _vehicleCapacityGateForRequest(env, req) {
       needed_slots: 1,
       reason_code: safeStr(evaluation?.reason_code, 80) || "vehicle_capacity_exceeded",
       block_reason: safeStr(evaluation?.block_reason, 80) || "vehicle_capacity_exceeded",
+      demand_index_rebuilt: evaluation?.demand_index_rebuilt === true,
+      demand_index_stale_before_rebuild:
+        evaluation?.demand_index_stale_before_rebuild === true,
+      demand_index_reason_before_rebuild:
+        safeStr(evaluation?.demand_index_reason_before_rebuild, 80) || null,
+      demand_index_updated_at: safeStr(evaluation?.demand_index_updated_at, 80) || null,
+      demand_index_stale: evaluation?.demand_index_stale === true,
       available_seconds: Number.isFinite(Number(evaluation?.available_seconds))
         ? Number(evaluation.available_seconds)
         : null,
@@ -30370,6 +30432,13 @@ async function _vehicleCapacityGateForRequest(env, req) {
     reason: "vehicle_capacity_ok",
     reason_code: "vehicle_capacity_ok",
     block_reason: null,
+    demand_index_rebuilt: evaluation?.demand_index_rebuilt === true,
+    demand_index_stale_before_rebuild:
+      evaluation?.demand_index_stale_before_rebuild === true,
+    demand_index_reason_before_rebuild:
+      safeStr(evaluation?.demand_index_reason_before_rebuild, 80) || null,
+    demand_index_updated_at: safeStr(evaluation?.demand_index_updated_at, 80) || null,
+    demand_index_stale: evaluation?.demand_index_stale === true,
     available_seconds: Number.isFinite(Number(evaluation?.available_seconds))
       ? Number(evaluation.available_seconds)
       : null,
@@ -30911,6 +30980,93 @@ async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
   };
 }
 
+async function _loadScopedActiveDemandWithRepair(env, scope, options = {}) {
+  const normalizedScope = normalizeFleetTenantScope(scope || {});
+  if (!normalizedScope?.hasScope) {
+    return {
+      ok: false,
+      reason: "missing_scope",
+      items: [],
+      demand_index_rebuilt: false,
+      demand_index_stale_before_rebuild: false,
+      demand_index_reason_before_rebuild: "missing_scope",
+    };
+  }
+  const initial = await _loadScopedActiveDemandFromIndex(env, normalizedScope, options);
+  if (initial?.ok) {
+    return {
+      ...initial,
+      demand_index_rebuilt: false,
+      demand_index_stale_before_rebuild: false,
+      demand_index_reason_before_rebuild: null,
+    };
+  }
+  const initialReason = safeStr(initial?.reason, 80) || "demand_index_unavailable";
+  const staleBeforeRebuild = initialReason === "demand_index_stale" || initial?.stale === true;
+  const shouldRebuild = (
+    initialReason === "demand_index_stale" ||
+    initialReason === "demand_index_unavailable" ||
+    initialReason === "demand_index_invalid"
+  );
+  if (!shouldRebuild) {
+    return {
+      ...initial,
+      ok: false,
+      reason: initialReason,
+      items: [],
+      demand_index_rebuilt: false,
+      demand_index_stale_before_rebuild: staleBeforeRebuild,
+      demand_index_reason_before_rebuild: initialReason,
+    };
+  }
+  let rebuilt = null;
+  try {
+    rebuilt = await rebuildBookingDemandIndexForScope(env, normalizedScope, { dryRun: false });
+  } catch (err) {
+    rebuilt = {
+      ok: false,
+      error: safeStr(err?.message || err, 120) || "unknown",
+    };
+  }
+  const maskedScope = _bookingIntentScopeMask(normalizedScope);
+  console.log(
+    `[BOOKING_DEMAND_INDEX][REPAIR] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} initial_reason=${initialReason} rebuild_ok=${rebuilt?.ok === true ? "true" : "false"}`,
+  );
+  if (rebuilt?.ok !== true) {
+    return {
+      ok: false,
+      reason: "demand_index_rebuild_failed",
+      items: [],
+      stale: initial?.stale === true,
+      index_updated_at: safeStr(initial?.index_updated_at, 80) || null,
+      demand_index_rebuilt: false,
+      demand_index_stale_before_rebuild: staleBeforeRebuild,
+      demand_index_reason_before_rebuild: initialReason,
+      demand_index_rebuild_error: safeStr(rebuilt?.error, 120) || null,
+    };
+  }
+  const reloaded = await _loadScopedActiveDemandFromIndex(env, normalizedScope, options);
+  if (!reloaded?.ok) {
+    return {
+      ok: false,
+      reason: "availability_index_unavailable",
+      items: [],
+      stale: reloaded?.stale === true,
+      index_updated_at: safeStr(reloaded?.index_updated_at, 80) || null,
+      demand_index_rebuilt: true,
+      demand_index_stale_before_rebuild: staleBeforeRebuild,
+      demand_index_reason_before_rebuild: initialReason,
+      demand_index_reload_reason: safeStr(reloaded?.reason, 80) || "availability_index_unavailable",
+    };
+  }
+  return {
+    ...reloaded,
+    demand_index_rebuilt: true,
+    demand_index_stale_before_rebuild: staleBeforeRebuild,
+    demand_index_reason_before_rebuild: initialReason,
+  };
+}
+
 function _assignedDriverFromVehicle(vehicle) {
   const d = vehicle?.assigned_driver;
   if (!d || typeof d !== "object") return null;
@@ -31122,7 +31278,7 @@ async function _evaluateFleetAvailability(env, req) {
   let overlappingUnassignedDemand = 0;
   const overlappingBookings = [];
   const vehicleDemands = new Map();
-  const indexedDemand = await _loadScopedActiveDemandFromIndex(
+  const indexedDemand = await _loadScopedActiveDemandWithRepair(
     env,
     fleetScope,
     { staleAfterMs: _fleetDemandIndexStaleAfterMs(env) },
@@ -31182,8 +31338,20 @@ async function _evaluateFleetAvailability(env, req) {
       demand_index_reason: indexReason,
       demand_index_stale: indexedDemand?.stale === true,
       demand_index_updated_at: safeStr(indexedDemand?.index_updated_at, 80) || null,
+      demand_index_rebuilt: indexedDemand?.demand_index_rebuilt === true,
+      demand_index_stale_before_rebuild:
+        indexedDemand?.demand_index_stale_before_rebuild === true,
+      demand_index_reason_before_rebuild:
+        safeStr(indexedDemand?.demand_index_reason_before_rebuild, 80) || null,
     };
   }
+  const demandIndexRebuilt = indexedDemand?.demand_index_rebuilt === true;
+  const demandIndexStaleBeforeRebuild =
+    indexedDemand?.demand_index_stale_before_rebuild === true;
+  const demandIndexReasonBeforeRebuild =
+    safeStr(indexedDemand?.demand_index_reason_before_rebuild, 80) || null;
+  const demandIndexUpdatedAt = safeStr(indexedDemand?.index_updated_at, 80) || null;
+  const demandIndexStale = indexedDemand?.stale === true;
 
   for (const d of indexedDemand?.items || []) {
     if (!Number.isFinite(d?.pickupMs)) continue;
@@ -32025,6 +32193,11 @@ async function _evaluateFleetAvailability(env, req) {
       topEtaFailure?.route_same_point_shortcut ?? nextVehicle?.route_same_point_shortcut ?? null,
     route_same_point_distance_meters:
       topEtaFailure?.route_same_point_distance_meters ?? nextVehicle?.route_same_point_distance_meters ?? null,
+    demand_index_rebuilt: demandIndexRebuilt,
+    demand_index_stale_before_rebuild: demandIndexStaleBeforeRebuild,
+    demand_index_reason_before_rebuild: demandIndexReasonBeforeRebuild,
+    demand_index_updated_at: demandIndexUpdatedAt,
+    demand_index_stale: demandIndexStale,
   };
 }
 
