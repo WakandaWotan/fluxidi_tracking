@@ -7822,62 +7822,72 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       var nextCurrency = 'EUR';
 
       try {
-        final responses = await Future.wait([
-          http
+        try {
+          final bookingsRes = await http
               .get(bookingsUri, headers: headers)
-              .timeout(const Duration(seconds: 12)),
-          http
-              .get(tripKpisUri, headers: headers)
-              .timeout(const Duration(seconds: 12)),
-        ]);
-
-        final bookingsRes = responses[0];
-        if (bookingsRes.statusCode == 200) {
-          final decoded = jsonDecode(bookingsRes.body);
-          if (decoded is Map && decoded['ok'] == true) {
-            nextOpenBookings = _asInt(decoded['open_bookings_count']);
+              .timeout(const Duration(seconds: 12));
+          if (bookingsRes.statusCode == 200) {
+            final decoded = jsonDecode(bookingsRes.body);
+            if (decoded is Map && decoded['ok'] == true) {
+              nextOpenBookings = _asInt(decoded['open_bookings_count']);
+            } else {
+              debugPrint(
+                '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+              );
+            }
           } else {
             debugPrint(
-              '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+              '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
             );
           }
-        } else {
+        } catch (e) {
           debugPrint(
-            '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=fetch_failed trigger=$reason error=$e',
           );
         }
         nextOpenBookings ??= await _loadOpenBookingsFallbackCount(
           headers: headers,
           reason: reason,
         );
+        nextOpenBookings ??= 0;
 
-        final tripRes = responses[1];
-        if (tripRes.statusCode == 200) {
-          final decoded = jsonDecode(tripRes.body);
-          if (decoded is Map && decoded['ok'] == true) {
-            nextCompletedRides = _asInt(decoded['completed_rides_count']);
-            nextUnpaidCompleted = _asInt(
-              decoded['unpaid_completed_rides_count'],
-            );
-            nextCurrency =
-                (decoded['currency']?.toString().trim().isNotEmpty ?? false)
-                ? decoded['currency'].toString().trim().toUpperCase()
-                : 'EUR';
-            final cents = _asInt(decoded['monthly_income_cents']);
-            if (cents != null) {
-              nextMonthlyIncomeCents = cents;
+        try {
+          final tripRes = await http
+              .get(tripKpisUri, headers: headers)
+              .timeout(const Duration(seconds: 12));
+          if (tripRes.statusCode == 200) {
+            final decoded = jsonDecode(tripRes.body);
+            if (decoded is Map && decoded['ok'] == true) {
+              nextCompletedRides = _asInt(decoded['completed_rides_count']);
+              nextUnpaidCompleted = _asInt(
+                decoded['unpaid_completed_rides_count'],
+              );
+              nextCurrency =
+                  (decoded['currency']?.toString().trim().isNotEmpty ?? false)
+                  ? decoded['currency'].toString().trim().toUpperCase()
+                  : 'EUR';
+              final cents = _asInt(decoded['monthly_income_cents']);
+              if (cents != null) {
+                nextMonthlyIncomeCents = cents;
+              } else {
+                final eur = _asDouble(decoded['monthly_income_eur']);
+                nextMonthlyIncomeCents = eur == null
+                    ? null
+                    : (eur * 100).round();
+              }
             } else {
-              final eur = _asDouble(decoded['monthly_income_eur']);
-              nextMonthlyIncomeCents = eur == null ? null : (eur * 100).round();
+              debugPrint(
+                '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+              );
             }
           } else {
             debugPrint(
-              '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+              '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
             );
           }
-        } else {
+        } catch (e) {
           debugPrint(
-            '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
+            '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=fetch_failed trigger=$reason error=$e',
           );
         }
       } catch (e) {
@@ -7887,7 +7897,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       }
       if (!mounted) return;
       setState(() {
-        _openBookingsCount = nextOpenBookings ?? _openBookingsCount;
+        _openBookingsCount = nextOpenBookings;
         _completedRidesCount = nextCompletedRides;
         _unpaidCompletedRidesCount = nextUnpaidCompleted;
         _monthlyIncomeCents = nextMonthlyIncomeCents;

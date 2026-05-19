@@ -17222,6 +17222,87 @@ GET /oauth/callback
         if (!scopedRoute.ok) return scopedRoute.response;
         const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
         const debugEnabled = debugRaw === "1" || debugRaw === "true";
+        const listIndexRead = await readCompanyBookingsListIndex(
+          env,
+          scopedRoute.scope,
+        );
+        const listItems = Array.isArray(listIndexRead?.index?.items)
+          ? listIndexRead.index.items
+          : null;
+        const listIndexStaleAfterMs = _companyBookingsListIndexStaleAfterMs(env);
+        const listIndexUpdatedAtMs = Date.parse(
+          safeStr(
+            listIndexRead?.index?.updated_at ?? listIndexRead?.index?.updatedAt,
+            80,
+          ),
+        );
+        const listIndexStale =
+          listIndexStaleAfterMs > 0 &&
+          (!Number.isFinite(listIndexUpdatedAtMs) ||
+            Date.now() - listIndexUpdatedAtMs > listIndexStaleAfterMs);
+        const resetEmptyMissingListIndex =
+          listIndexRead?.ok === true && listIndexRead?.exists === false;
+        const resetEmptyValidFreshEmptyListIndex =
+          listIndexRead?.ok === true &&
+          listIndexRead?.exists === true &&
+          listIndexRead?.valid === true &&
+          Array.isArray(listItems) &&
+          listItems.length === 0 &&
+          !listIndexStale;
+        const isResetEmptyState =
+          resetEmptyMissingListIndex || resetEmptyValidFreshEmptyListIndex;
+        if (isResetEmptyState) {
+          return json(
+            {
+              ok: true,
+              tenant_id: scopedRoute.scope?.tenant_id || null,
+              company_id: scopedRoute.scope?.company_id || null,
+              generated_at: new Date().toISOString(),
+              open_bookings_count: 0,
+              considered_open: 0,
+              excluded_terminal: 0,
+              excluded_payment_failed: 0,
+              excluded_stale_payment_pending: 0,
+              excluded_hidden: 0,
+              excluded_missing_pickup_time: 0,
+              excluded_stale_past_pickup: 0,
+              excluded_non_canonical_provisional_record: 0,
+              excluded_reference_only_provisional_record: 0,
+              excluded_duplicate_identity: 0,
+              excluded_terminal_identity: 0,
+              excluded_out_of_scope: 0,
+              excluded_invalid_record: 0,
+              total_scanned: 0,
+              excluded_terminal_statuses:
+                DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+              scan_complete: true,
+              scan_stats: {
+                scanned_keys: 0,
+                matched_scope: 0,
+                considered_open: 0,
+                excluded_terminal: 0,
+                excluded_payment_failed: 0,
+                excluded_stale_payment_pending: 0,
+                excluded_hidden: 0,
+                excluded_missing_pickup_time: 0,
+                excluded_stale_past_pickup: 0,
+                excluded_non_canonical_provisional_record: 0,
+                excluded_reference_only_provisional_record: 0,
+                excluded_duplicate_identity: 0,
+                excluded_terminal_identity: 0,
+                excluded_out_of_scope: 0,
+                excluded_invalid_record: 0,
+              },
+              source: "projection_degraded",
+              projection_health: "missing_index",
+              projection_complete: false,
+              projection_updated_at: null,
+              projection_rebuilt_at: null,
+              projection_evaluated_at: null,
+            },
+            200,
+          );
+        }
         const out = await computeDashboardBookingsKpis(env, {
           tenantScope: scopedRoute.scope,
           debug: debugEnabled,
@@ -17229,6 +17310,60 @@ GET /oauth/callback
         });
         if (!out?.ok) {
           const errorCode = safeStr(out?.error, 80);
+          if (errorCode === "dashboard_bookings_kpi_index_unavailable") {
+            if (isResetEmptyState) {
+              return json(
+                {
+                  ok: true,
+                  tenant_id: scopedRoute.scope?.tenant_id || null,
+                  company_id: scopedRoute.scope?.company_id || null,
+                  generated_at: new Date().toISOString(),
+                  open_bookings_count: 0,
+                  considered_open: 0,
+                  excluded_terminal: 0,
+                  excluded_payment_failed: 0,
+                  excluded_stale_payment_pending: 0,
+                  excluded_hidden: 0,
+                  excluded_missing_pickup_time: 0,
+                  excluded_stale_past_pickup: 0,
+                  excluded_non_canonical_provisional_record: 0,
+                  excluded_reference_only_provisional_record: 0,
+                  excluded_duplicate_identity: 0,
+                  excluded_terminal_identity: 0,
+                  excluded_out_of_scope: 0,
+                  excluded_invalid_record: 0,
+                  total_scanned: 0,
+                  excluded_terminal_statuses:
+                    DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+                  scan_complete: true,
+                  scan_stats: {
+                    scanned_keys: 0,
+                    matched_scope: 0,
+                    considered_open: 0,
+                    excluded_terminal: 0,
+                    excluded_payment_failed: 0,
+                    excluded_stale_payment_pending: 0,
+                    excluded_hidden: 0,
+                    excluded_missing_pickup_time: 0,
+                    excluded_stale_past_pickup: 0,
+                    excluded_non_canonical_provisional_record: 0,
+                    excluded_reference_only_provisional_record: 0,
+                    excluded_duplicate_identity: 0,
+                    excluded_terminal_identity: 0,
+                    excluded_out_of_scope: 0,
+                    excluded_invalid_record: 0,
+                  },
+                  source: "projection_degraded",
+                  projection_health: "missing_index",
+                  projection_complete: false,
+                  projection_updated_at: null,
+                  projection_rebuilt_at: null,
+                  projection_evaluated_at: null,
+                },
+                200,
+              );
+            }
+          }
           if (errorCode === "dashboard_bookings_kpi_index_stale") {
             const rebuilt = await rebuildDashboardBookingsKpiProjectionForScope(
               env,
@@ -32674,10 +32809,13 @@ async function listBookingsAuthoritative(
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const lim = Math.min(200, Math.max(1, Number(limit) || 50));
   const indexRead = await readCompanyBookingsListIndex(env, tenantScope);
+  if (indexRead?.ok && indexRead?.exists === false) {
+    return { ok: true, items: [] };
+  }
   const staleAfterMs = _companyBookingsListIndexStaleAfterMs(env);
   const indexUpdatedAtMs = Date.parse(safeStr(indexRead?.index?.updated_at ?? indexRead?.index?.updatedAt, 80));
   const indexStale = staleAfterMs > 0 && (!Number.isFinite(indexUpdatedAtMs) || (Date.now() - indexUpdatedAtMs) > staleAfterMs);
-  if (!indexRead?.ok || !indexRead?.exists || !indexRead?.valid || !indexRead?.index) {
+  if (!indexRead?.ok || !indexRead?.valid || !indexRead?.index) {
     return { ok: false, error: "company_bookings_list_index_unavailable" };
   }
   if (indexStale) {
