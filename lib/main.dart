@@ -32696,12 +32696,90 @@ class _DriverHomePageState extends State<DriverHomePage>
     return null;
   }
 
+  ({
+    String source,
+    double startFee,
+    double perKm,
+    double waitPerMin,
+    double vatRate,
+    String vatMode,
+    String currency,
+  })
+  _resolveDirectRidePricing() {
+    final settings = businessSettingsNotifier.value;
+    final vat = localBackendTaxProfileNotifier.value;
+    final base = settings.pricingBaseFare;
+    final perKm = settings.pricingPerKm;
+    final wait = settings.pricingWaitPerMinute;
+    final settingsUsable =
+        base.isFinite &&
+        base >= 0 &&
+        perKm.isFinite &&
+        perKm >= 0 &&
+        wait.isFinite &&
+        wait >= 0;
+    final source = settingsUsable ? 'settings' : 'fallback';
+    final vatRateBase = vat?.vatRate ?? settings.pricingVatRate;
+    final vatRate =
+        (vatRateBase.isFinite ? vatRateBase : settings.pricingVatRate)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    var vatMode = (vat?.vatDisplayMode ?? settings.pricingVatMode)
+        .trim()
+        .toLowerCase();
+    if (vatMode.isEmpty) vatMode = 'incl';
+    if (vatMode != 'incl' && vatMode != 'excl') vatMode = 'incl';
+    final currency = settings.defaultCurrency.trim().isEmpty
+        ? kDefaultCurrency
+        : settings.defaultCurrency.trim().toUpperCase();
+    return (
+      source: source,
+      startFee: settingsUsable ? base : _fallbackStartFee,
+      perKm: settingsUsable ? perKm : _fallbackPerKm,
+      waitPerMin: settingsUsable ? wait : _fallbackWaitPerMin,
+      vatRate: vatRate,
+      vatMode: vatMode,
+      currency: currency,
+    );
+  }
+
+  double _directRideCustomerTotalFromRaw(double rawTotal) {
+    final pricing = _resolveDirectRidePricing();
+    if (pricing.vatMode == 'excl') {
+      return rawTotal * (1.0 + pricing.vatRate);
+    }
+    return rawTotal;
+  }
+
+  Map<String, dynamic> _directRidePricingSnapshotPayload() {
+    final pricing = _resolveDirectRidePricing();
+    debugPrint(
+      '[DIRECT_RIDE][PRICING_SNAPSHOT] source=${pricing.source} '
+      'base=${pricing.startFee.toStringAsFixed(2)} '
+      'perKm=${pricing.perKm.toStringAsFixed(2)} '
+      'wait=${pricing.waitPerMin.toStringAsFixed(4)} '
+      'vatRate=${pricing.vatRate.toStringAsFixed(4)} '
+      'vatMode=${pricing.vatMode}',
+    );
+    return <String, dynamic>{
+      'start_fee': pricing.startFee,
+      'per_km': pricing.perKm,
+      'wait_per_min': pricing.waitPerMin,
+      'vat_rate': pricing.vatRate,
+      'vat_mode': pricing.vatMode,
+      'currency': pricing.currency,
+    };
+  }
+
   double get _liveMeterTotalEur {
     final km = _kmDriven;
     final waitMin = _effectiveWaitElapsed.inMilliseconds / 60000.0;
-    return _fallbackStartFee +
-        (km * _fallbackPerKm) +
-        (waitMin * _fallbackWaitPerMin);
+    final pricing = _resolveDirectRidePricing();
+    final raw =
+        pricing.startFee +
+        (km * pricing.perKm) +
+        (waitMin * pricing.waitPerMin);
+    return _directRideCustomerTotalFromRaw(raw);
   }
 
   void _debugLiveMeter({required String reason}) {
@@ -32710,9 +32788,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (last != null && now.difference(last).inSeconds < 5) return;
     _lastMeterDebugAt = now;
     final waitMin = _effectiveWaitElapsed.inMilliseconds / 60000.0;
-    final kmCost = _kmDriven * _fallbackPerKm;
-    final waitCost = waitMin * _fallbackWaitPerMin;
-    final total = _fallbackStartFee + kmCost + waitCost;
+    final pricing = _resolveDirectRidePricing();
+    final kmCost = _kmDriven * pricing.perKm;
+    final waitCost = waitMin * pricing.waitPerMin;
+    final raw = pricing.startFee + kmCost + waitCost;
+    final total = _directRideCustomerTotalFromRaw(raw);
     debugPrint(
       '[METER][$reason] waiting=$_isWaiting km=${_kmDriven.toStringAsFixed(3)} kmCost=${kmCost.toStringAsFixed(2)} waitSec=${_effectiveWaitElapsed.inSeconds} waitCost=${waitCost.toStringAsFixed(2)} total=${total.toStringAsFixed(2)}',
     );
@@ -33605,12 +33685,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'vehicle_id': _directRideVehicleId(),
         'origin': _currentOriginPayload(_lastPos),
         'destination': destinationPayload,
-        'pricing_snapshot': <String, dynamic>{
-          'start_fee': _fallbackStartFee,
-          'per_km': _fallbackPerKm,
-          'wait_per_min': _fallbackWaitPerMin,
-          'currency': kDefaultCurrency,
-        },
+        'pricing_snapshot': _directRidePricingSnapshotPayload(),
         'client_started_at': (_trackingStartedAt ?? DateTime.now())
             .toUtc()
             .toIso8601String(),
@@ -41711,10 +41786,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       es: 'Precio estimado',
     );
     final note = _tr(
-      nl: 'Definitieve prijs wordt berekend bij STOP.',
-      en: 'Final price is calculated at STOP.',
-      fr: 'Le prix final est calculé à l’arrêt.',
-      es: 'El precio final se calcula al finalizar.',
+      nl: 'Incl. btw • Definitieve prijs bij STOP',
+      en: 'Incl. VAT • Final price at STOP',
+      fr: 'TVA incl. • Prix final à l’arrêt',
+      es: 'IVA incl. • Precio final al finalizar',
     );
     final loadingText = _tr(
       nl: 'Prijs berekenen…',

@@ -1565,11 +1565,17 @@ function normalizePricingSnapshot(v) {
   if (start_fee === null) throw new Error("pricing_snapshot.start_fee is required");
   if (per_km === null) throw new Error("pricing_snapshot.per_km is required");
   if (wait_per_min === null) throw new Error("pricing_snapshot.wait_per_min is required");
+  const vat_rate_raw = safeNum(v.vat_rate, 0, 1);
+  const vat_rate = vat_rate_raw === null ? 0 : vat_rate_raw;
+  const vat_mode_raw = String(v.vat_mode ?? v.vatMode ?? "incl").trim().toLowerCase();
+  const vat_mode = vat_mode_raw === "excl" ? "excl" : "incl";
   return {
     start_fee,
     per_km,
     wait_per_min,
     currency: safeStr(v.currency ?? "EUR", 8) ?? "EUR",
+    vat_rate,
+    vat_mode,
   };
 }
 
@@ -1672,12 +1678,42 @@ function directTripTotals(trip, kmTotal, waitSecondsTotal) {
   const perKm = Number(pricing.per_km) || 0;
   const waitPerMin = Number(pricing.wait_per_min) || 0;
   const waitMinutes = waitSecondsTotal / 60;
-  const total = startFee + (kmTotal * perKm) + (waitMinutes * waitPerMin);
+  const rawTotal = startFee + (kmTotal * perKm) + (waitMinutes * waitPerMin);
+  const vatRateRaw = Number(pricing.vat_rate);
+  const vatRate = Number.isFinite(vatRateRaw)
+    ? Math.max(0, Math.min(1, vatRateRaw))
+    : 0;
+  const vatModeRaw = String(pricing.vat_mode ?? pricing.vatMode ?? "incl")
+    .trim()
+    .toLowerCase();
+  const vatMode = vatModeRaw === "excl" ? "excl" : "incl";
+  const hasVatMeta = pricing.vat_rate != null || pricing.vat_mode != null || pricing.vatMode != null;
+
+  let priceExVat = rawTotal;
+  let priceVat = 0;
+  let priceInclVat = rawTotal;
+  if (hasVatMeta) {
+    if (vatMode === "incl") {
+      priceExVat = vatRate > 0 ? rawTotal / (1 + vatRate) : rawTotal;
+      priceVat = rawTotal - priceExVat;
+      priceInclVat = rawTotal;
+    } else {
+      priceExVat = rawTotal;
+      priceVat = rawTotal * vatRate;
+      priceInclVat = rawTotal + priceVat;
+    }
+  }
+
   return {
     km_total: kmTotal,
     wait_seconds_total: waitSecondsTotal,
     wait_minutes: money2Num(waitMinutes),
-    total_eur: money2Num(total),
+    total_eur: money2Num(priceInclVat),
+    price_ex_vat: money2Num(priceExVat),
+    price_vat: money2Num(priceVat),
+    price_incl_vat: money2Num(priceInclVat),
+    vat_rate: vatRate,
+    vat_mode: vatMode,
     currency: safeStr(pricing.currency ?? "EUR", 8) ?? "EUR",
   };
 }
@@ -3293,6 +3329,9 @@ async function handleStopTrip(req, url, env, origin, ctx) {
 
   const stoppedAt = safeStr(body["client_stopped_at"], 64) ?? nowIso();
   const totals = directTripTotals(trip, km_total, wait_seconds_total);
+  console.log(
+    `[DIRECT_TRIP][STOP_PRICING] source=snapshot vatMode=${totals.vat_mode ?? "incl"} totalIncl=${Number(totals.price_incl_vat ?? totals.total_eur ?? 0).toFixed(2)}`,
+  );
   const timeline = Array.isArray(trip.timeline) ? trip.timeline : [];
   timeline.push({
     type: "stop",
@@ -3301,6 +3340,11 @@ async function handleStopTrip(req, url, env, origin, ctx) {
     km_total: totals.km_total,
     wait_seconds_total: totals.wait_seconds_total,
     total_eur: totals.total_eur,
+    price_ex_vat: totals.price_ex_vat,
+    price_vat: totals.price_vat,
+    price_incl_vat: totals.price_incl_vat,
+    vat_rate: totals.vat_rate,
+    vat_mode: totals.vat_mode,
   });
 
   trip.status = "stopped";
@@ -3308,6 +3352,11 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   trip.km_total = totals.km_total;
   trip.wait_seconds_total = totals.wait_seconds_total;
   trip.total_eur = totals.total_eur;
+  trip.price_ex_vat = totals.price_ex_vat;
+  trip.price_vat = totals.price_vat;
+  trip.price_incl_vat = totals.price_incl_vat;
+  trip.vat_rate = totals.vat_rate;
+  trip.vat_mode = totals.vat_mode;
   trip.timeline = timeline;
   applyCanonicalScopeToRecord(trip, scope);
 
