@@ -334,6 +334,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   List<_PlaceSuggestion> _fromSuggestions = const <_PlaceSuggestion>[];
   List<_PlaceSuggestion> _toSuggestions = const <_PlaceSuggestion>[];
+  double? _fromLat;
+  double? _fromLng;
+  double? _toLat;
+  double? _toLng;
   int _fromAutocompleteRequestId = 0;
   int _toAutocompleteRequestId = 0;
   bool _addressSearchUnavailable = false;
@@ -710,6 +714,31 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00$sign$oh:$om';
   }
 
+  bool _hasFiniteCoordPair(double? lat, double? lng) {
+    return lat != null && lng != null && lat.isFinite && lng.isFinite;
+  }
+
+  ({bool drinkService, bool workTable, List<String> extras})
+  _derivePublicExtrasAliases(String extraServiceRaw) {
+    final normalized = extraServiceRaw.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'none') {
+      return (drinkService: false, workTable: false, extras: const <String>[]);
+    }
+    final drink =
+        normalized.contains('drink') ||
+        normalized.contains('drank') ||
+        normalized.contains('water') ||
+        normalized.contains('fris');
+    final work =
+        normalized.contains('worktable') ||
+        normalized.contains('work_table') ||
+        normalized.contains('werk') ||
+        normalized.contains('tafel') ||
+        normalized.contains('laptop');
+    final extras = <String>[if (drink) 'drink_service', if (work) 'work_table'];
+    return (drinkService: drink, workTable: work, extras: extras);
+  }
+
   Map<String, dynamic> _buildQuotePayload(DateTime dt) {
     final vat = _activeVatConfig;
     final selectedScope = _selectCalculatorBookingScope(
@@ -728,9 +757,33 @@ class _CalculatorPageState extends State<CalculatorPage> {
       overrideInvoiceEmail: '',
       overrideInvoiceAddress: '',
     );
+    final fromText = _fromCtrl.text.trim();
+    final toText = _toCtrl.text.trim();
+    final extraServiceValue = _isPremiumTier
+        ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
+        : 'NONE';
+    final extrasAliases = _isPremiumTier
+        ? _derivePublicExtrasAliases(extraServiceValue)
+        : (drinkService: false, workTable: false, extras: const <String>[]);
     return <String, dynamic>{
-      "from": _fromCtrl.text.trim(),
-      "to": _toCtrl.text.trim(),
+      "from": fromText,
+      "to": toText,
+      "from_label": fromText,
+      "from_raw": fromText,
+      "to_label": toText,
+      "to_raw": toText,
+      if (_hasFiniteCoordPair(_fromLat, _fromLng)) ...{
+        "from_lat": _fromLat,
+        "from_lng": _fromLng,
+        "fromLat": _fromLat,
+        "fromLng": _fromLng,
+      },
+      if (_hasFiniteCoordPair(_toLat, _toLng)) ...{
+        "to_lat": _toLat,
+        "to_lng": _toLng,
+        "toLat": _toLat,
+        "toLng": _toLng,
+      },
       "date": _fmtDateYmd(dt),
       "time": _fmtTimeHm(dt),
       "pickup_iso": _isoLikeLocal(dt),
@@ -741,8 +794,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       "wait_min": _waitMin,
       "return": returnEnabled,
       "return_enabled": returnEnabled,
-      "return_from": _toCtrl.text.trim(),
-      "return_to": _fromCtrl.text.trim(),
+      "return_from": toText,
+      "return_to": fromText,
       "return_date": returnEnabled ? _fmtDateYmd(returnDt) : '',
       "return_time": returnEnabled ? _fmtTimeHm(returnDt) : '',
       "return_pickup_iso": returnEnabled ? _isoLikeLocal(returnDt) : '',
@@ -762,12 +815,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
       },
       "surcharge_fuel": _business.pricingFuelSurcharge,
       "return_fee": returnEnabled ? _business.pricingReturnFee : 0,
-      "extra_service": _isPremiumTier
-          ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
-          : 'NONE',
-      "extra_service_key": _isPremiumTier
-          ? _payloadValueFor(_extras, _extraService, fallback: 'NONE')
-          : 'NONE',
+      "extra_service": extraServiceValue,
+      "extra_service_key": extraServiceValue,
+      "drink_service": extrasAliases.drinkService,
+      "work_table": extrasAliases.workTable,
+      if (extrasAliases.extras.isNotEmpty) "extras": extrasAliases.extras,
       "tenant_id": selectedScope.tenantId,
       "company_id": selectedScope.companyId,
       "tenantId": selectedScope.tenantId,
@@ -1061,6 +1113,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
         _fromCtrl.text = (addr != null && addr.trim().isNotEmpty)
             ? addr
             : _s.calculatorCurrentLocationFallbackLabel.of(_lang);
+        _fromLat = pos.latitude;
+        _fromLng = pos.longitude;
         _fromSuggestions = const <_PlaceSuggestion>[];
       });
     } catch (e) {
@@ -2146,10 +2200,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       final requestId = ++_fromAutocompleteRequestId;
                       if (v.trim().isEmpty) {
                         setState(() {
+                          _fromLat = null;
+                          _fromLng = null;
                           _fromSuggestions = const <_PlaceSuggestion>[];
                           _addressSearchUnavailable = false;
                         });
                         return;
+                      }
+                      if (_fromLat != null || _fromLng != null) {
+                        setState(() {
+                          _fromLat = null;
+                          _fromLng = null;
+                        });
                       }
                       final query = v.trim();
                       _fromDebounce = Timer(
@@ -2175,6 +2237,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   _suggestionList(_fromSuggestions, (s) {
                     setState(() {
                       _fromCtrl.text = s.label;
+                      _fromLat = s.lat;
+                      _fromLng = s.lon;
                       _fromSuggestions = const <_PlaceSuggestion>[];
                     });
                   }),
@@ -2221,10 +2285,18 @@ class _CalculatorPageState extends State<CalculatorPage> {
                       final requestId = ++_toAutocompleteRequestId;
                       if (v.trim().isEmpty) {
                         setState(() {
+                          _toLat = null;
+                          _toLng = null;
                           _toSuggestions = const <_PlaceSuggestion>[];
                           _addressSearchUnavailable = false;
                         });
                         return;
+                      }
+                      if (_toLat != null || _toLng != null) {
+                        setState(() {
+                          _toLat = null;
+                          _toLng = null;
+                        });
                       }
                       final query = v.trim();
                       _toDebounce = Timer(
@@ -2250,6 +2322,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   _suggestionList(_toSuggestions, (s) {
                     setState(() {
                       _toCtrl.text = s.label;
+                      _toLat = s.lat;
+                      _toLng = s.lon;
                       _toSuggestions = const <_PlaceSuggestion>[];
                       _addressSearchUnavailable = false;
                     });
