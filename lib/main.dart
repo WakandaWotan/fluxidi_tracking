@@ -63,6 +63,7 @@ import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_location_config.dart';
+import 'navigation/driver_navigation_map_config.dart';
 import 'navigation/driver_navigation_models.dart';
 import 'navigation/driver_navigation_route_parser.dart';
 
@@ -31122,12 +31123,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _stableMapWidget = mb.MapWidget(
       key: const ValueKey('mapbox_map'),
       onMapCreated: _onMapCreated,
-      textureView: true,
-      androidHostingMode: mb.AndroidPlatformViewHostingMode.HC,
+      textureView: kDriverMapTextureView,
+      androidHostingMode: kDriverMapHostingMode,
       styleUri: initialStyle,
       cameraOptions: mb.CameraOptions(
-        center: _mbPoint(3.62, 50.78),
-        zoom: 12.0,
+        center: _mbPoint(
+          kDriverMapInitialCenterLon,
+          kDriverMapInitialCenterLat,
+        ),
+        zoom: kDriverMapInitialZoom,
       ),
     );
     appLanguageNotifier.addListener(_onAppLanguageChanged);
@@ -34715,9 +34719,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _styleForTheme(MapThemeMode theme) {
-    return theme == MapThemeMode.light
-        ? 'mapbox://styles/mapbox/streets-v12'
-        : 'mapbox://styles/mapbox/navigation-night-v1';
+    return driverMapStyleForTheme(isLightTheme: theme == MapThemeMode.light);
   }
 
   String _styleForMode(_CameraMode mode) {
