@@ -60,6 +60,7 @@ import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
 import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
+import 'navigation/driver_navigation_draw_state.dart';
 import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_instruction_state.dart';
@@ -36436,12 +36437,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final mgr = _pinsPointManager;
     if (mgr == null) return;
     final now = DateTime.now();
-    final signature =
-        '${pickup.lon.toStringAsFixed(5)},${pickup.lat.toStringAsFixed(5)}|${dropoff.lon.toStringAsFixed(5)},${dropoff.lat.toStringAsFixed(5)}';
-    final lastPinsAt = _lastPinsDrawAt;
-    if (signature == _lastPinsDrawSignature &&
-        lastPinsAt != null &&
-        now.difference(lastPinsAt) < _routeDrawDebounce) {
+    final signature = driverPinsDrawSignature(pickup: pickup, dropoff: dropoff);
+    if (driverShouldSkipDraw(
+      signature: signature,
+      lastSignature: _lastPinsDrawSignature,
+      lastDrawAt: _lastPinsDrawAt,
+      debounce: _routeDrawDebounce,
+      now: now,
+    )) {
       return;
     }
     _lastPinsDrawSignature = signature;
@@ -36474,16 +36477,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     final mgr = _routeLineManager;
     if (mgr == null) return;
     if (coords.length < 2) return;
-    final first = coords.first;
-    final last = coords.last;
     final now = DateTime.now();
-    final signature =
-        '${coords.length}:${first.lon.toStringAsFixed(5)},${first.lat.toStringAsFixed(5)}>${last.lon.toStringAsFixed(5)},${last.lat.toStringAsFixed(5)}';
-    final lastRouteAt = _lastRouteDrawAt;
-    if (!force &&
-        signature == _lastRouteDrawSignature &&
-        lastRouteAt != null &&
-        now.difference(lastRouteAt) < _routeDrawDebounce) {
+    final signature = driverRouteDrawSignature(coords);
+    if (driverShouldSkipDraw(
+      signature: signature,
+      lastSignature: _lastRouteDrawSignature,
+      lastDrawAt: _lastRouteDrawAt,
+      debounce: _routeDrawDebounce,
+      force: force,
+      now: now,
+    )) {
       return;
     }
     _lastRouteDrawSignature = signature;
