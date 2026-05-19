@@ -3201,14 +3201,16 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   Future<Map<String, dynamic>?> _postBookAndDecode(
     Map<String, dynamic> payload, {
     Duration timeout = const Duration(seconds: 20),
+    String? customerSessionToken,
   }) async {
     final url = Uri.parse('${widget.bookingBaseUrl}/book');
+    final headers = <String, String>{'content-type': 'application/json'};
+    final token = (customerSessionToken ?? '').trim();
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
     final res = await http
-        .post(
-          url,
-          headers: const {'content-type': 'application/json'},
-          body: jsonEncode(payload),
-        )
+        .post(url, headers: headers, body: jsonEncode(payload))
         .timeout(timeout);
     final rawText = res.body;
     Map<String, dynamic> body = <String, dynamic>{};
@@ -3234,8 +3236,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   }
 
   Future<Map<String, dynamic>?> _verifyBookAfterTransportError(
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? customerSessionToken,
+  }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         if (attempt > 0) {
@@ -3244,6 +3247,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         final body = await _postBookAndDecode(
           payload,
           timeout: const Duration(seconds: 15),
+          customerSessionToken: customerSessionToken,
         );
         if (body != null && body.isNotEmpty) return body;
       } catch (_) {
@@ -3264,6 +3268,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     required String effectiveInvoiceEmail,
     required String effectiveInvoiceAddress,
     required Map<String, dynamic> businessPayload,
+    required CustomerSession? customerSession,
+    required _CalculatorScopeSelection selectedScope,
   }) async {
     bool boolish(dynamic value) {
       if (value is bool) return value;
@@ -3419,6 +3425,36 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         );
     if (widget.persistToCustomerBookings) {
       await CustomerBookingsStore.instance.upsert(storedBooking);
+    }
+    if (widget.persistToCustomerBookings &&
+        _allowsCustomerSessionLink &&
+        customerSession != null &&
+        selectedScope.tenantId.trim().isNotEmpty &&
+        selectedScope.companyId.trim().isNotEmpty) {
+      final currentTenant = (customerSession.defaultTenantId ?? '').trim();
+      final currentCompany = (customerSession.defaultCompanyId ?? '').trim();
+      final nextTenant = selectedScope.tenantId.trim();
+      final nextCompany = selectedScope.companyId.trim();
+      if (currentTenant != nextTenant || currentCompany != nextCompany) {
+        final nextSession = CustomerSession(
+          customerSessionToken: customerSession.customerSessionToken,
+          expiresAt: customerSession.expiresAt,
+          customerId: customerSession.customerId,
+          phoneE164: customerSession.phoneE164,
+          defaultTenantId: nextTenant,
+          defaultCompanyId: nextCompany,
+          createdAt: customerSession.createdAt,
+          updatedAt: customerSession.updatedAt,
+        );
+        await CustomerSessionStore.instance.save(nextSession);
+      }
+      debugPrint(
+        '[CUSTOMER_BOOKING_LOCAL_SAVE][SCOPE] target=tenant_company tenant=${selectedScope.tenantId} company=${selectedScope.companyId}',
+      );
+    } else if (widget.persistToCustomerBookings) {
+      debugPrint(
+        '[CUSTOMER_BOOKING_LOCAL_SAVE][SCOPE] target=customer_session_fallback',
+      );
     }
     final localBookingId = (bookingRef.isNotEmpty ? bookingRef : publicRef)
         .trim();
@@ -3619,6 +3655,12 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final customerSession = _allowsCustomerSessionLink
         ? await CustomerSessionStore.instance.loadValidSession()
         : null;
+    final sessionCustomerId = _allowsCustomerSessionLink
+        ? (customerSession?.customerId ?? '').trim()
+        : '';
+    final customerSessionToken = _allowsCustomerSessionLink
+        ? (customerSession?.customerSessionToken ?? '').trim()
+        : '';
     final sessionPhoneE164 = _allowsCustomerSessionLink
         ? (customerSession?.phoneE164 ?? '').trim()
         : '';
@@ -3642,6 +3684,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final customerLinkMode = _allowsCustomerSessionLink
         ? 'customer_session_or_contact'
         : 'explicit_only';
+    debugPrint(
+      '[CUSTOMER_BOOKING_CREATE][IDENTITY] hasCustomerId=${sessionCustomerId.isNotEmpty} hasToken=${customerSessionToken.isNotEmpty}',
+    );
 
     final payload = <String, dynamic>{
       ...widget.payload, // keep quote payload keys unchanged
@@ -3693,6 +3738,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'invoice_requested': businessPayload['invoice_requested'],
         'invoiceRequested': businessPayload['invoiceRequested'],
         'message': _messageCtrl.text.trim(),
+        if (sessionCustomerId.isNotEmpty) ...{
+          'customer_id': sessionCustomerId,
+          'customerId': sessionCustomerId,
+        },
         if (useSessionPhoneForBooking) ...{
           'phone_e164': sessionPhoneE164,
           'customer_phone_e164': sessionPhoneE164,
@@ -3706,6 +3755,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       'customer_phone': payloadPhone,
       'customerPhone': payloadPhone,
       'customer_email': email,
+      if (sessionCustomerId.isNotEmpty) ...{
+        'customer_id': sessionCustomerId,
+        'customerId': sessionCustomerId,
+      },
       if (useSessionPhoneForBooking) ...{
         'phone_e164': sessionPhoneE164,
         'customer_phone_e164': sessionPhoneE164,
@@ -3740,7 +3793,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         '[CALCULATOR][BOOK_SCOPE] tenant=${selectedScope.tenantId} company=${selectedScope.companyId}',
       );
       _logBusinessPayload(stage: 'book', payload: payload);
-      final body = await _postBookAndDecode(payload);
+      final body = await _postBookAndDecode(
+        payload,
+        customerSessionToken: customerSessionToken,
+      );
       if (body == null) {
         throw Exception('book_response_missing');
       }
@@ -3755,6 +3811,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         effectiveInvoiceEmail: effectiveInvoiceEmail,
         effectiveInvoiceAddress: effectiveInvoiceAddress,
         businessPayload: businessPayload,
+        customerSession: customerSession,
+        selectedScope: selectedScope,
       );
     } catch (e) {
       if (!mounted) return;
@@ -3764,7 +3822,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           _submitState = _bookingCheckingStatusLabel();
           _submitStateIsError = false;
         });
-        final verified = await _verifyBookAfterTransportError(payload);
+        final verified = await _verifyBookAfterTransportError(
+          payload,
+          customerSessionToken: customerSessionToken,
+        );
         if (verified != null) {
           await _handleBookSuccess(
             body: verified,
@@ -3777,6 +3838,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             effectiveInvoiceEmail: effectiveInvoiceEmail,
             effectiveInvoiceAddress: effectiveInvoiceAddress,
             businessPayload: businessPayload,
+            customerSession: customerSession,
+            selectedScope: selectedScope,
           );
           return;
         }
