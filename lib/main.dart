@@ -5307,6 +5307,8 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
   final _idCtrl = TextEditingController();
   bool _busy = false;
   String? _lookupError;
+  bool _manualCodeCameFromTemporaryQr = false;
+  bool _suppressManualCodeSourceReset = false;
 
   String _t({
     required String nl,
@@ -5322,7 +5324,16 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       if (_lookupError != null) setState(() => _lookupError = null);
     });
     _idCtrl.addListener(() {
-      if (_lookupError != null) setState(() => _lookupError = null);
+      final shouldResetTemporaryQrGuard =
+          !_suppressManualCodeSourceReset && _manualCodeCameFromTemporaryQr;
+      if (_lookupError != null || shouldResetTemporaryQrGuard) {
+        setState(() {
+          if (_lookupError != null) _lookupError = null;
+          if (shouldResetTemporaryQrGuard) {
+            _manualCodeCameFromTemporaryQr = false;
+          }
+        });
+      }
     });
   }
 
@@ -5337,6 +5348,17 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     setState(() => _lookupError = null);
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
+    if (_manualCodeCameFromTemporaryQr) {
+      setState(() {
+        _lookupError = _t(
+          nl: 'Dit veld bevat een tijdelijke koppelcode uit QR-scan. Voor handmatig inloggen gebruik je een vaste chauffeurcode of scan je een nieuwe tijdelijke koppel-QR.',
+          en: 'This field contains a temporary pairing code from QR scan. For manual login, use a fixed driver code or scan a new temporary pairing QR.',
+          fr: 'Ce champ contient un code de liaison temporaire issu du scan QR. Pour la connexion manuelle, utilisez un code chauffeur fixe ou scannez un nouveau QR temporaire.',
+          es: 'Este campo contiene un código temporal de vinculación del escaneo QR. Para inicio manual, usa un código fijo de conductor o escanea un nuevo QR temporal.',
+        );
+      });
+      return;
+    }
     setState(() => _busy = true);
     final enteredCompanyCode = _normalizeCompanyCode(_companyCtrl.text);
     final enteredDriverCode = _idCtrl.text.trim();
@@ -5736,32 +5758,110 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       pairingCode: pairingCode,
       challengeId: challengeId,
     );
+    final responseOk = response['ok'] == true;
+    final safeErrorCode =
+        (response['error'] ?? response['reason'] ?? response['code'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+    debugPrint(
+      '[DRIVER_LINK_QR][VERIFY_HTTP_RES] response_ok=$responseOk error=$safeErrorCode',
+    );
     if (!mounted) return;
+    final payloadRaw = response['payload'];
+    final payload = payloadRaw is Map
+        ? Map<String, dynamic>.from(payloadRaw)
+        : Map<String, dynamic>.from(response);
+    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
+    final tenantId = (payload['tenant_id'] ?? '').toString().trim();
+    final companyId = (payload['company_id'] ?? '').toString().trim();
+    final resolvedCompanyCode =
+        (payload['company_code'] ?? payload['companyCode'] ?? companyCode)
+            .toString()
+            .trim();
+    final driverRaw = payload['driver'] is Map
+        ? payload['driver']
+        : (payload['driver_profile'] is Map
+              ? payload['driver_profile']
+              : (payload['driverSession'] is Map
+                    ? payload['driverSession']
+                    : null));
+    final driverMap = driverRaw is Map
+        ? Map<String, dynamic>.from(driverRaw)
+        : <String, dynamic>{};
+    final driverId =
+        (driverMap['driver_id'] ??
+                driverMap['driverId'] ??
+                driverMap['id'] ??
+                '')
+            .toString()
+            .trim();
+    final driverName =
+        (driverMap['driver_name'] ??
+                driverMap['driverName'] ??
+                driverMap['full_name'] ??
+                driverMap['fullName'] ??
+                driverMap['name'] ??
+                '')
+            .toString()
+            .trim();
+    final employeeNumberFromDriver =
+        (driverMap['employee_number'] ??
+                driverMap['employeeNumber'] ??
+                driverMap['driver_code'] ??
+                driverMap['driverCode'] ??
+                driverMap['login_code'] ??
+                driverMap['loginCode'] ??
+                '')
+            .toString()
+            .trim();
+    final employeeNumberFromPayload =
+        (payload['employee_number'] ??
+                payload['employeeNumber'] ??
+                payload['driver_code'] ??
+                payload['driverCode'] ??
+                payload['login_code'] ??
+                payload['loginCode'] ??
+                '')
+            .toString()
+            .trim();
+    var employeeNumber = employeeNumberFromDriver.isNotEmpty
+        ? employeeNumberFromDriver
+        : employeeNumberFromPayload;
+    var employeeNumberSource = employeeNumberFromDriver.isNotEmpty
+        ? 'driver'
+        : (employeeNumberFromPayload.isNotEmpty ? 'payload' : 'missing');
+    final hasCompanyCode = resolvedCompanyCode.isNotEmpty;
+    final hasDriverId = driverId.isNotEmpty;
     if (response['ok'] != true) {
+      debugPrint(
+        '[DRIVER_LINK_QR][VERIFY_REJECT] reason=backend_ok_false error=$safeErrorCode',
+      );
+      debugPrint('[DRIVER_LINK_QR][VERIFY_REJECT] reason=response_not_ok');
       setState(() {
         _busy = false;
         _lookupError = _driverPairingInvalidText();
       });
       return;
     }
-    final payload = response['payload'] is Map
-        ? Map<String, dynamic>.from(response['payload'] as Map)
-        : <String, dynamic>{};
-    final tenantId = (payload['tenant_id'] ?? '').toString().trim();
-    final companyId = (payload['company_id'] ?? '').toString().trim();
-    final resolvedCompanyCode = (payload['company_code'] ?? '')
-        .toString()
-        .trim();
-    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
-    final ok = payload['ok'] == true;
-    final driverMap = payload['driver'] is Map
-        ? Map<String, dynamic>.from(payload['driver'] as Map)
-        : <String, dynamic>{};
-    final driverId = (driverMap['driver_id'] ?? '').toString().trim();
-    final driverName = (driverMap['driver_name'] ?? '').toString().trim();
-    final employeeNumber = (driverMap['employee_number'] ?? '')
-        .toString()
-        .trim();
+    final ok = response['ok'] == true || payload['ok'] == true;
+    final hasStrictIdentity =
+        ok &&
+        role == 'driver' &&
+        tenantId.isNotEmpty &&
+        companyId.isNotEmpty &&
+        resolvedCompanyCode.isNotEmpty &&
+        driverId.isNotEmpty;
+    if (employeeNumber.isEmpty &&
+        hasStrictIdentity &&
+        pairingCode.trim().isNotEmpty) {
+      employeeNumber = pairingCode.trim();
+      employeeNumberSource = 'temporary_qr_fallback';
+    }
+    final hasEmployeeNumber = employeeNumber.isNotEmpty;
+    debugPrint(
+      '[DRIVER_LINK_QR][VERIFY_RES] response_ok=${response['ok'] == true} has_payload=${payloadRaw is Map} role=$role has_driver=${driverMap.isNotEmpty} has_tenant=${tenantId.isNotEmpty} has_company=${companyId.isNotEmpty} has_company_code=$hasCompanyCode has_driver_id=$hasDriverId has_employee_number=$hasEmployeeNumber employee_number_source=$employeeNumberSource',
+    );
     final assignedVehicleId =
         (driverMap['assigned_vehicle_id'] ??
                 driverMap['assignedVehicleId'] ??
@@ -5775,6 +5875,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         resolvedCompanyCode.isEmpty ||
         driverId.isEmpty ||
         employeeNumber.isEmpty) {
+      debugPrint(
+        '[DRIVER_LINK_QR][VERIFY_REJECT] reason=invalid_payload has_company_code=$hasCompanyCode has_driver_id=$hasDriverId has_employee_number=$hasEmployeeNumber employee_number_source=$employeeNumberSource',
+      );
       setState(() {
         _busy = false;
         _lookupError = _driverPairingInvalidText();
@@ -5848,8 +5951,12 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     );
     if (!mounted || !confirmed) return;
     _companyCtrl.text = parsed.companyCode;
+    _suppressManualCodeSourceReset = true;
     _idCtrl.text = parsed.code;
-    setState(() {});
+    _suppressManualCodeSourceReset = false;
+    setState(() {
+      _manualCodeCameFromTemporaryQr = true;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -6409,10 +6516,10 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           },
                           decoration: InputDecoration(
                             labelText: _t(
-                              nl: 'Chauffeurcode',
-                              en: 'Driver code',
-                              fr: 'Code chauffeur',
-                              es: 'Código de conductor',
+                              nl: 'Vaste chauffeurcode',
+                              en: 'Fixed driver code',
+                              fr: 'Code chauffeur fixe',
+                              es: 'Código fijo de conductor',
                             ),
                             labelStyle: TextStyle(
                               color: Colors.white.withOpacity(0.8),
@@ -6431,14 +6538,28 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                           validator: (v) {
                             if ((v ?? '').trim().isEmpty) {
                               return _t(
-                                nl: 'Vul je chauffeurcode in.',
-                                en: 'Enter your driver code.',
-                                fr: 'Saisissez votre code chauffeur.',
-                                es: 'Introduce tu código de conductor.',
+                                nl: 'Vul je vaste chauffeurcode in.',
+                                en: 'Enter your fixed driver code.',
+                                fr: 'Saisissez votre code chauffeur fixe.',
+                                es: 'Introduce tu código fijo de conductor.',
                               );
                             }
                             return null;
                           },
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _t(
+                            nl: 'Handmatig inloggen is alleen voor een vaste chauffeurcode. Tijdelijke QR/koppelcodes worden automatisch verwerkt via QR-scan. Werkt de scan niet, scan opnieuw of vraag een nieuwe tijdelijke koppelcode.',
+                            en: 'Manual login is only for a fixed driver code. Temporary QR/pairing codes are processed automatically via QR scan. If verification fails, rescan or request a new temporary pairing code.',
+                            fr: 'La connexion manuelle est uniquement pour un code chauffeur fixe. Les codes QR/de liaison temporaires sont traités automatiquement via scan QR. En cas d’échec, rescannez ou demandez un nouveau code temporaire.',
+                            es: 'El inicio manual es solo para un código fijo de conductor. Los códigos temporales QR/de vinculación se procesan automáticamente por escaneo QR. Si falla la verificación, vuelve a escanear o solicita un nuevo código temporal.',
+                          ),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.72),
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
                         ),
                         const SizedBox(height: 10),
                         OutlinedButton.icon(
