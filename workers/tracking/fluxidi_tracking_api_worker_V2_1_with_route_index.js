@@ -1827,6 +1827,25 @@ const TRIP_KPI_TERMINAL_BOOKING_STATUS_SET = new Set([
   "finished",
 ]);
 
+function _tripKpiVisibleAmountCentsFromTrip(trip) {
+  const amountCents =
+    _dashboardTripAmountCents(trip?.payment_amount) ??
+    _dashboardTripAmountCents(trip?.paymentAmount) ??
+    _dashboardTripAmountCents(trip?.final_amount) ??
+    _dashboardTripAmountCents(trip?.finalAmount) ??
+    _dashboardTripAmountCents(trip?.final_total) ??
+    _dashboardTripAmountCents(trip?.finalTotal) ??
+    _dashboardTripAmountCents(trip?.total_eur) ??
+    _dashboardTripAmountCents(trip?.totalEur) ??
+    _dashboardTripAmountCents(trip?.total) ??
+    _dashboardTripAmountCents(trip?.booking_details?.booking_total_eur) ??
+    _dashboardTripAmountCents(trip?.booking_details?.segment_price_eur) ??
+    _dashboardTripAmountCents(trip?.booking_details?.outbound_price_eur);
+  if (!Number.isFinite(Number(amountCents))) return null;
+  const normalized = Math.round(Number(amountCents));
+  return normalized > 0 ? normalized : null;
+}
+
 function _tripKpiHasVisiblePaymentArtifact(trip, bookingMap = null) {
   const paymentStatus = normalizeCompliancePaymentStatus(
     trip?.payment_status ?? trip?.paymentStatus,
@@ -1854,6 +1873,12 @@ function _tripKpiHasVisiblePaymentArtifact(trip, bookingMap = null) {
       bookingMap?.bookingStatus,
   );
   if (bookingStatus.includes("payment")) return true;
+  const hasTripProof =
+    !!safeStr(trip?.trip_id ?? trip?.tripId, 160) ||
+    !!safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+  if (hasTripProof && (_tripKpiVisibleAmountCentsFromTrip(trip) ?? 0) > 0) {
+    return true;
+  }
   return false;
 }
 
@@ -2050,11 +2075,7 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
           booking_id_preview: _tripKpiMask(bookingId),
           status: tripStatus || "unknown",
           payment_status: paymentStatus || "unknown",
-          amount_cents: Number.isFinite(Number(trip?.payment_amount))
-            ? Math.round(Number(trip.payment_amount) * 100)
-            : Number.isFinite(Number(trip?.paymentAmount))
-            ? Math.round(Number(trip.paymentAmount) * 100)
-            : null,
+          amount_cents: _tripKpiVisibleAmountCentsFromTrip(trip),
           contribution_shape: {
             completed_rides_count: contrib.completed_rides_count,
             unpaid_completed_rides_count: contrib.unpaid_completed_rides_count,
@@ -2081,11 +2102,7 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
           booking_id_preview: _tripKpiMask(trip?.booking_id ?? trip?.bookingId),
           status: tripStatus || "unknown",
           payment_status: paymentStatus || "unknown",
-          amount_cents: Number.isFinite(Number(trip?.payment_amount))
-            ? Math.round(Number(trip.payment_amount) * 100)
-            : Number.isFinite(Number(trip?.paymentAmount))
-            ? Math.round(Number(trip.paymentAmount) * 100)
-            : null,
+          amount_cents: _tripKpiVisibleAmountCentsFromTrip(trip),
           month: contrib.paid_month || null,
           contribution_shape: {
             monthly_paid_rides_count: contrib.monthly_paid_rides_count,
