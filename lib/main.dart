@@ -62,6 +62,7 @@ import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/driver_navigation_geometry.dart';
+import 'navigation/driver_navigation_instruction_state.dart';
 import 'navigation/driver_navigation_location_config.dart';
 import 'navigation/driver_navigation_map_config.dart';
 import 'navigation/driver_navigation_models.dart';
@@ -35092,7 +35093,18 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _updateNextNavInstruction(geo.Position pos) {
-    if (_routeSteps.isEmpty) {
+    final nextInstruction = computeDriverNextNavInstruction(
+      routeSteps: _routeSteps,
+      nextStepIndex: _nextStepIndex,
+      posLat: pos.latitude,
+      posLon: pos.longitude,
+      lastRouteSnap: _lastRouteSnap,
+      routeCoords: _routeCoords,
+      useMatchedVisual: _useMatchedVisual,
+    );
+    _nextStepIndex = nextInstruction.nextStepIndex;
+
+    if (nextInstruction.shouldClear) {
       if (_nextNavInstruction != null ||
           _nextNavStreet != null ||
           _nextNavDistanceM != null ||
@@ -35117,58 +35129,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    final snap =
-        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final progressM = (_useMatchedVisual && snap != null)
-        ? snap.distanceAlongRouteM
-        : null;
-    final progressSource = progressM == null ? 'raw_fallback' : 'matched';
-    while (_nextStepIndex < _routeSteps.length - 1) {
-      final current = _routeSteps[_nextStepIndex];
-      final straightLineM = geo.Geolocator.distanceBetween(
-        pos.latitude,
-        pos.longitude,
-        current.lat,
-        current.lon,
-      );
-      final passedByRouteProgress =
-          progressM != null && progressM >= current.distanceAlongRouteM + 18.0;
-      if (straightLineM <= 32 || passedByRouteProgress) {
-        _nextStepIndex += 1;
-      } else {
-        break;
-      }
-    }
-
-    final step = _routeSteps[_nextStepIndex];
-    final distanceM = progressM == null
-        ? geo.Geolocator.distanceBetween(
-            pos.latitude,
-            pos.longitude,
-            step.lat,
-            step.lon,
-          )
-        : math.max(0.0, step.distanceAlongRouteM - progressM);
+    final distanceM = nextInstruction.distanceMeters!;
     _logNavBounded(
       'NAV_STEP',
-      'progressSource=$progressSource nextDistanceM=${distanceM.toStringAsFixed(1)}',
+      'progressSource=${nextInstruction.progressSource} nextDistanceM=${distanceM.toStringAsFixed(1)}',
     );
 
     if (!mounted) {
-      _nextNavInstruction = step.instruction;
-      _nextNavStreet = step.street;
+      _nextNavInstruction = nextInstruction.instruction;
+      _nextNavStreet = nextInstruction.street;
       _nextNavDistanceM = distanceM;
-      _nextNavType = step.type;
-      _nextNavModifier = step.modifier;
+      _nextNavType = nextInstruction.type;
+      _nextNavModifier = nextInstruction.modifier;
       return;
     }
 
     setState(() {
-      _nextNavInstruction = step.instruction;
-      _nextNavStreet = step.street;
+      _nextNavInstruction = nextInstruction.instruction;
+      _nextNavStreet = nextInstruction.street;
       _nextNavDistanceM = distanceM;
-      _nextNavType = step.type;
-      _nextNavModifier = step.modifier;
+      _nextNavType = nextInstruction.type;
+      _nextNavModifier = nextInstruction.modifier;
     });
   }
 
