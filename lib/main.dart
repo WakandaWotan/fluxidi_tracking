@@ -61,6 +61,9 @@ import 'events/events_page.dart';
 import 'nearby_partners_page.dart';
 
 import 'widgets/cockpit_widget.dart';
+import 'widgets/direct_ride_destination_dialog.dart';
+import 'widgets/direct_ride_estimate_panel.dart';
+import 'widgets/driver_nav_banners.dart';
 import 'widgets/route_marquee.dart';
 
 final bool kIsWindows = !kIsWeb && Platform.isWindows;
@@ -28782,14 +28785,6 @@ class _PlaceSuggestion {
   const _PlaceSuggestion({required this.label, this.lon, this.lat});
 }
 
-class _DirectRideDestinationResult {
-  final String label;
-  final double? lon;
-  final double? lat;
-
-  const _DirectRideDestinationResult({required this.label, this.lon, this.lat});
-}
-
 class _TripHistoryItem {
   final String tripId;
   final String kind;
@@ -30447,214 +30442,6 @@ String? _paymentFieldWithMolliePaidFallback({
     return 'mollie';
   }
   return value?.trim();
-}
-
-class _DirectRideDestinationDialog extends StatefulWidget {
-  final String initialText;
-  final Future<List<_PlaceSuggestion>> Function(String query) search;
-
-  const _DirectRideDestinationDialog({
-    required this.initialText,
-    required this.search,
-  });
-
-  @override
-  State<_DirectRideDestinationDialog> createState() =>
-      _DirectRideDestinationDialogState();
-}
-
-class _DirectRideDestinationDialogState
-    extends State<_DirectRideDestinationDialog> {
-  late final TextEditingController _controller;
-  Timer? _debounce;
-  List<_PlaceSuggestion> _suggestions = <_PlaceSuggestion>[];
-  _PlaceSuggestion? _selected;
-  bool _loading = false;
-  bool _searched = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialText);
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onChanged(String value) {
-    _selected = null;
-    _debounce?.cancel();
-    final q = value.trim();
-    if (q.length < 3) {
-      setState(() {
-        _loading = false;
-        _searched = false;
-        _suggestions = <_PlaceSuggestion>[];
-      });
-      return;
-    }
-    _debounce = Timer(const Duration(milliseconds: 400), () async {
-      if (!mounted) return;
-      setState(() {
-        _loading = true;
-        _searched = true;
-      });
-      final results = await widget.search(q);
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _suggestions = results;
-      });
-    });
-  }
-
-  void _pick(_PlaceSuggestion suggestion) {
-    setState(() {
-      _selected = suggestion;
-      _controller.text = suggestion.label;
-      _controller.selection = TextSelection.collapsed(
-        offset: _controller.text.length,
-      );
-      _suggestions = <_PlaceSuggestion>[];
-      _searched = false;
-    });
-  }
-
-  void _submit() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-    final selected = _selected;
-    Navigator.of(context).pop(
-      _DirectRideDestinationResult(
-        label: selected?.label ?? text,
-        lon: selected?.lon,
-        lat: selected?.lat,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        _tr(
-          nl: 'Straatrit',
-          en: 'Direct ride',
-          fr: 'Course directe',
-          es: 'Viaje directo',
-        ),
-      ),
-      content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              decoration: InputDecoration(
-                labelText: _tr(
-                  nl: 'Bestemming',
-                  en: 'Destination',
-                  fr: 'Destination',
-                  es: 'Destino',
-                ),
-                hintText: _tr(
-                  nl: 'Typ minstens 3 tekens',
-                  en: 'Type at least 3 characters',
-                  fr: 'Tapez au moins 3 caracteres',
-                  es: 'Escribe al menos 3 caracteres',
-                ),
-                suffixIcon: _loading
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : null,
-              ),
-              onChanged: _onChanged,
-              onSubmitted: (_) => _submit(),
-            ),
-            if (_suggestions.isNotEmpty)
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                constraints: const BoxConstraints(maxHeight: 220),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0B0F1C),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0x44FFD54A)),
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _suggestions.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: Color(0x22FFFFFF)),
-                  itemBuilder: (context, index) {
-                    final suggestion = _suggestions[index];
-                    return ListTile(
-                      dense: true,
-                      title: Text(
-                        suggestion.label,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () => _pick(suggestion),
-                    );
-                  },
-                ),
-              )
-            else if (_searched && !_loading)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _tr(
-                      nl: 'Geen adres gevonden',
-                      en: 'No address found',
-                      fr: 'Aucune adresse trouvee',
-                      es: 'No se encontro direccion',
-                    ),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.70),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(
-            _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
-          ),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(
-            _tr(
-              nl: 'Doorgaan',
-              en: 'Continue',
-              fr: 'Continuer',
-              es: 'Continuar',
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class _LonLat {
@@ -34778,11 +34565,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
       Navigator.of(context).pop();
     }
-    final destination = await showDialog<_DirectRideDestinationResult>(
+    final destination = await showDialog<DirectRideDestinationResult>(
       context: context,
-      builder: (_) => _DirectRideDestinationDialog(
+      builder: (_) => DirectRideDestinationDialog(
         initialText: _directRideDestinationText ?? '',
-        search: _fetchPlaceSuggestions,
+        search: (query) async {
+          final results = await _fetchPlaceSuggestions(query);
+          return results
+              .map(
+                (s) => DirectRideSuggestion(
+                  label: s.label,
+                  lon: s.lon,
+                  lat: s.lat,
+                ),
+              )
+              .toList(growable: false);
+        },
+        tr: _tr,
       ),
     );
     if (!mounted || destination == null || destination.label.trim().isEmpty)
@@ -40112,6 +39911,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final street = (_nextNavStreet ?? '').trim();
     final action = _shortNavAction(instruction, _nextNavType, _nextNavModifier);
     final distanceText = _navDistanceText(dist);
+    final isArrival = _navTypeIsArrival(_nextNavType);
     final line1 = _navTypeIsArrival(_nextNavType)
         ? action
         : _tr(
@@ -40121,156 +39921,22 @@ class _DriverHomePageState extends State<DriverHomePage>
             es: 'En ${_navDistanceText(dist)} $action',
           );
     final icon = _maneuverIconData(_nextNavType, _nextNavModifier, instruction);
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 14 : 16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 9,
-          sigmaY: compact ? 7 : 9,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 58 : 64),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: compact ? 4 : 5,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF07142D).withOpacity(0.88),
-            borderRadius: BorderRadius.circular(compact ? 14 : 16),
-            border: Border.all(color: const Color(0x662D8CFF), width: 1.2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.30),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: compact ? 34 : 38,
-                height: compact ? 34 : 38,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2D8CFF),
-                  borderRadius: BorderRadius.circular(compact ? 10 : 12),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.80),
-                    width: 1.2,
-                  ),
-                ),
-                child: Icon(icon, size: compact ? 22 : 24, color: Colors.white),
-              ),
-              SizedBox(width: compact ? 6 : 8),
-              if (!_navTypeIsArrival(_nextNavType))
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 6 : 7,
-                    vertical: compact ? 3 : 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0x332D8CFF),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Colors.white.withOpacity(0.18)),
-                  ),
-                  child: Text(
-                    distanceText,
-                    style: TextStyle(
-                      fontSize: compact ? 10 : 11,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white.withOpacity(0.96),
-                    ),
-                  ),
-                ),
-              if (!_navTypeIsArrival(_nextNavType))
-                SizedBox(width: compact ? 6 : 8),
-              Expanded(
-                child: Text(
-                  street.isNotEmpty ? '$line1 • $street' : line1,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: compact ? 13 : 14,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    height: 1.12,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return DriverTurnInstructionBanner(
+      compact: compact,
+      isArrival: isArrival,
+      distanceText: distanceText,
+      line1: line1,
+      street: street,
+      icon: icon,
     );
   }
 
   Widget _buildNavLoadingBanner({required bool compact}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 9 : 10),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 8,
-          sigmaY: compact ? 7 : 8,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 9,
-            vertical: compact ? 3 : 4,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 9 : 10),
-            border: Border.all(color: const Color(0x332D8CFF)),
-          ),
-          child: Text(
-            'Route-instructies worden geladen...',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w700,
-              color: Colors.white.withOpacity(0.92),
-            ),
-          ),
-        ),
-      ),
-    );
+    return DriverNavLoadingBanner(compact: compact);
   }
 
   Widget _buildNoNavInstructionsBanner({required bool compact}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 9 : 10),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: compact ? 7 : 8,
-          sigmaY: compact ? 7 : 8,
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: compact ? 44 : 48),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 9,
-            vertical: compact ? 3 : 4,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B1733).withOpacity(0.78),
-            borderRadius: BorderRadius.circular(compact ? 9 : 10),
-            border: Border.all(color: const Color(0x33FF8A80)),
-          ),
-          child: Text(
-            'Geen route-instructies beschikbaar',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: compact ? 11 : 12,
-              fontWeight: FontWeight.w700,
-              color: Colors.white.withOpacity(0.92),
-            ),
-          ),
-        ),
-      ),
-    );
+    return DriverNoNavInstructionsBanner(compact: compact);
   }
 
   Widget _buildRecenterButton() {
@@ -41777,8 +41443,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     final destination = (_directRideDestinationText ?? '').trim();
     final showEstimate =
         _directRideDraft && _activeBooking == null && destination.isNotEmpty;
-    if (!showEstimate) return const SizedBox.shrink();
-
     final label = _tr(
       nl: 'Geschatte ritprijs',
       en: 'Estimated fare',
@@ -41803,77 +41467,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       fr: 'Estimation indisponible. Le taximètre reste actif.',
       es: 'Estimación no disponible. El taxímetro sigue funcionando.',
     );
-
-    final estimateValue = _directRideEstimatedFare != null
-        ? _formatDirectRideEstimateText(
-            _directRideEstimatedFare!,
-            _directRideEstimateCurrency,
-          )
-        : null;
-    final statusText = _directRideEstimateLoading
-        ? loadingText
-        : (estimateValue ?? unavailableText);
-    final valueIsEstimate =
-        !_directRideEstimateLoading && estimateValue != null;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF090909).withOpacity(0.86),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x55E5B641)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.local_taxi_outlined,
-                size: 14,
-                color: Color(0xFFE5B641),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFE5B641),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            statusText,
-            maxLines: valueIsEstimate ? 1 : 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: valueIsEstimate ? const Color(0xFFFFD36A) : Colors.white70,
-              fontSize: valueIsEstimate ? 15 : 11.5,
-              fontWeight: valueIsEstimate ? FontWeight.w800 : FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            note,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.63),
-              fontSize: 10.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
+    return DirectRideEstimatePanel(
+      visible: showEstimate,
+      estimatedFare: _directRideEstimatedFare,
+      isLoading: _directRideEstimateLoading,
+      error: _directRideEstimateError,
+      currency: _directRideEstimateCurrency,
+      label: label,
+      note: note,
+      loadingText: loadingText,
+      unavailableText: unavailableText,
+      formatAmount: _formatDirectRideEstimateText,
     );
   }
 
