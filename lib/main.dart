@@ -30711,22 +30711,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return true;
   }
 
-  Future<void> _clearActiveRouteAndNavigationState({
-    required String reason,
-    String? bookingId,
-    bool clearActiveSelection = true,
-  }) async {
-    final activeBookingId = _activeBooking?.bookingId;
-    final hasPolylineBefore = _routeLine != null || _routeLineOutline != null;
-    final routeCoordsBefore = _routeCoords.length;
-    final navStepsBefore = _routeSteps.length;
-    if (!clearActiveSelection &&
-        !hasPolylineBefore &&
-        routeCoordsBefore == 0 &&
-        navStepsBefore == 0) {
-      return;
-    }
-
+  Future<void> _clearRouteAndPinAnnotationsOnly() async {
     try {
       if (_routeLineManager != null) {
         if (_routeLineOutline != null) {
@@ -30750,6 +30735,25 @@ class _DriverHomePageState extends State<DriverHomePage>
       _pickupPin = null;
       _dropoffPin = null;
     } catch (_) {}
+  }
+
+  Future<void> _clearActiveRouteAndNavigationState({
+    required String reason,
+    String? bookingId,
+    bool clearActiveSelection = true,
+  }) async {
+    final activeBookingId = _activeBooking?.bookingId;
+    final hasPolylineBefore = _routeLine != null || _routeLineOutline != null;
+    final routeCoordsBefore = _routeCoords.length;
+    final navStepsBefore = _routeSteps.length;
+    if (!clearActiveSelection &&
+        !hasPolylineBefore &&
+        routeCoordsBefore == 0 &&
+        navStepsBefore == 0) {
+      return;
+    }
+
+    await _clearRouteAndPinAnnotationsOnly();
 
     if (!mounted) return;
     setState(() {
@@ -35727,23 +35731,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final dropoffText = (b.to ?? '').trim();
       // Preview must always represent booked ride path: pickup -> destination.
       // Never use current GPS here.
-      try {
-        if (_routeLineManager != null && _routeLineOutline != null) {
-          await _routeLineManager!.delete(_routeLineOutline!);
-        }
-        if (_routeLineManager != null && _routeLine != null) {
-          await _routeLineManager!.delete(_routeLine!);
-        }
-        _routeLineOutline = null;
-        _routeLine = null;
-        if (_pinsPointManager != null) {
-          if (_pickupPin != null) await _pinsPointManager!.delete(_pickupPin!);
-          if (_dropoffPin != null)
-            await _pinsPointManager!.delete(_dropoffPin!);
-        }
-        _pickupPin = null;
-        _dropoffPin = null;
-      } catch (_) {}
+      await _clearRouteAndPinAnnotationsOnly();
 
       // Prefer server-side routing (Worker) so the app never needs to call Mapbox Directions directly.
       await _tryWorkerRouteFallback(
