@@ -3008,7 +3008,40 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
       error: "trip_not_assigned_to_driver",
       origin,
     });
-    if (ownershipBlock) return ownershipBlock;
+    if (ownershipBlock) {
+      const resolved = await resolveSessionByBookingForScope(env, scope, booking_id);
+      const resolvedSession = resolved?.session;
+      const resolvedMap = resolved?.map;
+      const sessionStatus = safeStr(resolvedSession?.status, 32)?.toLowerCase() ?? "";
+      const sessionBookingId = _trackingOwnershipValue(
+        resolvedSession?.owner_booking_id ??
+          resolvedSession?.booking_id ??
+          resolvedSession?.bookingId ??
+          resolvedMap?.owner_booking_id,
+      );
+      const sessionOwnerCheck = _trackingOwnershipAllowed({
+        actorDriverId: actor.actor_driver_id,
+        actorVehicleId: actor.actor_vehicle_id,
+        ownerDriverId: _trackingOwnershipValue(
+          resolvedSession?.owner_driver_id ?? resolvedSession?.driver_id,
+        ),
+        ownerVehicleId: _trackingOwnershipValue(
+          resolvedSession?.owner_vehicle_id ?? resolvedSession?.vehicle_id,
+        ),
+        fallbackDriverId: _trackingOwnershipValue(resolvedSession?.driver_id),
+        fallbackVehicleId: _trackingOwnershipValue(resolvedSession?.vehicle_id),
+      });
+      const sessionOwnershipProofPassed =
+        sessionStatus === "stopped" &&
+        (!sessionBookingId || sessionBookingId === booking_id) &&
+        sessionOwnerCheck.allowed &&
+        (sessionOwnerCheck.reason === "driver_match" ||
+          sessionOwnerCheck.reason === "vehicle_match");
+      if (!sessionOwnershipProofPassed) return ownershipBlock;
+      console.log(
+        `[TRACKING_OWNERSHIP][PLANNED_STOP_SESSION_PROOF_OVERRIDE] booking_id=${booking_id} trip_id=${trip_id} reason=stale_existing_trip_owner`,
+      );
+    }
   }
 
   const trip = {
