@@ -2156,7 +2156,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return parsed;
   }
 
-  void _save() {
+  Future<void> _save() async {
     final current = businessSettingsNotifier.value;
     final scope = _activeSettingsScope();
     final vat = _activeVatConfig();
@@ -2235,17 +2235,31 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       ),
       tenantId: scope.tenantId,
       companyId: scope.companyId,
+      syncToBackend: false,
     );
 
+    final synced = await syncPricingProfileToBackend(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          _t(
-            nl: 'Instellingen bijgewerkt (runtime).',
-            en: 'Settings updated (runtime).',
-            fr: 'Parametres mis a jour (runtime).',
-            es: 'Configuracion actualizada (runtime).',
-          ),
+          synced
+              ? _t(
+                  nl: 'Prijsinstellingen lokaal opgeslagen en gesynchroniseerd met de server.',
+                  en: 'Pricing settings saved locally and synced to the server.',
+                  fr: 'Tarifs enregistres localement et synchronises avec le serveur.',
+                  es: 'Precios guardados localmente y sincronizados con el servidor.',
+                )
+              : _t(
+                  nl: 'Prijsinstellingen lokaal opgeslagen, maar synchronisatie met de server is mislukt.',
+                  en: 'Pricing settings saved locally, but server sync failed.',
+                  fr: 'Tarifs enregistres localement, mais la synchronisation serveur a echoue.',
+                  es: 'Precios guardados localmente, pero fallo la sincronizacion con el servidor.',
+                ),
         ),
       ),
     );

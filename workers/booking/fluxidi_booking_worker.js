@@ -26275,17 +26275,40 @@ function round2(n) {
   return to2(n);
 }
 
+function _formatSurchargePercentLabel(rate) {
+  const n = Number(rate);
+  if (!Number.isFinite(n) || n <= 0) return "+0%";
+  const pct = Math.round(n * 100);
+  return `+${pct}%`;
+}
+
 function buildNote({ isNight, isWeekend, surchargeRate, tier, pax, bags, stop_count, wait_min, profile }) {
   let note = "Indicatief tarief op basis van route + rijtijd. Definitieve bevestiging na acceptatie.";
   const tags = [];
+  const normalizedProfile = _normalizeTenantPricingProfile(profile);
+  const nightRate = normalizedProfile.night_surcharge_rate;
+  const weekendRate = normalizedProfile.weekend_surcharge_rate;
+  const capRate = normalizedProfile.surcharge_cap_rate;
   tags.push(`tier: ${String(tier || "comfort").toUpperCase()} (+€${tierFeeFromProfileEx(tier, profile).toFixed(0)})`);
   tags.push(`pax: ${pax}`);
   tags.push(`bags: ${bags} (€${Number(profile?.bag_fee_each || 0).toFixed(2)}/koffer)`);
   if (stop_count) tags.push(`stops: ${stop_count}`);
   if (wait_min) tags.push(`wachttijd: ${wait_min} min`);
-  if (isNight) tags.push("nachttarief +12%");
-  if (isWeekend) tags.push("weekendtoeslag +8%");
-  if (isNight && isWeekend && surchargeRate >= 0.20) tags.push("combinatie max +20%");
+  if (isNight && nightRate > 0) {
+    tags.push(`nachttarief ${_formatSurchargePercentLabel(nightRate)}`);
+  }
+  if (isWeekend && weekendRate > 0) {
+    tags.push(`weekendtoeslag ${_formatSurchargePercentLabel(weekendRate)}`);
+  }
+  if (
+    isNight &&
+    isWeekend &&
+    capRate > 0 &&
+    Number.isFinite(Number(surchargeRate)) &&
+    Number(surchargeRate) >= capRate - 1e-9
+  ) {
+    tags.push(`combinatie max ${_formatSurchargePercentLabel(capRate)}`);
+  }
   if (tags.length) note += " (" + tags.join(", ") + ")";
   return note;
 }

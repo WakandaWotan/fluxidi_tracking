@@ -1213,12 +1213,15 @@ void updateBusinessSettings(
   BusinessSettingsState next, {
   String? tenantId,
   String? companyId,
+  bool syncToBackend = true,
 }) {
   businessSettingsNotifier.value = next;
   _persistLocalTenantState();
-  unawaited(
-    syncPricingProfileToBackend(tenantId: tenantId, companyId: companyId),
-  );
+  if (syncToBackend) {
+    unawaited(
+      syncPricingProfileToBackend(tenantId: tenantId, companyId: companyId),
+    );
+  }
 }
 
 final ValueNotifier<List<VehicleProfile>> vehiclesNotifier =
@@ -2427,7 +2430,7 @@ Future<bool> syncPricingProfileToBackend({
       tenantId: tenantId,
       companyId: companyId,
     );
-    await http
+    final res = await http
         .post(
           endpoint,
           headers: _adminJsonHeaders(),
@@ -2437,8 +2440,54 @@ Future<bool> syncPricingProfileToBackend({
           }),
         )
         .timeout(const Duration(seconds: 12));
+    final status = res.statusCode;
+    if (status < 200 || status >= 300) {
+      final snippet = res.body.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final safeSnippet = snippet.length > 120
+          ? '${snippet.substring(0, 120)}...'
+          : snippet;
+      debugPrint(
+        '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=http_error'
+        '${safeSnippet.isNotEmpty ? ' detail=$safeSnippet' : ''}',
+      );
+      return false;
+    }
+    final rawBody = res.body.trim();
+    if (rawBody.isEmpty) {
+      debugPrint(
+        '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=empty_body',
+      );
+      return false;
+    }
+    try {
+      final decoded = jsonDecode(rawBody);
+      if (decoded is! Map) {
+        debugPrint(
+          '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=invalid_json_shape',
+        );
+        return false;
+      }
+      final body = Map<String, dynamic>.from(decoded);
+      if (body['ok'] != true) {
+        final reason = (body['error'] ?? body['message'] ?? 'ok_false')
+            .toString()
+            .trim();
+        debugPrint(
+          '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=${reason.isNotEmpty ? reason : 'ok_false'}',
+        );
+        return false;
+      }
+    } catch (_) {
+      debugPrint(
+        '[PRICING_PROFILE_SYNC][FAIL] status=$status reason=invalid_json',
+      );
+      return false;
+    }
+    debugPrint('[PRICING_PROFILE_SYNC][OK] status=$status');
     return true;
-  } catch (_) {
+  } catch (e) {
+    final reason = e.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    debugPrint('[PRICING_PROFILE_SYNC][FAIL] reason=$reason');
     return false;
   }
 }
