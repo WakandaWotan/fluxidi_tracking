@@ -62,6 +62,7 @@ import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/driver_navigation_geometry.dart';
+import 'navigation/driver_navigation_location_config.dart';
 import 'navigation/driver_navigation_models.dart';
 import 'navigation/driver_navigation_route_parser.dart';
 
@@ -34296,10 +34297,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _stopBookingPolling(reason: 'tracking_started');
 
-    const settings = geo.LocationSettings(
-      accuracy: geo.LocationAccuracy.bestForNavigation,
-      distanceFilter: 3,
-    );
+    final settings = buildDriverTrackingLocationSettings();
 
     _posSub = geo.Geolocator.getPositionStream(locationSettings: settings).listen((
       pos,
