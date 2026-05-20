@@ -530,6 +530,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     }
 
     if (hasExplicitSignal) return false;
+    // Legacy fallback for profiles without explicit capability booleans.
     return _servicesListIncludesAirport(source['services']);
   }
 

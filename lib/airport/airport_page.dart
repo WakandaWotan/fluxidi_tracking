@@ -2606,6 +2606,15 @@ class _AirportPageState extends State<AirportPage> {
     return true;
   }
 
+  String _extractLikelyPostcode(String rawAddress) {
+    final text = rawAddress.trim();
+    if (text.isEmpty) return '';
+    final match = RegExp(
+      r'(?:^|[,\s])([1-9]\d{3})(?:\s?[A-Za-z]{2})?(?=$|[,\s])',
+    ).firstMatch(text);
+    return (match?.group(1) ?? '').trim();
+  }
+
   Map<String, dynamic>? _buildAirportQuotePayload() {
     final selectedAirport = _selectedAirport;
     final isToAirport = _selectedMode == _TransferMode.toAirport;
@@ -2641,13 +2650,23 @@ class _AirportPageState extends State<AirportPage> {
     final note = _noteController.text.trim();
     final flightNumber = _flightNumberController.text.trim();
     final nameBoard = _nameBoardController.text.trim();
+    const fixedFareTier = 'comfort';
+    final direction = isToAirport ? 'to_airport' : 'from_airport';
+    final userZoneAddress = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final derivedPostcode = _extractLikelyPostcode(userZoneAddress);
+    final hasDerivedZone = derivedPostcode.isNotEmpty;
     final hasAirportCoordinates = _hasValidCoordinates(
       selectedAirport.latitude,
       selectedAirport.longitude,
     );
     debugPrint(
       '[AIRPORT_QUOTE] airport=${selectedAirport.id}/${selectedAirport.iata} '
-      'direction=${isToAirport ? "to_airport" : "from_airport"} '
+      'direction=$direction '
+      'postcode=${hasDerivedZone ? derivedPostcode : "none"} '
+      'tier=$fixedFareTier '
+      'scope=$tenantId/$companyId '
       'airport_coords=$hasAirportCoordinates',
     );
     return <String, dynamic>{
@@ -2656,7 +2675,9 @@ class _AirportPageState extends State<AirportPage> {
       'date': _fmtDateYmd(parsedDate),
       'time': _fmtTimeHm(parsedDate),
       'pickup_iso': _isoLikeLocal(parsedDate),
-      'tier': 'COMFORT',
+      'tier': fixedFareTier,
+      'tier_id': fixedFareTier,
+      'tierId': fixedFareTier,
       'service': 'AIRPORT',
       'pax': _passengers,
       'bags': _bags,
@@ -2678,11 +2699,25 @@ class _AirportPageState extends State<AirportPage> {
         'partner_id': _selectedPartnerId,
         'partnerId': _selectedPartnerId,
       },
-      'airport_direction': isToAirport ? 'to_airport' : 'from_airport',
+      'airport_direction': direction,
+      'direction': direction,
       'airport_id': selectedAirport.id,
       'airport_iata': selectedAirport.iata,
       'airport_name': selectedAirport.name,
       'airport_country': selectedAirport.countryName,
+      if (hasDerivedZone) ...{
+        'fixed_fare_zone_type': 'postcode',
+        'fixedFareZoneType': 'postcode',
+        'fixed_fare_zone_value': derivedPostcode,
+        'fixedFareZoneValue': derivedPostcode,
+        'zone_type': 'postcode',
+        'zoneType': 'postcode',
+        'zone_value': derivedPostcode,
+        'zoneValue': derivedPostcode,
+        'postcode': derivedPostcode,
+        'postal_code': derivedPostcode,
+        'postalCode': derivedPostcode,
+      },
       if (note.isNotEmpty) 'note': note,
       if (hasAirportCoordinates && isToAirport) ...{
         'to_lat': selectedAirport.latitude,
@@ -2695,11 +2730,21 @@ class _AirportPageState extends State<AirportPage> {
       if (isToAirport) ...{
         if (_pickupLatitude != null) 'pickup_lat': _pickupLatitude,
         if (_pickupLongitude != null) 'pickup_lng': _pickupLongitude,
+        if (hasDerivedZone) ...{
+          'pickup_postcode': derivedPostcode,
+          'pickupPostcode': derivedPostcode,
+          'from_postcode': derivedPostcode,
+        },
       } else ...{
         if (_destinationLatitude != null)
           'destination_lat': _destinationLatitude,
         if (_destinationLongitude != null)
           'destination_lng': _destinationLongitude,
+        if (hasDerivedZone) ...{
+          'destination_postcode': derivedPostcode,
+          'destinationPostcode': derivedPostcode,
+          'to_postcode': derivedPostcode,
+        },
         if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
         'meet_and_greet': _meetAndGreet,
         if (nameBoard.isNotEmpty) 'name_board': nameBoard,

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -38,6 +39,14 @@ class BusinessSettingsPage extends StatefulWidget {
 }
 
 class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
+  static const List<String> _publicServiceCatalog = <String>[
+    'taxi_vvb',
+    'airport_transfer',
+    'business_rides',
+    'event_mobility',
+    'hotel_bnb_pickup',
+    'online_payments',
+  ];
   static const List<String> _publicPaymentOptionCatalog = <String>[
     'cash',
     'qr_code',
@@ -144,6 +153,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'qr_code',
     'online_payment',
   };
+  Set<String> _publicServiceIds = <String>{};
+  bool _publicServicesConfigured = false;
   final Set<String> _expandedSections = <String>{};
   static const List<String> _airportFixedFareDirections = <String>[
     'to_airport',
@@ -159,39 +170,35 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'private',
     'premium',
   ];
-  static const List<Map<String, String>> _airportFixedFareCatalog =
-      <Map<String, String>>[
-        <String, String>{
-          'country_code': 'BE',
-          'country_name': 'België',
-          'iata': 'BRU',
-          'airport_name': 'Brussels Airport',
-        },
-        <String, String>{
-          'country_code': 'BE',
-          'country_name': 'België',
-          'iata': 'CRL',
-          'airport_name': 'Brussels South Charleroi Airport',
-        },
-        <String, String>{
-          'country_code': 'NL',
-          'country_name': 'Nederland',
-          'iata': 'AMS',
-          'airport_name': 'Amsterdam Schiphol',
-        },
-        <String, String>{
-          'country_code': 'FR',
-          'country_name': 'Frankrijk',
-          'iata': 'LYS',
-          'airport_name': 'Lyon-Saint Exupéry',
-        },
-        <String, String>{
-          'country_code': 'ES',
-          'country_name': 'Spanje',
-          'iata': 'IBZ',
-          'airport_name': 'Ibiza Airport',
-        },
-      ];
+  static final List<Map<String, String>> _airportFixedFareCatalog =
+      _buildAirportFixedFareCatalog();
+
+  static List<Map<String, String>> _buildAirportFixedFareCatalog() {
+    final seen = <String>{};
+    final out = <Map<String, String>>[];
+    for (final entry in kAirportCatalog) {
+      final iata = entry.iata.trim().toUpperCase();
+      final countryCode = entry.countryCode.trim().toUpperCase();
+      if (iata.length != 3 || countryCode.isEmpty) continue;
+      final dedupeKey = '$countryCode:$iata';
+      if (!seen.add(dedupeKey)) continue;
+      out.add(<String, String>{
+        'country_code': countryCode,
+        'country_name': entry.countryName.trim(),
+        'iata': iata,
+        'airport_name': entry.name.trim(),
+      });
+    }
+    out.sort((a, b) {
+      final cc = (a['country_code'] ?? '').compareTo(b['country_code'] ?? '');
+      if (cc != 0) return cc;
+      final name = (a['airport_name'] ?? '').compareTo(b['airport_name'] ?? '');
+      if (name != 0) return name;
+      return (a['iata'] ?? '').compareTo(b['iata'] ?? '');
+    });
+    return out;
+  }
+
   bool _airportFixedFaresLoading = false;
   bool _airportFixedFaresSaving = false;
   String? _airportFixedFaresError;
@@ -381,6 +388,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _publicPaymentOptionIds = _sanitizePublicPaymentOptionIds(
       p.publicPaymentOptions,
     );
+    final sanitizedPublicServices = _sanitizePublicServiceIds(
+      p.publicServiceIds,
+    );
+    _publicServicesConfigured = p.publicServicesConfigured;
+    if (p.publicServicesConfigured) {
+      _publicServiceIds = sanitizedPublicServices.toSet();
+    } else {
+      // Backward compatibility: older profiles had no dedicated public-service
+      // section. Seed once from calculator service setup mapping.
+      _publicServiceIds = _legacyPublicServiceIdsFromCalculator().toSet();
+    }
     _publicPartnerProfilePublishedAt = p.publicPartnerProfilePublishedAt;
     _publicPartnerProfilePublishStatus = p.publicPartnerProfilePublishStatus;
     _backendInvoiceEmailCtrl.text = p.invoiceEmail;
@@ -477,10 +495,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }) {
     String pick(String localValue, String serverValue) =>
         _backendFieldHasValue(serverValue) ? serverValue : localValue;
-    List<String> pickList(List<String> localValue, List<String> serverValue) {
+    List<String> pickPaymentList(
+      List<String> localValue,
+      List<String> serverValue,
+    ) {
       final normalizedServer = _sanitizePublicPaymentOptionIds(serverValue);
       if (normalizedServer.isNotEmpty) return normalizedServer.toList();
       final normalizedLocal = _sanitizePublicPaymentOptionIds(localValue);
+      return normalizedLocal.toList();
+    }
+
+    List<String> pickPublicServiceList(
+      List<String> localValue,
+      List<String> serverValue,
+    ) {
+      final normalizedServer = _sanitizePublicServiceIds(serverValue);
+      if (normalizedServer.isNotEmpty) return normalizedServer.toList();
+      final normalizedLocal = _sanitizePublicServiceIds(localValue);
       return normalizedLocal.toList();
     }
 
@@ -534,10 +565,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         local.publicServiceRadiusKm,
         server.publicServiceRadiusKm,
       ),
-      publicPaymentOptions: pickList(
+      publicPaymentOptions: pickPaymentList(
         local.publicPaymentOptions,
         server.publicPaymentOptions,
       ),
+      publicServiceIds: pickPublicServiceList(
+        local.publicServiceIds,
+        server.publicServiceIds,
+      ),
+      publicServicesConfigured:
+          server.publicServicesConfigured || local.publicServicesConfigured,
       publicPartnerProfilePublishedAt: pick(
         local.publicPartnerProfilePublishedAt,
         server.publicPartnerProfilePublishedAt,
@@ -1190,6 +1227,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicPaymentOptions: _sanitizePublicPaymentOptionIds(
         _publicPaymentOptionIds,
       ).toList(growable: false),
+      publicServiceIds: _publicServicesConfigured
+          ? _sanitizePublicServiceIds(_publicServiceIds).toList(growable: false)
+          : const <String>[],
+      publicServicesConfigured: _publicServicesConfigured,
       publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
       publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
           .trim(),
@@ -1684,7 +1725,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  List<String> _mappedPublicServiceIds() {
+  Set<String> _sanitizePublicServiceIds(Iterable<String> values) {
+    final allowed = _publicServiceCatalog.toSet();
+    final out = <String>{};
+    for (final value in values) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty || !allowed.contains(normalized)) continue;
+      out.add(normalized);
+    }
+    return out;
+  }
+
+  List<String> _legacyPublicServiceIdsFromCalculator() {
     final selected = _serviceIds.map((s) => s.trim().toLowerCase()).toSet();
     final mapped = <String>{};
     if (selected.contains('airport')) mapped.add('airport_transfer');
@@ -1693,11 +1745,67 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     if (selected.contains('event')) mapped.add('event_mobility');
     if (selected.contains('courier')) mapped.add('hotel_bnb_pickup');
     if (selected.contains('care')) mapped.add('taxi_vvb');
-    if (mapped.isNotEmpty) {
-      mapped.add('online_payments');
-      return mapped.toList(growable: false);
+    if (mapped.isNotEmpty) mapped.add('online_payments');
+    return mapped.toList(growable: false);
+  }
+
+  List<String> _mappedPublicServiceIds() {
+    final explicit = _sanitizePublicServiceIds(_publicServiceIds);
+    if (_publicServicesConfigured) {
+      return explicit.toList(growable: false);
     }
-    return const <String>['online_payments'];
+    // Temporary fallback for tenants that still have no dedicated public
+    // service configuration saved yet.
+    return _legacyPublicServiceIdsFromCalculator();
+  }
+
+  String _publicServiceLabel(String id) {
+    switch (id.trim().toLowerCase()) {
+      case 'taxi_vvb':
+        return _t(
+          nl: 'Taxi & VVB',
+          en: 'Taxi & VVB',
+          fr: 'Taxi & VVB',
+          es: 'Taxi & VVB',
+        );
+      case 'airport_transfer':
+        return _t(
+          nl: 'Luchthavenvervoer',
+          en: 'Airport transfer',
+          fr: 'Transfert aéroport',
+          es: 'Traslado aeropuerto',
+        );
+      case 'business_rides':
+        return _t(
+          nl: 'Zakelijke ritten',
+          en: 'Business rides',
+          fr: 'Trajets business',
+          es: 'Viajes de empresa',
+        );
+      case 'event_mobility':
+        return _t(
+          nl: 'Evenementen',
+          en: 'Events',
+          fr: 'Événements',
+          es: 'Eventos',
+        );
+      case 'hotel_bnb_pickup':
+        return _t(
+          nl: 'Hotels & B&B',
+          en: 'Hotels & B&B',
+          fr: 'Hôtels & B&B',
+          es: 'Hoteles y B&B',
+        );
+      case 'online_payments':
+        return _t(
+          nl: 'Online betalen',
+          en: 'Online payments',
+          fr: 'Paiement en ligne',
+          es: 'Pago online',
+        );
+      default:
+        return id;
+    }
   }
 
   String _publicTierCategoryLabel(String tierId) {
@@ -2159,6 +2267,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         publicCoverageLng: mergedBusiness.publicCoverageLng,
         publicServiceRadiusKm: mergedBusiness.publicServiceRadiusKm,
         publicPaymentOptions: mergedBusiness.publicPaymentOptions,
+        publicServiceIds: mergedBusiness.publicServiceIds,
+        publicServicesConfigured: mergedBusiness.publicServicesConfigured,
         publicPartnerProfilePublishedAt: publishedAt,
         publicPartnerProfilePublishStatus: 'published',
         invoiceEmail: mergedBusiness.invoiceEmail,
@@ -5667,6 +5777,74 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       fr: '1 à 100',
                       es: '1 a 100',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(
+                      nl: 'Publieke services en profielzichtbaarheid',
+                      en: 'Public services and profile visibility',
+                      fr: 'Services publics et visibilité du profil',
+                      es: 'Servicios públicos y visibilidad del perfil',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.6,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(
+                      nl: 'Dit is los van Service setup. Service setup stuurt calculator/pricing; deze toggles sturen publiek profiel en boekings-CTA’s.',
+                      en: 'This is separate from Service setup. Service setup drives calculator/pricing; these toggles drive public profile and booking CTAs.',
+                      fr: 'Ceci est séparé de la configuration des services. Cette section contrôle le profil public et les CTA de réservation.',
+                      es: 'Esto es independiente de la configuración de servicios. Estos controles afectan el perfil público y los CTA de reserva.',
+                    ),
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _publicServiceCatalog
+                        .map((id) {
+                          final selected = _publicServiceIds.contains(id);
+                          return FilterChip(
+                            label: Text(_publicServiceLabel(id)),
+                            selected: selected,
+                            onSelected: (value) {
+                              setState(() {
+                                _publicServicesConfigured = true;
+                                if (value) {
+                                  _publicServiceIds.add(id);
+                                } else {
+                                  _publicServiceIds.remove(id);
+                                }
+                              });
+                            },
+                            selectedColor: const Color(
+                              0xFFE5B641,
+                            ).withOpacity(0.22),
+                            checkmarkColor: const Color(0xFFE5B641),
+                            backgroundColor: const Color(0xFF111315),
+                            side: BorderSide(
+                              color: selected
+                                  ? const Color(0xFFE5B641).withOpacity(0.75)
+                                  : Colors.white.withOpacity(0.18),
+                            ),
+                            labelStyle: TextStyle(
+                              color: selected
+                                  ? const Color(0xFFFFF2CC)
+                                  : Colors.white.withOpacity(0.86),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11.6,
+                            ),
+                          );
+                        })
+                        .toList(growable: false),
                   ),
                   const SizedBox(height: 12),
                   Text(

@@ -403,6 +403,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
 
     if (hasExplicitSignal) return false;
 
+    // Legacy fallback for older published profiles that have no explicit
+    // capability booleans yet. Any explicit false/true signal above wins.
     final servicesList = _profileTextListAny(profile, const ['services']);
     return servicesList.any(_isAirportServiceToken);
   }
@@ -1173,17 +1175,16 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
+                          minimumSize: const Size.fromHeight(54),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
-                        icon: const Icon(Icons.local_taxi_outlined, size: 19),
+                        icon: const Icon(Icons.local_taxi_outlined, size: 22),
                         label: Text(
-                          _t(
-                            nl: 'Boek rit',
-                            en: 'Book ride',
-                            fr: 'Réserver une course',
-                            es: 'Reservar viaje',
+                          _t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi'),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
                           ),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                       ),
                     ),
@@ -1200,11 +1201,12 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
+                            minimumSize: const Size.fromHeight(54),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                           ),
                           icon: const Icon(
                             Icons.flight_takeoff_rounded,
-                            size: 18,
+                            size: 21,
                           ),
                           label: Text(
                             _t(
@@ -1213,7 +1215,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               fr: 'Aéroport',
                               es: 'Aeropuerto',
                             ),
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14.5,
+                            ),
                           ),
                         ),
                       ),
@@ -1472,61 +1477,64 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
+                                minimumSize: const Size.fromHeight(52),
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 13,
                                 ),
                               ),
                               icon: const Icon(
                                 Icons.local_taxi_outlined,
-                                size: 18,
+                                size: 21,
                               ),
                               label: Text(
                                 _t(
-                                  nl: 'Boek rit bij deze partner',
-                                  en: 'Book a ride with this partner',
-                                  fr: 'Réserver une course avec ce partenaire',
-                                  es: 'Reservar un viaje con este socio',
+                                  nl: 'Taxi',
+                                  en: 'Taxi',
+                                  fr: 'Taxi',
+                                  es: 'Taxi',
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
+                                  fontSize: 14.5,
                                 ),
                               ),
                             ),
                           ),
                           if (airportServiceEnabled) ...[
                             const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              onPressed: () => _openPartnerAirportBooking(
-                                companyName: companyName,
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: _gold.withOpacity(0.98),
-                                side: BorderSide(
-                                  color: _gold.withOpacity(0.36),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _openPartnerAirportBooking(
+                                  companyName: companyName,
                                 ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: _gold.withOpacity(0.98),
+                                  side: BorderSide(
+                                    color: _gold.withOpacity(0.36),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  minimumSize: const Size.fromHeight(52),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
                                 ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 13,
+                                icon: const Icon(
+                                  Icons.flight_takeoff_rounded,
+                                  size: 20,
                                 ),
-                              ),
-                              icon: const Icon(
-                                Icons.flight_takeoff_rounded,
-                                size: 18,
-                              ),
-                              label: Text(
-                                _t(
-                                  nl: 'Luchthaven',
-                                  en: 'Airport',
-                                  fr: 'Aéroport',
-                                  es: 'Aeropuerto',
-                                ),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
+                                label: Text(
+                                  _t(
+                                    nl: 'Luchthaven',
+                                    en: 'Airport',
+                                    fr: 'Aéroport',
+                                    es: 'Aeropuerto',
+                                  ),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                  ),
                                 ),
                               ),
                             ),

@@ -282,6 +282,8 @@ class BackendBusinessProfile {
   final String publicCoverageLng;
   final String publicServiceRadiusKm;
   final List<String> publicPaymentOptions;
+  final List<String> publicServiceIds;
+  final bool publicServicesConfigured;
   final String publicPartnerProfilePublishedAt;
   final String publicPartnerProfilePublishStatus;
   final String invoiceEmail;
@@ -313,6 +315,8 @@ class BackendBusinessProfile {
     this.publicCoverageLng = '',
     this.publicServiceRadiusKm = '',
     this.publicPaymentOptions = const <String>[],
+    this.publicServiceIds = const <String>[],
+    this.publicServicesConfigured = false,
     this.publicPartnerProfilePublishedAt = '',
     this.publicPartnerProfilePublishStatus = '',
     required this.invoiceEmail,
@@ -341,6 +345,8 @@ class BackendBusinessProfile {
     publicCoverageLng: '',
     publicServiceRadiusKm: '',
     publicPaymentOptions: const <String>[],
+    publicServiceIds: const <String>[],
+    publicServicesConfigured: false,
     publicPartnerProfilePublishedAt: '',
     publicPartnerProfilePublishStatus: '',
     invoiceEmail: appConfig.supportEmail,
@@ -450,6 +456,22 @@ class BackendBusinessProfile {
         'publicPaymentOptions',
         'public_payment_options',
       ], fallback.publicPaymentOptions),
+      publicServiceIds: textListAny(const [
+        'publicServiceIds',
+        'public_service_ids',
+      ], fallback.publicServiceIds),
+      publicServicesConfigured:
+          (json['publicServicesConfigured'] ??
+                  json['public_services_configured'])
+              is bool
+          ? ((json['publicServicesConfigured'] ??
+                    json['public_services_configured'])
+                as bool)
+          : (textListAny(const [
+                  'publicServiceIds',
+                  'public_service_ids',
+                ], const <String>[]).isNotEmpty ||
+                fallback.publicServicesConfigured),
       publicPartnerProfilePublishedAt: textAny(const [
         'publicPartnerProfilePublishedAt',
         'public_partner_profile_published_at',
@@ -514,6 +536,10 @@ class BackendBusinessProfile {
     'public_service_radius_km': publicServiceRadiusKm,
     'publicPaymentOptions': publicPaymentOptions,
     'public_payment_options': publicPaymentOptions,
+    'publicServiceIds': publicServiceIds,
+    'public_service_ids': publicServiceIds,
+    'publicServicesConfigured': publicServicesConfigured,
+    'public_services_configured': publicServicesConfigured,
     'publicPartnerProfilePublishedAt': publicPartnerProfilePublishedAt,
     'public_partner_profile_published_at': publicPartnerProfilePublishedAt,
     'publicPartnerProfilePublishStatus': publicPartnerProfilePublishStatus,
