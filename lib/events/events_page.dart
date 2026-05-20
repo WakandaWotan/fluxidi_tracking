@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'events_detail_page.dart';
 
 class EventsPage extends StatefulWidget {
-  const EventsPage({super.key});
+  const EventsPage({this.onBookEvent, super.key});
+
+  final EventBookCallback? onBookEvent;
 
   @override
   State<EventsPage> createState() => _EventsPageState();
@@ -13,19 +18,20 @@ class _EventsPageState extends State<EventsPage> {
   static const Color _gold = Color(0xFFE5B641);
   static const Color _softText = Color(0xFFB4B4B4);
 
-  static const List<String> _filters = <String>[
-    'Alles',
-    'Vandaag',
-    'Dit weekend',
-    'Muziek',
-    'Zakelijk',
-    'Sport',
+  static const List<String> _filterKeys = <String>[
+    'all',
+    'today',
+    'weekend',
+    'music',
+    'business',
+    'sport',
   ];
-  static const List<String> _markets = <String>[
-    'België',
-    'Nederland',
-    'Frankrijk',
-    'VK',
+  static const List<String> _marketKeys = <String>[
+    'be',
+    'nl',
+    'fr',
+    'uk',
+    'es',
   ];
 
   final TextEditingController _searchController = TextEditingController();
@@ -33,42 +39,157 @@ class _EventsPageState extends State<EventsPage> {
   int _selectedFilterIndex = 0;
   int _selectedTabIndex = 0;
 
-  final List<_LocalEvent> _events = const <_LocalEvent>[
-    _LocalEvent(
-      title: 'Stadsfestival Antwerpen',
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (appConfig.currentLanguage) {
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.nl:
+        return nl;
+    }
+  }
+
+  String get _ctaCardLabel => _t(
+    nl: 'Taxi naar dit event',
+    en: 'Taxi to this event',
+    fr: 'Taxi vers cet événement',
+    es: 'Taxi a este evento',
+  );
+
+  String _marketLabel(String key) {
+    switch (key) {
+      case 'be':
+        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
+      case 'nl':
+        return _t(
+          nl: 'Nederland',
+          en: 'Netherlands',
+          fr: 'Pays-Bas',
+          es: 'Países Bajos',
+        );
+      case 'fr':
+        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
+      case 'uk':
+        return _t(
+          nl: 'Verenigd Koninkrijk',
+          en: 'United Kingdom',
+          fr: 'Royaume-Uni',
+          es: 'Reino Unido',
+        );
+      case 'es':
+        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
+      default:
+        return key.toUpperCase();
+    }
+  }
+
+  String _filterLabel(String key) {
+    switch (key) {
+      case 'all':
+        return _t(nl: 'Alles', en: 'All', fr: 'Tout', es: 'Todo');
+      case 'today':
+        return _t(nl: 'Vandaag', en: 'Today', fr: 'Aujourd’hui', es: 'Hoy');
+      case 'weekend':
+        return _t(
+          nl: 'Dit weekend',
+          en: 'This weekend',
+          fr: 'Ce week-end',
+          es: 'Este fin de semana',
+        );
+      case 'music':
+        return _t(nl: 'Muziek', en: 'Music', fr: 'Musique', es: 'Música');
+      case 'business':
+        return _t(
+          nl: 'Zakelijk',
+          en: 'Business',
+          fr: 'Business',
+          es: 'Negocios',
+        );
+      case 'sport':
+        return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
+      default:
+        return key;
+    }
+  }
+
+  final List<EventDetailData> _events = const <EventDetailData>[
+    EventDetailData(
+      id: 'evt_antwerp_jazz_2026',
+      title: 'Antwerp Jazz Nights 2026',
       category: 'Muziek',
-      dateTime: 'Vandaag • 19:30',
-      location: 'Centrum, Antwerpen',
+      dateTimeLabel: 'Vrijdag • 19:30',
+      locationName: 'Stadspark Arena',
+      city: 'Antwerpen',
+      address: 'Van Eycklei 1, 2018 Antwerpen, België',
+      lat: 51.208186,
+      lng: 4.418731,
       distanceOrStatus: '2.1 km',
-      ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF2A1F08), Color(0xFF15120A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
-    _LocalEvent(
-      title: 'Businessnetwerk Brussel',
+    EventDetailData(
+      id: 'evt_brussels_mobility_summit_2026',
+      title: 'Brussels Mobility Summit',
       category: 'Zakelijk',
-      dateTime: 'Vrijdag • 18:00',
-      location: 'Business District, Brussel',
+      dateTimeLabel: 'Dinsdag • 09:00',
+      locationName: 'Brussels Expo Hall 7',
+      city: 'Brussel',
+      address: 'Belgiëplein 1, 1020 Brussel, België',
+      lat: 50.897227,
+      lng: 4.338472,
       distanceOrStatus: 'Gepland',
-      ctaLabel: 'Details bekijken',
       gradient: <Color>[Color(0xFF2A260E), Color(0xFF12110A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
-    _LocalEvent(
-      title: 'Sportevenement Gent',
+    EventDetailData(
+      id: 'evt_ghent_night_run_2026',
+      title: 'Ghent Night Run',
       category: 'Sport',
-      dateTime: 'Zaterdag • 14:00',
-      location: 'Sporthal Zuid, Gent',
+      dateTimeLabel: 'Zaterdag • 20:30',
+      locationName: 'Sport Vlaanderen Gent',
+      city: 'Gent',
+      address: 'Zuiderlaan 14, 9000 Gent, België',
+      lat: 51.026364,
+      lng: 3.703992,
       distanceOrStatus: '5.4 km',
-      ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF1F1A0C), Color(0xFF100F0A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
-    _LocalEvent(
-      title: 'Foodmarkt Leuven',
+    EventDetailData(
+      id: 'evt_leuven_food_market_2026',
+      title: 'Leuven Food & Culture Market',
       category: 'Vandaag',
-      dateTime: 'Vandaag • 17:00',
-      location: 'Marktplein, Leuven',
+      dateTimeLabel: 'Vandaag • 17:00',
+      locationName: 'Grote Markt Leuven',
+      city: 'Leuven',
+      address: 'Grote Markt 1, 3000 Leuven, België',
+      lat: 50.879842,
+      lng: 4.700517,
       distanceOrStatus: 'Actief',
-      ctaLabel: 'Details bekijken',
       gradient: <Color>[Color(0xFF2E220B), Color(0xFF141108)],
+      sourceLabel: 'Fluxidi Curated',
+    ),
+    EventDetailData(
+      id: 'evt_barcelona_sonar_2026',
+      title: 'Barcelona Sonar Weekender',
+      category: 'Muziek',
+      dateTimeLabel: 'Vrijdag • 21:00',
+      locationName: 'Fira Barcelona Gran Via',
+      city: 'Barcelona',
+      address: 'Av. Joan Carles I, 64, 08908 L Hospitalet de Llobregat, Spanje',
+      lat: 41.354780,
+      lng: 2.126349,
+      distanceOrStatus: 'Internationaal',
+      gradient: <Color>[Color(0xFF311E0D), Color(0xFF160E08)],
+      sourceLabel: 'Fluxidi Curated',
     ),
   ];
 
@@ -78,29 +199,111 @@ class _EventsPageState extends State<EventsPage> {
     super.dispose();
   }
 
-  List<_LocalEvent> get _visibleEvents {
+  List<EventDetailData> get _visibleEvents {
     final query = _searchController.text.trim().toLowerCase();
-    final selectedFilter = _filters[_selectedFilterIndex];
+    final selectedFilter = _filterKeys[_selectedFilterIndex];
+    final selectedMarket = _marketKeys[_selectedMarketIndex];
     return _events
         .where((event) {
+          if (!_marketMatchesEvent(event, selectedMarket)) return false;
           final matchesSearch =
               query.isEmpty ||
               event.title.toLowerCase().contains(query) ||
-              event.location.toLowerCase().contains(query) ||
+              event.locationName.toLowerCase().contains(query) ||
+              event.city.toLowerCase().contains(query) ||
+              event.address.toLowerCase().contains(query) ||
               event.category.toLowerCase().contains(query);
           if (!matchesSearch) return false;
-          if (selectedFilter == 'Alles') return true;
-          if (selectedFilter == 'Dit weekend') {
-            return event.dateTime.toLowerCase().contains('zaterdag') ||
-                event.dateTime.toLowerCase().contains('zondag') ||
-                event.dateTime.toLowerCase().contains('vrijdag');
+          if (selectedFilter == 'all') return true;
+          if (selectedFilter == 'weekend') {
+            final dateLabel = event.dateTimeLabel.toLowerCase();
+            return dateLabel.contains('zaterdag') ||
+                dateLabel.contains('zondag') ||
+                dateLabel.contains('vrijdag') ||
+                dateLabel.contains('sábado') ||
+                dateLabel.contains('domingo') ||
+                dateLabel.contains('friday') ||
+                dateLabel.contains('saturday') ||
+                dateLabel.contains('sunday');
           }
-          return event.category.toLowerCase() == selectedFilter.toLowerCase() ||
-              event.dateTime.toLowerCase().contains(
-                selectedFilter.toLowerCase(),
-              );
+          if (selectedFilter == 'today') {
+            final dateLabel = event.dateTimeLabel.toLowerCase();
+            return dateLabel.contains('vandaag') ||
+                dateLabel.contains('today') ||
+                dateLabel.contains('aujourd') ||
+                dateLabel.contains('hoy');
+          }
+          final category = event.category.toLowerCase();
+          if (selectedFilter == 'music') {
+            return category.contains('muziek') ||
+                category.contains('music') ||
+                category.contains('musique') ||
+                category.contains('música');
+          }
+          if (selectedFilter == 'business') {
+            return category.contains('zakelijk') ||
+                category.contains('business') ||
+                category.contains('negocios');
+          }
+          if (selectedFilter == 'sport') {
+            return category.contains('sport') || category.contains('deporte');
+          }
+          return true;
         })
         .toList(growable: false);
+  }
+
+  bool _marketMatchesEvent(EventDetailData event, String marketKey) {
+    final haystack = '${event.city} ${event.address}'.toLowerCase();
+    switch (marketKey) {
+      case 'be':
+        return haystack.contains('belgië') || haystack.contains('belg');
+      case 'nl':
+        return haystack.contains('nederland') ||
+            haystack.contains('netherlands');
+      case 'fr':
+        return haystack.contains('frankrijk') || haystack.contains('france');
+      case 'uk':
+        return haystack.contains('uk') ||
+            haystack.contains('united kingdom') ||
+            haystack.contains('verenigd koninkrijk');
+      case 'es':
+        return haystack.contains('spanje') ||
+            haystack.contains('españa') ||
+            haystack.contains('spain');
+      default:
+        return true;
+    }
+  }
+
+  void _openEventDetails(EventDetailData event) {
+    Navigator.of(context).push(
+      MaterialPageRoute<EventDetailPage>(
+        builder: (_) =>
+            EventDetailPage(event: event, onBookEvent: widget.onBookEvent),
+      ),
+    );
+  }
+
+  void _bookEvent(EventDetailData event) {
+    if (widget.onBookEvent != null) {
+      widget.onBookEvent!.call(event);
+      return;
+    }
+    _showInfoSnackBar(
+      _t(
+        nl: 'Boekingsflow voor dit event is binnenkort beschikbaar.',
+        en: 'Booking flow for this event is coming soon.',
+        fr: 'Le flux de réservation pour cet événement arrive bientôt.',
+        es: 'El flujo de reserva para este evento estará disponible pronto.',
+      ),
+    );
+  }
+
+  void _showInfoSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -157,7 +360,7 @@ class _EventsPageState extends State<EventsPage> {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back_rounded),
             color: _gold,
-            tooltip: 'Terug',
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
           const SizedBox(width: 2),
           Expanded(
@@ -165,21 +368,31 @@ class _EventsPageState extends State<EventsPage> {
               padding: const EdgeInsets.only(top: 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
+                children: [
                   Text(
-                    'Evenementen',
+                    _t(
+                      nl: 'Evenementen',
+                      en: 'Events',
+                      fr: 'Événements',
+                      es: 'Eventos',
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  SizedBox(height: 2),
+                  const SizedBox(height: 2),
                   Text(
-                    'Evenementen en vervoer in uw regio',
-                    style: TextStyle(
+                    _t(
+                      nl: 'Evenementen en vervoer in uw regio',
+                      en: 'Events and transport in your area',
+                      fr: 'Événements et transport dans votre région',
+                      es: 'Eventos y transporte en tu región',
+                    ),
+                    style: const TextStyle(
                       color: _softText,
                       fontSize: 11.4,
                       fontWeight: FontWeight.w500,
@@ -221,87 +434,75 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Widget _buildMarketChips() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: List<Widget>.generate(_markets.length, (index) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        itemCount: _marketKeys.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
           final selected = index == _selectedMarketIndex;
-          return Padding(
-            padding: EdgeInsets.only(
-              right: index == _markets.length - 1 ? 0 : 7,
+          return ChoiceChip(
+            label: Text(
+              _marketLabel(_marketKeys[index]),
+              style: TextStyle(
+                color: selected ? Colors.black : Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
             ),
-            child: ChoiceChip(
-              label: Text(
-                _markets[index],
-                style: TextStyle(
-                  color: selected ? Colors.black : Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 11.2,
-                ),
+            selected: selected,
+            onSelected: (_) => setState(() => _selectedMarketIndex = index),
+            selectedColor: _gold,
+            backgroundColor: _panelBlack,
+            shape: StadiumBorder(
+              side: BorderSide(
+                color: _gold.withOpacity(selected ? 0.15 : 0.34),
               ),
-              selected: selected,
-              onSelected: (_) => setState(() => _selectedMarketIndex = index),
-              selectedColor: _gold,
-              backgroundColor: _panelBlack,
-              shape: StadiumBorder(
-                side: BorderSide(
-                  color: _gold.withOpacity(selected ? 0.15 : 0.34),
-                ),
-              ),
-              showCheckmark: false,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: const VisualDensity(
-                horizontal: -1.4,
-                vertical: -1.8,
-              ),
-              labelPadding: const EdgeInsets.symmetric(horizontal: 7),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
             ),
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           );
-        }),
+        },
       ),
     );
   }
 
   Widget _buildFilterChips() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: List<Widget>.generate(_filters.length, (index) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        itemCount: _filterKeys.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
           final selected = index == _selectedFilterIndex;
-          return Padding(
-            padding: EdgeInsets.only(
-              right: index == _filters.length - 1 ? 0 : 8,
+          return ChoiceChip(
+            label: Text(
+              _filterLabel(_filterKeys[index]),
+              style: TextStyle(
+                color: selected ? Colors.black : Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
             ),
-            child: ChoiceChip(
-              label: Text(
-                _filters[index],
-                style: TextStyle(
-                  color: selected ? Colors.black : Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 11.6,
-                ),
-              ),
-              selected: selected,
-              onSelected: (_) => setState(() => _selectedFilterIndex = index),
-              selectedColor: _gold,
-              backgroundColor: _panelBlack,
-              shape: StadiumBorder(
-                side: BorderSide(
-                  color: _gold.withOpacity(selected ? 0.1 : 0.32),
-                ),
-              ),
-              showCheckmark: false,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: const VisualDensity(
-                horizontal: -1.4,
-                vertical: -1.8,
-              ),
-              labelPadding: const EdgeInsets.symmetric(horizontal: 7),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
+            selected: selected,
+            onSelected: (_) => setState(() => _selectedFilterIndex = index),
+            selectedColor: _gold,
+            backgroundColor: _panelBlack,
+            shape: StadiumBorder(
+              side: BorderSide(color: _gold.withOpacity(selected ? 0.1 : 0.32)),
             ),
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           );
-        }),
+        },
       ),
     );
   }
@@ -379,7 +580,7 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildEventList(List<_LocalEvent> events) {
+  Widget _buildEventList(List<EventDetailData> events) {
     return Column(
       children: [
         for (var i = 0; i < events.length; i++) ...[
@@ -405,7 +606,7 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  Widget _buildEventCard(_LocalEvent event) {
+  Widget _buildEventCard(EventDetailData event) {
     return Container(
       decoration: BoxDecoration(
         color: _panelBlack,
@@ -422,256 +623,310 @@ class _EventsPageState extends State<EventsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 94,
-            decoration: BoxDecoration(
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _openEventDetails(event),
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(16),
               ),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: event.gradient,
-              ),
-            ),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 14,
-                  top: 14,
-                  child: Container(
-                    width: 60,
-                    height: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 94,
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          _gold.withOpacity(0.20),
-                          _gold.withOpacity(0.04),
-                          Colors.transparent,
-                        ],
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(16),
+                      ),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: event.gradient,
                       ),
                     ),
-                  ),
-                ),
-                Positioned(
-                  right: 44,
-                  top: 18,
-                  child: Container(
-                    width: 5,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.35),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 65,
-                  top: 31,
-                  child: Container(
-                    width: 3,
-                    height: 3,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.24),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 56,
-                  top: 46,
-                  child: Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.18),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 10,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: _gold.withOpacity(0.5)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    child: Stack(
                       children: [
-                        Icon(
-                          _categoryIcon(event.category),
-                          color: _gold,
-                          size: 12,
+                        Positioned(
+                          left: 14,
+                          top: 14,
+                          child: Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  _gold.withOpacity(0.20),
+                                  _gold.withOpacity(0.04),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          event.category,
-                          style: const TextStyle(
-                            color: _gold,
-                            fontSize: 10.6,
-                            fontWeight: FontWeight.w700,
+                        Positioned(
+                          right: 44,
+                          top: 18,
+                          child: Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: _gold.withOpacity(0.35),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 65,
+                          top: 31,
+                          child: Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: _gold.withOpacity(0.24),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 56,
+                          top: 46,
+                          child: Container(
+                            width: 4,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: _gold.withOpacity(0.18),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 10,
+                          top: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.4),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: _gold.withOpacity(0.5)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _categoryIcon(event.category),
+                                  color: _gold,
+                                  size: 12,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  event.category,
+                                  style: const TextStyle(
+                                    color: _gold,
+                                    fontSize: 10.6,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 12,
+                          bottom: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.34),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.32),
+                              ),
+                            ),
+                            child: Text(
+                              event.locationName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: _gold.withOpacity(0.95),
+                                fontSize: 10.2,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 10,
+                          top: 6,
+                          child: IconButton(
+                            onPressed: () => _showInfoSnackBar(
+                              _t(
+                                nl: 'Favorieten voor events komen binnenkort.',
+                                en: 'Event favorites are coming soon.',
+                                fr: 'Les favoris événement arrivent bientôt.',
+                                es: 'Los favoritos de eventos estarán disponibles pronto.',
+                              ),
+                            ),
+                            icon: const Icon(Icons.favorite_border_rounded),
+                            iconSize: 18,
+                            color: Colors.white.withOpacity(0.92),
+                            tooltip: _t(
+                              nl: 'Favoriet',
+                              en: 'Favorite',
+                              fr: 'Favori',
+                              es: 'Favorito',
+                            ),
+                            visualDensity: const VisualDensity(
+                              horizontal: -2,
+                              vertical: -2,
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-                Positioned(
-                  left: 12,
-                  bottom: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.34),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: _gold.withOpacity(0.32)),
-                    ),
-                    child: Text(
-                      'Evenementlocatie',
-                      style: TextStyle(
-                        color: _gold.withOpacity(0.95),
-                        fontSize: 10.2,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            height: 1.2,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.calendar_today_outlined,
+                              size: 13,
+                              color: _gold.withOpacity(0.95),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                event.dateTimeLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _softText,
+                                  fontSize: 11.9,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on_outlined,
+                              size: 14,
+                              color: _gold.withOpacity(0.95),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                '${event.locationName}, ${event.city}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _softText,
+                                  fontSize: 11.9,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.pin_drop_outlined,
+                              size: 13,
+                              color: _gold.withOpacity(0.9),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                event.address,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _softText,
+                                  fontSize: 11.2,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _gold.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: _gold.withOpacity(0.4),
+                                ),
+                              ),
+                              child: Text(
+                                event.distanceOrStatus,
+                                style: const TextStyle(
+                                  color: _gold,
+                                  fontSize: 10.8,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                Positioned(
-                  right: 10,
-                  top: 6,
-                  child: IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.favorite_border_rounded),
-                    iconSize: 18,
-                    color: Colors.white.withOpacity(0.92),
-                    tooltip: 'Favoriet',
-                    visualDensity: const VisualDensity(
-                      horizontal: -2,
-                      vertical: -2,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14.8,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
+            padding: const EdgeInsets.fromLTRB(11, 0, 11, 10),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _bookEvent(event),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _gold,
+                  side: BorderSide(color: _gold.withOpacity(0.55)),
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: 13,
-                      color: _gold.withOpacity(0.95),
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Text(
-                        event.dateTime,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _softText,
-                          fontSize: 11.9,
-                        ),
-                      ),
-                    ),
-                  ],
+                icon: const Icon(Icons.local_taxi_rounded, size: 17),
+                label: Text(
+                  _ctaCardLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.location_on_outlined,
-                      size: 14,
-                      color: _gold.withOpacity(0.95),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        event.location,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _softText,
-                          fontSize: 11.9,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _gold.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.4)),
-                      ),
-                      child: Text(
-                        event.distanceOrStatus,
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.8,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF15120A),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.5)),
-                      ),
-                      child: Text(
-                        event.ctaLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.9,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -698,21 +953,34 @@ class _EventsPageState extends State<EventsPage> {
           children: [
             Icon(Icons.map_rounded, color: _gold.withOpacity(0.96), size: 44),
             const SizedBox(height: 12),
-            const Text(
-              'Kaartmodus komt binnenkort',
+            Text(
+              _t(
+                nl: 'Kaartmodus komt binnenkort',
+                en: 'Map mode is coming soon',
+                fr: 'Le mode carte arrive bientôt',
+                es: 'El modo mapa estará disponible pronto',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Kaart- en locatiemodus wordt later gekoppeld. '
-              'Gebruik voorlopig de lijstweergave voor een overzicht.',
+            Text(
+              _t(
+                nl: 'Kaart- en locatiemodus wordt later gekoppeld. Gebruik voorlopig de lijstweergave voor een overzicht.',
+                en: 'Map and location mode will be connected later. For now, use the list view for an overview.',
+                fr: 'Le mode carte et localisation sera connecté plus tard. Utilisez la vue liste en attendant.',
+                es: 'El modo mapa y ubicación se conectará más adelante. Por ahora, usa la vista de lista.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(color: _softText, fontSize: 13, height: 1.35),
+              style: const TextStyle(
+                color: _softText,
+                fontSize: 13,
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 14),
             Container(
@@ -722,9 +990,14 @@ class _EventsPageState extends State<EventsPage> {
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(color: _gold.withOpacity(0.45)),
               ),
-              child: const Text(
-                'Fluxidi Locator Voorbeeld',
-                style: TextStyle(
+              child: Text(
+                _t(
+                  nl: 'Fluxidi Event Locator',
+                  en: 'Fluxidi Event Locator',
+                  fr: 'Fluxidi Event Locator',
+                  es: 'Fluxidi Event Locator',
+                ),
+                style: const TextStyle(
                   color: _gold,
                   fontSize: 11.8,
                   fontWeight: FontWeight.w700,
@@ -745,31 +1018,16 @@ class _EventsPageState extends State<EventsPage> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _gold.withOpacity(0.24)),
       ),
-      child: const Text(
-        'Geen evenementen gevonden voor je zoekopdracht of filter.',
+      child: Text(
+        _t(
+          nl: 'Geen evenementen gevonden voor je zoekopdracht of filter.',
+          en: 'No events found for your search or filter.',
+          fr: 'Aucun événement trouvé pour votre recherche ou filtre.',
+          es: 'No se encontraron eventos para tu búsqueda o filtro.',
+        ),
         textAlign: TextAlign.center,
-        style: TextStyle(color: _softText, fontSize: 13),
+        style: const TextStyle(color: _softText, fontSize: 13),
       ),
     );
   }
-}
-
-class _LocalEvent {
-  const _LocalEvent({
-    required this.title,
-    required this.category,
-    required this.dateTime,
-    required this.location,
-    required this.distanceOrStatus,
-    required this.ctaLabel,
-    required this.gradient,
-  });
-
-  final String title;
-  final String category;
-  final String dateTime;
-  final String location;
-  final String distanceOrStatus;
-  final String ctaLabel;
-  final List<Color> gradient;
 }
