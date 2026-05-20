@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'events_detail_page.dart';
 
 class EventsPage extends StatefulWidget {
-  const EventsPage({super.key});
+  const EventsPage({this.onBookEvent, super.key});
+
+  final EventBookCallback? onBookEvent;
 
   @override
   State<EventsPage> createState() => _EventsPageState();
@@ -34,42 +38,87 @@ class _EventsPageState extends State<EventsPage> {
   int _selectedFilterIndex = 0;
   int _selectedTabIndex = 0;
 
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (appConfig.currentLanguage) {
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.nl:
+        return nl;
+    }
+  }
+
+  String get _ctaCardLabel => _t(
+    nl: 'Taxi naar dit event',
+    en: 'Taxi to this event',
+    fr: 'Taxi vers cet événement',
+    es: 'Taxi a este evento',
+  );
+
   final List<EventDetailData> _events = const <EventDetailData>[
     EventDetailData(
-      title: 'Stadsfestival Antwerpen',
+      id: 'evt_antwerp_jazz_2026',
+      title: 'Antwerp Jazz Nights 2026',
       category: 'Muziek',
-      dateTime: 'Vandaag • 19:30',
-      location: 'Centrum, Antwerpen',
+      dateTimeLabel: 'Vrijdag • 19:30',
+      locationName: 'Stadspark Arena',
+      city: 'Antwerpen',
+      address: 'Van Eycklei 1, 2018 Antwerpen, België',
+      lat: 51.208186,
+      lng: 4.418731,
       distanceOrStatus: '2.1 km',
-      ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF2A1F08), Color(0xFF15120A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
     EventDetailData(
-      title: 'Businessnetwerk Brussel',
+      id: 'evt_brussels_mobility_summit_2026',
+      title: 'Brussels Mobility Summit',
       category: 'Zakelijk',
-      dateTime: 'Vrijdag • 18:00',
-      location: 'Business District, Brussel',
+      dateTimeLabel: 'Dinsdag • 09:00',
+      locationName: 'Brussels Expo Hall 7',
+      city: 'Brussel',
+      address: 'Belgiëplein 1, 1020 Brussel, België',
+      lat: 50.897227,
+      lng: 4.338472,
       distanceOrStatus: 'Gepland',
-      ctaLabel: 'Details bekijken',
       gradient: <Color>[Color(0xFF2A260E), Color(0xFF12110A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
     EventDetailData(
-      title: 'Sportevenement Gent',
+      id: 'evt_ghent_night_run_2026',
+      title: 'Ghent Night Run',
       category: 'Sport',
-      dateTime: 'Zaterdag • 14:00',
-      location: 'Sporthal Zuid, Gent',
+      dateTimeLabel: 'Zaterdag • 20:30',
+      locationName: 'Sport Vlaanderen Gent',
+      city: 'Gent',
+      address: 'Zuiderlaan 14, 9000 Gent, België',
+      lat: 51.026364,
+      lng: 3.703992,
       distanceOrStatus: '5.4 km',
-      ctaLabel: 'Rit plannen',
       gradient: <Color>[Color(0xFF1F1A0C), Color(0xFF100F0A)],
+      sourceLabel: 'Fluxidi Curated',
     ),
     EventDetailData(
-      title: 'Foodmarkt Leuven',
+      id: 'evt_leuven_food_market_2026',
+      title: 'Leuven Food & Culture Market',
       category: 'Vandaag',
-      dateTime: 'Vandaag • 17:00',
-      location: 'Marktplein, Leuven',
+      dateTimeLabel: 'Vandaag • 17:00',
+      locationName: 'Grote Markt Leuven',
+      city: 'Leuven',
+      address: 'Grote Markt 1, 3000 Leuven, België',
+      lat: 50.879842,
+      lng: 4.700517,
       distanceOrStatus: 'Actief',
-      ctaLabel: 'Details bekijken',
       gradient: <Color>[Color(0xFF2E220B), Color(0xFF141108)],
+      sourceLabel: 'Fluxidi Curated',
     ),
   ];
 
@@ -87,17 +136,19 @@ class _EventsPageState extends State<EventsPage> {
           final matchesSearch =
               query.isEmpty ||
               event.title.toLowerCase().contains(query) ||
-              event.location.toLowerCase().contains(query) ||
+              event.locationName.toLowerCase().contains(query) ||
+              event.city.toLowerCase().contains(query) ||
+              event.address.toLowerCase().contains(query) ||
               event.category.toLowerCase().contains(query);
           if (!matchesSearch) return false;
           if (selectedFilter == 'Alles') return true;
           if (selectedFilter == 'Dit weekend') {
-            return event.dateTime.toLowerCase().contains('zaterdag') ||
-                event.dateTime.toLowerCase().contains('zondag') ||
-                event.dateTime.toLowerCase().contains('vrijdag');
+            return event.dateTimeLabel.toLowerCase().contains('zaterdag') ||
+                event.dateTimeLabel.toLowerCase().contains('zondag') ||
+                event.dateTimeLabel.toLowerCase().contains('vrijdag');
           }
           return event.category.toLowerCase() == selectedFilter.toLowerCase() ||
-              event.dateTime.toLowerCase().contains(
+              event.dateTimeLabel.toLowerCase().contains(
                 selectedFilter.toLowerCase(),
               );
         })
@@ -158,7 +209,7 @@ class _EventsPageState extends State<EventsPage> {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back_rounded),
             color: _gold,
-            tooltip: 'Terug',
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
           const SizedBox(width: 2),
           Expanded(
@@ -166,21 +217,31 @@ class _EventsPageState extends State<EventsPage> {
               padding: const EdgeInsets.only(top: 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
+                children: [
                   Text(
-                    'Evenementen',
+                    _t(
+                      nl: 'Evenementen',
+                      en: 'Events',
+                      fr: 'Événements',
+                      es: 'Eventos',
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  SizedBox(height: 2),
+                  const SizedBox(height: 2),
                   Text(
-                    'Evenementen en vervoer in uw regio',
-                    style: TextStyle(
+                    _t(
+                      nl: 'Evenementen en vervoer in uw regio',
+                      en: 'Events and transport in your area',
+                      fr: 'Événements et transport dans votre région',
+                      es: 'Eventos y transporte en tu región',
+                    ),
+                    style: const TextStyle(
                       color: _softText,
                       fontSize: 11.4,
                       fontWeight: FontWeight.w500,
@@ -413,7 +474,10 @@ class _EventsPageState extends State<EventsPage> {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute<EventDetailPage>(
-              builder: (_) => EventDetailPage(event: event),
+              builder: (_) => EventDetailPage(
+                event: event,
+                onBookEvent: widget.onBookEvent,
+              ),
             ),
           );
         },
@@ -550,7 +614,9 @@ class _EventsPageState extends State<EventsPage> {
                           border: Border.all(color: _gold.withOpacity(0.32)),
                         ),
                         child: Text(
-                          'Evenementlocatie',
+                          event.locationName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: _gold.withOpacity(0.95),
                             fontSize: 10.2,
@@ -567,7 +633,12 @@ class _EventsPageState extends State<EventsPage> {
                         icon: const Icon(Icons.favorite_border_rounded),
                         iconSize: 18,
                         color: Colors.white.withOpacity(0.92),
-                        tooltip: 'Favoriet',
+                        tooltip: _t(
+                          nl: 'Favoriet',
+                          en: 'Favorite',
+                          fr: 'Favori',
+                          es: 'Favorito',
+                        ),
                         visualDensity: const VisualDensity(
                           horizontal: -2,
                           vertical: -2,
@@ -604,7 +675,7 @@ class _EventsPageState extends State<EventsPage> {
                         const SizedBox(width: 5),
                         Expanded(
                           child: Text(
-                            event.dateTime,
+                            event.dateTimeLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -626,12 +697,34 @@ class _EventsPageState extends State<EventsPage> {
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            event.location,
+                            '${event.locationName}, ${event.city}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: _softText,
                               fontSize: 11.9,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.pin_drop_outlined,
+                          size: 13,
+                          color: _gold.withOpacity(0.9),
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            event.address,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _softText,
+                              fontSize: 11.2,
                             ),
                           ),
                         ),
@@ -671,7 +764,7 @@ class _EventsPageState extends State<EventsPage> {
                             border: Border.all(color: _gold.withOpacity(0.5)),
                           ),
                           child: Text(
-                            event.ctaLabel,
+                            _ctaCardLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -712,21 +805,34 @@ class _EventsPageState extends State<EventsPage> {
           children: [
             Icon(Icons.map_rounded, color: _gold.withOpacity(0.96), size: 44),
             const SizedBox(height: 12),
-            const Text(
-              'Kaartmodus komt binnenkort',
+            Text(
+              _t(
+                nl: 'Kaartmodus komt binnenkort',
+                en: 'Map mode is coming soon',
+                fr: 'Le mode carte arrive bientôt',
+                es: 'El modo mapa estará disponible pronto',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Kaart- en locatiemodus wordt later gekoppeld. '
-              'Gebruik voorlopig de lijstweergave voor een overzicht.',
+            Text(
+              _t(
+                nl: 'Kaart- en locatiemodus wordt later gekoppeld. Gebruik voorlopig de lijstweergave voor een overzicht.',
+                en: 'Map and location mode will be connected later. For now, use the list view for an overview.',
+                fr: 'Le mode carte et localisation sera connecté plus tard. Utilisez la vue liste en attendant.',
+                es: 'El modo mapa y ubicación se conectará más adelante. Por ahora, usa la vista de lista.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(color: _softText, fontSize: 13, height: 1.35),
+              style: const TextStyle(
+                color: _softText,
+                fontSize: 13,
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 14),
             Container(
@@ -737,7 +843,7 @@ class _EventsPageState extends State<EventsPage> {
                 border: Border.all(color: _gold.withOpacity(0.45)),
               ),
               child: const Text(
-                'Fluxidi Locator Voorbeeld',
+                'Fluxidi Event Locator',
                 style: TextStyle(
                   color: _gold,
                   fontSize: 11.8,
@@ -759,10 +865,15 @@ class _EventsPageState extends State<EventsPage> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _gold.withOpacity(0.24)),
       ),
-      child: const Text(
-        'Geen evenementen gevonden voor je zoekopdracht of filter.',
+      child: Text(
+        _t(
+          nl: 'Geen evenementen gevonden voor je zoekopdracht of filter.',
+          en: 'No events found for your search or filter.',
+          fr: 'Aucun événement trouvé pour votre recherche ou filtre.',
+          es: 'No se encontraron eventos para tu búsqueda o filtro.',
+        ),
         textAlign: TextAlign.center,
-        style: TextStyle(color: _softText, fontSize: 13),
+        style: const TextStyle(color: _softText, fontSize: 13),
       ),
     );
   }

@@ -211,6 +211,7 @@ class CalculatorPage extends StatefulWidget {
     this.onGoToStartPage,
     this.publicPartnerId,
     this.publicPartnerName,
+    this.initialDestinationLabel,
   });
 
   final String
@@ -220,6 +221,7 @@ class CalculatorPage extends StatefulWidget {
   final VoidCallback? onGoToStartPage;
   final String? publicPartnerId;
   final String? publicPartnerName;
+  final String? initialDestinationLabel;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
@@ -729,6 +731,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
+    final initialDestination = (widget.initialDestinationLabel ?? '').trim();
+    if (initialDestination.isNotEmpty) {
+      _toCtrl.text = initialDestination;
+    }
   }
 
   void _onLanguageChanged() {

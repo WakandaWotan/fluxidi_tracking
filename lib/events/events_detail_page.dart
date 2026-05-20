@@ -1,27 +1,51 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+
+typedef EventBookCallback = void Function(EventDetailData event);
 
 class EventDetailData {
   const EventDetailData({
+    required this.id,
     required this.title,
     required this.category,
-    required this.dateTime,
-    required this.location,
+    required this.dateTimeLabel,
+    required this.locationName,
+    required this.city,
+    required this.address,
+    required this.lat,
+    required this.lng,
     required this.distanceOrStatus,
-    required this.ctaLabel,
     required this.gradient,
+    this.visualAssetPath,
+    this.sourceLabel,
   });
 
+  final String id;
   final String title;
   final String category;
-  final String dateTime;
-  final String location;
+  final String dateTimeLabel;
+  final String locationName;
+  final String city;
+  final String address;
+  final double lat;
+  final double lng;
   final String distanceOrStatus;
-  final String ctaLabel;
   final List<Color> gradient;
+  final String? visualAssetPath;
+  final String? sourceLabel;
+
+  String get destinationLabel {
+    final location = locationName.trim();
+    final destination = address.trim();
+    if (location.isEmpty) return destination;
+    if (destination.isEmpty) return location;
+    return '$location, $destination';
+  }
 }
 
 class EventDetailPage extends StatelessWidget {
-  const EventDetailPage({required this.event, super.key});
+  const EventDetailPage({required this.event, this.onBookEvent, super.key});
 
   static const Color _bgBlack = Color(0xFF07080C);
   static const Color _panelBlack = Color(0xFF101010);
@@ -29,36 +53,83 @@ class EventDetailPage extends StatelessWidget {
   static const Color _softText = Color(0xFFB4B4B4);
 
   final EventDetailData event;
+  final EventBookCallback? onBookEvent;
 
-  String get _city {
-    final parts = event.location.split(',');
-    return parts.isEmpty ? event.location : parts.last.trim();
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (appConfig.currentLanguage) {
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.nl:
+        return nl;
+    }
   }
 
   String get _mobiliteitsvraag {
     switch (event.category.toLowerCase()) {
       case 'zakelijk':
-        return 'Hoog in de piekuren, met nadruk op gedeelde ritten.';
+        return _t(
+          nl: 'Hoog in de piekuren, met nadruk op gedeelde ritten.',
+          en: 'High during peak hours, with focus on shared rides.',
+          fr: 'Elevee aux heures de pointe, avec accent sur les trajets partages.',
+          es: 'Alta en horas punta, con enfoque en viajes compartidos.',
+        );
       case 'sport':
-        return 'Middelmatig tot hoog rondom start- en eindmomenten.';
+        return _t(
+          nl: 'Middelmatig tot hoog rondom start- en eindmomenten.',
+          en: 'Medium to high around start and end times.',
+          fr: 'Moyenne a elevee autour des debuts et fins d evenement.',
+          es: 'Media a alta alrededor del inicio y cierre del evento.',
+        );
       case 'muziek':
-        return 'Hoog in de avond, met geconcentreerde uitstroom na afloop.';
+        return _t(
+          nl: 'Hoog in de avond, met geconcentreerde uitstroom na afloop.',
+          en: 'High in the evening, with concentrated outflow afterwards.',
+          fr: 'Elevee en soiree, avec une sortie concentree apres la fin.',
+          es: 'Alta por la noche, con salida concentrada al finalizar.',
+        );
       default:
-        return 'Middelmatig, met gespreide vraag over de dag.';
+        return _t(
+          nl: 'Middelmatig, met gespreide vraag over de dag.',
+          en: 'Medium, with demand spread across the day.',
+          fr: 'Moyenne, avec une demande etalee sur la journee.',
+          es: 'Media, con demanda repartida durante el dia.',
+        );
     }
   }
 
   String get _vervoersmoment {
-    if (event.dateTime.toLowerCase().contains('vandaag')) {
-      return 'Vandaag, operationele monitoring aanbevolen.';
+    if (event.dateTimeLabel.toLowerCase().contains('vandaag')) {
+      return _t(
+        nl: 'Vandaag, operationele monitoring aanbevolen.',
+        en: 'Today, operational monitoring is recommended.',
+        fr: 'Aujourd hui, un suivi operationnel est recommande.',
+        es: 'Hoy se recomienda seguimiento operativo.',
+      );
     }
-    return '${event.dateTime}, capaciteit vooraf reserveren.';
+    return _t(
+      nl: '${event.dateTimeLabel}, capaciteit vooraf reserveren.',
+      en: '${event.dateTimeLabel}, reserve capacity in advance.',
+      fr: '${event.dateTimeLabel}, reserver la capacite a l avance.',
+      es: '${event.dateTimeLabel}, reservar capacidad con antelacion.',
+    );
   }
 
   String get _description {
-    return 'Dit evenement trekt een professioneel publiek en vraagt om '
-        'betrouwbare mobiliteitsplanning. Fluxidi ondersteunt een vlotte '
-        'instroom, gecontroleerde uitstroom en heldere operationele regie.';
+    return _t(
+      nl: 'Dit evenement trekt een professioneel publiek en vraagt om betrouwbare mobiliteitsplanning. Fluxidi ondersteunt een vlotte instroom, gecontroleerde uitstroom en heldere operationele regie.',
+      en: 'This event attracts a professional audience and requires reliable mobility planning. Fluxidi supports smooth arrival flows, controlled departures, and clear operational coordination.',
+      fr: 'Cet evenement attire un public professionnel et demande une planification de mobilite fiable. Fluxidi soutient des arrivees fluides, des departs controles et une coordination operationnelle claire.',
+      es: 'Este evento atrae a un publico profesional y requiere una planificacion de movilidad fiable. Fluxidi apoya llegadas fluidas, salidas controladas y una coordinacion operativa clara.',
+    );
   }
 
   @override
@@ -79,7 +150,7 @@ class EventDetailPage extends StatelessWidget {
                   const SizedBox(height: 12),
                   _buildInfoPanel(),
                   const SizedBox(height: 14),
-                  _buildCtaArea(),
+                  _buildCtaArea(context),
                 ],
               ),
             ),
@@ -98,15 +169,20 @@ class EventDetailPage extends StatelessWidget {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back_rounded),
             color: _gold,
-            tooltip: 'Terug',
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
           ),
           const SizedBox(width: 2),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Evenementdetail',
+              _t(
+                nl: 'Evenementdetail',
+                en: 'Event details',
+                fr: 'Details de l evenement',
+                es: 'Detalle del evento',
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
@@ -221,11 +297,11 @@ class EventDetailPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildMetaRow(Icons.calendar_today_outlined, event.dateTime),
+          _buildMetaRow(Icons.calendar_today_outlined, event.dateTimeLabel),
           const SizedBox(height: 8),
-          _buildMetaRow(Icons.location_on_outlined, event.location),
+          _buildMetaRow(Icons.location_on_outlined, event.locationName),
           const SizedBox(height: 8),
-          _buildMetaRow(Icons.location_city_rounded, _city),
+          _buildMetaRow(Icons.pin_drop_outlined, event.address),
           const SizedBox(height: 10),
           const Divider(color: Color(0x33E5B641), height: 1),
           const SizedBox(height: 10),
@@ -253,17 +329,65 @@ class EventDetailPage extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _buildInfoRow('Evenementlocatie', event.location),
+          _buildInfoRow(
+            _t(
+              nl: 'Evenementlocatie',
+              en: 'Event venue',
+              fr: 'Lieu de l evenement',
+              es: 'Lugar del evento',
+            ),
+            '${event.locationName}, ${event.city}',
+          ),
           const SizedBox(height: 10),
-          _buildInfoRow('Verwachte mobiliteitsvraag', _mobiliteitsvraag),
+          _buildInfoRow(
+            _t(nl: 'Adres', en: 'Address', fr: 'Adresse', es: 'Direccion'),
+            event.address,
+          ),
           const SizedBox(height: 10),
-          _buildInfoRow('Vervoersmoment', _vervoersmoment),
+          _buildInfoRow(
+            _t(
+              nl: 'Verwachte mobiliteitsvraag',
+              en: 'Expected mobility demand',
+              fr: 'Demande de mobilite attendue',
+              es: 'Demanda de movilidad esperada',
+            ),
+            _mobiliteitsvraag,
+          ),
+          const SizedBox(height: 10),
+          _buildInfoRow(
+            _t(
+              nl: 'Vervoersmoment',
+              en: 'Transport timing',
+              fr: 'Moment du transport',
+              es: 'Momento del transporte',
+            ),
+            _vervoersmoment,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildCtaArea() {
+  void _onBookPressed(BuildContext context) {
+    if (onBookEvent != null) {
+      onBookEvent!.call(event);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Boekingsflow wordt hier gekoppeld in de volgende stap.',
+            en: 'Booking flow will be connected here in the next step.',
+            fr: 'Le flux de reservation sera connecte ici a l etape suivante.',
+            es: 'El flujo de reserva se conectara aqui en el siguiente paso.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCtaArea(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -276,20 +400,25 @@ class EventDetailPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () {},
+              onPressed: () => _onBookPressed(context),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _gold,
                 foregroundColor: Colors.black,
                 elevation: 0,
-                minimumSize: const Size.fromHeight(46),
+                minimumSize: const Size.fromHeight(52),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               icon: const Icon(Icons.local_taxi_rounded, size: 18),
-              label: const Text(
-                'Rit plannen',
-                style: TextStyle(fontWeight: FontWeight.w800),
+              label: Text(
+                _t(
+                  nl: 'Taxi naar dit event boeken',
+                  en: 'Book a taxi to this event',
+                  fr: 'Reserver un taxi vers cet evenement',
+                  es: 'Reservar un taxi a este evento',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -301,15 +430,20 @@ class EventDetailPage extends StatelessWidget {
               style: OutlinedButton.styleFrom(
                 foregroundColor: _gold,
                 side: BorderSide(color: _gold.withOpacity(0.6)),
-                minimumSize: const Size.fromHeight(44),
+                minimumSize: const Size.fromHeight(46),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               icon: const Icon(Icons.bookmark_border_rounded, size: 18),
-              label: const Text(
-                'Details opslaan',
-                style: TextStyle(fontWeight: FontWeight.w700),
+              label: Text(
+                _t(
+                  nl: 'Details opslaan',
+                  en: 'Save details',
+                  fr: 'Enregistrer les details',
+                  es: 'Guardar detalles',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ),
