@@ -1,4 +1,5 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -10,6 +11,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -2352,6 +2354,69 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return parsed;
   }
 
+  bool _isBelgianPostcodeLike(String value) {
+    return RegExp(r'^\d{4}$').hasMatch(value.trim());
+  }
+
+  String _radiusCenterResolveQuery(String zoneLabel) {
+    final normalized = zoneLabel.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return '';
+    if (_isBelgianPostcodeLike(normalized)) {
+      return '$normalized Belgium';
+    }
+    return normalized;
+  }
+
+  Future<Map<String, double>?> _resolveRadiusCenterCoordinates(
+    String zoneLabel,
+  ) async {
+    final token = kMapboxToken.trim();
+    if (token.isEmpty) return null;
+    final query = _radiusCenterResolveQuery(zoneLabel);
+    if (query.isEmpty) return null;
+    try {
+      final uri = Uri.parse(
+        'https://api.mapbox.com/geocoding/v5/mapbox.places/'
+        '${Uri.encodeComponent(query)}.json'
+        '?access_token=${Uri.encodeComponent(token)}'
+        '&autocomplete=true'
+        '&limit=1'
+        '&types=postcode,address,place,locality,district',
+      );
+      final response = await http.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final features = decoded['features'];
+      if (features is! List || features.isEmpty) return null;
+      final first = features.first;
+      if (first is! Map) return null;
+      final center = first['center'];
+      if (center is! List || center.length < 2) return null;
+      final lngRaw = center[0];
+      final latRaw = center[1];
+      final lat = latRaw is num
+          ? latRaw.toDouble()
+          : double.tryParse('$latRaw');
+      final lng = lngRaw is num
+          ? lngRaw.toDouble()
+          : double.tryParse('$lngRaw');
+      if (lat == null ||
+          lng == null ||
+          !lat.isFinite ||
+          !lng.isFinite ||
+          lat < -90 ||
+          lat > 90 ||
+          lng < -180 ||
+          lng > 180) {
+        return null;
+      }
+      return <String, double>{'lat': lat, 'lng': lng};
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _save() async {
     if (_saveAllBusy) return;
     final current = businessSettingsNotifier.value;
@@ -3705,6 +3770,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       tier = _airportFixedFareTiers.first;
     }
     var showAdvancedRadiusCoordinates = false;
+    var isResolvingRadiusCenter = false;
+    String? radiusCenterResolveStatus;
     String? airportError;
     String? zoneError;
     String? radiusError;
@@ -3953,10 +4020,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                     const SizedBox(height: 2),
                                     Text(
                                       _t(
-                                        nl: 'Gebruik een plaats, postcode of adres als middelpunt van deze zone.',
-                                        en: 'Use a place, postcode, or address as the center of this zone.',
-                                        fr: 'Utilisez un lieu, code postal ou adresse comme centre de cette zone.',
-                                        es: 'Usa una ciudad, codigo postal o direccion como centro de esta zona.',
+                                        nl: 'Bijvoorbeeld: 9688, Ronse, Maarkedal of een volledig adres.',
+                                        en: 'For example: 9688, Ronse, Maarkedal, or a full address.',
+                                        fr: 'Par exemple: 9688, Ronse, Maarkedal ou une adresse complete.',
+                                        es: 'Por ejemplo: 9688, Ronse, Maarkedal o una direccion completa.',
                                       ),
                                       style: TextStyle(
                                         color: Colors.white.withOpacity(0.72),
@@ -3964,6 +4031,47 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                         height: 1.3,
                                       ),
                                     ),
+                                    if (isResolvingRadiusCenter) ...[
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          const SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              _t(
+                                                nl: 'Locatiecentrum wordt opgezocht...',
+                                                en: 'Resolving center location...',
+                                                fr: 'Recherche du centre de zone...',
+                                                es: 'Buscando el centro de la zona...',
+                                              ),
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(
+                                                  0.78,
+                                                ),
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ] else if (radiusCenterResolveStatus !=
+                                        null) ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        radiusCenterResolveStatus!,
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.65),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 10),
                                     DropdownButtonFormField<String>(
                                       isExpanded: true,
@@ -4200,194 +4308,254 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: FilledButton(
-                                  onPressed: () {
-                                    FocusScope.of(dialogContext).unfocus();
-                                    setDialogState(() {
-                                      airportError = null;
-                                      zoneError = null;
-                                      radiusError = null;
-                                      priceError = null;
-                                    });
+                                  onPressed: isResolvingRadiusCenter
+                                      ? null
+                                      : () async {
+                                          FocusScope.of(
+                                            dialogContext,
+                                          ).unfocus();
+                                          setDialogState(() {
+                                            airportError = null;
+                                            zoneError = null;
+                                            radiusError = null;
+                                            priceError = null;
+                                            radiusCenterResolveStatus = null;
+                                          });
 
-                                    final zoneValue = zoneValueCtrl.text.trim();
-                                    final zoneLabel = zoneLabelCtrl.text.trim();
-                                    final zoneCenterLat = double.tryParse(
-                                      zoneCenterLatCtrl.text.trim().replaceAll(
-                                        ',',
-                                        '.',
-                                      ),
-                                    );
-                                    final zoneCenterLng = double.tryParse(
-                                      zoneCenterLngCtrl.text.trim().replaceAll(
-                                        ',',
-                                        '.',
-                                      ),
-                                    );
-                                    final radiusKm = radiusPreset == 'custom'
-                                        ? double.tryParse(
-                                            radiusKmCtrl.text.trim().replaceAll(
+                                          final zoneValue = zoneValueCtrl.text
+                                              .trim();
+                                          final zoneLabel = zoneLabelCtrl.text
+                                              .trim();
+                                          var zoneCenterLat = double.tryParse(
+                                            zoneCenterLatCtrl.text
+                                                .trim()
+                                                .replaceAll(',', '.'),
+                                          );
+                                          var zoneCenterLng = double.tryParse(
+                                            zoneCenterLngCtrl.text
+                                                .trim()
+                                                .replaceAll(',', '.'),
+                                          );
+                                          final radiusKm =
+                                              radiusPreset == 'custom'
+                                              ? double.tryParse(
+                                                  radiusKmCtrl.text
+                                                      .trim()
+                                                      .replaceAll(',', '.'),
+                                                )
+                                              : double.tryParse(radiusPreset);
+                                          final price = double.tryParse(
+                                            priceCtrl.text.trim().replaceAll(
                                               ',',
                                               '.',
                                             ),
-                                          )
-                                        : double.tryParse(radiusPreset);
-                                    final price = double.tryParse(
-                                      priceCtrl.text.trim().replaceAll(
-                                        ',',
-                                        '.',
-                                      ),
-                                    );
-                                    if (selectedAirportIata.trim().isEmpty) {
-                                      setDialogState(() {
-                                        airportError = _t(
-                                          nl: 'Kies een luchthaven.',
-                                          en: 'Choose an airport.',
-                                          fr: 'Choisissez un aeroport.',
-                                          es: 'Elige un aeropuerto.',
-                                        );
-                                      });
-                                      return;
-                                    }
-                                    if (zoneType != 'radius' &&
-                                        zoneValue.isEmpty) {
-                                      setDialogState(() {
-                                        zoneError = _t(
-                                          nl: 'Vul een zonewaarde in.',
-                                          en: 'Enter a zone value.',
-                                          fr: 'Saisissez une valeur de zone.',
-                                          es: 'Introduce un valor de zona.',
-                                        );
-                                      });
-                                      return;
-                                    }
-                                    if (zoneType == 'radius') {
-                                      if (zoneLabel.isEmpty) {
-                                        setDialogState(() {
-                                          radiusError = _t(
-                                            nl: 'Vul een locatiecentrum in.',
-                                            en: 'Enter a centre location.',
-                                            fr: 'Saisissez un centre de zone.',
-                                            es: 'Introduce el centro de la zona.',
                                           );
-                                        });
-                                        return;
-                                      }
-                                      if (zoneCenterLat == null ||
-                                          !zoneCenterLat.isFinite ||
-                                          zoneCenterLat < -90 ||
-                                          zoneCenterLat > 90 ||
-                                          zoneCenterLng == null ||
-                                          !zoneCenterLng.isFinite ||
-                                          zoneCenterLng < -180 ||
-                                          zoneCenterLng > 180) {
-                                        setDialogState(() {
-                                          showAdvancedRadiusCoordinates = true;
-                                          radiusError = _t(
-                                            nl: 'Vul geldige centrumcoördinaten in.',
-                                            en: 'Enter valid centre coordinates.',
-                                            fr: 'Saisissez des coordonnees valides du centre.',
-                                            es: 'Introduce coordenadas validas del centro.',
-                                          );
-                                        });
-                                        return;
-                                      }
-                                      if (radiusKm == null ||
-                                          !radiusKm.isFinite ||
-                                          radiusKm < 1 ||
-                                          radiusKm > 100) {
-                                        setDialogState(() {
-                                          radiusError = _t(
-                                            nl: 'Vul een geldige radius in (1-100 km).',
-                                            en: 'Enter a valid radius (1-100 km).',
-                                            fr: 'Saisissez un rayon valide (1-100 km).',
-                                            es: 'Introduce un radio valido (1-100 km).',
-                                          );
-                                        });
-                                        return;
-                                      }
-                                    }
-                                    if (price == null ||
-                                        !price.isFinite ||
-                                        price <= 0) {
-                                      setDialogState(() {
-                                        priceError = _t(
-                                          nl: 'Vul een geldige prijs in.',
-                                          en: 'Enter a valid price.',
-                                          fr: 'Saisissez un prix valide.',
-                                          es: 'Introduce un precio valido.',
-                                        );
-                                      });
-                                      return;
-                                    }
-                                    final selectedAirport =
-                                        _airportCatalogByIata(
-                                          selectedAirportIata,
-                                        );
-                                    final airportIata = selectedAirportIata
-                                        .trim()
-                                        .toUpperCase();
-                                    final normalizedCurrency =
-                                        _airportFixedFareCurrencies.contains(
-                                          selectedCurrency,
-                                        )
-                                        ? selectedCurrency
-                                        : 'EUR';
-                                    final ruleId =
-                                        _airportRuleText(
-                                          existing?['rule_id'],
-                                        ).isEmpty
-                                        ? _nextAirportFixedFareRuleId(
-                                            airportIata,
-                                            direction,
-                                          )
-                                        : _airportRuleText(
-                                            existing?['rule_id'],
-                                          );
-                                    Navigator.of(
-                                      dialogContext,
-                                    ).pop(<String, dynamic>{
-                                      'rule_id': ruleId,
-                                      'enabled': enabled,
-                                      'priority': _airportRuleInt(
-                                        existing?['priority'],
-                                        fallback: 0,
-                                      ),
-                                      'airport_iata': airportIata,
-                                      'direction': direction,
-                                      'zone_type': zoneType,
-                                      if (zoneType != 'radius')
-                                        'zone_value': zoneValue,
-                                      if (zoneType == 'radius')
-                                        'zone_label': zoneLabel,
-                                      if (zoneType == 'radius')
-                                        'zone_center_lat': zoneCenterLat,
-                                      if (zoneType == 'radius')
-                                        'zone_center_lng': zoneCenterLng,
-                                      if (zoneType == 'radius')
-                                        'radius_km': radiusKm,
-                                      'tier': tier,
-                                      'price_incl_vat': price,
-                                      'currency': normalizedCurrency,
-                                      'airport_name': _airportRuleText(
-                                        selectedAirport?['airport_name'],
-                                      ),
-                                      'airport_country': _airportRuleText(
-                                        selectedAirport?['country_name'],
-                                      ),
-                                      'pax_min': _airportRuleInt(
-                                        existing?['pax_min'],
-                                        fallback: 1,
-                                      ),
-                                      'pax_max': _airportRuleInt(
-                                        existing?['pax_max'],
-                                        fallback: 99,
-                                      ),
-                                      'bags_max': _airportRuleInt(
-                                        existing?['bags_max'],
-                                        fallback: 99,
-                                      ),
-                                    });
-                                  },
+                                          if (selectedAirportIata
+                                              .trim()
+                                              .isEmpty) {
+                                            setDialogState(() {
+                                              airportError = _t(
+                                                nl: 'Kies een luchthaven.',
+                                                en: 'Choose an airport.',
+                                                fr: 'Choisissez un aeroport.',
+                                                es: 'Elige un aeropuerto.',
+                                              );
+                                            });
+                                            return;
+                                          }
+                                          if (zoneType != 'radius' &&
+                                              zoneValue.isEmpty) {
+                                            setDialogState(() {
+                                              zoneError = _t(
+                                                nl: 'Vul een zonewaarde in.',
+                                                en: 'Enter a zone value.',
+                                                fr: 'Saisissez une valeur de zone.',
+                                                es: 'Introduce un valor de zona.',
+                                              );
+                                            });
+                                            return;
+                                          }
+                                          if (zoneType == 'radius') {
+                                            if (zoneLabel.isEmpty) {
+                                              setDialogState(() {
+                                                radiusError = _t(
+                                                  nl: 'Vul een locatiecentrum in.',
+                                                  en: 'Enter a centre location.',
+                                                  fr: 'Saisissez un centre de zone.',
+                                                  es: 'Introduce el centro de la zona.',
+                                                );
+                                              });
+                                              return;
+                                            }
+                                            final hasValidCoords =
+                                                zoneCenterLat != null &&
+                                                zoneCenterLat.isFinite &&
+                                                zoneCenterLat >= -90 &&
+                                                zoneCenterLat <= 90 &&
+                                                zoneCenterLng != null &&
+                                                zoneCenterLng.isFinite &&
+                                                zoneCenterLng >= -180 &&
+                                                zoneCenterLng <= 180;
+                                            if (!hasValidCoords) {
+                                              setDialogState(() {
+                                                isResolvingRadiusCenter = true;
+                                              });
+                                              final resolvedCoords =
+                                                  await _resolveRadiusCenterCoordinates(
+                                                    zoneLabel,
+                                                  );
+                                              if (!dialogContext.mounted)
+                                                return;
+                                              if (resolvedCoords == null) {
+                                                setDialogState(() {
+                                                  isResolvingRadiusCenter =
+                                                      false;
+                                                  showAdvancedRadiusCoordinates =
+                                                      true;
+                                                  radiusError = _t(
+                                                    nl: 'Locatiecentrum niet gevonden. Controleer de postcode, stad of vul coördinaten handmatig in.',
+                                                    en: 'Center location not found. Check the postcode/city or enter coordinates manually.',
+                                                    fr: 'Centre introuvable. Verifiez le code postal/la ville ou saisissez les coordonnees manuellement.',
+                                                    es: 'No se encontro el centro. Comprueba el codigo postal/ciudad o introduce coordenadas manualmente.',
+                                                  );
+                                                });
+                                                return;
+                                              }
+                                              zoneCenterLat =
+                                                  resolvedCoords['lat'];
+                                              zoneCenterLng =
+                                                  resolvedCoords['lng'];
+                                              zoneCenterLatCtrl.text =
+                                                  zoneCenterLat!
+                                                      .toStringAsFixed(6);
+                                              zoneCenterLngCtrl.text =
+                                                  zoneCenterLng!
+                                                      .toStringAsFixed(6);
+                                              setDialogState(() {
+                                                isResolvingRadiusCenter = false;
+                                                radiusCenterResolveStatus = _t(
+                                                  nl: 'Centrum gevonden.',
+                                                  en: 'Center found.',
+                                                  fr: 'Centre trouve.',
+                                                  es: 'Centro encontrado.',
+                                                );
+                                              });
+                                            }
+                                            if (!zoneCenterLat.isFinite ||
+                                                zoneCenterLat < -90 ||
+                                                zoneCenterLat > 90 ||
+                                                !zoneCenterLng.isFinite ||
+                                                zoneCenterLng < -180 ||
+                                                zoneCenterLng > 180) {
+                                              setDialogState(() {
+                                                showAdvancedRadiusCoordinates =
+                                                    true;
+                                                radiusError = _t(
+                                                  nl: 'Vul geldige centrumcoördinaten in.',
+                                                  en: 'Enter valid centre coordinates.',
+                                                  fr: 'Saisissez des coordonnees valides du centre.',
+                                                  es: 'Introduce coordenadas validas del centro.',
+                                                );
+                                              });
+                                              return;
+                                            }
+                                            if (radiusKm == null ||
+                                                !radiusKm.isFinite ||
+                                                radiusKm < 1 ||
+                                                radiusKm > 100) {
+                                              setDialogState(() {
+                                                radiusError = _t(
+                                                  nl: 'Vul een geldige radius in (1-100 km).',
+                                                  en: 'Enter a valid radius (1-100 km).',
+                                                  fr: 'Saisissez un rayon valide (1-100 km).',
+                                                  es: 'Introduce un radio valido (1-100 km).',
+                                                );
+                                              });
+                                              return;
+                                            }
+                                          }
+                                          if (price == null ||
+                                              !price.isFinite ||
+                                              price <= 0) {
+                                            setDialogState(() {
+                                              priceError = _t(
+                                                nl: 'Vul een geldige prijs in.',
+                                                en: 'Enter a valid price.',
+                                                fr: 'Saisissez un prix valide.',
+                                                es: 'Introduce un precio valido.',
+                                              );
+                                            });
+                                            return;
+                                          }
+                                          final selectedAirport =
+                                              _airportCatalogByIata(
+                                                selectedAirportIata,
+                                              );
+                                          final airportIata =
+                                              selectedAirportIata
+                                                  .trim()
+                                                  .toUpperCase();
+                                          final normalizedCurrency =
+                                              _airportFixedFareCurrencies
+                                                  .contains(selectedCurrency)
+                                              ? selectedCurrency
+                                              : 'EUR';
+                                          final ruleId =
+                                              _airportRuleText(
+                                                existing?['rule_id'],
+                                              ).isEmpty
+                                              ? _nextAirportFixedFareRuleId(
+                                                  airportIata,
+                                                  direction,
+                                                )
+                                              : _airportRuleText(
+                                                  existing?['rule_id'],
+                                                );
+                                          Navigator.of(
+                                            dialogContext,
+                                          ).pop(<String, dynamic>{
+                                            'rule_id': ruleId,
+                                            'enabled': enabled,
+                                            'priority': _airportRuleInt(
+                                              existing?['priority'],
+                                              fallback: 0,
+                                            ),
+                                            'airport_iata': airportIata,
+                                            'direction': direction,
+                                            'zone_type': zoneType,
+                                            if (zoneType != 'radius')
+                                              'zone_value': zoneValue,
+                                            if (zoneType == 'radius')
+                                              'zone_label': zoneLabel,
+                                            if (zoneType == 'radius')
+                                              'zone_center_lat': zoneCenterLat,
+                                            if (zoneType == 'radius')
+                                              'zone_center_lng': zoneCenterLng,
+                                            if (zoneType == 'radius')
+                                              'radius_km': radiusKm,
+                                            'tier': tier,
+                                            'price_incl_vat': price,
+                                            'currency': normalizedCurrency,
+                                            'airport_name': _airportRuleText(
+                                              selectedAirport?['airport_name'],
+                                            ),
+                                            'airport_country': _airportRuleText(
+                                              selectedAirport?['country_name'],
+                                            ),
+                                            'pax_min': _airportRuleInt(
+                                              existing?['pax_min'],
+                                              fallback: 1,
+                                            ),
+                                            'pax_max': _airportRuleInt(
+                                              existing?['pax_max'],
+                                              fallback: 99,
+                                            ),
+                                            'bags_max': _airportRuleInt(
+                                              existing?['bags_max'],
+                                              fallback: 99,
+                                            ),
+                                          });
+                                        },
                                   child: Text(
                                     _t(
                                       nl: 'Toepassen',
