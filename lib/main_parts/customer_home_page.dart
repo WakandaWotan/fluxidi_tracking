@@ -398,18 +398,6 @@ class CustomerHomePage extends StatelessWidget {
         ),
       ),
       (
-        icon: Icons.celebration_outlined,
-        label: _t(
-          nl: 'Evenementen',
-          en: 'Events',
-          fr: 'Événements',
-          es: 'Eventos',
-        ),
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const EventsPage())),
-      ),
-      (
         icon: Icons.person_outline_rounded,
         label: _t(
           nl: 'Mijn gegevens',
