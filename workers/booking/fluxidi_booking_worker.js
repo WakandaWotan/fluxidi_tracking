@@ -25756,8 +25756,12 @@ function _fixedFareNormalizeZoneValue(zoneType, value) {
   if (zoneType === "city") {
     return raw.toLowerCase();
   }
+  return raw;
+}
 
 function _fixedFareFiniteNumberOrNull(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -25771,8 +25775,6 @@ function _fixedFareHaversineKm(lat1, lng1, lat2, lng2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return 6371 * c;
-}
-  return raw;
 }
 
 function _fixedFareIntOr(rawValue, fallback, min = 0, max = 9999) {
