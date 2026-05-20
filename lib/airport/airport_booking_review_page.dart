@@ -540,6 +540,20 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final flightNumber = _fallback(payload['flight_number'], empty: '');
     final nameBoard = _fallback(payload['name_board'], empty: '');
     final note = _fallback(payload['note'], empty: '');
+    final selectedCompanyLabel = _firstNonEmptyText([
+      payload['public_partner_name'],
+      payload['publicPartnerName'],
+      payload['selected_company_name'],
+      payload['selectedCompanyName'],
+      payload['company_name'],
+      payload['companyName'],
+      payload['company_code'],
+      payload['companyCode'],
+      payload['partner_id'],
+      payload['partnerId'],
+      payload['company_id'],
+      payload['companyId'],
+    ]);
 
     return Scaffold(
       backgroundColor: _bg,
@@ -586,6 +600,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                 ),
                 const SizedBox(height: 9),
+                if (selectedCompanyLabel.isNotEmpty)
+                  _summaryRow(
+                    _t(
+                      nl: 'Boeking bij',
+                      en: 'Booking with',
+                      fr: 'Réservation chez',
+                      es: 'Reserva con',
+                    ),
+                    selectedCompanyLabel,
+                  ),
                 _summaryRow(
                   _t(
                     nl: 'Luchthaven',

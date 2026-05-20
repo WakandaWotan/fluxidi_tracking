@@ -121,6 +121,77 @@ class CustomerHomePage extends StatelessWidget {
     }
   }
 
+  String _partnerSelectionValue(Map<String, String>? map, String key) {
+    if (map == null) return '';
+    return (map[key] ?? '').trim();
+  }
+
+  Future<void> _openAirportFlow(BuildContext context) async {
+    final selected = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => NearbyPartnersPage(
+          customerHomeBuilder: (_) => const CustomerHomePage(),
+          regionRegistrationBuilder: (_) =>
+              const CustomerRegionRegistrationPage(),
+          syncCustomerProfileFromBackend:
+              _syncCustomerProfileFromBackendBestEffort,
+          selectionMode: true,
+        ),
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    final tenantId = _partnerSelectionValue(selected, 'tenant_id');
+    final companyId = _partnerSelectionValue(selected, 'company_id');
+    final companyName = _partnerSelectionValue(selected, 'company_name');
+    final companyCode = _partnerSelectionValue(selected, 'company_code');
+    final partnerId = _partnerSelectionValue(selected, 'partner_id');
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kies eerst een taxipartner.',
+              en: 'Select a taxi partner first.',
+              fr: "Sélectionnez d'abord un partenaire taxi.",
+              es: 'Selecciona primero un socio de taxi.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AirportPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          selectedTenantId: tenantId,
+          selectedCompanyId: companyId,
+          selectedCompanyName: companyName,
+          selectedCompanyCode: companyCode,
+          selectedPartnerId: partnerId,
+          allowPartnerChange: true,
+          onChangePartnerRequested: (selectorContext) async {
+            return await Navigator.of(
+              selectorContext,
+            ).push<Map<String, String>>(
+              MaterialPageRoute(
+                builder: (_) => NearbyPartnersPage(
+                  customerHomeBuilder: (_) => const CustomerHomePage(),
+                  regionRegistrationBuilder: (_) =>
+                      const CustomerRegionRegistrationPage(),
+                  syncCustomerProfileFromBackend:
+                      _syncCustomerProfileFromBackendBestEffort,
+                  selectionMode: true,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _customerHomeHero(
     BuildContext context, {
     required String heroAsset,
@@ -383,11 +454,7 @@ class CustomerHomePage extends StatelessWidget {
             fr: 'Trajets aéroport',
             es: 'Traslados aeropuerto',
           ),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AirportPage(bookingBaseUrl: kBookingBaseUrl),
-            ),
-          ),
+          onTap: () => _openAirportFlow(context),
         ),
         (
           icon: Icons.hotel_rounded,
@@ -780,13 +847,7 @@ class CustomerHomePage extends StatelessWidget {
                             visualHeight: customerWideCardHeight,
                             visualAlignment: const Alignment(-0.35, -0.15),
                             visualOverlayOpacityMultiplier: 0.82,
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => AirportPage(
-                                  bookingBaseUrl: kBookingBaseUrl,
-                                ),
-                              ),
-                            ),
+                            onTap: () => _openAirportFlow(context),
                           ),
                           _customerWideCard(
                             context: context,
@@ -870,12 +931,7 @@ class CustomerHomePage extends StatelessWidget {
                         visualOverlayOpacityMultiplier: isTabletPortrait
                             ? 0.82
                             : 1.0,
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                AirportPage(bookingBaseUrl: kBookingBaseUrl),
-                          ),
-                        ),
+                        onTap: () => _openAirportFlow(context),
                       ),
                       const SizedBox(height: 10),
                       _customerWideCard(

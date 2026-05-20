@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'app_config.dart';
 import 'app_strings.dart';
+import 'airport/airport_page.dart';
 import 'calculator_page.dart';
 import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
@@ -262,6 +263,23 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           },
           publicPartnerId: partnerId,
           publicPartnerName: companyName,
+        ),
+      ),
+    );
+  }
+
+  void _openPartnerAirportBooking({required String companyName}) {
+    final partnerId = widget.partnerId.trim();
+    if (partnerId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AirportPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          selectedTenantId: partnerId,
+          selectedCompanyId: partnerId,
+          selectedCompanyCode: partnerId,
+          selectedCompanyName: companyName,
+          selectedPartnerId: partnerId,
         ),
       ),
     );
@@ -1063,27 +1081,62 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         bottomNavigationBar: !_loading && _error == null && hasBookCta
             ? SafeArea(
                 minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-                child: FilledButton.icon(
-                  onPressed: () =>
-                      _openPartnerBooking(companyName: companyName),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _gold,
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () =>
+                            _openPartnerBooking(companyName: companyName),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _gold,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.local_taxi_outlined, size: 19),
+                        label: Text(
+                          _t(
+                            nl: 'Boek rit',
+                            en: 'Book ride',
+                            fr: 'Réserver une course',
+                            es: 'Reservar viaje',
+                          ),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  icon: const Icon(Icons.local_taxi_outlined, size: 19),
-                  label: Text(
-                    _t(
-                      nl: 'Boek rit',
-                      en: 'Book ride',
-                      fr: 'Réserver une course',
-                      es: 'Reservar viaje',
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _openPartnerAirportBooking(
+                          companyName: companyName,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _gold.withOpacity(0.98),
+                          side: BorderSide(color: _gold.withOpacity(0.38)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(
+                          Icons.flight_takeoff_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _t(
+                            nl: 'Luchthaven',
+                            en: 'Airport',
+                            fr: 'Aéroport',
+                            es: 'Aeropuerto',
+                          ),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
                     ),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
+                  ],
                 ),
               )
             : null,
@@ -1325,32 +1378,74 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                     ),
                     const SizedBox(height: 8),
                     if (hasBookCta)
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: () =>
-                              _openPartnerBooking(companyName: companyName),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _gold,
-                            foregroundColor: Colors.black,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: () =>
+                                  _openPartnerBooking(companyName: companyName),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _gold,
+                                foregroundColor: Colors.black,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.local_taxi_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                _t(
+                                  nl: 'Boek rit bij deze partner',
+                                  en: 'Book a ride with this partner',
+                                  fr: 'Réserver une course avec ce partenaire',
+                                  es: 'Reservar un viaje con este socio',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
                           ),
-                          icon: const Icon(Icons.local_taxi_outlined, size: 18),
-                          label: Text(
-                            _t(
-                              nl: 'Boek rit bij deze partner',
-                              en: 'Book a ride with this partner',
-                              fr: 'Réserver une course avec ce partenaire',
-                              es: 'Reservar un viaje con este socio',
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _openPartnerAirportBooking(
+                              companyName: companyName,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _gold.withOpacity(0.98),
+                              side: BorderSide(color: _gold.withOpacity(0.36)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 13,
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.flight_takeoff_rounded,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _t(
+                                nl: 'Luchthaven',
+                                en: 'Airport',
+                                fr: 'Aéroport',
+                                es: 'Aeropuerto',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     const SizedBox(height: 9),
                     _section(

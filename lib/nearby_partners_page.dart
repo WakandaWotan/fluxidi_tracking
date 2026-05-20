@@ -18,12 +18,14 @@ class NearbyPartnersPage extends StatefulWidget {
   final WidgetBuilder customerHomeBuilder;
   final WidgetBuilder regionRegistrationBuilder;
   final CustomerProfileBackendSync syncCustomerProfileFromBackend;
+  final bool selectionMode;
 
   const NearbyPartnersPage({
     super.key,
     required this.customerHomeBuilder,
     required this.regionRegistrationBuilder,
     required this.syncCustomerProfileFromBackend,
+    this.selectionMode = false,
   });
 
   @override
@@ -497,6 +499,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   void _openPartnerBooking(Map<String, dynamic> p) {
+    if (widget.selectionMode) {
+      _selectAirportPartner(p);
+      return;
+    }
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     if (partnerId.isEmpty) return;
     final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
@@ -517,6 +523,31 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         ),
       ),
     );
+  }
+
+  Map<String, String>? _partnerSelectionResult(Map<String, dynamic> p) {
+    final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    if (partnerId.isEmpty) return null;
+    final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
+    final companyCode = _mapTextAny(p, const [
+      'public_company_code',
+      'publicCompanyCode',
+      'company_code',
+      'companyCode',
+    ]);
+    return <String, String>{
+      'partner_id': partnerId,
+      'tenant_id': partnerId,
+      'company_id': partnerId,
+      'company_name': companyName,
+      'company_code': companyCode.isNotEmpty ? companyCode : partnerId,
+    };
+  }
+
+  void _selectAirportPartner(Map<String, dynamic> partner) {
+    final result = _partnerSelectionResult(partner);
+    if (result == null) return;
+    Navigator.of(context).pop<Map<String, String>>(result);
   }
 
   Widget _partnerCard(Map<String, dynamic> p) {
@@ -756,10 +787,18 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         ),
                         child: Text(
                           _t(
-                            nl: 'Boek rit',
-                            en: 'Book ride',
-                            fr: 'Réserver un trajet',
-                            es: 'Reservar viaje',
+                            nl: widget.selectionMode
+                                ? 'Selecteer partner'
+                                : 'Boek rit',
+                            en: widget.selectionMode
+                                ? 'Select partner'
+                                : 'Book ride',
+                            fr: widget.selectionMode
+                                ? 'Choisir partenaire'
+                                : 'Réserver un trajet',
+                            es: widget.selectionMode
+                                ? 'Seleccionar socio'
+                                : 'Reservar viaje',
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -933,10 +972,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     ),
                     child: Text(
                       _t(
-                        nl: 'Boek rit',
-                        en: 'Book ride',
-                        fr: 'Réserver',
-                        es: 'Reservar',
+                        nl: widget.selectionMode ? 'Selecteer' : 'Boek rit',
+                        en: widget.selectionMode ? 'Select' : 'Book ride',
+                        fr: widget.selectionMode ? 'Choisir' : 'Réserver',
+                        es: widget.selectionMode ? 'Seleccionar' : 'Reservar',
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1063,12 +1102,19 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         appBar: AppBar(
           backgroundColor: _bg,
           title: Text(
-            _t(
-              nl: "Taxi's in de buurt",
-              en: 'Taxis nearby',
-              fr: 'Taxis à proximité',
-              es: 'Taxis cercanos',
-            ),
+            widget.selectionMode
+                ? _t(
+                    nl: 'Kies taxipartner',
+                    en: 'Choose taxi partner',
+                    fr: 'Choisir un partenaire taxi',
+                    es: 'Elige socio de taxi',
+                  )
+                : _t(
+                    nl: "Taxi's in de buurt",
+                    en: 'Taxis nearby',
+                    fr: 'Taxis à proximité',
+                    es: 'Taxis cercanos',
+                  ),
           ),
         ),
         body: SafeArea(

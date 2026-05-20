@@ -10,6 +10,9 @@ import 'package:http/http.dart' as http;
 
 enum _TransferMode { toAirport, fromAirport }
 
+typedef AirportPartnerSelectionCallback =
+    Future<Map<String, String>?> Function(BuildContext context);
+
 class _AirportOption {
   const _AirportOption({
     required this.id,
@@ -35,9 +38,28 @@ class _AirportOption {
 }
 
 class AirportPage extends StatefulWidget {
-  const AirportPage({super.key, required this.bookingBaseUrl});
+  const AirportPage({
+    super.key,
+    required this.bookingBaseUrl,
+    this.selectedTenantId,
+    this.selectedCompanyId,
+    this.selectedCompanyCode,
+    this.selectedCompanyName,
+    this.selectedPartnerId,
+    this.allowPartnerChange = false,
+    this.onChangePartnerRequested,
+    this.allowAdminScopeFallback = false,
+  });
 
   final String bookingBaseUrl;
+  final String? selectedTenantId;
+  final String? selectedCompanyId;
+  final String? selectedCompanyCode;
+  final String? selectedCompanyName;
+  final String? selectedPartnerId;
+  final bool allowPartnerChange;
+  final AirportPartnerSelectionCallback? onChangePartnerRequested;
+  final bool allowAdminScopeFallback;
 
   @override
   State<AirportPage> createState() => _AirportPageState();
@@ -678,6 +700,11 @@ class _AirportPageState extends State<AirportPage> {
   @override
   void initState() {
     super.initState();
+    _selectedTenantId = _safeText(widget.selectedTenantId);
+    _selectedCompanyId = _safeText(widget.selectedCompanyId);
+    _selectedCompanyCode = _safeText(widget.selectedCompanyCode);
+    _selectedCompanyName = _safeText(widget.selectedCompanyName);
+    _selectedPartnerId = _safeText(widget.selectedPartnerId);
     if (_filteredAirports.every(
       (airport) => airport.id != _selectedAirportId,
     )) {
@@ -703,6 +730,23 @@ class _AirportPageState extends State<AirportPage> {
   final TextEditingController _flightNumberController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _nameBoardController = TextEditingController();
+  late String _selectedTenantId;
+  late String _selectedCompanyId;
+  late String _selectedCompanyCode;
+  late String _selectedCompanyName;
+  late String _selectedPartnerId;
+
+  String _safeText(String? value) => (value ?? '').trim();
+
+  bool get _hasSelectedPartnerScope =>
+      _selectedTenantId.isNotEmpty && _selectedCompanyId.isNotEmpty;
+
+  String get _selectedCompanyLabel {
+    if (_selectedCompanyName.isNotEmpty) return _selectedCompanyName;
+    if (_selectedCompanyCode.isNotEmpty) return _selectedCompanyCode;
+    if (_selectedPartnerId.isNotEmpty) return _selectedPartnerId;
+    return _selectedCompanyId;
+  }
 
   @override
   void dispose() {
@@ -721,6 +765,25 @@ class _AirportPageState extends State<AirportPage> {
     _noteController.dispose();
     _nameBoardController.dispose();
     super.dispose();
+  }
+
+  Future<void> _changePartner() async {
+    final callback = widget.onChangePartnerRequested;
+    if (callback == null) return;
+    final selected = await callback(context);
+    if (!mounted || selected == null) return;
+    final tenantId = (selected['tenant_id'] ?? '').trim();
+    final companyId = (selected['company_id'] ?? '').trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return;
+    setState(() {
+      _selectedTenantId = tenantId;
+      _selectedCompanyId = companyId;
+      _selectedCompanyCode = (selected['company_code'] ?? '').trim();
+      _selectedCompanyName = (selected['company_name'] ?? '').trim();
+      _selectedPartnerId = (selected['partner_id'] ?? '').trim();
+      _airportQuote = null;
+      _airportQuoteError = null;
+    });
   }
 
   @override
@@ -807,9 +870,43 @@ class _AirportPageState extends State<AirportPage> {
                   ),
                   style: TextStyle(color: _soft, fontSize: 11.5, height: 1.2),
                 ),
+                if (_hasSelectedPartnerScope) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_t(nl: "Boeking bij", en: "Booking with", fr: "Réservation chez", es: "Reserva con")}: $_selectedCompanyLabel',
+                    style: TextStyle(
+                      color: _gold.withOpacity(0.95),
+                      fontSize: 11.6,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
+          if (widget.allowPartnerChange &&
+              widget.onChangePartnerRequested != null) ...[
+            const SizedBox(width: 6),
+            TextButton.icon(
+              onPressed: _changePartner,
+              style: TextButton.styleFrom(
+                foregroundColor: _gold.withOpacity(0.96),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+              ),
+              icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+              label: Text(
+                _t(
+                  nl: 'Wijzig partner',
+                  en: 'Change partner',
+                  fr: 'Changer partenaire',
+                  es: 'Cambiar socio',
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2519,9 +2616,19 @@ class _AirportPageState extends State<AirportPage> {
     if (parsedDate == null) {
       return null;
     }
-    final effectiveScope = resolveEffectiveTenantCompanyScope(
-      allowDriverFallback: true,
-    );
+    String tenantId = _selectedTenantId;
+    String companyId = _selectedCompanyId;
+    if ((tenantId.isEmpty || companyId.isEmpty) &&
+        widget.allowAdminScopeFallback) {
+      final effectiveScope = resolveEffectiveTenantCompanyScope(
+        allowDriverFallback: true,
+      );
+      tenantId = effectiveScope.tenantId;
+      companyId = effectiveScope.companyId;
+    }
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      return null;
+    }
     final fromText = isToAirport
         ? _pickupAddressController.text.trim()
         : '${selectedAirport.name}, ${selectedAirport.countryName}';
@@ -2553,10 +2660,24 @@ class _AirportPageState extends State<AirportPage> {
       'service': 'AIRPORT',
       'pax': _passengers,
       'bags': _bags,
-      'tenant_id': effectiveScope.tenantId,
-      'company_id': effectiveScope.companyId,
-      'tenantId': effectiveScope.tenantId,
-      'companyId': effectiveScope.companyId,
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+      if (_selectedCompanyCode.isNotEmpty) ...{
+        'company_code': _selectedCompanyCode,
+        'companyCode': _selectedCompanyCode,
+      },
+      if (_selectedCompanyName.isNotEmpty) ...{
+        'public_partner_name': _selectedCompanyName,
+        'publicPartnerName': _selectedCompanyName,
+      },
+      if (_selectedPartnerId.isNotEmpty) ...{
+        'public_partner_id': _selectedPartnerId,
+        'publicPartnerId': _selectedPartnerId,
+        'partner_id': _selectedPartnerId,
+        'partnerId': _selectedPartnerId,
+      },
       'airport_direction': isToAirport ? 'to_airport' : 'from_airport',
       'airport_id': selectedAirport.id,
       'airport_iata': selectedAirport.iata,
@@ -2605,10 +2726,10 @@ class _AirportPageState extends State<AirportPage> {
         SnackBar(
           content: Text(
             _t(
-              nl: 'Prijsberekening kon niet worden opgehaald.',
-              en: 'Price calculation could not be retrieved.',
-              fr: "Le calcul du prix n'a pas pu être récupéré.",
-              es: 'No se pudo obtener el cálculo del precio.',
+              nl: 'Kies eerst een taxipartner voor luchthavenvervoer.',
+              en: 'Select a taxi partner first for airport rides.',
+              fr: "Choisissez d'abord un partenaire taxi pour les transferts aéroport.",
+              es: 'Selecciona primero un socio de taxi para traslados al aeropuerto.',
             ),
           ),
         ),
