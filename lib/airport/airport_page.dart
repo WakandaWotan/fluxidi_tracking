@@ -2728,18 +2728,36 @@ class _AirportPageState extends State<AirportPage> {
         'from_lng': selectedAirport.longitude,
       },
       if (isToAirport) ...{
-        if (_pickupLatitude != null) 'pickup_lat': _pickupLatitude,
-        if (_pickupLongitude != null) 'pickup_lng': _pickupLongitude,
+        if (_pickupLatitude != null) ...{
+          'pickup_lat': _pickupLatitude,
+          'pickupLat': _pickupLatitude,
+          'from_lat': _pickupLatitude,
+          'fromLat': _pickupLatitude,
+        },
+        if (_pickupLongitude != null) ...{
+          'pickup_lng': _pickupLongitude,
+          'pickupLng': _pickupLongitude,
+          'from_lng': _pickupLongitude,
+          'fromLng': _pickupLongitude,
+        },
         if (hasDerivedZone) ...{
           'pickup_postcode': derivedPostcode,
           'pickupPostcode': derivedPostcode,
           'from_postcode': derivedPostcode,
         },
       } else ...{
-        if (_destinationLatitude != null)
+        if (_destinationLatitude != null) ...{
           'destination_lat': _destinationLatitude,
-        if (_destinationLongitude != null)
+          'destinationLat': _destinationLatitude,
+          'to_lat': _destinationLatitude,
+          'toLat': _destinationLatitude,
+        },
+        if (_destinationLongitude != null) ...{
           'destination_lng': _destinationLongitude,
+          'destinationLng': _destinationLongitude,
+          'to_lng': _destinationLongitude,
+          'toLng': _destinationLongitude,
+        },
         if (hasDerivedZone) ...{
           'destination_postcode': derivedPostcode,
           'destinationPostcode': derivedPostcode,

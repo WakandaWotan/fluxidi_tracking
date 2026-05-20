@@ -25756,6 +25756,22 @@ function _fixedFareNormalizeZoneValue(zoneType, value) {
   if (zoneType === "city") {
     return raw.toLowerCase();
   }
+
+function _fixedFareFiniteNumberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _fixedFareHaversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
+}
   return raw;
 }
 
@@ -25813,11 +25829,29 @@ function _normalizeAirportFixedFareRule(raw, idx = 0) {
   const bags_max = _fixedFareIntOr(raw.bags_max ?? raw.bagsMax, 99, 0, 99);
   const zoneTypeRaw = _fixedFareNormalizeText(raw.zone_type ?? raw.zoneType ?? "none", 24).toLowerCase();
   const zone_type =
-    zoneTypeRaw === "postcode" || zoneTypeRaw === "city" || zoneTypeRaw === "country" || zoneTypeRaw === "none"
+    zoneTypeRaw === "postcode" ||
+    zoneTypeRaw === "city" ||
+    zoneTypeRaw === "country" ||
+    zoneTypeRaw === "radius" ||
+    zoneTypeRaw === "none"
       ? zoneTypeRaw
       : "none";
   const zone_value = _fixedFareNormalizeZoneValue(zone_type, raw.zone_value ?? raw.zoneValue ?? "");
-  if (zone_type !== "none" && !zone_value) return null;
+  if (zone_type !== "none" && zone_type !== "radius" && !zone_value) return null;
+  const zone_label = _fixedFareNormalizeText(raw.zone_label ?? raw.zoneLabel, 120);
+  const zone_center_lat = _fixedFareFiniteNumberOrNull(
+    raw.zone_center_lat ?? raw.zoneCenterLat ?? raw.center_lat ?? raw.centerLat,
+  );
+  const zone_center_lng = _fixedFareFiniteNumberOrNull(
+    raw.zone_center_lng ?? raw.zoneCenterLng ?? raw.center_lng ?? raw.centerLng,
+  );
+  const radius_km = _fixedFareFiniteNumberOrNull(raw.radius_km ?? raw.radiusKm);
+  if (zone_type === "radius") {
+    if (!zone_label) return null;
+    if (!Number.isFinite(zone_center_lat) || zone_center_lat < -90 || zone_center_lat > 90) return null;
+    if (!Number.isFinite(zone_center_lng) || zone_center_lng < -180 || zone_center_lng > 180) return null;
+    if (!Number.isFinite(radius_km) || radius_km < 1 || radius_km > 100) return null;
+  }
 
   const price_incl_vat = _fixedFareNumOr(raw.price_incl_vat ?? raw.priceInclVat, Number.NaN, 0.01, 1_000_000);
   if (!Number.isFinite(price_incl_vat) || price_incl_vat <= 0) return null;
@@ -25843,6 +25877,10 @@ function _normalizeAirportFixedFareRule(raw, idx = 0) {
     bags_max,
     zone_type,
     zone_value,
+    zone_label: zone_type === "radius" ? zone_label : "",
+    zone_center_lat: zone_type === "radius" ? zone_center_lat : null,
+    zone_center_lng: zone_type === "radius" ? zone_center_lng : null,
+    radius_km: zone_type === "radius" ? radius_km : null,
     price_incl_vat,
     currency,
     active_from,
@@ -25983,15 +26021,42 @@ function _validateAirportFixedFaresForAdmin(doc) {
       rule.zone_type ?? rule.zoneType ?? "none",
       24,
     ).toLowerCase();
-    if (!["none", "postcode", "city", "country"].includes(zoneType)) {
-      pushErr(i, "zone_type", "must be none, postcode, city or country");
+    if (!["none", "postcode", "city", "country", "radius"].includes(zoneType)) {
+      pushErr(i, "zone_type", "must be none, postcode, city, country or radius");
     }
     const zoneValue = _fixedFareNormalizeZoneValue(
-      ["none", "postcode", "city", "country"].includes(zoneType) ? zoneType : "none",
+      ["none", "postcode", "city", "country", "radius"].includes(zoneType) ? zoneType : "none",
       rule.zone_value ?? rule.zoneValue ?? "",
     );
-    if (zoneType !== "none" && !zoneValue) {
+    if (zoneType !== "none" && zoneType !== "radius" && !zoneValue) {
       pushErr(i, "zone_value", "is required when zone_type is not none");
+    }
+    if (zoneType === "radius") {
+      const zoneLabel = _fixedFareNormalizeText(
+        rule.zone_label ?? rule.zoneLabel,
+        120,
+      );
+      if (!zoneLabel) {
+        pushErr(i, "zone_label", "is required when zone_type is radius");
+      }
+      const centerLat = _fixedFareFiniteNumberOrNull(
+        rule.zone_center_lat ?? rule.zoneCenterLat ?? rule.center_lat ?? rule.centerLat,
+      );
+      const centerLng = _fixedFareFiniteNumberOrNull(
+        rule.zone_center_lng ?? rule.zoneCenterLng ?? rule.center_lng ?? rule.centerLng,
+      );
+      const radiusKm = _fixedFareFiniteNumberOrNull(
+        rule.radius_km ?? rule.radiusKm,
+      );
+      if (!Number.isFinite(centerLat) || centerLat < -90 || centerLat > 90) {
+        pushErr(i, "zone_center_lat", "must be between -90 and 90");
+      }
+      if (!Number.isFinite(centerLng) || centerLng < -180 || centerLng > 180) {
+        pushErr(i, "zone_center_lng", "must be between -180 and 180");
+      }
+      if (!Number.isFinite(radiusKm) || radiusKm < 1 || radiusKm > 100) {
+        pushErr(i, "radius_km", "must be between 1 and 100");
+      }
     }
 
     const activeFrom = _fixedFareNormalizeText(
@@ -26133,6 +26198,40 @@ function _matchAirportFixedFareRule(rule, normalizedCtx) {
   }
 
   if (rule.zone_type !== "none") {
+    if (rule.zone_type === "radius") {
+      const userLat = _fixedFareFiniteNumberOrNull(normalizedCtx.user_side_lat);
+      const userLng = _fixedFareFiniteNumberOrNull(normalizedCtx.user_side_lng);
+      if (!Number.isFinite(userLat) || !Number.isFinite(userLng)) {
+        return { matched: false, reason: "radius_context_missing_coords" };
+      }
+      if (
+        !Number.isFinite(rule.zone_center_lat) ||
+        !Number.isFinite(rule.zone_center_lng) ||
+        !Number.isFinite(rule.radius_km)
+      ) {
+        return { matched: false, reason: "radius_rule_invalid" };
+      }
+      const distanceKm = _fixedFareHaversineKm(
+        userLat,
+        userLng,
+        rule.zone_center_lat,
+        rule.zone_center_lng,
+      );
+      if (!Number.isFinite(distanceKm) || distanceKm > rule.radius_km) {
+        return {
+          matched: false,
+          reason: "radius_outside",
+          distance_km: Number.isFinite(distanceKm) ? to2(distanceKm) : null,
+          radius_km: rule.radius_km,
+        };
+      }
+      return {
+        matched: true,
+        reason: "radius_match",
+        distance_km: to2(distanceKm),
+        radius_km: rule.radius_km,
+      };
+    }
     const bucket = normalizedCtx.zone_values?.[rule.zone_type];
     if (!(bucket instanceof Set) || bucket.size === 0) {
       return { matched: false, reason: "zone_context_missing" };
@@ -26147,7 +26246,7 @@ function _matchAirportFixedFareRule(rule, normalizedCtx) {
 
 function _selectBestAirportFixedFareRule(matches) {
   if (!Array.isArray(matches) || matches.length === 0) return null;
-  const zoneRank = { none: 0, country: 1, city: 2, postcode: 3 };
+  const zoneRank = { none: 0, country: 1, radius: 2, city: 3, postcode: 4 };
   const sorted = [...matches].sort((a, b) => {
     const pa = _fixedFareIntOr(a?.rule?.priority, 0, 0, 1_000_000);
     const pb = _fixedFareIntOr(b?.rule?.priority, 0, 0, 1_000_000);
@@ -26156,6 +26255,12 @@ function _selectBestAirportFixedFareRule(matches) {
     const za = zoneRank[a?.rule?.zone_type] ?? 0;
     const zb = zoneRank[b?.rule?.zone_type] ?? 0;
     if (zb !== za) return zb - za;
+
+    if ((a?.rule?.zone_type ?? "") === "radius" && (b?.rule?.zone_type ?? "") === "radius") {
+      const ra = Number(a?.rule?.radius_km);
+      const rb = Number(b?.rule?.radius_km);
+      if (Number.isFinite(ra) && Number.isFinite(rb) && ra !== rb) return ra - rb;
+    }
 
     const bandA = Math.max(0, _fixedFareIntOr(a?.rule?.pax_max, 99) - _fixedFareIntOr(a?.rule?.pax_min, 1));
     const bandB = Math.max(0, _fixedFareIntOr(b?.rule?.pax_max, 99) - _fixedFareIntOr(b?.rule?.pax_min, 1));
@@ -26225,6 +26330,22 @@ async function resolveAirportFixedFare(env, scope, payload, options = {}) {
     const pax = _fixedFareIntOr(payload?.pax, 1, 1, 99);
     const bags = _fixedFareIntOr(payload?.bags, 0, 0, 99);
     const nowMs = Date.parse(options?.nowIso || new Date().toISOString());
+    const userSideLat = _fixedFareFiniteNumberOrNull(
+      direction === "to_airport"
+        ? payload?.pickup_lat ?? payload?.pickupLat ?? payload?.from_lat ?? payload?.fromLat
+        : payload?.destination_lat ??
+            payload?.destinationLat ??
+            payload?.to_lat ??
+            payload?.toLat,
+    );
+    const userSideLng = _fixedFareFiniteNumberOrNull(
+      direction === "to_airport"
+        ? payload?.pickup_lng ?? payload?.pickupLng ?? payload?.from_lng ?? payload?.fromLng
+        : payload?.destination_lng ??
+            payload?.destinationLng ??
+            payload?.to_lng ??
+            payload?.toLng,
+    );
     if (!airport_iata || !direction) return fallback;
 
     const explicitCountry = [
@@ -26273,6 +26394,8 @@ async function resolveAirportFixedFare(env, scope, payload, options = {}) {
       tier,
       pax,
       bags,
+      user_side_lat: userSideLat,
+      user_side_lng: userSideLng,
       now_ms: Number.isFinite(nowMs) ? nowMs : Date.now(),
       zone_values: {
         country: new Set(explicitCountry),
@@ -26290,6 +26413,9 @@ async function resolveAirportFixedFare(env, scope, payload, options = {}) {
       if (match.matched) matches.push({ rule, match });
     }
     const winner = _selectBestAirportFixedFareRule(matches);
+    console.log(
+      `[AIRPORT_FIXED_FARE][MATCH] airport_iata=${airport_iata} direction=${direction} tier=${tier} zone_type=${winner?.rule?.zone_type || "none"} matched=${winner?.rule ? "true" : "false"} distance_km=${winner?.match?.distance_km ?? ""} radius_km=${winner?.rule?.radius_km ?? ""}`,
+    );
     if (!winner?.rule) return fallback;
     const split = _splitInclVatFromPricingProfile(
       winner.rule.price_incl_vat,
@@ -26315,6 +26441,11 @@ async function resolveAirportFixedFare(env, scope, payload, options = {}) {
           tier: winner.rule.tier,
           zone_type: winner.rule.zone_type,
           zone_value: winner.rule.zone_value || "",
+          zone_label: winner.rule.zone_label || "",
+          radius_km: Number.isFinite(winner.rule.radius_km) ? winner.rule.radius_km : null,
+          distance_km: Number.isFinite(winner?.match?.distance_km)
+            ? winner.match.distance_km
+            : null,
           currency: winner.rule.currency,
           vat_rate: split.vat_rate,
         },

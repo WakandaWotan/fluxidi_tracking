@@ -164,6 +164,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'postcode',
     'city',
     'country',
+    'radius',
   ];
   static const List<String> _airportFixedFareTiers = <String>[
     'comfort',
@@ -3116,6 +3117,24 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final zoneValue = _airportRuleText(
       source['zone_value'] ?? source['zoneValue'],
     );
+    final zoneLabel = _airportRuleText(
+      source['zone_label'] ?? source['zoneLabel'],
+    );
+    final zoneCenterLat = _airportRulePrice(
+      source['zone_center_lat'] ??
+          source['zoneCenterLat'] ??
+          source['center_lat'] ??
+          source['centerLat'],
+    );
+    final zoneCenterLng = _airportRulePrice(
+      source['zone_center_lng'] ??
+          source['zoneCenterLng'] ??
+          source['center_lng'] ??
+          source['centerLng'],
+    );
+    final radiusKm = _airportRulePrice(
+      source['radius_km'] ?? source['radiusKm'],
+    );
     final tier = _airportRuleText(source['tier']).toLowerCase();
     final price = _airportRulePrice(
       source['price_incl_vat'] ?? source['priceInclVat'],
@@ -3124,10 +3143,26 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       source['currency'],
       fallback: 'EUR',
     ).toUpperCase();
+    final isRadius = zoneType == 'radius';
+    final zoneValid = isRadius
+        ? zoneLabel.isNotEmpty &&
+              zoneCenterLat != null &&
+              zoneCenterLat.isFinite &&
+              zoneCenterLat >= -90 &&
+              zoneCenterLat <= 90 &&
+              zoneCenterLng != null &&
+              zoneCenterLng.isFinite &&
+              zoneCenterLng >= -180 &&
+              zoneCenterLng <= 180 &&
+              radiusKm != null &&
+              radiusKm.isFinite &&
+              radiusKm >= 1 &&
+              radiusKm <= 100
+        : zoneValue.isNotEmpty;
     if (airportIata.isEmpty ||
         !_airportFixedFareDirections.contains(direction) ||
         !_airportFixedFareZoneTypes.contains(zoneType) ||
-        zoneValue.isEmpty ||
+        !zoneValid ||
         !_airportFixedFareTiers.contains(tier) ||
         price == null ||
         !price.isFinite ||
@@ -3144,7 +3179,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       'airport_iata': airportIata,
       'direction': direction,
       'zone_type': zoneType,
-      'zone_value': zoneValue,
+      if (!isRadius) 'zone_value': zoneValue,
+      if (isRadius) 'zone_label': zoneLabel,
+      if (isRadius) 'zone_center_lat': zoneCenterLat,
+      if (isRadius) 'zone_center_lng': zoneCenterLng,
+      if (isRadius) 'radius_km': radiusKm,
       'tier': tier,
       'price_incl_vat': price,
       'currency': currency.isEmpty ? 'EUR' : currency,
@@ -3252,6 +3291,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad');
       case 'country':
         return _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País');
+      case 'radius':
+        return _t(
+          nl: 'Radius rond locatie',
+          en: 'Radius around location',
+          fr: 'Rayon autour d’un lieu',
+          es: 'Radio alrededor de ubicación',
+        );
       default:
         return value;
     }
@@ -3435,6 +3481,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final zoneValueCtrl = TextEditingController(
       text: _airportRuleText(existing?['zone_value']),
     );
+    final zoneLabelCtrl = TextEditingController(
+      text: _airportRuleText(existing?['zone_label']),
+    );
+    final zoneCenterLatCtrl = TextEditingController(
+      text: _airportRuleText(existing?['zone_center_lat']),
+    );
+    final zoneCenterLngCtrl = TextEditingController(
+      text: _airportRuleText(existing?['zone_center_lng']),
+    );
+    final radiusKmCtrl = TextEditingController(
+      text: _airportRuleText(existing?['radius_km']),
+    );
     final priceCtrl = TextEditingController(
       text: existing == null
           ? ''
@@ -3508,6 +3566,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     ).toLowerCase();
     if (!_airportFixedFareZoneTypes.contains(zoneType)) {
       zoneType = _airportFixedFareZoneTypes.first;
+    }
+    var radiusPreset = '20';
+    final existingRadius = _airportRulePrice(existing?['radius_km']);
+    if (existingRadius != null) {
+      if ((existingRadius - 10).abs() < 0.0001) {
+        radiusPreset = '10';
+      } else if ((existingRadius - 20).abs() < 0.0001) {
+        radiusPreset = '20';
+      } else if ((existingRadius - 30).abs() < 0.0001) {
+        radiusPreset = '30';
+      } else {
+        radiusPreset = 'custom';
+      }
+    } else if (radiusKmCtrl.text.trim().isNotEmpty) {
+      radiusPreset = 'custom';
     }
     var tier = _airportRuleText(
       existing?['tier'],
@@ -3674,17 +3747,96 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           setDialogState(() => zoneType = value);
                         },
                       ),
-                      const SizedBox(height: 8),
                       const SizedBox(height: 10),
-                      _txt(
-                        zoneValueCtrl,
-                        _t(
-                          nl: 'Zone waarde',
-                          en: 'Zone value',
-                          fr: 'Valeur de zone',
-                          es: 'Valor de zona',
+                      if (zoneType == 'radius') ...[
+                        _txt(
+                          zoneLabelCtrl,
+                          _t(
+                            nl: 'Locatielabel',
+                            en: 'Location label',
+                            fr: 'Libellé de lieu',
+                            es: 'Etiqueta de ubicación',
+                          ),
+                          hint: _t(
+                            nl: 'Bijv. Maarkedal centrum',
+                            en: 'E.g. Maarkedal center',
+                            fr: 'Ex. centre de Maarkedal',
+                            es: 'Ej. centro de Maarkedal',
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 10),
+                        _txt(
+                          zoneCenterLatCtrl,
+                          _t(
+                            nl: 'Center latitude',
+                            en: 'Center latitude',
+                            fr: 'Latitude du centre',
+                            es: 'Latitud del centro',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        _txt(
+                          zoneCenterLngCtrl,
+                          _t(
+                            nl: 'Center longitude',
+                            en: 'Center longitude',
+                            fr: 'Longitude du centre',
+                            es: 'Longitud del centro',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          value: radiusPreset,
+                          decoration: InputDecoration(
+                            labelText: _t(
+                              nl: 'Radius',
+                              en: 'Radius',
+                              fr: 'Rayon',
+                              es: 'Radio',
+                            ),
+                          ),
+                          items: const <String>['10', '20', '30', 'custom']
+                              .map(
+                                (value) => DropdownMenuItem<String>(
+                                  value: value,
+                                  child: Text(
+                                    value == 'custom' ? 'Custom' : '$value km',
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() {
+                              radiusPreset = value;
+                              if (value != 'custom') {
+                                radiusKmCtrl.text = value;
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        if (radiusPreset == 'custom')
+                          _txt(
+                            radiusKmCtrl,
+                            _t(
+                              nl: 'Radius km (custom)',
+                              en: 'Radius km (custom)',
+                              fr: 'Rayon km (personnalisé)',
+                              es: 'Radio km (personalizado)',
+                            ),
+                          ),
+                      ] else ...[
+                        _txt(
+                          zoneValueCtrl,
+                          _t(
+                            nl: 'Zone waarde',
+                            en: 'Zone value',
+                            fr: 'Valeur de zone',
+                            es: 'Valor de zona',
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: tier,
@@ -3759,6 +3911,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 FilledButton(
                   onPressed: () {
                     final zoneValue = zoneValueCtrl.text.trim();
+                    final zoneLabel = zoneLabelCtrl.text.trim();
+                    final zoneCenterLat = double.tryParse(
+                      zoneCenterLatCtrl.text.trim().replaceAll(',', '.'),
+                    );
+                    final zoneCenterLng = double.tryParse(
+                      zoneCenterLngCtrl.text.trim().replaceAll(',', '.'),
+                    );
+                    final radiusKm = double.tryParse(
+                      radiusKmCtrl.text.trim().replaceAll(',', '.'),
+                    );
                     final price = double.tryParse(
                       priceCtrl.text.trim().replaceAll(',', '.'),
                     );
@@ -3774,7 +3936,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       });
                       return;
                     }
-                    if (zoneValue.isEmpty) {
+                    if (zoneType != 'radius' && zoneValue.isEmpty) {
                       setDialogState(() {
                         localError = _t(
                           nl: 'Vul een zone in.',
@@ -3784,6 +3946,51 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         );
                       });
                       return;
+                    }
+                    if (zoneType == 'radius') {
+                      if (zoneLabel.isEmpty) {
+                        setDialogState(() {
+                          localError = _t(
+                            nl: 'Vul een locatielabel in.',
+                            en: 'Enter a location label.',
+                            fr: 'Saisissez un libellé de lieu.',
+                            es: 'Introduce una etiqueta de ubicación.',
+                          );
+                        });
+                        return;
+                      }
+                      if (zoneCenterLat == null ||
+                          !zoneCenterLat.isFinite ||
+                          zoneCenterLat < -90 ||
+                          zoneCenterLat > 90 ||
+                          zoneCenterLng == null ||
+                          !zoneCenterLng.isFinite ||
+                          zoneCenterLng < -180 ||
+                          zoneCenterLng > 180) {
+                        setDialogState(() {
+                          localError = _t(
+                            nl: 'Vul geldige center coördinaten in.',
+                            en: 'Enter valid center coordinates.',
+                            fr: 'Saisissez des coordonnées de centre valides.',
+                            es: 'Introduce coordenadas válidas del centro.',
+                          );
+                        });
+                        return;
+                      }
+                      if (radiusKm == null ||
+                          !radiusKm.isFinite ||
+                          radiusKm < 1 ||
+                          radiusKm > 100) {
+                        setDialogState(() {
+                          localError = _t(
+                            nl: 'Vul een geldige radius in (1-100 km).',
+                            en: 'Enter a valid radius (1-100 km).',
+                            fr: 'Saisissez un rayon valide (1-100 km).',
+                            es: 'Introduce un radio válido (1-100 km).',
+                          );
+                        });
+                        return;
+                      }
                     }
                     if (price == null || !price.isFinite || price <= 0) {
                       setDialogState(() {
@@ -3816,7 +4023,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       'airport_iata': airportIata,
                       'direction': direction,
                       'zone_type': zoneType,
-                      'zone_value': zoneValue,
+                      if (zoneType != 'radius') 'zone_value': zoneValue,
+                      if (zoneType == 'radius') 'zone_label': zoneLabel,
+                      if (zoneType == 'radius')
+                        'zone_center_lat': zoneCenterLat,
+                      if (zoneType == 'radius')
+                        'zone_center_lng': zoneCenterLng,
+                      if (zoneType == 'radius') 'radius_km': radiusKm,
                       'tier': tier,
                       'price_incl_vat': price,
                       'currency': currency.isEmpty ? 'EUR' : currency,
@@ -3856,6 +4069,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       },
     );
     zoneValueCtrl.dispose();
+    zoneLabelCtrl.dispose();
+    zoneCenterLatCtrl.dispose();
+    zoneCenterLngCtrl.dispose();
+    radiusKmCtrl.dispose();
     priceCtrl.dispose();
     currencyCtrl.dispose();
     if (result == null) return;
@@ -3940,6 +4157,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _airportRuleText(rule['zone_type']),
             );
             final zoneValue = _airportRuleText(rule['zone_value']);
+            final isRadiusRule =
+                _airportRuleText(rule['zone_type']).toLowerCase() == 'radius';
+            final zoneLabel = _airportRuleText(rule['zone_label']);
+            final radiusKm = _airportRulePrice(rule['radius_km']);
+            final radiusLabel = radiusKm == null
+                ? '?'
+                : radiusKm.toStringAsFixed(radiusKm % 1 == 0 ? 0 : 1);
             final tier = _airportTierLabel(_airportRuleText(rule['tier']));
             final price = _airportRulePrice(rule['price_incl_vat']) ?? 0;
             final currency = _airportRuleText(
@@ -4006,7 +4230,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '$direction - $zoneType: $zoneValue - $tier',
+                    isRadiusRule
+                        ? '$direction - $zoneType: $zoneLabel ($radiusLabel km) - $tier'
+                        : '$direction - $zoneType: $zoneValue - $tier',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.74),
                       fontSize: 12,
