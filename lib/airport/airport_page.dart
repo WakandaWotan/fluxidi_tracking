@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -35,6 +36,24 @@ class _AirportOption {
   final double? latitude;
   final double? longitude;
   final String? preciseAddress;
+}
+
+class _AirportAddressSuggestion {
+  const _AirportAddressSuggestion({
+    required this.label,
+    required this.latitude,
+    required this.longitude,
+    this.postcode,
+    this.city,
+    this.country,
+  });
+
+  final String label;
+  final double latitude;
+  final double longitude;
+  final String? postcode;
+  final String? city;
+  final String? country;
 }
 
 class AirportPage extends StatefulWidget {
@@ -474,10 +493,20 @@ class _AirportPageState extends State<AirportPage> {
   bool _isResolvingPickupLocation = false;
   bool _isResolvingDestinationLocation = false;
   bool _isRequestingQuote = false;
+  Timer? _pickupAddressDebounce;
+  Timer? _destinationAddressDebounce;
+  int _pickupAddressRequestId = 0;
+  int _destinationAddressRequestId = 0;
+  List<_AirportAddressSuggestion> _pickupAddressSuggestions =
+      const <_AirportAddressSuggestion>[];
+  List<_AirportAddressSuggestion> _destinationAddressSuggestions =
+      const <_AirportAddressSuggestion>[];
   double? _pickupLatitude;
   double? _pickupLongitude;
   double? _destinationLatitude;
   double? _destinationLongitude;
+  String? _pickupPostcode;
+  String? _destinationPostcode;
   Map<String, dynamic>? _airportQuote;
   String? _airportQuoteError;
 
@@ -750,6 +779,8 @@ class _AirportPageState extends State<AirportPage> {
 
   @override
   void dispose() {
+    _pickupAddressDebounce?.cancel();
+    _destinationAddressDebounce?.cancel();
     _pickupAddressController.removeListener(_handleSummaryInputChanged);
     _destinationAddressController.removeListener(_handleSummaryInputChanged);
     _pickupDateTimeController.removeListener(_handleSummaryInputChanged);
@@ -1243,6 +1274,7 @@ class _AirportPageState extends State<AirportPage> {
                 es: 'Calle, número, código postal, ciudad',
               ),
               icon: Icons.pin_drop_outlined,
+              onChanged: _onPickupAddressChanged,
               suffixIcon: IconButton(
                 onPressed: _isResolvingPickupLocation
                     ? null
@@ -1270,6 +1302,10 @@ class _AirportPageState extends State<AirportPage> {
                         size: 18,
                       ),
               ),
+            ),
+            _buildAddressSuggestions(
+              suggestions: _pickupAddressSuggestions,
+              onSelect: _applyPickupSuggestion,
             ),
             const SizedBox(height: 10),
             _buildAirportDropdown(),
@@ -1392,6 +1428,7 @@ class _AirportPageState extends State<AirportPage> {
                 es: 'Calle, número, código postal, ciudad',
               ),
               icon: Icons.location_on_outlined,
+              onChanged: _onDestinationAddressChanged,
               suffixIcon: IconButton(
                 onPressed: _isResolvingDestinationLocation
                     ? null
@@ -1419,6 +1456,10 @@ class _AirportPageState extends State<AirportPage> {
                         size: 18,
                       ),
               ),
+            ),
+            _buildAddressSuggestions(
+              suggestions: _destinationAddressSuggestions,
+              onSelect: _applyDestinationSuggestion,
             ),
             const SizedBox(height: 10),
             _buildTextField(
@@ -1565,6 +1606,7 @@ class _AirportPageState extends State<AirportPage> {
     Widget? suffixIcon,
     bool readOnly = false,
     VoidCallback? onTap,
+    ValueChanged<String>? onChanged,
     int maxLines = 1,
     int minLines = 1,
   }) {
@@ -1572,6 +1614,7 @@ class _AirportPageState extends State<AirportPage> {
       controller: controller,
       readOnly: readOnly,
       onTap: onTap,
+      onChanged: onChanged,
       maxLines: maxLines,
       minLines: minLines,
       style: const TextStyle(color: Colors.white, fontSize: 13),
@@ -1879,6 +1922,8 @@ class _AirportPageState extends State<AirportPage> {
       setState(() {
         _pickupLatitude = lat;
         _pickupLongitude = lng;
+        _pickupPostcode = _extractLikelyPostcode(resolvedAddress ?? '');
+        _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
         _pickupAddressController.text =
             (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
             ? resolvedAddress
@@ -1964,6 +2009,277 @@ class _AirportPageState extends State<AirportPage> {
     }
   }
 
+  bool _looksBelgianPostcode(String input) {
+    return RegExp(r'^[1-9]\d{3}$').hasMatch(input.trim());
+  }
+
+  String _forwardGeocodeQuery(String rawInput) {
+    final compact = rawInput.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (compact.isEmpty) return '';
+    if (_looksBelgianPostcode(compact)) {
+      return '$compact Belgium';
+    }
+    return compact;
+  }
+
+  String? _featureContextValueByPrefix(dynamic feature, String prefix) {
+    if (feature is! Map<String, dynamic>) return null;
+    final context = feature['context'];
+    if (context is! List) return null;
+    for (final item in context) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = (item['id'] ?? '').toString().toLowerCase();
+      if (!id.startsWith(prefix)) continue;
+      final text = (item['text'] ?? item['short_code'] ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  _AirportAddressSuggestion? _parseAirportAddressSuggestion(
+    dynamic rawFeature,
+  ) {
+    if (rawFeature is! Map<String, dynamic>) return null;
+    final placeName = (rawFeature['place_name'] ?? '').toString().trim();
+    final center = rawFeature['center'];
+    if (placeName.isEmpty || center is! List || center.length < 2) return null;
+    final lngRaw = center[0];
+    final latRaw = center[1];
+    final lng = lngRaw is num ? lngRaw.toDouble() : double.tryParse('$lngRaw');
+    final lat = latRaw is num ? latRaw.toDouble() : double.tryParse('$latRaw');
+    if (lat == null ||
+        lng == null ||
+        !lat.isFinite ||
+        !lng.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180) {
+      return null;
+    }
+    final postcode = _featureContextValueByPrefix(rawFeature, 'postcode.');
+    final city =
+        _featureContextValueByPrefix(rawFeature, 'place.') ??
+        _featureContextValueByPrefix(rawFeature, 'locality.') ??
+        _featureContextValueByPrefix(rawFeature, 'district.');
+    final country =
+        _featureContextValueByPrefix(rawFeature, 'country.') ??
+        (rawFeature['properties'] is Map
+            ? ((rawFeature['properties'] as Map)['short_code'] ?? '')
+                  .toString()
+                  .trim()
+            : '');
+    return _AirportAddressSuggestion(
+      label: placeName,
+      latitude: lat,
+      longitude: lng,
+      postcode: postcode == null || postcode.isEmpty ? null : postcode,
+      city: city == null || city.isEmpty ? null : city,
+      country: country.isEmpty ? null : country,
+    );
+  }
+
+  Future<List<_AirportAddressSuggestion>> _searchAirportAddressSuggestions(
+    String rawInput,
+  ) async {
+    final token = _mapboxToken.trim();
+    if (token.isEmpty) return const <_AirportAddressSuggestion>[];
+    final query = _forwardGeocodeQuery(rawInput);
+    if (query.isEmpty) return const <_AirportAddressSuggestion>[];
+    final uri = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${Uri.encodeComponent(query)}.json'
+      '?access_token=${Uri.encodeComponent(token)}'
+      '&autocomplete=true'
+      '&country=be,nl,fr,de,lu'
+      '&language=${Uri.encodeComponent(_lang)}'
+      '&types=address,postcode,place,locality,district,neighborhood'
+      '&limit=6',
+    );
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200)
+        return const <_AirportAddressSuggestion>[];
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return const <_AirportAddressSuggestion>[];
+      }
+      final features = decoded['features'];
+      if (features is! List || features.isEmpty) {
+        return const <_AirportAddressSuggestion>[];
+      }
+      final out = <_AirportAddressSuggestion>[];
+      for (final feature in features) {
+        final parsed = _parseAirportAddressSuggestion(feature);
+        if (parsed != null) out.add(parsed);
+      }
+      return out;
+    } catch (_) {
+      return const <_AirportAddressSuggestion>[];
+    }
+  }
+
+  void _applyPickupSuggestion(_AirportAddressSuggestion suggestion) {
+    _clearAirportQuote();
+    setState(() {
+      _pickupAddressController.text = suggestion.label;
+      _pickupLatitude = suggestion.latitude;
+      _pickupLongitude = suggestion.longitude;
+      _pickupPostcode = suggestion.postcode;
+      _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
+    });
+  }
+
+  void _applyDestinationSuggestion(_AirportAddressSuggestion suggestion) {
+    _clearAirportQuote();
+    setState(() {
+      _destinationAddressController.text = suggestion.label;
+      _destinationLatitude = suggestion.latitude;
+      _destinationLongitude = suggestion.longitude;
+      _destinationPostcode = suggestion.postcode;
+      _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
+    });
+  }
+
+  void _onPickupAddressChanged(String value) {
+    _pickupAddressDebounce?.cancel();
+    final query = value.trim();
+    _clearAirportQuote();
+    setState(() {
+      _pickupLatitude = null;
+      _pickupLongitude = null;
+      _pickupPostcode = null;
+      if (query.isEmpty) {
+        _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
+      }
+    });
+    if (query.isEmpty || _mapboxToken.trim().isEmpty) return;
+    final requestId = ++_pickupAddressRequestId;
+    _pickupAddressDebounce = Timer(const Duration(milliseconds: 260), () async {
+      final results = await _searchAirportAddressSuggestions(query);
+      if (!mounted) return;
+      if (requestId != _pickupAddressRequestId) return;
+      if (_pickupAddressController.text.trim() != query) return;
+      setState(() {
+        _pickupAddressSuggestions = results;
+      });
+    });
+  }
+
+  void _onDestinationAddressChanged(String value) {
+    _destinationAddressDebounce?.cancel();
+    final query = value.trim();
+    _clearAirportQuote();
+    setState(() {
+      _destinationLatitude = null;
+      _destinationLongitude = null;
+      _destinationPostcode = null;
+      if (query.isEmpty) {
+        _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
+      }
+    });
+    if (query.isEmpty || _mapboxToken.trim().isEmpty) return;
+    final requestId = ++_destinationAddressRequestId;
+    _destinationAddressDebounce = Timer(
+      const Duration(milliseconds: 260),
+      () async {
+        final results = await _searchAirportAddressSuggestions(query);
+        if (!mounted) return;
+        if (requestId != _destinationAddressRequestId) return;
+        if (_destinationAddressController.text.trim() != query) return;
+        setState(() {
+          _destinationAddressSuggestions = results;
+        });
+      },
+    );
+  }
+
+  Future<bool> _resolveUserSideAddressBeforeQuote() async {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final address = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final hasUserCoords = isToAirport
+        ? _hasValidCoordinates(_pickupLatitude, _pickupLongitude)
+        : _hasValidCoordinates(_destinationLatitude, _destinationLongitude);
+    if (address.isEmpty || hasUserCoords) return true;
+    FocusScope.of(context).unfocus();
+    if (isToAirport) {
+      setState(() => _isResolvingPickupLocation = true);
+    } else {
+      setState(() => _isResolvingDestinationLocation = true);
+    }
+    final resolved = await _searchAirportAddressSuggestions(address);
+    if (!mounted) return false;
+    if (isToAirport) {
+      setState(() => _isResolvingPickupLocation = false);
+    } else {
+      setState(() => _isResolvingDestinationLocation = false);
+    }
+    if (resolved.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Adres of postcode niet gevonden. Kies een suggestie of gebruik huidige locatie.',
+              en: 'Address or postcode not found. Pick a suggestion or use current location.',
+              fr: 'Adresse ou code postal introuvable. Choisissez une suggestion ou utilisez la position actuelle.',
+              es: 'Dirección o código postal no encontrado. Elige una sugerencia o usa la ubicación actual.',
+            ),
+          ),
+        ),
+      );
+      return false;
+    }
+    final match = resolved.first;
+    if (isToAirport) {
+      _applyPickupSuggestion(match);
+    } else {
+      _applyDestinationSuggestion(match);
+    }
+    return true;
+  }
+
+  Widget _buildAddressSuggestions({
+    required List<_AirportAddressSuggestion> suggestions,
+    required ValueChanged<_AirportAddressSuggestion> onSelect,
+  }) {
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171717),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.28)),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: suggestions.length,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: _gold.withOpacity(0.12)),
+        itemBuilder: (context, index) {
+          final suggestion = suggestions[index];
+          return ListTile(
+            dense: true,
+            minLeadingWidth: 0,
+            leading: Icon(
+              Icons.location_on_outlined,
+              color: _gold.withOpacity(0.9),
+              size: 17,
+            ),
+            title: Text(
+              suggestion.label,
+              style: const TextStyle(color: Colors.white, fontSize: 12.7),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => onSelect(suggestion),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _useCurrentDestinationLocation() async {
     if (_isResolvingDestinationLocation) {
       return;
@@ -2040,6 +2356,8 @@ class _AirportPageState extends State<AirportPage> {
       setState(() {
         _destinationLatitude = lat;
         _destinationLongitude = lng;
+        _destinationPostcode = _extractLikelyPostcode(resolvedAddress ?? '');
+        _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
         _destinationAddressController.text =
             (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
             ? resolvedAddress
@@ -2655,8 +2973,21 @@ class _AirportPageState extends State<AirportPage> {
     final userZoneAddress = isToAirport
         ? _pickupAddressController.text.trim()
         : _destinationAddressController.text.trim();
-    final derivedPostcode = _extractLikelyPostcode(userZoneAddress);
+    final derivedPostcode =
+        (isToAirport ? _pickupPostcode : _destinationPostcode)?.trim() ??
+        _extractLikelyPostcode(userZoneAddress);
     final hasDerivedZone = derivedPostcode.isNotEmpty;
+    final hasPickupCoordinates = _hasValidCoordinates(
+      _pickupLatitude,
+      _pickupLongitude,
+    );
+    final hasDestinationCoordinates = _hasValidCoordinates(
+      _destinationLatitude,
+      _destinationLongitude,
+    );
+    final hasUserCoordinates = isToAirport
+        ? hasPickupCoordinates
+        : hasDestinationCoordinates;
     final hasAirportCoordinates = _hasValidCoordinates(
       selectedAirport.latitude,
       selectedAirport.longitude,
@@ -2666,6 +2997,9 @@ class _AirportPageState extends State<AirportPage> {
       'direction=$direction '
       'postcode=${hasDerivedZone ? derivedPostcode : "none"} '
       'tier=$fixedFareTier '
+      'user_coords=$hasUserCoordinates '
+      'pickup_coords=$hasPickupCoordinates '
+      'destination_coords=$hasDestinationCoordinates '
       'scope=$tenantId/$companyId '
       'airport_coords=$hasAirportCoordinates',
     );
@@ -2744,6 +3078,7 @@ class _AirportPageState extends State<AirportPage> {
           'pickup_postcode': derivedPostcode,
           'pickupPostcode': derivedPostcode,
           'from_postcode': derivedPostcode,
+          'fromPostcode': derivedPostcode,
         },
       } else ...{
         if (_destinationLatitude != null) ...{
@@ -2761,7 +3096,9 @@ class _AirportPageState extends State<AirportPage> {
         if (hasDerivedZone) ...{
           'destination_postcode': derivedPostcode,
           'destinationPostcode': derivedPostcode,
+          'destination_postal_code': derivedPostcode,
           'to_postcode': derivedPostcode,
+          'toPostcode': derivedPostcode,
         },
         if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
         'meet_and_greet': _meetAndGreet,
@@ -2781,6 +3118,10 @@ class _AirportPageState extends State<AirportPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(validationError)));
+      return null;
+    }
+    final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
+    if (!resolvedUserSide || !mounted) {
       return null;
     }
     final payload = _buildAirportQuotePayload();
@@ -2881,6 +3222,10 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Future<void> _prepareAirportBookingDetails() async {
+    final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
+    if (!resolvedUserSide || !mounted) {
+      return;
+    }
     final payload = _buildAirportQuotePayload();
     if (payload == null) {
       ScaffoldMessenger.of(context).showSnackBar(
