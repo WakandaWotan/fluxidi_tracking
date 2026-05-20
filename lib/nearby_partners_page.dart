@@ -113,8 +113,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final safePartnerId = partnerId.trim();
     if (safePartnerId.isEmpty) return null;
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/partners/profile?partner_id=${Uri.encodeQueryComponent(safePartnerId)}',
+      final uri = Uri.parse('$kBookingBaseUrl/partners/profile').replace(
+        queryParameters: <String, String>{
+          'partner_id': safePartnerId,
+          'ts': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) return null;
@@ -150,6 +153,15 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           'region_label',
           'regionLabel',
         ]),
+        'services': profile['services'],
+        'capabilities': profile['capabilities'],
+        'booking_capabilities': profile['booking_capabilities'],
+        'airport_service_enabled':
+            profile['airport_service_enabled'] ??
+            profile['airportServiceEnabled'],
+        'airport_transfer_enabled':
+            profile['airport_transfer_enabled'] ??
+            profile['airportTransferEnabled'],
       };
     } catch (_) {
       return null;
@@ -444,6 +456,81 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       if (text.isNotEmpty) return text;
     }
     return '';
+  }
+
+  bool _looksTruthy(dynamic value) {
+    if (value is bool) return value;
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    return text == 'true' || text == '1' || text == 'yes';
+  }
+
+  bool _servicesListIncludesAirport(dynamic value) {
+    if (value is! List) return false;
+    for (final item in value) {
+      final token = item.toString().trim().toLowerCase();
+      if (token == 'airport' ||
+          token == 'airport_transfer' ||
+          token == 'airport_service' ||
+          token == 'airportservice') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _airportServiceEnabledFromPartner(Map<String, dynamic> source) {
+    var hasExplicitSignal = false;
+    for (final value in <dynamic>[
+      source['airport_service_enabled'],
+      source['airportServiceEnabled'],
+      source['airport_transfer_enabled'],
+      source['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final capabilities = _safeMap(source['capabilities']);
+    for (final value in <dynamic>[
+      capabilities['airport'],
+      capabilities['airport_transfer'],
+      capabilities['airport_service_enabled'],
+      capabilities['airportServiceEnabled'],
+      capabilities['airport_transfer_enabled'],
+      capabilities['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final bookingCapabilities = _safeMap(source['booking_capabilities']);
+    for (final value in <dynamic>[
+      bookingCapabilities['airport'],
+      bookingCapabilities['airport_transfer'],
+      bookingCapabilities['airport_service_enabled'],
+      bookingCapabilities['airportServiceEnabled'],
+      bookingCapabilities['airport_transfer_enabled'],
+      bookingCapabilities['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final servicesMap = _safeMap(source['services']);
+    for (final value in <dynamic>[
+      servicesMap['airport'],
+      servicesMap['airport_transfer'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    if (hasExplicitSignal) return false;
+    return _servicesListIncludesAirport(source['services']);
   }
 
   List<String> _mapTextList(Map<String, dynamic> p, String key) {
@@ -992,6 +1079,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   Widget _favoritePartnersSection() {
+    final visibleFavoritePartners = widget.selectionMode
+        ? _favoritePartnerProfiles
+              .where(_airportServiceEnabledFromPartner)
+              .toList(growable: false)
+        : _favoritePartnerProfiles;
     return _premiumCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1048,14 +1140,21 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               ),
               const SizedBox(height: 8),
             ],
-            if (_favoritePartnerProfiles.isEmpty)
+            if (visibleFavoritePartners.isEmpty)
               Text(
-                _t(
-                  nl: 'Favoriete partnerprofielen worden nog bijgewerkt.',
-                  en: 'Favorite partner profiles are still being refreshed.',
-                  fr: 'Les profils favoris sont encore en cours d’actualisation.',
-                  es: 'Los perfiles favoritos todavía se están actualizando.',
-                ),
+                widget.selectionMode
+                    ? _t(
+                        nl: 'Geen luchthaven-geschikte favoriete partners beschikbaar.',
+                        en: 'No airport-capable favorite partners available.',
+                        fr: 'Aucun partenaire favori compatible aéroport disponible.',
+                        es: 'No hay socios favoritos aptos para aeropuerto.',
+                      )
+                    : _t(
+                        nl: 'Favoriete partnerprofielen worden nog bijgewerkt.',
+                        en: 'Favorite partner profiles are still being refreshed.',
+                        fr: 'Les profils favoris sont encore en cours d’actualisation.',
+                        es: 'Los perfiles favoritos todavía se están actualizando.',
+                      ),
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.72),
                   fontSize: 12.1,
@@ -1067,7 +1166,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   final useGrid = constraints.maxWidth >= 720;
                   if (!useGrid) {
                     return Column(
-                      children: _favoritePartnerProfiles
+                      children: visibleFavoritePartners
                           .map(
                             (p) => Padding(
                               padding: const EdgeInsets.only(bottom: 9),
@@ -1081,7 +1180,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   return Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: _favoritePartnerProfiles
+                    children: visibleFavoritePartners
                         .map((p) => _favoritePartnerCard(p, width: itemWidth))
                         .toList(growable: false),
                   );
@@ -1095,6 +1194,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final visiblePartners = widget.selectionMode
+        ? _partners
+              .where(_airportServiceEnabledFromPartner)
+              .toList(growable: false)
+        : _partners;
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => Scaffold(
@@ -1342,25 +1446,41 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                         es: 'Ingresa tu código postal o usa tu ubicación para comprobar qué socios están activos.',
                       ),
                     )
-                  : _partners.isNotEmpty
+                  : visiblePartners.isNotEmpty
                   ? _premiumCard(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _t(
-                              nl: _lastSearchUsedLocation
-                                  ? 'Actieve partners in de buurt van je locatie'
-                                  : 'Actieve partners in $_normalizedPostcode',
-                              en: _lastSearchUsedLocation
-                                  ? 'Active partners near your location'
-                                  : 'Active partners in $_normalizedPostcode',
-                              fr: _lastSearchUsedLocation
-                                  ? 'Partenaires actifs à proximité de votre position'
-                                  : 'Partenaires actifs dans $_normalizedPostcode',
-                              es: _lastSearchUsedLocation
-                                  ? 'Socios activos cerca de tu ubicación'
-                                  : 'Socios activos en $_normalizedPostcode',
+                              nl: widget.selectionMode
+                                  ? (_lastSearchUsedLocation
+                                        ? 'Luchthavenpartners in de buurt van je locatie'
+                                        : 'Luchthavenpartners in $_normalizedPostcode')
+                                  : (_lastSearchUsedLocation
+                                        ? 'Actieve partners in de buurt van je locatie'
+                                        : 'Actieve partners in $_normalizedPostcode'),
+                              en: widget.selectionMode
+                                  ? (_lastSearchUsedLocation
+                                        ? 'Airport-capable partners near your location'
+                                        : 'Airport-capable partners in $_normalizedPostcode')
+                                  : (_lastSearchUsedLocation
+                                        ? 'Active partners near your location'
+                                        : 'Active partners in $_normalizedPostcode'),
+                              fr: widget.selectionMode
+                                  ? (_lastSearchUsedLocation
+                                        ? 'Partenaires aéroport près de votre position'
+                                        : 'Partenaires aéroport dans $_normalizedPostcode')
+                                  : (_lastSearchUsedLocation
+                                        ? 'Partenaires actifs à proximité de votre position'
+                                        : 'Partenaires actifs dans $_normalizedPostcode'),
+                              es: widget.selectionMode
+                                  ? (_lastSearchUsedLocation
+                                        ? 'Socios aptos para aeropuerto cerca de tu ubicación'
+                                        : 'Socios aptos para aeropuerto en $_normalizedPostcode')
+                                  : (_lastSearchUsedLocation
+                                        ? 'Socios activos cerca de tu ubicación'
+                                        : 'Socios activos en $_normalizedPostcode'),
                             ),
                             style: const TextStyle(
                               color: Colors.white,
@@ -1380,24 +1500,40 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                             ),
                           ],
                           const SizedBox(height: 10),
-                          ..._partners.map(_partnerCard),
+                          ...visiblePartners.map(_partnerCard),
                         ],
                       ),
                     )
                   : _emptyStateCard(
                       _t(
-                        nl: _lastSearchUsedLocation
-                            ? 'Geen partners gevonden voor je huidige locatie of servicegebied.'
-                            : 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.',
-                        en: _lastSearchUsedLocation
-                            ? 'No partners found for your current location or service area.'
-                            : 'No partners found for postcode or service area $_normalizedPostcode.',
-                        fr: _lastSearchUsedLocation
-                            ? 'Aucun partenaire trouvé pour votre position actuelle ou zone de service.'
-                            : 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.',
-                        es: _lastSearchUsedLocation
-                            ? 'No se encontraron socios para tu ubicación actual o zona de servicio.'
-                            : 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.',
+                        nl: widget.selectionMode
+                            ? (_lastSearchUsedLocation
+                                  ? 'Geen luchthavenpartners gevonden voor je huidige locatie.'
+                                  : 'Geen luchthavenpartners gevonden voor $_normalizedPostcode.')
+                            : (_lastSearchUsedLocation
+                                  ? 'Geen partners gevonden voor je huidige locatie of servicegebied.'
+                                  : 'Geen partners gevonden voor postcode of servicegebied $_normalizedPostcode.'),
+                        en: widget.selectionMode
+                            ? (_lastSearchUsedLocation
+                                  ? 'No airport-capable partners found for your current location.'
+                                  : 'No airport-capable partners found for $_normalizedPostcode.')
+                            : (_lastSearchUsedLocation
+                                  ? 'No partners found for your current location or service area.'
+                                  : 'No partners found for postcode or service area $_normalizedPostcode.'),
+                        fr: widget.selectionMode
+                            ? (_lastSearchUsedLocation
+                                  ? 'Aucun partenaire compatible aéroport trouvé pour votre position actuelle.'
+                                  : 'Aucun partenaire compatible aéroport trouvé pour $_normalizedPostcode.')
+                            : (_lastSearchUsedLocation
+                                  ? 'Aucun partenaire trouvé pour votre position actuelle ou zone de service.'
+                                  : 'Aucun partenaire trouvé pour le code postal ou la zone de service $_normalizedPostcode.'),
+                        es: widget.selectionMode
+                            ? (_lastSearchUsedLocation
+                                  ? 'No se encontraron socios aptos para aeropuerto para tu ubicación actual.'
+                                  : 'No se encontraron socios aptos para aeropuerto para $_normalizedPostcode.')
+                            : (_lastSearchUsedLocation
+                                  ? 'No se encontraron socios para tu ubicación actual o zona de servicio.'
+                                  : 'No se encontraron socios para el código postal o zona de servicio $_normalizedPostcode.'),
                       ),
                       action: OutlinedButton(
                         onPressed: () {

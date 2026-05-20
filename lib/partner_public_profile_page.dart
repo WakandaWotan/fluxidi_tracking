@@ -84,8 +84,11 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       _error = null;
     });
     try {
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/partners/profile?partner_id=${Uri.encodeQueryComponent(widget.partnerId)}',
+      final uri = Uri.parse('$kBookingBaseUrl/partners/profile').replace(
+        queryParameters: <String, String>{
+          'partner_id': widget.partnerId.trim(),
+          'ts': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
       );
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
@@ -331,6 +334,77 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       if (out.isNotEmpty) return out;
     }
     return const <String>[];
+  }
+
+  bool _looksTruthy(dynamic value) {
+    if (value is bool) return value;
+    final normalized = value?.toString().trim().toLowerCase() ?? '';
+    return normalized == 'true' || normalized == '1' || normalized == 'yes';
+  }
+
+  bool _isAirportServiceToken(String token) {
+    final normalized = token.trim().toLowerCase();
+    return normalized == 'airport' ||
+        normalized == 'airport_transfer' ||
+        normalized == 'airport_service' ||
+        normalized == 'airportservice';
+  }
+
+  bool _airportServiceEnabledFromProfile(Map<String, dynamic> profile) {
+    var hasExplicitSignal = false;
+    for (final value in <dynamic>[
+      profile['airport_service_enabled'],
+      profile['airportServiceEnabled'],
+      profile['airport_transfer_enabled'],
+      profile['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final capabilities = _profileMap(profile['capabilities']);
+    for (final value in <dynamic>[
+      capabilities['airport'],
+      capabilities['airport_transfer'],
+      capabilities['airport_service_enabled'],
+      capabilities['airportServiceEnabled'],
+      capabilities['airport_transfer_enabled'],
+      capabilities['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final bookingCapabilities = _profileMap(profile['booking_capabilities']);
+    for (final value in <dynamic>[
+      bookingCapabilities['airport'],
+      bookingCapabilities['airport_transfer'],
+      bookingCapabilities['airport_service_enabled'],
+      bookingCapabilities['airportServiceEnabled'],
+      bookingCapabilities['airport_transfer_enabled'],
+      bookingCapabilities['airportTransferEnabled'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    final servicesMap = _profileMap(profile['services']);
+    for (final value in <dynamic>[
+      servicesMap['airport'],
+      servicesMap['airport_transfer'],
+    ]) {
+      if (value == null) continue;
+      hasExplicitSignal = true;
+      if (_looksTruthy(value)) return true;
+    }
+
+    if (hasExplicitSignal) return false;
+
+    final servicesList = _profileTextListAny(profile, const ['services']);
+    return servicesList.any(_isAirportServiceToken);
   }
 
   double? _asDoubleRating(dynamic value) {
@@ -973,6 +1047,12 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     ]);
     final gallery = _profileTextListAny(media, const ['gallery']);
     final services = _profileTextListAny(p, const ['services']);
+    final airportServiceEnabled = _airportServiceEnabledFromProfile(p);
+    final visibleServices = airportServiceEnabled
+        ? services
+        : services
+              .where((serviceId) => !_isAirportServiceToken(serviceId))
+              .toList(growable: false);
     final paymentMethods = _normalizedPublicPaymentMethods(
       _profileTextListAny(p, const ['payment_methods', 'paymentMethods']),
     );
@@ -1107,35 +1187,37 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _openPartnerAirportBooking(
-                          companyName: companyName,
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _gold.withOpacity(0.98),
-                          side: BorderSide(color: _gold.withOpacity(0.38)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                    if (airportServiceEnabled) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _openPartnerAirportBooking(
+                            companyName: companyName,
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        icon: const Icon(
-                          Icons.flight_takeoff_rounded,
-                          size: 18,
-                        ),
-                        label: Text(
-                          _t(
-                            nl: 'Luchthaven',
-                            en: 'Airport',
-                            fr: 'Aéroport',
-                            es: 'Aeropuerto',
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _gold.withOpacity(0.98),
+                            side: BorderSide(color: _gold.withOpacity(0.38)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
                           ),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                          icon: const Icon(
+                            Icons.flight_takeoff_rounded,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Luchthaven',
+                              en: 'Airport',
+                              fr: 'Aéroport',
+                              es: 'Aeropuerto',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               )
@@ -1413,38 +1495,42 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: () => _openPartnerAirportBooking(
-                              companyName: companyName,
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _gold.withOpacity(0.98),
-                              side: BorderSide(color: _gold.withOpacity(0.36)),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          if (airportServiceEnabled) ...[
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: () => _openPartnerAirportBooking(
+                                companyName: companyName,
                               ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 13,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _gold.withOpacity(0.98),
+                                side: BorderSide(
+                                  color: _gold.withOpacity(0.36),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 13,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.flight_takeoff_rounded,
+                                size: 18,
+                              ),
+                              label: Text(
+                                _t(
+                                  nl: 'Luchthaven',
+                                  en: 'Airport',
+                                  fr: 'Aéroport',
+                                  es: 'Aeropuerto',
+                                ),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                            icon: const Icon(
-                              Icons.flight_takeoff_rounded,
-                              size: 18,
-                            ),
-                            label: Text(
-                              _t(
-                                nl: 'Luchthaven',
-                                en: 'Airport',
-                                fr: 'Aéroport',
-                                es: 'Aeropuerto',
-                              ),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
+                          ],
                         ],
                       ),
                     const SizedBox(height: 9),
@@ -1461,7 +1547,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (services.isNotEmpty)
+                    if (visibleServices.isNotEmpty)
                       _section(
                         _t(
                           nl: 'Services',
@@ -1472,7 +1558,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         Wrap(
                           spacing: 6,
                           runSpacing: 6,
-                          children: services
+                          children: visibleServices
                               .map(
                                 (s) => _chip(
                                   _serviceLabel(s),

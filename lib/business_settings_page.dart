@@ -1697,14 +1697,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       mapped.add('online_payments');
       return mapped.toList(growable: false);
     }
-    return const <String>[
-      'taxi_vvb',
-      'airport_transfer',
-      'business_rides',
-      'hotel_bnb_pickup',
-      'event_mobility',
-      'online_payments',
-    ];
+    return const <String>['online_payments'];
   }
 
   String _publicTierCategoryLabel(String tierId) {
@@ -1962,6 +1955,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ? profileForm.phone.trim()
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
+    final airportServiceEnabled = services.contains('airport_transfer');
     final publicPaymentMethods = _sanitizePublicPaymentOptionIds(
       _publicPaymentOptionIds,
     ).toList(growable: false);
@@ -2076,6 +2070,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'gallery': const <String>[],
       },
       'services': services,
+      'airport_service_enabled': airportServiceEnabled,
+      'airportServiceEnabled': airportServiceEnabled,
+      'airport_transfer_enabled': airportServiceEnabled,
+      'airportTransferEnabled': airportServiceEnabled,
+      'capabilities': <String, dynamic>{
+        'airport': airportServiceEnabled,
+        'airport_transfer': airportServiceEnabled,
+      },
       'payment_methods': publicPaymentMethods,
       'vehicles': vehicles,
       'drivers': drivers,
@@ -2087,6 +2089,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'online_payments': onlinePaymentsEnabled,
         'instant_quote': false,
         'profile_enabled': true,
+        'airport': airportServiceEnabled,
+        'airport_transfer': airportServiceEnabled,
+        'airport_service_enabled': airportServiceEnabled,
+        'airportServiceEnabled': airportServiceEnabled,
+        'airport_transfer_enabled': airportServiceEnabled,
+        'airportTransferEnabled': airportServiceEnabled,
       },
     };
   }
