@@ -4670,9 +4670,25 @@ async function _loadDriverIndexRecord(env, scope) {
       updated_at: sanitizeTenantString(entry.updated_at ?? entry.updatedAt, 80),
     };
   }
+  const deletedDriversSource =
+    raw.deleted_drivers && typeof raw.deleted_drivers === "object" && !Array.isArray(raw.deleted_drivers)
+      ? raw.deleted_drivers
+      : (raw.deletedDrivers && typeof raw.deletedDrivers === "object" && !Array.isArray(raw.deletedDrivers)
+          ? raw.deletedDrivers
+          : {});
+  const deletedDrivers = {};
+  for (const [driverIdRaw, deletedAtRaw] of Object.entries(deletedDriversSource)) {
+    const driverId = sanitizeTenantString(driverIdRaw, 96);
+    if (!_isSafeCompanyLinkScopePart(driverId)) continue;
+    const deletedAt = sanitizeTenantString(deletedAtRaw, 80);
+    if (!deletedAt) continue;
+    deletedDrivers[driverId] = deletedAt;
+  }
   return {
     key,
     drivers,
+    deleted_drivers: deletedDrivers,
+    deletedDrivers,
     updated_at: sanitizeTenantString(raw.updated_at ?? raw.updatedAt, 80),
   };
 }
@@ -4713,11 +4729,30 @@ async function _saveDriverIndexRecord(env, scope, doc) {
     existing && typeof existing === "object" && !Array.isArray(existing)
       ? (existing.drivers && typeof existing.drivers === "object" ? existing.drivers : {})
       : {};
+  const existingDeletedDrivers =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing.deleted_drivers && typeof existing.deleted_drivers === "object"
+          ? existing.deleted_drivers
+          : (existing.deletedDrivers && typeof existing.deletedDrivers === "object"
+              ? existing.deletedDrivers
+              : {}))
+      : {};
   const nextDrivers =
     doc && typeof doc === "object" && !Array.isArray(doc) && doc.drivers && typeof doc.drivers === "object"
       ? doc.drivers
       : {};
-  if (kvComparableEqual(existingDrivers, nextDrivers)) {
+  const nextDeletedDrivers =
+    doc && typeof doc === "object" && !Array.isArray(doc) &&
+    doc.deleted_drivers && typeof doc.deleted_drivers === "object"
+      ? doc.deleted_drivers
+      : (doc && typeof doc === "object" && !Array.isArray(doc) &&
+          doc.deletedDrivers && typeof doc.deletedDrivers === "object"
+          ? doc.deletedDrivers
+          : {});
+  if (
+    kvComparableEqual(existingDrivers, nextDrivers) &&
+    kvComparableEqual(existingDeletedDrivers, nextDeletedDrivers)
+  ) {
     return { key, changed: false };
   }
   const existingCount = Object.keys(existingDrivers).length;
@@ -4745,6 +4780,8 @@ async function _saveDriverIndexRecord(env, scope, doc) {
       key,
       JSON.stringify({
         drivers: doc.drivers,
+        deleted_drivers: nextDeletedDrivers,
+        deletedDrivers: nextDeletedDrivers,
         updated_at: doc.updated_at,
       }),
     );
@@ -10443,6 +10480,32 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
   const scope = { tenant_id: tenantId, company_id: companyId };
   const existing = await _loadDriverIndexRecord(env, scope);
   const existingDriver = existing?.drivers?.[driverId] || {};
+  const deletedDrivers = {
+    ...(existing?.deleted_drivers || existing?.deletedDrivers || {}),
+  };
+  const restoreRequested = _coerceBoolean(
+    body.restore ?? body.restore_driver ?? body.restoreDriver,
+    false,
+  );
+  const tombstoned = Object.prototype.hasOwnProperty.call(
+    deletedDrivers,
+    driverId,
+  );
+  if (tombstoned && !restoreRequested) {
+    console.log(
+      `[DRIVER_INDEX][UPSERT_BLOCKED_DELETED] driver=${_maskPublicDriverLoginValue(driverId)}`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "driver_deleted_conflict",
+        tenant_id: tenantId,
+        company_id: companyId,
+        driver_id: driverId,
+      },
+      409,
+    );
+  }
   const resolvedLoginCode = _normalizeDriverEmployeeNumber(
     loginCodeInput || employeeNumberInput || existingDriver.driver_code || existingDriver.login_code,
   );
@@ -10498,6 +10561,10 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     )).toLowerCase();
   }
   const nextDrivers = { ...(existing?.drivers || {}) };
+  const nextDeletedDrivers = { ...deletedDrivers };
+  if (restoreRequested) {
+    delete nextDeletedDrivers[driverId];
+  }
   nextDrivers[driverId] = {
     driver_id: driverId,
     display_name: displayName,
@@ -10533,6 +10600,7 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
   try {
     saveResult = await _saveDriverIndexRecord(env, scope, {
       drivers: nextDrivers,
+      deleted_drivers: nextDeletedDrivers,
       updated_at: nowIso,
     });
   } catch (err) {
@@ -10608,13 +10676,21 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
   const scope = { tenant_id: tenantId, company_id: companyId };
   const existing = await _loadDriverIndexRecord(env, scope);
   const nextDrivers = { ...(existing?.drivers || {}) };
+  const nextDeletedDrivers = {
+    ...(existing?.deleted_drivers || existing?.deletedDrivers || {}),
+  };
   const deleted = Object.prototype.hasOwnProperty.call(nextDrivers, driverId);
+  const nowIso = new Date().toISOString();
   if (deleted) {
     delete nextDrivers[driverId];
   }
-  const nowIso = new Date().toISOString();
+  nextDeletedDrivers[driverId] = nowIso;
+  console.log(
+    `[DRIVER_INDEX][DELETE_TOMBSTONE] driver=${_maskPublicDriverLoginValue(driverId)} deleted=${deleted}`,
+  );
   await _saveDriverIndexRecord(env, scope, {
     drivers: nextDrivers,
+    deleted_drivers: nextDeletedDrivers,
     updated_at: nowIso,
   });
   return json(
@@ -11542,6 +11618,14 @@ async function handleCompanyBootstrap(request, env) {
 
   const driverIndex = await _loadDriverIndexRecord(env, scope);
   const driverEntries = Object.values(driverIndex?.drivers || {});
+  const deletedDriverIds = Object.keys(
+    driverIndex?.deleted_drivers || driverIndex?.deletedDrivers || {},
+  )
+    .map((driverId) => sanitizeTenantString(driverId, 96))
+    .filter((driverId) => !!driverId);
+  console.log(
+    `[COMPANY_BOOTSTRAP][DELETED_DRIVERS] count=${deletedDriverIds.length}`,
+  );
   const driverRatingAggregates = await _loadDriverRatingAggregatesByDriverIds(
     env,
     scope,
@@ -11905,6 +11989,8 @@ async function handleCompanyBootstrap(request, env) {
       communication_templates: communicationTemplates,
       vehicles,
       drivers,
+      deleted_driver_ids: deletedDriverIds,
+      deletedDriverIds: deletedDriverIds,
       media: {
         ...(companyLogoUrl
           ? {

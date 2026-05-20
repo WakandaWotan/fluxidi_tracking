@@ -1255,6 +1255,100 @@ final ValueNotifier<List<DriverProfile>> driversNotifier =
       ),
     ]);
 
+final Map<String, Set<String>> _deletedDriverIdsByScope =
+    <String, Set<String>>{};
+
+String _normalizedDriverIdForTombstone(String value) => value.trim();
+
+String _deletedDriverScopeKey({
+  required String tenantId,
+  required String companyId,
+}) {
+  final normalizedTenant = tenantId.trim();
+  final normalizedCompany = companyId.trim();
+  if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return '';
+  return '$normalizedTenant::$normalizedCompany';
+}
+
+Set<String> _deletedDriverIdsForScope({
+  required String tenantId,
+  required String companyId,
+}) {
+  final key = _deletedDriverScopeKey(tenantId: tenantId, companyId: companyId);
+  if (key.isEmpty) return const <String>{};
+  return _deletedDriverIdsByScope[key] ?? const <String>{};
+}
+
+bool _isDriverIdTombstonedForScope({
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+}) {
+  final normalizedDriverId = _normalizedDriverIdForTombstone(driverId);
+  if (normalizedDriverId.isEmpty) return false;
+  final ids = _deletedDriverIdsForScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  return ids.contains(normalizedDriverId);
+}
+
+void _markDeletedDriverForScope({
+  required String tenantId,
+  required String companyId,
+  required String driverId,
+}) {
+  final normalizedDriverId = _normalizedDriverIdForTombstone(driverId);
+  if (normalizedDriverId.isEmpty) return;
+  final key = _deletedDriverScopeKey(tenantId: tenantId, companyId: companyId);
+  if (key.isEmpty) return;
+  final current = _deletedDriverIdsByScope[key] ?? <String>{};
+  current.add(normalizedDriverId);
+  _deletedDriverIdsByScope[key] = current;
+}
+
+Map<String, dynamic> _encodeDeletedDriverTombstonesForPersistence() {
+  if (_deletedDriverIdsByScope.isEmpty) return const <String, dynamic>{};
+  final out = <String, dynamic>{};
+  for (final entry in _deletedDriverIdsByScope.entries) {
+    final ids =
+        entry.value
+            .map((e) => _normalizedDriverIdForTombstone(e))
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    if (ids.isEmpty) continue;
+    out[entry.key] = ids;
+  }
+  return out;
+}
+
+void _decodeDeletedDriverTombstonesFromPersistence(dynamic raw) {
+  _deletedDriverIdsByScope.clear();
+  if (raw is! Map) return;
+  for (final entry in raw.entries) {
+    final key = entry.key.toString().trim();
+    if (key.isEmpty) continue;
+    final parts = key.split('::');
+    if (parts.length != 2) continue;
+    final normalizedKey = _deletedDriverScopeKey(
+      tenantId: parts.first,
+      companyId: parts.last,
+    );
+    if (normalizedKey.isEmpty) continue;
+    if (entry.value is! List) continue;
+    final ids = <String>{};
+    for (final item in (entry.value as List)) {
+      final normalized = _normalizedDriverIdForTombstone('$item');
+      if (normalized.isEmpty) continue;
+      ids.add(normalized);
+    }
+    if (ids.isEmpty) continue;
+    _deletedDriverIdsByScope[normalizedKey] = ids;
+  }
+}
+
 const FleetSubscriptionPolicy fleetSubscriptionPolicy = FleetSubscriptionPolicy(
   includedVehicles: 1,
   upsellMode: FleetUpsellMode.perVehicleMonthly,
@@ -1421,6 +1515,19 @@ void deleteDriver(String id) {
   vehiclesNotifier.value = vehiclesNotifier.value
       .map((v) => v.driverId == id ? v.copyWith(driverId: null) : v)
       .toList(growable: false);
+  debugPrint(
+    '[DRIVER_DELETE][LOCAL_REMOVE] driver=${_maskDriverIdForDiag(id)} tenant=${_maskCompanyScopeForLog(strictScope?.tenantId ?? "")} company=${_maskCompanyScopeForLog(strictScope?.companyId ?? "")}',
+  );
+  if (strictScope != null) {
+    _markDeletedDriverForScope(
+      tenantId: strictScope.tenantId,
+      companyId: strictScope.companyId,
+      driverId: id,
+    );
+    debugPrint(
+      '[DRIVER_DELETE][TOMBSTONE] driver=${_maskDriverIdForDiag(id)} tenant=${_maskCompanyScopeForLog(strictScope.tenantId)} company=${_maskCompanyScopeForLog(strictScope.companyId)}',
+    );
+  }
   _persistLocalTenantState();
   if (strictScope != null) {
     unawaited(
@@ -1448,16 +1555,16 @@ void removeDriverLocallyAfterBackendDelete(
   final hadVehicleLinks = vehiclesNotifier.value.any(
     (v) => v.driverId == driverId,
   );
-  if (!hadDriver && !hadVehicleLinks) return;
+  final localChanged = hadDriver || hadVehicleLinks;
 
-  driversNotifier.value = driversNotifier.value
-      .where((d) => d.id != driverId)
-      .toList(growable: false);
-  vehiclesNotifier.value = vehiclesNotifier.value
-      .map((v) => v.driverId == driverId ? v.copyWith(driverId: null) : v)
-      .toList(growable: false);
-
-  _persistLocalTenantState();
+  if (localChanged) {
+    driversNotifier.value = driversNotifier.value
+        .where((d) => d.id != driverId)
+        .toList(growable: false);
+    vehiclesNotifier.value = vehiclesNotifier.value
+        .map((v) => v.driverId == driverId ? v.copyWith(driverId: null) : v)
+        .toList(growable: false);
+  }
 
   late final Map<String, String> scope;
   try {
@@ -1469,8 +1576,21 @@ void removeDriverLocallyAfterBackendDelete(
     debugPrint(
       '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_tenant_scope op=remove_driver_locally_after_backend_delete',
     );
+    _persistLocalTenantState();
     return;
   }
+  debugPrint(
+    '[DRIVER_DELETE][LOCAL_REMOVE] driver=${_maskDriverIdForDiag(driverId)} tenant=${_maskCompanyScopeForLog(scope["tenant_id"] ?? "")} company=${_maskCompanyScopeForLog(scope["company_id"] ?? "")}',
+  );
+  _markDeletedDriverForScope(
+    tenantId: scope['tenant_id'] ?? '',
+    companyId: scope['company_id'] ?? '',
+    driverId: driverId,
+  );
+  debugPrint(
+    '[DRIVER_DELETE][TOMBSTONE] driver=${_maskDriverIdForDiag(driverId)} tenant=${_maskCompanyScopeForLog(scope["tenant_id"] ?? "")} company=${_maskCompanyScopeForLog(scope["company_id"] ?? "")}',
+  );
+  _persistLocalTenantState();
   unawaited(
     syncFleetInventoryToBackend(
       tenantId: scope['tenant_id'],
@@ -1978,6 +2098,7 @@ Future<void> _persistLocalTenantState() async {
       'drivers': driversNotifier.value
           .map(_encodeDriver)
           .toList(growable: false),
+      'deletedDriverIdsByScope': _encodeDeletedDriverTombstonesForPersistence(),
     };
     await file.writeAsString(jsonEncode(payload));
     debugPrint(
@@ -2913,6 +3034,52 @@ Future<void> syncLocalCompanyInventoryToBackend({
       tenantId: effectiveTenant,
       companyId: effectiveCompany,
     );
+    final tombstonedDriverIds = <String>{
+      ..._deletedDriverIdsForScope(
+        tenantId: scope['tenant_id'] ?? '',
+        companyId: scope['company_id'] ?? '',
+      ),
+    };
+    final syncTenantId = scope['tenant_id'] ?? '';
+    final syncCompanyId = scope['company_id'] ?? '';
+    final syncTenantMasked = _maskCompanyScopeForLog(syncTenantId);
+    final syncCompanyMasked = _maskCompanyScopeForLog(syncCompanyId);
+    final removedDriverIdsAfterConflict = <String>{};
+
+    void removeDriverLocallyAfterConflict(String driverId) {
+      final normalizedDriverId = driverId.trim();
+      if (normalizedDriverId.isEmpty) return;
+      if (!removedDriverIdsAfterConflict.add(normalizedDriverId)) return;
+      driversNotifier.value = driversNotifier.value
+          .where((d) => d.id.trim() != normalizedDriverId)
+          .toList(growable: false);
+      vehiclesNotifier.value = vehiclesNotifier.value
+          .map(
+            (v) => (v.driverId ?? '').trim() == normalizedDriverId
+                ? v.copyWith(driverId: null)
+                : v,
+          )
+          .toList(growable: false);
+      debugPrint(
+        '[COMPANY_SYNC][LOCAL_REMOVE_AFTER_CONFLICT] driver=${_maskDriverIdForDiag(normalizedDriverId)}',
+      );
+      _persistLocalTenantState();
+    }
+
+    bool isDeletedConflictResponse(http.Response response) {
+      if (response.statusCode == 409) return true;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          final errorCode = (decoded['error'] ?? decoded['reason'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          return errorCode == 'driver_deleted_conflict';
+        }
+      } catch (_) {}
+      return false;
+    }
 
     if (scopedVehicles.isNotEmpty) {
       try {
@@ -2978,6 +3145,13 @@ Future<void> syncLocalCompanyInventoryToBackend({
           );
           continue;
         }
+        if (tombstonedDriverIds.contains(driverId)) {
+          skippedCount += 1;
+          debugPrint(
+            '[COMPANY_SYNC][SKIP_DELETED_DRIVER] driver=$maskedDriver reason=tombstone',
+          );
+          continue;
+        }
         try {
           final endpoint = _withAdminTenantCompanyScope(
             Uri.parse(
@@ -3003,6 +3177,20 @@ Future<void> syncLocalCompanyInventoryToBackend({
             okCount += 1;
             debugPrint('[COMPANY_SYNC][DRIVER_OK] driver=$maskedDriver');
           } else {
+            if (isDeletedConflictResponse(response)) {
+              skippedCount += 1;
+              tombstonedDriverIds.add(driverId);
+              _markDeletedDriverForScope(
+                tenantId: syncTenantId,
+                companyId: syncCompanyId,
+                driverId: driverId,
+              );
+              debugPrint(
+                '[COMPANY_SYNC][REMOTE_DELETE_CONFLICT] driver=$maskedDriver tenant=$syncTenantMasked company=$syncCompanyMasked',
+              );
+              removeDriverLocallyAfterConflict(driverId);
+              continue;
+            }
             failedCount += 1;
             String reason = 'non_2xx';
             try {
@@ -4124,6 +4312,48 @@ Future<bool> hydrateCompanyStateFromBootstrap(
     final bootstrapScopeCompanyId = companyId.trim().isNotEmpty
         ? companyId.trim()
         : tenantId.trim();
+    final remoteDeletedDriverIds = <String>{};
+    final deletedDriverIdsRaw =
+        bootstrap['deleted_driver_ids'] ?? bootstrap['deletedDriverIds'];
+    if (deletedDriverIdsRaw is List) {
+      for (final row in deletedDriverIdsRaw) {
+        final driverId = _normalizedDriverIdForTombstone('$row');
+        if (driverId.isEmpty) continue;
+        remoteDeletedDriverIds.add(driverId);
+      }
+    }
+    debugPrint(
+      '[DRIVER_DELETE][REMOTE_TOMBSTONE_SYNC] count=${remoteDeletedDriverIds.length}',
+    );
+    if (tenantId.isNotEmpty && bootstrapScopeCompanyId.isNotEmpty) {
+      for (final driverId in remoteDeletedDriverIds) {
+        _markDeletedDriverForScope(
+          tenantId: tenantId,
+          companyId: bootstrapScopeCompanyId,
+          driverId: driverId,
+        );
+        debugPrint(
+          '[DRIVER_DELETE][REMOTE_TOMBSTONE_APPLY] driver=${_maskDriverIdForDiag(driverId)}',
+        );
+      }
+      if (remoteDeletedDriverIds.isNotEmpty) {
+        driversNotifier.value = driversNotifier.value
+            .where(
+              (driver) => !remoteDeletedDriverIds.contains(driver.id.trim()),
+            )
+            .toList(growable: false);
+        vehiclesNotifier.value = vehiclesNotifier.value
+            .map(
+              (vehicle) =>
+                  remoteDeletedDriverIds.contains(
+                    (vehicle.driverId ?? '').trim(),
+                  )
+                  ? vehicle.copyWith(driverId: null)
+                  : vehicle,
+            )
+            .toList(growable: false);
+      }
+    }
 
     final businessMap = bootstrap['business_profile'] is Map
         ? Map<String, dynamic>.from(bootstrap['business_profile'] as Map)
@@ -4516,6 +4746,12 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           map['id'],
         ]);
         if (driverId.isEmpty) continue;
+        if (remoteDeletedDriverIds.contains(driverId)) {
+          debugPrint(
+            '[DRIVER_HYDRATE_MERGE][SKIP_TOMBSTONED_LOCAL] driver=${_maskDriverIdForDiag(driverId)}',
+          );
+          continue;
+        }
         remoteDriverIds.add(driverId);
         final fullName = textAny(<dynamic>[
           map['display_name'],
@@ -4648,6 +4884,20 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         final localCompany = (local.companyId ?? '').trim();
         if (localCompany.isNotEmpty &&
             localCompany != bootstrapScopeCompanyId) {
+          continue;
+        }
+        final tombstoneCompanyId = bootstrapScopeCompanyId.isNotEmpty
+            ? bootstrapScopeCompanyId
+            : tenantId;
+        final isTombstoned = _isDriverIdTombstonedForScope(
+          tenantId: tenantId,
+          companyId: tombstoneCompanyId,
+          driverId: localId,
+        );
+        if (isTombstoned) {
+          debugPrint(
+            '[DRIVER_HYDRATE_MERGE][SKIP_TOMBSTONED_LOCAL] driver=${_maskDriverIdForDiag(localId)}',
+          );
           continue;
         }
         debugPrint(
@@ -4953,6 +5203,7 @@ Future<Map<String, dynamic>> disconnectBackendGoogleCalendar({
 
 Future<void> loadLocalTenantState() async {
   try {
+    _deletedDriverIdsByScope.clear();
     final file = await _tenantStateFile();
     final exists = await file.exists();
     debugPrint('tenant_state_load path=${file.path} exists=$exists');
@@ -4963,6 +5214,9 @@ Future<void> loadLocalTenantState() async {
     final decoded = jsonDecode(raw);
     if (decoded is! Map) return;
     final map = Map<String, dynamic>.from(decoded);
+    _decodeDeletedDriverTombstonesFromPersistence(
+      map['deletedDriverIdsByScope'],
+    );
 
     final currentBusiness = businessSettingsNotifier.value;
     final businessMap = map['businessSettings'];
