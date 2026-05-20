@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -171,6 +171,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'comfort',
     'private',
     'premium',
+  ];
+  static const List<String> _airportFixedFareCurrencies = <String>[
+    'EUR',
+    'GBP',
+    'USD',
+    'CHF',
+    'NOK',
+    'SEK',
+    'DKK',
   ];
   static final List<Map<String, String>> _airportFixedFareCatalog =
       _buildAirportFixedFareCatalog();
@@ -3601,9 +3610,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           : ((_airportRulePrice(existing['price_incl_vat']) ?? 0)
                 .toStringAsFixed(2)),
     );
-    final currencyCtrl = TextEditingController(
-      text: _airportRuleText(existing?['currency'], fallback: 'EUR'),
-    );
+    var selectedCurrency = _airportRuleText(
+      existing?['currency'],
+      fallback: 'EUR',
+    ).trim().toUpperCase();
+    if (!_airportFixedFareCurrencies.contains(selectedCurrency)) {
+      selectedCurrency = 'EUR';
+    }
     final countryCodes = _airportCatalogCountryCodes();
     final existingAirport = _airportCatalogByIata(
       _airportRuleText(existing?['airport_iata']),
@@ -3691,480 +3704,708 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     if (!_airportFixedFareTiers.contains(tier)) {
       tier = _airportFixedFareTiers.first;
     }
-    String? localError;
+    var showAdvancedRadiusCoordinates = false;
+    String? airportError;
+    String? zoneError;
+    String? radiusError;
+    String? priceError;
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF111111),
-              title: Text(
-                existing == null
-                    ? _t(
-                        nl: 'Regel toevoegen',
-                        en: 'Add rule',
-                        fr: 'Ajouter une rÃ¨gle',
-                        es: 'Agregar regla',
-                      )
-                    : _t(
-                        nl: 'Regel bewerken',
-                        en: 'Edit rule',
-                        fr: 'Modifier la rÃ¨gle',
-                        es: 'Editar regla',
-                      ),
-              ),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: enabled,
-                        onChanged: (value) =>
-                            setDialogState(() => enabled = value),
-                        title: Text(
-                          _t(
-                            nl: 'Ingeschakeld',
-                            en: 'Enabled',
-                            fr: 'ActivÃ©',
-                            es: 'Habilitado',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        value: selectedCountryCode.isEmpty
-                            ? null
-                            : selectedCountryCode,
-                        decoration: InputDecoration(
-                          labelText: _t(
-                            nl: 'Land',
-                            en: 'Country',
-                            fr: 'Pays',
-                            es: 'PaÃ­s',
-                          ),
-                        ),
-                        items: countryCodes
-                            .map(
-                              (code) => DropdownMenuItem<String>(
-                                value: code,
-                                child: Text(_airportCatalogCountryName(code)),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() {
-                            selectedCountryCode = value;
-                            airportsForCountry =
-                                _airportCatalogAirportsForCountry(
-                                  selectedCountryCode,
-                                );
-                            selectedAirportIata = airportsForCountry.isNotEmpty
-                                ? (airportsForCountry.first['iata'] ?? '')
-                                      .toUpperCase()
-                                : '';
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: selectedAirportIata.isEmpty
-                            ? null
-                            : selectedAirportIata,
-                        decoration: InputDecoration(
-                          labelText: _t(
-                            nl: 'Luchthaven',
-                            en: 'Airport',
-                            fr: 'AÃ©roport',
-                            es: 'Aeropuerto',
-                          ),
-                        ),
-                        items: airportsForCountry
-                            .map(
-                              (item) => DropdownMenuItem<String>(
-                                value: (item['iata'] ?? '').toUpperCase(),
-                                child: Text(
-                                  '${item['airport_name'] ?? ''} (${item['iata'] ?? ''})',
-                                ),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            selectedAirportIata = (value ?? '').toUpperCase();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: direction,
-                        decoration: InputDecoration(
-                          labelText: _t(
-                            nl: 'Richting',
-                            en: 'Direction',
-                            fr: 'Direction',
-                            es: 'DirecciÃ³n',
-                          ),
-                        ),
-                        items: _airportFixedFareDirections
-                            .map(
-                              (value) => DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(_airportDirectionLabel(value)),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() => direction = value);
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: zoneType,
-                        decoration: InputDecoration(
-                          labelText: _t(
-                            nl: 'Zone type',
-                            en: 'Zone type',
-                            fr: 'Type de zone',
-                            es: 'Tipo de zona',
-                          ),
-                        ),
-                        items: _airportFixedFareZoneTypes
-                            .map(
-                              (value) => DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(_airportZoneTypeLabel(value)),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() => zoneType = value);
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      if (zoneType == 'radius') ...[
-                        _txt(
-                          zoneLabelCtrl,
-                          _t(
-                            nl: 'Locatielabel',
-                            en: 'Location label',
-                            fr: 'LibellÃ© de lieu',
-                            es: 'Etiqueta de ubicaciÃ³n',
-                          ),
-                          hint: _t(
-                            nl: 'Bijv. Maarkedal centrum',
-                            en: 'E.g. Maarkedal center',
-                            fr: 'Ex. centre de Maarkedal',
-                            es: 'Ej. centro de Maarkedal',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _txt(
-                          zoneCenterLatCtrl,
-                          _t(
-                            nl: 'Center latitude',
-                            en: 'Center latitude',
-                            fr: 'Latitude du centre',
-                            es: 'Latitud del centro',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _txt(
-                          zoneCenterLngCtrl,
-                          _t(
-                            nl: 'Center longitude',
-                            en: 'Center longitude',
-                            fr: 'Longitude du centre',
-                            es: 'Longitud del centro',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        DropdownButtonFormField<String>(
-                          value: radiusPreset,
-                          decoration: InputDecoration(
-                            labelText: _t(
-                              nl: 'Radius',
-                              en: 'Radius',
-                              fr: 'Rayon',
-                              es: 'Radio',
+            final viewInsets = MediaQuery.of(context).viewInsets;
+            final media = MediaQuery.of(context).size;
+            final airportDropdownItems = airportsForCountry
+                .map(
+                  (item) => DropdownMenuItem<String>(
+                    value: (item['iata'] ?? '').toUpperCase(),
+                    child: Text(
+                      '${item['airport_name'] ?? ''} (${item['iata'] ?? ''})',
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                )
+                .toList(growable: false);
+            return SafeArea(
+              child: AnimatedPadding(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                padding: EdgeInsets.only(bottom: viewInsets.bottom),
+                child: Dialog(
+                  backgroundColor: const Color(0xFF111111),
+                  insetPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: media.height * 0.92),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            existing == null
+                                ? _t(
+                                    nl: 'Regel toevoegen',
+                                    en: 'Add rule',
+                                    fr: 'Ajouter une regle',
+                                    es: 'Agregar regla',
+                                  )
+                                : _t(
+                                    nl: 'Regel bewerken',
+                                    en: 'Edit rule',
+                                    fr: 'Modifier la regle',
+                                    es: 'Editar regla',
+                                  ),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          items: const <String>['10', '20', '30', 'custom']
-                              .map(
-                                (value) => DropdownMenuItem<String>(
-                                  value: value,
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    value: enabled,
+                                    onChanged: (value) =>
+                                        setDialogState(() => enabled = value),
+                                    title: Text(
+                                      _t(
+                                        nl: 'Ingeschakeld',
+                                        en: 'Enabled',
+                                        fr: 'Active',
+                                        es: 'Habilitado',
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: selectedCountryCode.isEmpty
+                                        ? null
+                                        : selectedCountryCode,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Land',
+                                        en: 'Country',
+                                        fr: 'Pays',
+                                        es: 'Pais',
+                                      ),
+                                    ),
+                                    items: countryCodes
+                                        .map(
+                                          (code) => DropdownMenuItem<String>(
+                                            value: code,
+                                            child: Text(
+                                              _airportCatalogCountryName(code),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      setDialogState(() {
+                                        selectedCountryCode = value;
+                                        airportsForCountry =
+                                            _airportCatalogAirportsForCountry(
+                                              selectedCountryCode,
+                                            );
+                                        selectedAirportIata =
+                                            airportsForCountry.isNotEmpty
+                                            ? (airportsForCountry
+                                                          .first['iata'] ??
+                                                      '')
+                                                  .toUpperCase()
+                                            : '';
+                                        airportError = null;
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: selectedAirportIata.isEmpty
+                                        ? null
+                                        : selectedAirportIata,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Luchthaven',
+                                        en: 'Airport',
+                                        fr: 'Aeroport',
+                                        es: 'Aeropuerto',
+                                      ),
+                                    ),
+                                    selectedItemBuilder: (_) {
+                                      return airportsForCountry
+                                          .map(
+                                            (item) => Text(
+                                              '${item['airport_name'] ?? ''} (${item['iata'] ?? ''})',
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                          )
+                                          .toList(growable: false);
+                                    },
+                                    items: airportDropdownItems,
+                                    onChanged: (value) {
+                                      setDialogState(() {
+                                        selectedAirportIata = (value ?? '')
+                                            .toUpperCase();
+                                        airportError = null;
+                                      });
+                                    },
+                                  ),
+                                  if (airportError != null) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      airportError!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: direction,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Richting',
+                                        en: 'Direction',
+                                        fr: 'Direction',
+                                        es: 'Direccion',
+                                      ),
+                                    ),
+                                    items: _airportFixedFareDirections
+                                        .map(
+                                          (value) => DropdownMenuItem<String>(
+                                            value: value,
+                                            child: Text(
+                                              _airportDirectionLabel(value),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      setDialogState(() => direction = value);
+                                    },
+                                  ),
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: zoneType,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Zone type',
+                                        en: 'Zone type',
+                                        fr: 'Type de zone',
+                                        es: 'Tipo de zona',
+                                      ),
+                                    ),
+                                    items: _airportFixedFareZoneTypes
+                                        .map(
+                                          (value) => DropdownMenuItem<String>(
+                                            value: value,
+                                            child: Text(
+                                              _airportZoneTypeLabel(value),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      setDialogState(() {
+                                        zoneType = value;
+                                        zoneError = null;
+                                        radiusError = null;
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(height: 10),
+                                  if (zoneType == 'radius') ...[
+                                    _txt(
+                                      zoneLabelCtrl,
+                                      _t(
+                                        nl: 'Locatiecentrum',
+                                        en: 'Centre location',
+                                        fr: 'Centre de la zone',
+                                        es: 'Centro de la zona',
+                                      ),
+                                      hint: _t(
+                                        nl: 'Bijv. Maarkedal centrum',
+                                        en: 'E.g. Maarkedal center',
+                                        fr: 'Ex. centre de Maarkedal',
+                                        es: 'Ej. centro de Maarkedal',
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _t(
+                                        nl: 'Gebruik een plaats, postcode of adres als middelpunt van deze zone.',
+                                        en: 'Use a place, postcode, or address as the center of this zone.',
+                                        fr: 'Utilisez un lieu, code postal ou adresse comme centre de cette zone.',
+                                        es: 'Usa una ciudad, codigo postal o direccion como centro de esta zona.',
+                                      ),
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.72),
+                                        fontSize: 12,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    DropdownButtonFormField<String>(
+                                      isExpanded: true,
+                                      value: radiusPreset,
+                                      decoration: InputDecoration(
+                                        labelText: _t(
+                                          nl: 'Radius',
+                                          en: 'Radius',
+                                          fr: 'Rayon',
+                                          es: 'Radio',
+                                        ),
+                                      ),
+                                      items:
+                                          const <String>[
+                                                '10',
+                                                '20',
+                                                '30',
+                                                'custom',
+                                              ]
+                                              .map(
+                                                (
+                                                  value,
+                                                ) => DropdownMenuItem<String>(
+                                                  value: value,
+                                                  child: Text(
+                                                    value == 'custom'
+                                                        ? _t(
+                                                            nl: 'Aangepast',
+                                                            en: 'Custom',
+                                                            fr: 'Personnalise',
+                                                            es: 'Personalizado',
+                                                          )
+                                                        : '$value km',
+                                                  ),
+                                                ),
+                                              )
+                                              .toList(growable: false),
+                                      onChanged: (value) {
+                                        if (value == null) return;
+                                        setDialogState(() {
+                                          radiusPreset = value;
+                                          if (value != 'custom') {
+                                            radiusKmCtrl.text = value;
+                                          }
+                                          radiusError = null;
+                                        });
+                                      },
+                                    ),
+                                    const SizedBox(height: 10),
+                                    if (radiusPreset == 'custom')
+                                      _txt(
+                                        radiusKmCtrl,
+                                        _t(
+                                          nl: 'Aangepaste radius (km)',
+                                          en: 'Custom radius (km)',
+                                          fr: 'Rayon personnalise (km)',
+                                          es: 'Radio personalizado (km)',
+                                        ),
+                                      ),
+                                    ExpansionTile(
+                                      tilePadding: EdgeInsets.zero,
+                                      childrenPadding: EdgeInsets.zero,
+                                      collapsedIconColor: const Color(
+                                        0xFFE5B641,
+                                      ),
+                                      iconColor: const Color(0xFFE5B641),
+                                      textColor: Colors.white,
+                                      collapsedTextColor: Colors.white70,
+                                      initiallyExpanded:
+                                          showAdvancedRadiusCoordinates,
+                                      title: Text(
+                                        _t(
+                                          nl: 'Geavanceerd: coordinaten handmatig invullen',
+                                          en: 'Advanced: enter coordinates manually',
+                                          fr: 'Avance: saisir les coordonnees manuellement',
+                                          es: 'Avanzado: introducir coordenadas manualmente',
+                                        ),
+                                        style: const TextStyle(fontSize: 13),
+                                      ),
+                                      onExpansionChanged: (expanded) {
+                                        setDialogState(() {
+                                          showAdvancedRadiusCoordinates =
+                                              expanded;
+                                        });
+                                      },
+                                      children: [
+                                        _txt(
+                                          zoneCenterLatCtrl,
+                                          _t(
+                                            nl: 'Breedtegraad',
+                                            en: 'Latitude',
+                                            fr: 'Latitude',
+                                            es: 'Latitud',
+                                          ),
+                                        ),
+                                        _txt(
+                                          zoneCenterLngCtrl,
+                                          _t(
+                                            nl: 'Lengtegraad',
+                                            en: 'Longitude',
+                                            fr: 'Longitude',
+                                            es: 'Longitud',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (radiusError != null) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        radiusError!,
+                                        style: const TextStyle(
+                                          color: Colors.redAccent,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ] else ...[
+                                    _txt(
+                                      zoneValueCtrl,
+                                      _t(
+                                        nl: 'Zone waarde',
+                                        en: 'Zone value',
+                                        fr: 'Valeur de zone',
+                                        es: 'Valor de zona',
+                                      ),
+                                    ),
+                                    if (zoneError != null) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        zoneError!,
+                                        style: const TextStyle(
+                                          color: Colors.redAccent,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: tier,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Tier',
+                                        en: 'Tier',
+                                        fr: 'Niveau',
+                                        es: 'Nivel',
+                                      ),
+                                    ),
+                                    items: _airportFixedFareTiers
+                                        .map(
+                                          (value) => DropdownMenuItem<String>(
+                                            value: value,
+                                            child: Text(
+                                              _airportTierLabel(value),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      setDialogState(() => tier = value);
+                                    },
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _txt(
+                                    priceCtrl,
+                                    _t(
+                                      nl: 'Prijs incl. btw',
+                                      en: 'Price incl. VAT',
+                                      fr: 'Prix TTC',
+                                      es: 'Precio con IVA',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    isExpanded: true,
+                                    value: selectedCurrency,
+                                    decoration: InputDecoration(
+                                      labelText: _t(
+                                        nl: 'Munt',
+                                        en: 'Currency',
+                                        fr: 'Devise',
+                                        es: 'Moneda',
+                                      ),
+                                    ),
+                                    items: _airportFixedFareCurrencies
+                                        .map(
+                                          (value) => DropdownMenuItem<String>(
+                                            value: value,
+                                            child: Text(value),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      if (value == null) return;
+                                      setDialogState(() {
+                                        selectedCurrency = value;
+                                        priceError = null;
+                                      });
+                                    },
+                                  ),
+                                  if (priceError != null) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      priceError!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(dialogContext).pop(),
                                   child: Text(
-                                    value == 'custom' ? 'Custom' : '$value km',
+                                    _t(
+                                      nl: 'Annuleren',
+                                      en: 'Cancel',
+                                      fr: 'Annuler',
+                                      es: 'Cancelar',
+                                    ),
                                   ),
                                 ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (value) {
-                            if (value == null) return;
-                            setDialogState(() {
-                              radiusPreset = value;
-                              if (value != 'custom') {
-                                radiusKmCtrl.text = value;
-                              }
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 10),
-                        if (radiusPreset == 'custom')
-                          _txt(
-                            radiusKmCtrl,
-                            _t(
-                              nl: 'Radius km (custom)',
-                              en: 'Radius km (custom)',
-                              fr: 'Rayon km (personnalisÃ©)',
-                              es: 'Radio km (personalizado)',
-                            ),
-                          ),
-                      ] else ...[
-                        _txt(
-                          zoneValueCtrl,
-                          _t(
-                            nl: 'Zone waarde',
-                            en: 'Zone value',
-                            fr: 'Valeur de zone',
-                            es: 'Valor de zona',
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: tier,
-                        decoration: InputDecoration(
-                          labelText: _t(
-                            nl: 'Tier',
-                            en: 'Tier',
-                            fr: 'Niveau',
-                            es: 'Nivel',
-                          ),
-                        ),
-                        items: _airportFixedFareTiers
-                            .map(
-                              (value) => DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(_airportTierLabel(value)),
                               ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() => tier = value);
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      const SizedBox(height: 10),
-                      _txt(
-                        priceCtrl,
-                        _t(
-                          nl: 'Prijs incl. btw',
-                          en: 'Price incl. VAT',
-                          fr: 'Prix TTC',
-                          es: 'Precio con IVA',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _txt(
-                        currencyCtrl,
-                        _t(
-                          nl: 'Munt',
-                          en: 'Currency',
-                          fr: 'Devise',
-                          es: 'Moneda',
-                        ),
-                      ),
-                      if (localError != null) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          localError!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 12,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: FilledButton(
+                                  onPressed: () {
+                                    FocusScope.of(dialogContext).unfocus();
+                                    setDialogState(() {
+                                      airportError = null;
+                                      zoneError = null;
+                                      radiusError = null;
+                                      priceError = null;
+                                    });
+
+                                    final zoneValue = zoneValueCtrl.text.trim();
+                                    final zoneLabel = zoneLabelCtrl.text.trim();
+                                    final zoneCenterLat = double.tryParse(
+                                      zoneCenterLatCtrl.text.trim().replaceAll(
+                                        ',',
+                                        '.',
+                                      ),
+                                    );
+                                    final zoneCenterLng = double.tryParse(
+                                      zoneCenterLngCtrl.text.trim().replaceAll(
+                                        ',',
+                                        '.',
+                                      ),
+                                    );
+                                    final radiusKm = radiusPreset == 'custom'
+                                        ? double.tryParse(
+                                            radiusKmCtrl.text.trim().replaceAll(
+                                              ',',
+                                              '.',
+                                            ),
+                                          )
+                                        : double.tryParse(radiusPreset);
+                                    final price = double.tryParse(
+                                      priceCtrl.text.trim().replaceAll(
+                                        ',',
+                                        '.',
+                                      ),
+                                    );
+                                    if (selectedAirportIata.trim().isEmpty) {
+                                      setDialogState(() {
+                                        airportError = _t(
+                                          nl: 'Kies een luchthaven.',
+                                          en: 'Choose an airport.',
+                                          fr: 'Choisissez un aeroport.',
+                                          es: 'Elige un aeropuerto.',
+                                        );
+                                      });
+                                      return;
+                                    }
+                                    if (zoneType != 'radius' &&
+                                        zoneValue.isEmpty) {
+                                      setDialogState(() {
+                                        zoneError = _t(
+                                          nl: 'Vul een zonewaarde in.',
+                                          en: 'Enter a zone value.',
+                                          fr: 'Saisissez une valeur de zone.',
+                                          es: 'Introduce un valor de zona.',
+                                        );
+                                      });
+                                      return;
+                                    }
+                                    if (zoneType == 'radius') {
+                                      if (zoneLabel.isEmpty) {
+                                        setDialogState(() {
+                                          radiusError = _t(
+                                            nl: 'Vul een locatiecentrum in.',
+                                            en: 'Enter a centre location.',
+                                            fr: 'Saisissez un centre de zone.',
+                                            es: 'Introduce el centro de la zona.',
+                                          );
+                                        });
+                                        return;
+                                      }
+                                      if (zoneCenterLat == null ||
+                                          !zoneCenterLat.isFinite ||
+                                          zoneCenterLat < -90 ||
+                                          zoneCenterLat > 90 ||
+                                          zoneCenterLng == null ||
+                                          !zoneCenterLng.isFinite ||
+                                          zoneCenterLng < -180 ||
+                                          zoneCenterLng > 180) {
+                                        setDialogState(() {
+                                          showAdvancedRadiusCoordinates = true;
+                                          radiusError = _t(
+                                            nl: 'Vul geldige centrumcoördinaten in.',
+                                            en: 'Enter valid centre coordinates.',
+                                            fr: 'Saisissez des coordonnees valides du centre.',
+                                            es: 'Introduce coordenadas validas del centro.',
+                                          );
+                                        });
+                                        return;
+                                      }
+                                      if (radiusKm == null ||
+                                          !radiusKm.isFinite ||
+                                          radiusKm < 1 ||
+                                          radiusKm > 100) {
+                                        setDialogState(() {
+                                          radiusError = _t(
+                                            nl: 'Vul een geldige radius in (1-100 km).',
+                                            en: 'Enter a valid radius (1-100 km).',
+                                            fr: 'Saisissez un rayon valide (1-100 km).',
+                                            es: 'Introduce un radio valido (1-100 km).',
+                                          );
+                                        });
+                                        return;
+                                      }
+                                    }
+                                    if (price == null ||
+                                        !price.isFinite ||
+                                        price <= 0) {
+                                      setDialogState(() {
+                                        priceError = _t(
+                                          nl: 'Vul een geldige prijs in.',
+                                          en: 'Enter a valid price.',
+                                          fr: 'Saisissez un prix valide.',
+                                          es: 'Introduce un precio valido.',
+                                        );
+                                      });
+                                      return;
+                                    }
+                                    final selectedAirport =
+                                        _airportCatalogByIata(
+                                          selectedAirportIata,
+                                        );
+                                    final airportIata = selectedAirportIata
+                                        .trim()
+                                        .toUpperCase();
+                                    final normalizedCurrency =
+                                        _airportFixedFareCurrencies.contains(
+                                          selectedCurrency,
+                                        )
+                                        ? selectedCurrency
+                                        : 'EUR';
+                                    final ruleId =
+                                        _airportRuleText(
+                                          existing?['rule_id'],
+                                        ).isEmpty
+                                        ? _nextAirportFixedFareRuleId(
+                                            airportIata,
+                                            direction,
+                                          )
+                                        : _airportRuleText(
+                                            existing?['rule_id'],
+                                          );
+                                    Navigator.of(
+                                      dialogContext,
+                                    ).pop(<String, dynamic>{
+                                      'rule_id': ruleId,
+                                      'enabled': enabled,
+                                      'priority': _airportRuleInt(
+                                        existing?['priority'],
+                                        fallback: 0,
+                                      ),
+                                      'airport_iata': airportIata,
+                                      'direction': direction,
+                                      'zone_type': zoneType,
+                                      if (zoneType != 'radius')
+                                        'zone_value': zoneValue,
+                                      if (zoneType == 'radius')
+                                        'zone_label': zoneLabel,
+                                      if (zoneType == 'radius')
+                                        'zone_center_lat': zoneCenterLat,
+                                      if (zoneType == 'radius')
+                                        'zone_center_lng': zoneCenterLng,
+                                      if (zoneType == 'radius')
+                                        'radius_km': radiusKm,
+                                      'tier': tier,
+                                      'price_incl_vat': price,
+                                      'currency': normalizedCurrency,
+                                      'airport_name': _airportRuleText(
+                                        selectedAirport?['airport_name'],
+                                      ),
+                                      'airport_country': _airportRuleText(
+                                        selectedAirport?['country_name'],
+                                      ),
+                                      'pax_min': _airportRuleInt(
+                                        existing?['pax_min'],
+                                        fallback: 1,
+                                      ),
+                                      'pax_max': _airportRuleInt(
+                                        existing?['pax_max'],
+                                        fallback: 99,
+                                      ),
+                                      'bags_max': _airportRuleInt(
+                                        existing?['bags_max'],
+                                        fallback: 99,
+                                      ),
+                                    });
+                                  },
+                                  child: Text(
+                                    _t(
+                                      nl: 'Toepassen',
+                                      en: 'Apply',
+                                      fr: 'Appliquer',
+                                      es: 'Aplicar',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
-                    ],
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: Text(
-                    _t(
-                      nl: 'Annuleren',
-                      en: 'Cancel',
-                      fr: 'Annuler',
-                      es: 'Cancelar',
-                    ),
-                  ),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final zoneValue = zoneValueCtrl.text.trim();
-                    final zoneLabel = zoneLabelCtrl.text.trim();
-                    final zoneCenterLat = double.tryParse(
-                      zoneCenterLatCtrl.text.trim().replaceAll(',', '.'),
-                    );
-                    final zoneCenterLng = double.tryParse(
-                      zoneCenterLngCtrl.text.trim().replaceAll(',', '.'),
-                    );
-                    final radiusKm = double.tryParse(
-                      radiusKmCtrl.text.trim().replaceAll(',', '.'),
-                    );
-                    final price = double.tryParse(
-                      priceCtrl.text.trim().replaceAll(',', '.'),
-                    );
-                    final currency = currencyCtrl.text.trim().toUpperCase();
-                    if (selectedAirportIata.trim().isEmpty) {
-                      setDialogState(() {
-                        localError = _t(
-                          nl: 'Kies een luchthaven.',
-                          en: 'Choose an airport.',
-                          fr: 'Choisissez un aÃ©roport.',
-                          es: 'Elige un aeropuerto.',
-                        );
-                      });
-                      return;
-                    }
-                    if (zoneType != 'radius' && zoneValue.isEmpty) {
-                      setDialogState(() {
-                        localError = _t(
-                          nl: 'Vul een zone in.',
-                          en: 'Enter a zone value.',
-                          fr: 'Saisissez une valeur de zone.',
-                          es: 'Introduce un valor de zona.',
-                        );
-                      });
-                      return;
-                    }
-                    if (zoneType == 'radius') {
-                      if (zoneLabel.isEmpty) {
-                        setDialogState(() {
-                          localError = _t(
-                            nl: 'Vul een locatielabel in.',
-                            en: 'Enter a location label.',
-                            fr: 'Saisissez un libellÃ© de lieu.',
-                            es: 'Introduce una etiqueta de ubicaciÃ³n.',
-                          );
-                        });
-                        return;
-                      }
-                      if (zoneCenterLat == null ||
-                          !zoneCenterLat.isFinite ||
-                          zoneCenterLat < -90 ||
-                          zoneCenterLat > 90 ||
-                          zoneCenterLng == null ||
-                          !zoneCenterLng.isFinite ||
-                          zoneCenterLng < -180 ||
-                          zoneCenterLng > 180) {
-                        setDialogState(() {
-                          localError = _t(
-                            nl: 'Vul geldige center coÃ¶rdinaten in.',
-                            en: 'Enter valid center coordinates.',
-                            fr: 'Saisissez des coordonnÃ©es de centre valides.',
-                            es: 'Introduce coordenadas vÃ¡lidas del centro.',
-                          );
-                        });
-                        return;
-                      }
-                      if (radiusKm == null ||
-                          !radiusKm.isFinite ||
-                          radiusKm < 1 ||
-                          radiusKm > 100) {
-                        setDialogState(() {
-                          localError = _t(
-                            nl: 'Vul een geldige radius in (1-100 km).',
-                            en: 'Enter a valid radius (1-100 km).',
-                            fr: 'Saisissez un rayon valide (1-100 km).',
-                            es: 'Introduce un radio vÃ¡lido (1-100 km).',
-                          );
-                        });
-                        return;
-                      }
-                    }
-                    if (price == null || !price.isFinite || price <= 0) {
-                      setDialogState(() {
-                        localError = _t(
-                          nl: 'Vul een geldige prijs in.',
-                          en: 'Enter a valid price.',
-                          fr: 'Saisissez un prix valide.',
-                          es: 'Introduce un precio vÃ¡lido.',
-                        );
-                      });
-                      return;
-                    }
-                    final selectedAirport = _airportCatalogByIata(
-                      selectedAirportIata,
-                    );
-                    final airportIata = selectedAirportIata
-                        .trim()
-                        .toUpperCase();
-                    final ruleId =
-                        _airportRuleText(existing?['rule_id']).isEmpty
-                        ? _nextAirportFixedFareRuleId(airportIata, direction)
-                        : _airportRuleText(existing?['rule_id']);
-                    Navigator.of(dialogContext).pop(<String, dynamic>{
-                      'rule_id': ruleId,
-                      'enabled': enabled,
-                      'priority': _airportRuleInt(
-                        existing?['priority'],
-                        fallback: 0,
-                      ),
-                      'airport_iata': airportIata,
-                      'direction': direction,
-                      'zone_type': zoneType,
-                      if (zoneType != 'radius') 'zone_value': zoneValue,
-                      if (zoneType == 'radius') 'zone_label': zoneLabel,
-                      if (zoneType == 'radius')
-                        'zone_center_lat': zoneCenterLat,
-                      if (zoneType == 'radius')
-                        'zone_center_lng': zoneCenterLng,
-                      if (zoneType == 'radius') 'radius_km': radiusKm,
-                      'tier': tier,
-                      'price_incl_vat': price,
-                      'currency': currency.isEmpty ? 'EUR' : currency,
-                      'airport_name': _airportRuleText(
-                        selectedAirport?['airport_name'],
-                      ),
-                      'airport_country': _airportRuleText(
-                        selectedAirport?['country_name'],
-                      ),
-                      'pax_min': _airportRuleInt(
-                        existing?['pax_min'],
-                        fallback: 1,
-                      ),
-                      'pax_max': _airportRuleInt(
-                        existing?['pax_max'],
-                        fallback: 99,
-                      ),
-                      'bags_max': _airportRuleInt(
-                        existing?['bags_max'],
-                        fallback: 99,
-                      ),
-                    });
-                  },
-                  child: Text(
-                    _t(
-                      nl: 'Toepassen',
-                      en: 'Apply',
-                      fr: 'Appliquer',
-                      es: 'Aplicar',
-                    ),
-                  ),
-                ),
-              ],
             );
           },
         );
@@ -4176,7 +4417,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     zoneCenterLngCtrl.dispose();
     radiusKmCtrl.dispose();
     priceCtrl.dispose();
-    currencyCtrl.dispose();
     if (result == null) return;
     setState(() {
       _airportFixedFaresError = null;
