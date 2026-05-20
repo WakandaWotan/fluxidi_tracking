@@ -3438,6 +3438,103 @@ Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   return BackendSubscriptionProfile.fromJson(Map<String, dynamic>.from(saved));
 }
 
+String _adminApiErrorMessageFromResponse(
+  dynamic decoded,
+  int statusCode, {
+  String fallback = 'request_failed',
+}) {
+  if (decoded is Map) {
+    final map = Map<String, dynamic>.from(decoded);
+    final error = (map['error'] ?? map['message'] ?? '').toString().trim();
+    final details = map['details'];
+    if (details is List && details.isNotEmpty) {
+      final detailText = details
+          .map((item) => item is Map ? Map<String, dynamic>.from(item) : null)
+          .whereType<Map<String, dynamic>>()
+          .map((item) {
+            final field = (item['field'] ?? '').toString().trim();
+            final issue = (item['error'] ?? '').toString().trim();
+            if (field.isNotEmpty && issue.isNotEmpty) return '$field: $issue';
+            if (issue.isNotEmpty) return issue;
+            return '';
+          })
+          .where((item) => item.isNotEmpty)
+          .join('; ');
+      if (detailText.isNotEmpty) {
+        return '${error.isNotEmpty ? '$error - ' : ''}$detailText';
+      }
+    }
+    if (error.isNotEmpty) return error;
+  }
+  return 'HTTP $statusCode: $fallback';
+}
+
+Future<Map<String, dynamic>> fetchAdminAirportFixedFares({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/airport-fixed-fares'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .get(endpoint, headers: _adminJsonHeaders())
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'airport_fixed_fares_fetch_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+Future<Map<String, dynamic>> saveAdminAirportFixedFares(
+  Map<String, dynamic> airportFixedFaresDocument, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/airport-fixed-fares'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: _adminJsonHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'airport_fixed_fares': airportFixedFaresDocument,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'airport_fixed_fares_save_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 int? _lastCompanyBootstrapHttpStatusCode;
 int? get lastCompanyBootstrapHttpStatusCode =>
     _lastCompanyBootstrapHttpStatusCode;

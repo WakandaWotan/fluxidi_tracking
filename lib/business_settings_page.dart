@@ -145,6 +145,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'online_payment',
   };
   final Set<String> _expandedSections = <String>{};
+  static const List<String> _airportFixedFareDirections = <String>[
+    'to_airport',
+    'from_airport',
+  ];
+  static const List<String> _airportFixedFareZoneTypes = <String>[
+    'postcode',
+    'city',
+    'country',
+  ];
+  static const List<String> _airportFixedFareTiers = <String>[
+    'comfort',
+    'private',
+    'premium',
+  ];
+  bool _airportFixedFaresLoading = false;
+  bool _airportFixedFaresSaving = false;
+  String? _airportFixedFaresError;
+  String? _airportFixedFaresStatus;
+  int _airportFixedFaresVersion = 1;
+  String? _airportFixedFaresUpdatedAt;
+  List<Map<String, dynamic>> _airportFixedFareRules = <Map<String, dynamic>>[];
 
   void _onLogoSanitizationListeners() {
     _syncLocalTenantLogoFromNotifier();
@@ -196,6 +217,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _mergeLocalIntoGeneralControllersIfEligible();
     _loadBackendProfiles();
     _loadGoogleCalendarStatus();
+    _loadAirportFixedFareRules();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncLocalTenantLogoFromNotifier();
@@ -2904,6 +2926,794 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return (tenantId: companyId, companyId: companyId);
   }
 
+  String _airportRuleText(dynamic value, {String fallback = ''}) {
+    final text = (value ?? '').toString().trim();
+    return text.isEmpty ? fallback : text;
+  }
+
+  bool _airportRuleBool(dynamic value, {bool fallback = true}) {
+    if (value is bool) return value;
+    final text = (value ?? '').toString().trim().toLowerCase();
+    if (text == 'true' || text == '1' || text == 'yes') return true;
+    if (text == 'false' || text == '0' || text == 'no') return false;
+    return fallback;
+  }
+
+  int _airportRuleInt(dynamic value, {required int fallback}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse((value ?? '').toString().trim()) ?? fallback;
+  }
+
+  double? _airportRulePrice(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(
+      (value ?? '').toString().trim().replaceAll(',', '.'),
+    );
+  }
+
+  Map<String, dynamic>? _normalizeAirportFixedFareRule(dynamic raw, int idx) {
+    if (raw is! Map) return null;
+    final source = Map<String, dynamic>.from(raw);
+    final airportIata = _airportRuleText(
+      source['airport_iata'] ?? source['airportIata'],
+    ).toUpperCase();
+    final direction = _airportRuleText(source['direction']).toLowerCase();
+    final zoneType = _airportRuleText(
+      source['zone_type'] ?? source['zoneType'],
+    ).toLowerCase();
+    final zoneValue = _airportRuleText(
+      source['zone_value'] ?? source['zoneValue'],
+    );
+    final tier = _airportRuleText(source['tier']).toLowerCase();
+    final price = _airportRulePrice(
+      source['price_incl_vat'] ?? source['priceInclVat'],
+    );
+    final currency = _airportRuleText(
+      source['currency'],
+      fallback: 'EUR',
+    ).toUpperCase();
+    if (airportIata.isEmpty ||
+        !_airportFixedFareDirections.contains(direction) ||
+        !_airportFixedFareZoneTypes.contains(zoneType) ||
+        zoneValue.isEmpty ||
+        !_airportFixedFareTiers.contains(tier) ||
+        price == null ||
+        !price.isFinite ||
+        price <= 0) {
+      return null;
+    }
+    return <String, dynamic>{
+      'rule_id': _airportRuleText(
+        source['rule_id'] ?? source['ruleId'],
+        fallback: 'airport_rule_${idx + 1}',
+      ),
+      'enabled': _airportRuleBool(source['enabled'], fallback: true),
+      'priority': _airportRuleInt(source['priority'], fallback: 0),
+      'airport_iata': airportIata,
+      'direction': direction,
+      'zone_type': zoneType,
+      'zone_value': zoneValue,
+      'tier': tier,
+      'price_incl_vat': price,
+      'currency': currency.isEmpty ? 'EUR' : currency,
+      'pax_min': _airportRuleInt(
+        source['pax_min'] ?? source['paxMin'],
+        fallback: 1,
+      ),
+      'pax_max': _airportRuleInt(
+        source['pax_max'] ?? source['paxMax'],
+        fallback: 99,
+      ),
+      'bags_max': _airportRuleInt(
+        source['bags_max'] ?? source['bagsMax'],
+        fallback: 99,
+      ),
+    };
+  }
+
+  String _nextAirportFixedFareRuleId(String airportIata, String direction) {
+    final base = '${airportIata.toUpperCase()}_${direction.toLowerCase()}'
+        .replaceAll(RegExp(r'[^A-Z0-9_]+'), '_');
+    final seed = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
+    return '${base}_$seed';
+  }
+
+  Future<void> _loadAirportFixedFareRules({bool showErrorSnack = false}) async {
+    setState(() {
+      _airportFixedFaresLoading = true;
+      _airportFixedFaresError = null;
+      _airportFixedFaresStatus = null;
+    });
+    try {
+      final scope = _activeSettingsScope();
+      final data = await fetchAdminAirportFixedFares(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final rawDoc = data['airport_fixed_fares'];
+      final doc = rawDoc is Map<String, dynamic>
+          ? rawDoc
+          : rawDoc is Map
+          ? Map<String, dynamic>.from(rawDoc)
+          : <String, dynamic>{};
+      final rawRules = doc['rules'];
+      final parsedRules = <Map<String, dynamic>>[];
+      if (rawRules is List) {
+        for (var i = 0; i < rawRules.length; i++) {
+          final normalized = _normalizeAirportFixedFareRule(rawRules[i], i);
+          if (normalized != null) parsedRules.add(normalized);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _airportFixedFareRules = parsedRules;
+        _airportFixedFaresVersion = _airportRuleInt(
+          doc['version'],
+          fallback: 1,
+        );
+        _airportFixedFaresUpdatedAt = _airportRuleText(
+          doc['updated_at'] ?? doc['updatedAt'],
+        );
+        _airportFixedFaresStatus = _t(
+          nl: 'Luchthaventarieven geladen.',
+          en: 'Airport fixed fares loaded.',
+          fr: 'Tarifs fixes aéroport chargés.',
+          es: 'Tarifas fijas de aeropuerto cargadas.',
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().trim();
+      setState(() {
+        _airportFixedFaresError = message.isEmpty
+            ? _t(
+                nl: 'Luchthaventarieven konden niet worden geladen.',
+                en: 'Airport fixed fares could not be loaded.',
+                fr: 'Les tarifs fixes aéroport n’ont pas pu être chargés.',
+                es: 'No se pudieron cargar las tarifas fijas de aeropuerto.',
+              )
+            : message;
+      });
+      if (showErrorSnack) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_airportFixedFaresError!)));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _airportFixedFaresLoading = false);
+      }
+    }
+  }
+
+  Future<void> _saveAirportFixedFareRules() async {
+    if (_airportFixedFaresSaving) return;
+    setState(() {
+      _airportFixedFaresSaving = true;
+      _airportFixedFaresError = null;
+      _airportFixedFaresStatus = null;
+    });
+    try {
+      final scope = _activeSettingsScope();
+      final payloadRules = _airportFixedFareRules
+          .map((rule) => Map<String, dynamic>.from(rule))
+          .toList(growable: false);
+      final response = await saveAdminAirportFixedFares(
+        <String, dynamic>{
+          'version': _airportFixedFaresVersion <= 0
+              ? 1
+              : _airportFixedFaresVersion,
+          'rules': payloadRules,
+        },
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final rawDoc = response['airport_fixed_fares'];
+      final doc = rawDoc is Map<String, dynamic>
+          ? rawDoc
+          : rawDoc is Map
+          ? Map<String, dynamic>.from(rawDoc)
+          : <String, dynamic>{};
+      final rawRules = doc['rules'];
+      final parsedRules = <Map<String, dynamic>>[];
+      if (rawRules is List) {
+        for (var i = 0; i < rawRules.length; i++) {
+          final normalized = _normalizeAirportFixedFareRule(rawRules[i], i);
+          if (normalized != null) parsedRules.add(normalized);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _airportFixedFareRules = parsedRules;
+        _airportFixedFaresVersion = _airportRuleInt(
+          doc['version'],
+          fallback: 1,
+        );
+        _airportFixedFaresUpdatedAt = _airportRuleText(
+          doc['updated_at'] ?? doc['updatedAt'],
+        );
+        _airportFixedFaresStatus = _t(
+          nl: 'Luchthaventarieven opgeslagen.',
+          en: 'Airport fixed fares saved.',
+          fr: 'Tarifs fixes aéroport enregistrés.',
+          es: 'Tarifas fijas de aeropuerto guardadas.',
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportFixedFaresStatus!)));
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().trim();
+      setState(() {
+        _airportFixedFaresError = message.isEmpty
+            ? _t(
+                nl: 'Opslaan van luchthaventarieven mislukt.',
+                en: 'Saving airport fixed fares failed.',
+                fr: 'Échec de l’enregistrement des tarifs fixes aéroport.',
+                es: 'Error al guardar tarifas fijas de aeropuerto.',
+              )
+            : message;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportFixedFaresError!)));
+    } finally {
+      if (mounted) {
+        setState(() => _airportFixedFaresSaving = false);
+      }
+    }
+  }
+
+  _SetupStatus _airportFixedFaresSetupStatus() {
+    if (_airportFixedFareRules.isEmpty) return _SetupStatus.attention;
+    return _SetupStatus.complete;
+  }
+
+  Future<void> _editAirportFixedFareRule({int? index}) async {
+    final existing =
+        index != null && index >= 0 && index < _airportFixedFareRules.length
+        ? Map<String, dynamic>.from(_airportFixedFareRules[index])
+        : null;
+    final iataCtrl = TextEditingController(
+      text: _airportRuleText(existing?['airport_iata']),
+    );
+    final zoneValueCtrl = TextEditingController(
+      text: _airportRuleText(existing?['zone_value']),
+    );
+    final priceCtrl = TextEditingController(
+      text: existing == null
+          ? ''
+          : ((_airportRulePrice(existing['price_incl_vat']) ?? 0)
+                .toStringAsFixed(2)),
+    );
+    final currencyCtrl = TextEditingController(
+      text: _airportRuleText(existing?['currency'], fallback: 'EUR'),
+    );
+    var enabled = _airportRuleBool(existing?['enabled'], fallback: true);
+    var direction = _airportRuleText(
+      existing?['direction'],
+      fallback: 'to_airport',
+    ).toLowerCase();
+    if (!_airportFixedFareDirections.contains(direction)) {
+      direction = _airportFixedFareDirections.first;
+    }
+    var zoneType = _airportRuleText(
+      existing?['zone_type'],
+      fallback: 'postcode',
+    ).toLowerCase();
+    if (!_airportFixedFareZoneTypes.contains(zoneType)) {
+      zoneType = _airportFixedFareZoneTypes.first;
+    }
+    var tier = _airportRuleText(
+      existing?['tier'],
+      fallback: 'comfort',
+    ).toLowerCase();
+    if (!_airportFixedFareTiers.contains(tier)) {
+      tier = _airportFixedFareTiers.first;
+    }
+    String? localError;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              title: Text(
+                existing == null
+                    ? _t(
+                        nl: 'Regel toevoegen',
+                        en: 'Add rule',
+                        fr: 'Ajouter une règle',
+                        es: 'Agregar regla',
+                      )
+                    : _t(
+                        nl: 'Regel bewerken',
+                        en: 'Edit rule',
+                        fr: 'Modifier la règle',
+                        es: 'Editar regla',
+                      ),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: enabled,
+                      onChanged: (value) =>
+                          setDialogState(() => enabled = value),
+                      title: Text(
+                        _t(
+                          nl: 'Ingeschakeld',
+                          en: 'Enabled',
+                          fr: 'Activé',
+                          es: 'Habilitado',
+                        ),
+                      ),
+                    ),
+                    _txt(
+                      iataCtrl,
+                      _t(
+                        nl: 'Airport IATA',
+                        en: 'Airport IATA',
+                        fr: 'IATA aéroport',
+                        es: 'IATA aeropuerto',
+                      ),
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: direction,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Richting',
+                          en: 'Direction',
+                          fr: 'Direction',
+                          es: 'Dirección',
+                        ),
+                      ),
+                      items: _airportFixedFareDirections
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => direction = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: zoneType,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Zone type',
+                          en: 'Zone type',
+                          fr: 'Type de zone',
+                          es: 'Tipo de zona',
+                        ),
+                      ),
+                      items: _airportFixedFareZoneTypes
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => zoneType = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _txt(
+                      zoneValueCtrl,
+                      _t(
+                        nl: 'Zone waarde',
+                        en: 'Zone value',
+                        fr: 'Valeur de zone',
+                        es: 'Valor de zona',
+                      ),
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: tier,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Tier',
+                          en: 'Tier',
+                          fr: 'Niveau',
+                          es: 'Nivel',
+                        ),
+                      ),
+                      items: _airportFixedFareTiers
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => tier = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _txt(
+                      priceCtrl,
+                      _t(
+                        nl: 'Prijs incl. btw',
+                        en: 'Price incl. VAT',
+                        fr: 'Prix TTC',
+                        es: 'Precio con IVA',
+                      ),
+                    ),
+                    _txt(
+                      currencyCtrl,
+                      _t(
+                        nl: 'Munt',
+                        en: 'Currency',
+                        fr: 'Devise',
+                        es: 'Moneda',
+                      ),
+                    ),
+                    if (localError != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        localError!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final airportIata = iataCtrl.text.trim().toUpperCase();
+                    final zoneValue = zoneValueCtrl.text.trim();
+                    final price = double.tryParse(
+                      priceCtrl.text.trim().replaceAll(',', '.'),
+                    );
+                    final currency = currencyCtrl.text.trim().toUpperCase();
+                    if (airportIata.isEmpty ||
+                        zoneValue.isEmpty ||
+                        price == null ||
+                        !price.isFinite ||
+                        price <= 0) {
+                      setDialogState(() {
+                        localError = _t(
+                          nl: 'Vul IATA, zone en een geldige prijs in.',
+                          en: 'Enter IATA, zone and a valid price.',
+                          fr: 'Saisissez IATA, zone et un prix valide.',
+                          es: 'Introduce IATA, zona y un precio válido.',
+                        );
+                      });
+                      return;
+                    }
+                    final ruleId =
+                        _airportRuleText(existing?['rule_id']).isEmpty
+                        ? _nextAirportFixedFareRuleId(airportIata, direction)
+                        : _airportRuleText(existing?['rule_id']);
+                    Navigator.of(dialogContext).pop(<String, dynamic>{
+                      'rule_id': ruleId,
+                      'enabled': enabled,
+                      'priority': _airportRuleInt(
+                        existing?['priority'],
+                        fallback: 0,
+                      ),
+                      'airport_iata': airportIata,
+                      'direction': direction,
+                      'zone_type': zoneType,
+                      'zone_value': zoneValue,
+                      'tier': tier,
+                      'price_incl_vat': price,
+                      'currency': currency.isEmpty ? 'EUR' : currency,
+                      'pax_min': _airportRuleInt(
+                        existing?['pax_min'],
+                        fallback: 1,
+                      ),
+                      'pax_max': _airportRuleInt(
+                        existing?['pax_max'],
+                        fallback: 99,
+                      ),
+                      'bags_max': _airportRuleInt(
+                        existing?['bags_max'],
+                        fallback: 99,
+                      ),
+                    });
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Toepassen',
+                      en: 'Apply',
+                      fr: 'Appliquer',
+                      es: 'Aplicar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    iataCtrl.dispose();
+    zoneValueCtrl.dispose();
+    priceCtrl.dispose();
+    currencyCtrl.dispose();
+    if (result == null) return;
+    setState(() {
+      _airportFixedFaresError = null;
+      _airportFixedFaresStatus = null;
+      if (index != null &&
+          index >= 0 &&
+          index < _airportFixedFareRules.length) {
+        _airportFixedFareRules[index] = result;
+      } else {
+        _airportFixedFareRules.add(result);
+      }
+    });
+  }
+
+  Widget _airportFixedFareCard() {
+    return _collapsibleSettingsCard(
+      id: 'airport_fixed_fares',
+      icon: Icons.flight_takeoff_outlined,
+      title: _t(
+        nl: 'Luchthaven vaste tarieven',
+        en: 'Airport fixed fares',
+        fr: 'Tarifs fixes aéroport',
+        es: 'Tarifas fijas aeropuerto',
+      ),
+      subtitle: _t(
+        nl: 'Bedrijfsregels per luchthaven',
+        en: 'Company rules per airport',
+        fr: 'Règles entreprise par aéroport',
+        es: 'Reglas de empresa por aeropuerto',
+      ),
+      status: _airportFixedFaresSetupStatus(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_airportFixedFaresLoading) ...[
+            const LinearProgressIndicator(),
+            const SizedBox(height: 10),
+          ],
+          if (_airportFixedFaresError != null) ...[
+            _notice(_airportFixedFaresError!, isError: true),
+            const SizedBox(height: 8),
+          ],
+          if (_airportFixedFaresStatus != null) ...[
+            _notice(_airportFixedFaresStatus!),
+            const SizedBox(height: 8),
+          ],
+          if ((_airportFixedFaresUpdatedAt ?? '').isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Dernière mise à jour', es: 'Última actualización')}: ${_airportFixedFaresUpdatedAt ?? ''}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.64),
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          if (_airportFixedFareRules.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _t(
+                  nl: 'Nog geen vaste luchthaventarieven ingesteld.',
+                  en: 'No airport fixed fare rules configured yet.',
+                  fr: 'Aucune règle de tarif fixe aéroport configurée.',
+                  es: 'Aún no hay reglas de tarifa fija de aeropuerto configuradas.',
+                ),
+                style: TextStyle(color: Colors.white.withOpacity(0.74)),
+              ),
+            ),
+          ..._airportFixedFareRules.asMap().entries.map((entry) {
+            final index = entry.key;
+            final rule = entry.value;
+            final airportIata = _airportRuleText(rule['airport_iata']);
+            final direction = _airportRuleText(rule['direction']);
+            final zoneType = _airportRuleText(rule['zone_type']);
+            final zoneValue = _airportRuleText(rule['zone_value']);
+            final tier = _airportRuleText(rule['tier']);
+            final price = _airportRulePrice(rule['price_incl_vat']) ?? 0;
+            final currency = _airportRuleText(
+              rule['currency'],
+              fallback: 'EUR',
+            );
+            final enabled = _airportRuleBool(rule['enabled'], fallback: true);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D0F12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white.withOpacity(0.12)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '$airportIata - € ${price.toStringAsFixed(2)} $currency',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: enabled
+                              ? const Color(0xFF12331F)
+                              : const Color(0xFF3A1010),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          enabled
+                              ? _t(
+                                  nl: 'Actief',
+                                  en: 'Active',
+                                  fr: 'Actif',
+                                  es: 'Activo',
+                                )
+                              : _t(
+                                  nl: 'Inactief',
+                                  en: 'Inactive',
+                                  fr: 'Inactif',
+                                  es: 'Inactivo',
+                                ),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$direction - $zoneType: $zoneValue - $tier',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.74),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _airportFixedFaresSaving
+                            ? null
+                            : () => _editAirportFixedFareRule(index: index),
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: Text(
+                          _t(
+                            nl: 'Bewerken',
+                            en: 'Edit',
+                            fr: 'Modifier',
+                            es: 'Editar',
+                          ),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: _airportFixedFaresSaving
+                            ? null
+                            : () {
+                                setState(() {
+                                  _airportFixedFaresError = null;
+                                  _airportFixedFaresStatus = null;
+                                  _airportFixedFareRules.removeAt(index);
+                                });
+                              },
+                        icon: const Icon(Icons.delete_outline, size: 16),
+                        label: Text(
+                          _t(
+                            nl: 'Verwijderen',
+                            en: 'Delete',
+                            fr: 'Supprimer',
+                            es: 'Eliminar',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed:
+                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
+                    ? null
+                    : () => _editAirportFixedFareRule(),
+                icon: const Icon(Icons.add),
+                label: Text(
+                  _t(
+                    nl: 'Regel toevoegen',
+                    en: 'Add rule',
+                    fr: 'Ajouter une règle',
+                    es: 'Agregar regla',
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
+                    ? null
+                    : () => _loadAirportFixedFareRules(showErrorSnack: true),
+                icon: const Icon(Icons.refresh),
+                label: Text(
+                  _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
+                    ? null
+                    : _saveAirportFixedFareRules,
+                icon: _airportFixedFaresSaving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(
+                  _t(
+                    nl: 'Regels opslaan',
+                    en: 'Save rules',
+                    fr: 'Enregistrer les règles',
+                    es: 'Guardar reglas',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   ActiveVatConfig _activeVatConfig() {
     return resolveActiveVatConfig(
       settings: businessSettingsNotifier.value,
@@ -5290,6 +6100,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ],
               ),
             ),
+            _airportFixedFareCard(),
             const SizedBox(height: 4),
             FilledButton.icon(
               onPressed: _save,
