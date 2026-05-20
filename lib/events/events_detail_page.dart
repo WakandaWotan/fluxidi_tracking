@@ -373,18 +373,21 @@ class EventDetailPage extends StatelessWidget {
       onBookEvent!.call(event);
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Boekingsflow wordt hier gekoppeld in de volgende stap.',
-            en: 'Booking flow will be connected here in the next step.',
-            fr: 'Le flux de reservation sera connecte ici a l etape suivante.',
-            es: 'El flujo de reserva se conectara aqui en el siguiente paso.',
-          ),
-        ),
+    _showInfoSnackBar(
+      context,
+      _t(
+        nl: 'Boekingsflow voor dit event is binnenkort beschikbaar.',
+        en: 'Booking flow for this event is coming soon.',
+        fr: 'Le flux de réservation pour cet événement arrive bientôt.',
+        es: 'El flujo de reserva para este evento estará disponible pronto.',
       ),
     );
+  }
+
+  void _showInfoSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _buildCtaArea(BuildContext context) {
@@ -415,7 +418,7 @@ class EventDetailPage extends StatelessWidget {
                 _t(
                   nl: 'Taxi naar dit event boeken',
                   en: 'Book a taxi to this event',
-                  fr: 'Reserver un taxi vers cet evenement',
+                  fr: 'Réserver un taxi vers cet événement',
                   es: 'Reservar un taxi a este evento',
                 ),
                 style: const TextStyle(fontWeight: FontWeight.w800),
@@ -426,7 +429,15 @@ class EventDetailPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: () => _showInfoSnackBar(
+                context,
+                _t(
+                  nl: 'Opslaan van eventdetails komt binnenkort.',
+                  en: 'Saving event details is coming soon.',
+                  fr: 'L enregistrement des détails de l événement arrive bientôt.',
+                  es: 'Guardar detalles del evento estará disponible pronto.',
+                ),
+              ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _gold,
                 side: BorderSide(color: _gold.withOpacity(0.6)),
