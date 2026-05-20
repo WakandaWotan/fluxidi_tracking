@@ -159,6 +159,39 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'private',
     'premium',
   ];
+  static const List<Map<String, String>> _airportFixedFareCatalog =
+      <Map<String, String>>[
+        <String, String>{
+          'country_code': 'BE',
+          'country_name': 'België',
+          'iata': 'BRU',
+          'airport_name': 'Brussels Airport',
+        },
+        <String, String>{
+          'country_code': 'BE',
+          'country_name': 'België',
+          'iata': 'CRL',
+          'airport_name': 'Brussels South Charleroi Airport',
+        },
+        <String, String>{
+          'country_code': 'NL',
+          'country_name': 'Nederland',
+          'iata': 'AMS',
+          'airport_name': 'Amsterdam Schiphol',
+        },
+        <String, String>{
+          'country_code': 'FR',
+          'country_name': 'Frankrijk',
+          'iata': 'LYS',
+          'airport_name': 'Lyon-Saint Exupéry',
+        },
+        <String, String>{
+          'country_code': 'ES',
+          'country_name': 'Spanje',
+          'iata': 'IBZ',
+          'airport_name': 'Ibiza Airport',
+        },
+      ];
   bool _airportFixedFaresLoading = false;
   bool _airportFixedFaresSaving = false;
   String? _airportFixedFaresError;
@@ -3009,6 +3042,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         source['bags_max'] ?? source['bagsMax'],
         fallback: 99,
       ),
+      if (_airportRuleText(source['airport_name']).isNotEmpty)
+        'airport_name': _airportRuleText(source['airport_name']),
+      if (_airportRuleText(source['airport_country']).isNotEmpty)
+        'airport_country': _airportRuleText(source['airport_country']),
     };
   }
 
@@ -3017,6 +3054,107 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         .replaceAll(RegExp(r'[^A-Z0-9_]+'), '_');
     final seed = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
     return '${base}_$seed';
+  }
+
+  List<String> _airportCatalogCountryCodes() {
+    final out = <String>[];
+    for (final item in _airportFixedFareCatalog) {
+      final code = (item['country_code'] ?? '').trim().toUpperCase();
+      if (code.isEmpty || out.contains(code)) continue;
+      out.add(code);
+    }
+    return out;
+  }
+
+  String _airportCatalogCountryName(String countryCode) {
+    final normalized = countryCode.trim().toUpperCase();
+    for (final item in _airportFixedFareCatalog) {
+      if ((item['country_code'] ?? '').trim().toUpperCase() == normalized) {
+        final name = (item['country_name'] ?? '').trim();
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return normalized;
+  }
+
+  List<Map<String, String>> _airportCatalogAirportsForCountry(
+    String countryCode,
+  ) {
+    final normalized = countryCode.trim().toUpperCase();
+    return _airportFixedFareCatalog
+        .where(
+          (item) =>
+              (item['country_code'] ?? '').trim().toUpperCase() == normalized,
+        )
+        .map((item) => Map<String, String>.from(item))
+        .toList(growable: false);
+  }
+
+  Map<String, String>? _airportCatalogByIata(String iata) {
+    final normalized = iata.trim().toUpperCase();
+    for (final item in _airportFixedFareCatalog) {
+      if ((item['iata'] ?? '').trim().toUpperCase() == normalized) {
+        return Map<String, String>.from(item);
+      }
+    }
+    return null;
+  }
+
+  String _airportDirectionLabel(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'to_airport':
+        return _t(
+          nl: 'Naar luchthaven',
+          en: 'To airport',
+          fr: 'Vers aéroport',
+          es: 'Al aeropuerto',
+        );
+      case 'from_airport':
+        return _t(
+          nl: 'Van luchthaven',
+          en: 'From airport',
+          fr: 'Depuis aéroport',
+          es: 'Desde aeropuerto',
+        );
+      default:
+        return value;
+    }
+  }
+
+  String _airportZoneTypeLabel(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'postcode':
+        return _t(
+          nl: 'Postcode',
+          en: 'Postcode',
+          fr: 'Code postal',
+          es: 'Código postal',
+        );
+      case 'city':
+        return _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad');
+      case 'country':
+        return _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País');
+      default:
+        return value;
+    }
+  }
+
+  String _airportTierLabel(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'comfort':
+        return _t(nl: 'Comfort', en: 'Comfort', fr: 'Comfort', es: 'Comfort');
+      case 'private':
+        return _t(
+          nl: 'Business',
+          en: 'Business',
+          fr: 'Business',
+          es: 'Business',
+        );
+      case 'premium':
+        return _t(nl: 'Premium', en: 'Premium', fr: 'Premium', es: 'Premium');
+      default:
+        return value;
+    }
   }
 
   Future<void> _loadAirportFixedFareRules({bool showErrorSnack = false}) async {
@@ -3176,9 +3314,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         index != null && index >= 0 && index < _airportFixedFareRules.length
         ? Map<String, dynamic>.from(_airportFixedFareRules[index])
         : null;
-    final iataCtrl = TextEditingController(
-      text: _airportRuleText(existing?['airport_iata']),
-    );
     final zoneValueCtrl = TextEditingController(
       text: _airportRuleText(existing?['zone_value']),
     );
@@ -3191,6 +3326,56 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final currencyCtrl = TextEditingController(
       text: _airportRuleText(existing?['currency'], fallback: 'EUR'),
     );
+    final countryCodes = _airportCatalogCountryCodes();
+    final existingAirport = _airportCatalogByIata(
+      _airportRuleText(existing?['airport_iata']),
+    );
+    var selectedCountryCode = (existingAirport?['country_code'] ?? '')
+        .trim()
+        .toUpperCase();
+    if (selectedCountryCode.isEmpty && countryCodes.isNotEmpty) {
+      selectedCountryCode = countryCodes.first;
+    }
+    var airportsForCountry = _airportCatalogAirportsForCountry(
+      selectedCountryCode,
+    );
+    var selectedAirportIata = _airportRuleText(
+      existing?['airport_iata'],
+    ).trim().toUpperCase();
+    final existingAirportName = _airportRuleText(existing?['airport_name']);
+    final existingAirportCountry = _airportRuleText(
+      existing?['airport_country'],
+    );
+    if (selectedAirportIata.isEmpty && airportsForCountry.isNotEmpty) {
+      selectedAirportIata = (airportsForCountry.first['iata'] ?? '')
+          .toUpperCase();
+    }
+    if (selectedAirportIata.isNotEmpty &&
+        !airportsForCountry.any(
+          (item) =>
+              (item['iata'] ?? '').trim().toUpperCase() == selectedAirportIata,
+        )) {
+      airportsForCountry = <Map<String, String>>[
+        <String, String>{
+          'country_code': selectedCountryCode,
+          'country_name': existingAirportCountry,
+          'iata': selectedAirportIata,
+          'airport_name': existingAirportName.isNotEmpty
+              ? existingAirportName
+              : selectedAirportIata,
+        },
+        ...airportsForCountry,
+      ];
+    }
+    if (selectedAirportIata.isNotEmpty &&
+        !airportsForCountry.any(
+          (item) =>
+              (item['iata'] ?? '').trim().toUpperCase() == selectedAirportIata,
+        ) &&
+        airportsForCountry.isNotEmpty) {
+      selectedAirportIata = (airportsForCountry.first['iata'] ?? '')
+          .toUpperCase();
+    }
     var enabled = _airportRuleBool(existing?['enabled'], fallback: true);
     var direction = _airportRuleText(
       existing?['direction'],
@@ -3236,144 +3421,209 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         es: 'Editar regla',
                       ),
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: enabled,
-                      onChanged: (value) =>
-                          setDialogState(() => enabled = value),
-                      title: Text(
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: enabled,
+                        onChanged: (value) =>
+                            setDialogState(() => enabled = value),
+                        title: Text(
+                          _t(
+                            nl: 'Ingeschakeld',
+                            en: 'Enabled',
+                            fr: 'Activé',
+                            es: 'Habilitado',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: selectedCountryCode.isEmpty
+                            ? null
+                            : selectedCountryCode,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Land',
+                            en: 'Country',
+                            fr: 'Pays',
+                            es: 'País',
+                          ),
+                        ),
+                        items: countryCodes
+                            .map(
+                              (code) => DropdownMenuItem<String>(
+                                value: code,
+                                child: Text(_airportCatalogCountryName(code)),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() {
+                            selectedCountryCode = value;
+                            airportsForCountry =
+                                _airportCatalogAirportsForCountry(
+                                  selectedCountryCode,
+                                );
+                            selectedAirportIata = airportsForCountry.isNotEmpty
+                                ? (airportsForCountry.first['iata'] ?? '')
+                                      .toUpperCase()
+                                : '';
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: selectedAirportIata.isEmpty
+                            ? null
+                            : selectedAirportIata,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Luchthaven',
+                            en: 'Airport',
+                            fr: 'Aéroport',
+                            es: 'Aeropuerto',
+                          ),
+                        ),
+                        items: airportsForCountry
+                            .map(
+                              (item) => DropdownMenuItem<String>(
+                                value: (item['iata'] ?? '').toUpperCase(),
+                                child: Text(
+                                  '${item['airport_name'] ?? ''} (${item['iata'] ?? ''})',
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedAirportIata = (value ?? '').toUpperCase();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: direction,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Richting',
+                            en: 'Direction',
+                            fr: 'Direction',
+                            es: 'Dirección',
+                          ),
+                        ),
+                        items: _airportFixedFareDirections
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(_airportDirectionLabel(value)),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => direction = value);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: zoneType,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Zone type',
+                            en: 'Zone type',
+                            fr: 'Type de zone',
+                            es: 'Tipo de zona',
+                          ),
+                        ),
+                        items: _airportFixedFareZoneTypes
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(_airportZoneTypeLabel(value)),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => zoneType = value);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
+                      _txt(
+                        zoneValueCtrl,
                         _t(
-                          nl: 'Ingeschakeld',
-                          en: 'Enabled',
-                          fr: 'Activé',
-                          es: 'Habilitado',
+                          nl: 'Zone waarde',
+                          en: 'Zone value',
+                          fr: 'Valeur de zone',
+                          es: 'Valor de zona',
                         ),
                       ),
-                    ),
-                    _txt(
-                      iataCtrl,
-                      _t(
-                        nl: 'Airport IATA',
-                        en: 'Airport IATA',
-                        fr: 'IATA aéroport',
-                        es: 'IATA aeropuerto',
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: tier,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            nl: 'Tier',
+                            en: 'Tier',
+                            fr: 'Niveau',
+                            es: 'Nivel',
+                          ),
+                        ),
+                        items: _airportFixedFareTiers
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(_airportTierLabel(value)),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => tier = value);
+                        },
                       ),
-                    ),
-                    DropdownButtonFormField<String>(
-                      value: direction,
-                      decoration: InputDecoration(
-                        labelText: _t(
-                          nl: 'Richting',
-                          en: 'Direction',
-                          fr: 'Direction',
-                          es: 'Dirección',
+                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
+                      _txt(
+                        priceCtrl,
+                        _t(
+                          nl: 'Prijs incl. btw',
+                          en: 'Price incl. VAT',
+                          fr: 'Prix TTC',
+                          es: 'Precio con IVA',
                         ),
                       ),
-                      items: _airportFixedFareDirections
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(value),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() => direction = value);
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: zoneType,
-                      decoration: InputDecoration(
-                        labelText: _t(
-                          nl: 'Zone type',
-                          en: 'Zone type',
-                          fr: 'Type de zone',
-                          es: 'Tipo de zona',
+                      const SizedBox(height: 10),
+                      _txt(
+                        currencyCtrl,
+                        _t(
+                          nl: 'Munt',
+                          en: 'Currency',
+                          fr: 'Devise',
+                          es: 'Moneda',
                         ),
                       ),
-                      items: _airportFixedFareZoneTypes
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(value),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() => zoneType = value);
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    _txt(
-                      zoneValueCtrl,
-                      _t(
-                        nl: 'Zone waarde',
-                        en: 'Zone value',
-                        fr: 'Valeur de zone',
-                        es: 'Valor de zona',
-                      ),
-                    ),
-                    DropdownButtonFormField<String>(
-                      value: tier,
-                      decoration: InputDecoration(
-                        labelText: _t(
-                          nl: 'Tier',
-                          en: 'Tier',
-                          fr: 'Niveau',
-                          es: 'Nivel',
+                      if (localError != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          localError!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                      items: _airportFixedFareTiers
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(value),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() => tier = value);
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    _txt(
-                      priceCtrl,
-                      _t(
-                        nl: 'Prijs incl. btw',
-                        en: 'Price incl. VAT',
-                        fr: 'Prix TTC',
-                        es: 'Precio con IVA',
-                      ),
-                    ),
-                    _txt(
-                      currencyCtrl,
-                      _t(
-                        nl: 'Munt',
-                        en: 'Currency',
-                        fr: 'Devise',
-                        es: 'Moneda',
-                      ),
-                    ),
-                    if (localError != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        localError!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                        ),
-                      ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               actions: [
@@ -3390,27 +3640,50 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
                 FilledButton(
                   onPressed: () {
-                    final airportIata = iataCtrl.text.trim().toUpperCase();
                     final zoneValue = zoneValueCtrl.text.trim();
                     final price = double.tryParse(
                       priceCtrl.text.trim().replaceAll(',', '.'),
                     );
                     final currency = currencyCtrl.text.trim().toUpperCase();
-                    if (airportIata.isEmpty ||
-                        zoneValue.isEmpty ||
-                        price == null ||
-                        !price.isFinite ||
-                        price <= 0) {
+                    if (selectedAirportIata.trim().isEmpty) {
                       setDialogState(() {
                         localError = _t(
-                          nl: 'Vul IATA, zone en een geldige prijs in.',
-                          en: 'Enter IATA, zone and a valid price.',
-                          fr: 'Saisissez IATA, zone et un prix valide.',
-                          es: 'Introduce IATA, zona y un precio válido.',
+                          nl: 'Kies een luchthaven.',
+                          en: 'Choose an airport.',
+                          fr: 'Choisissez un aéroport.',
+                          es: 'Elige un aeropuerto.',
                         );
                       });
                       return;
                     }
+                    if (zoneValue.isEmpty) {
+                      setDialogState(() {
+                        localError = _t(
+                          nl: 'Vul een zone in.',
+                          en: 'Enter a zone value.',
+                          fr: 'Saisissez une valeur de zone.',
+                          es: 'Introduce un valor de zona.',
+                        );
+                      });
+                      return;
+                    }
+                    if (price == null || !price.isFinite || price <= 0) {
+                      setDialogState(() {
+                        localError = _t(
+                          nl: 'Vul een geldige prijs in.',
+                          en: 'Enter a valid price.',
+                          fr: 'Saisissez un prix valide.',
+                          es: 'Introduce un precio válido.',
+                        );
+                      });
+                      return;
+                    }
+                    final selectedAirport = _airportCatalogByIata(
+                      selectedAirportIata,
+                    );
+                    final airportIata = selectedAirportIata
+                        .trim()
+                        .toUpperCase();
                     final ruleId =
                         _airportRuleText(existing?['rule_id']).isEmpty
                         ? _nextAirportFixedFareRuleId(airportIata, direction)
@@ -3429,6 +3702,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       'tier': tier,
                       'price_incl_vat': price,
                       'currency': currency.isEmpty ? 'EUR' : currency,
+                      'airport_name': _airportRuleText(
+                        selectedAirport?['airport_name'],
+                      ),
+                      'airport_country': _airportRuleText(
+                        selectedAirport?['country_name'],
+                      ),
                       'pax_min': _airportRuleInt(
                         existing?['pax_min'],
                         fallback: 1,
@@ -3458,7 +3737,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         );
       },
     );
-    iataCtrl.dispose();
     zoneValueCtrl.dispose();
     priceCtrl.dispose();
     currencyCtrl.dispose();
@@ -3536,10 +3814,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             final index = entry.key;
             final rule = entry.value;
             final airportIata = _airportRuleText(rule['airport_iata']);
-            final direction = _airportRuleText(rule['direction']);
-            final zoneType = _airportRuleText(rule['zone_type']);
+            final airportName = _airportRuleText(rule['airport_name']);
+            final direction = _airportDirectionLabel(
+              _airportRuleText(rule['direction']),
+            );
+            final zoneType = _airportZoneTypeLabel(
+              _airportRuleText(rule['zone_type']),
+            );
             final zoneValue = _airportRuleText(rule['zone_value']);
-            final tier = _airportRuleText(rule['tier']);
+            final tier = _airportTierLabel(_airportRuleText(rule['tier']));
             final price = _airportRulePrice(rule['price_incl_vat']) ?? 0;
             final currency = _airportRuleText(
               rule['currency'],
@@ -3561,7 +3844,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     children: [
                       Expanded(
                         child: Text(
-                          '$airportIata - € ${price.toStringAsFixed(2)} $currency',
+                          airportName.isNotEmpty
+                              ? '$airportName ($airportIata) - € ${price.toStringAsFixed(2)} $currency'
+                              : '$airportIata - € ${price.toStringAsFixed(2)} $currency',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
