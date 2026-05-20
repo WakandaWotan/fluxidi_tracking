@@ -5891,6 +5891,31 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                 '')
             .toString()
             .trim();
+    final pairingDriverSessionToken =
+        (payload['driver_session_token'] ?? payload['driverSessionToken'] ?? '')
+            .toString()
+            .trim();
+    final pairingTokenExpiresAtRaw =
+        (payload['driver_session_expires_at'] ??
+                payload['driverSessionExpiresAtUtc'] ??
+                payload['driver_session_expires_at_utc'] ??
+                '')
+            .toString()
+            .trim();
+    DateTime? pairingTokenExpiresAt = pairingTokenExpiresAtRaw.isEmpty
+        ? null
+        : DateTime.tryParse(pairingTokenExpiresAtRaw)?.toUtc();
+    if (pairingTokenExpiresAt == null) {
+      final expiresInRaw = (payload['expires_in'] ?? payload['expiresIn'] ?? '')
+          .toString()
+          .trim();
+      final expiresInSeconds = int.tryParse(expiresInRaw);
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        pairingTokenExpiresAt = DateTime.now().toUtc().add(
+          Duration(seconds: expiresInSeconds),
+        );
+      }
+    }
     if (!ok ||
         role != 'driver' ||
         tenantId.isEmpty ||
@@ -5921,6 +5946,8 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       driverName: driverName,
       employeeNumber: employeeNumber,
       assignedVehicleId: assignedVehicleId,
+      driverSessionToken: pairingDriverSessionToken,
+      driverSessionExpiresAtUtc: pairingTokenExpiresAt,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
     );
@@ -6387,6 +6414,31 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
                 '')
             .toString()
             .trim();
+    final pairingDriverSessionToken =
+        (payload['driver_session_token'] ?? payload['driverSessionToken'] ?? '')
+            .toString()
+            .trim();
+    final pairingTokenExpiresAtRaw =
+        (payload['driver_session_expires_at'] ??
+                payload['driverSessionExpiresAtUtc'] ??
+                payload['driver_session_expires_at_utc'] ??
+                '')
+            .toString()
+            .trim();
+    DateTime? pairingTokenExpiresAt = pairingTokenExpiresAtRaw.isEmpty
+        ? null
+        : DateTime.tryParse(pairingTokenExpiresAtRaw)?.toUtc();
+    if (pairingTokenExpiresAt == null) {
+      final expiresInRaw = (payload['expires_in'] ?? payload['expiresIn'] ?? '')
+          .toString()
+          .trim();
+      final expiresInSeconds = int.tryParse(expiresInRaw);
+      if (expiresInSeconds != null && expiresInSeconds > 0) {
+        pairingTokenExpiresAt = DateTime.now().toUtc().add(
+          Duration(seconds: expiresInSeconds),
+        );
+      }
+    }
     if (!ok ||
         role != 'driver' ||
         tenantId.isEmpty ||
@@ -6414,6 +6466,8 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       driverName: driverName,
       employeeNumber: employeeNumber,
       assignedVehicleId: assignedVehicleId,
+      driverSessionToken: pairingDriverSessionToken,
+      driverSessionExpiresAtUtc: pairingTokenExpiresAt,
       issuedAt: issuedAt,
       expiresAt: expiresAt,
     );
@@ -33343,21 +33397,43 @@ class _DriverHomePageState extends State<DriverHomePage>
       profile?.id ?? activeDriverSessionNotifier.value?.driverId ?? '',
     );
     debugPrint('[DRIVER_AVAILABILITY][PAUSE_START] driver=$safeDriverRef');
-    final token = (activeDriverSessionNotifier.value?.driverSessionToken ?? '')
-        .trim();
+    final sessionBeforeRecovery = activeDriverSessionNotifier.value;
+    var token = (sessionBeforeRecovery?.driverSessionToken ?? '').trim();
     if (token.isEmpty) {
+      var recoverySource = 'not_attempted';
       debugPrint(
-        '[DRIVER_AVAILABILITY][FAILED] driver=$safeDriverRef error=missing_driver_session_token',
+        '[DRIVER_AVAILABILITY][RECOVER_ATTEMPT] has_session=${sessionBeforeRecovery != null} has_token_before=${token.isNotEmpty}',
       );
-      _toast(
-        _tr(
-          nl: 'Chauffeurssessie ontbreekt. Log opnieuw in.',
-          en: 'Driver session missing. Please log in again.',
-          fr: 'Session chauffeur manquante. Reconnectez-vous.',
-          es: 'Falta sesión de conductor. Inicia sesión de nuevo.',
-        ),
+      try {
+        final loadedSession = await DriverSessionStore.instance.load();
+        recoverySource = loadedSession == null ? 'load_empty' : 'load_hit';
+        await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+        recoverySource = '$recoverySource+bootstrap';
+      } catch (_) {
+        recoverySource = 'load_bootstrap_error';
+      }
+      final sessionAfterRecovery = activeDriverSessionNotifier.value;
+      token = (sessionAfterRecovery?.driverSessionToken ?? '').trim();
+      debugPrint(
+        '[DRIVER_AVAILABILITY][RECOVER_RESULT] has_session=${sessionAfterRecovery != null} has_token_after=${token.isNotEmpty}',
       );
-      return;
+      if (token.isEmpty) {
+        final driverIdPresent =
+            (sessionAfterRecovery?.driverId ?? '').trim().isNotEmpty ||
+            (profile?.id ?? '').trim().isNotEmpty;
+        debugPrint(
+          '[DRIVER_AVAILABILITY][BLOCKED_NO_TOKEN] has_session=${sessionAfterRecovery != null} driver_id_present=$driverIdPresent source=$recoverySource',
+        );
+        _toast(
+          _tr(
+            nl: 'Chauffeurssessie ontbreekt. Log opnieuw in als chauffeur om je status te wijzigen.',
+            en: 'Driver session missing. Please log in as driver again to change your status.',
+            fr: 'Session chauffeur manquante. Reconnectez-vous comme chauffeur pour modifier votre statut.',
+            es: 'Falta sesión de conductor. Vuelve a iniciar sesión como conductor para cambiar tu estado.',
+          ),
+        );
+        return;
+      }
     }
     setState(() => _driverAvailabilitySaving = true);
     try {

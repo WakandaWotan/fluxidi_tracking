@@ -4385,11 +4385,22 @@ function _constantTimeEquals(a, b) {
   return diff === 0;
 }
 
-function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
+function _projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSession = null) {
   const assignedVehicleId = sanitizeTenantString(
     challenge.assigned_vehicle_id ?? challenge.assignedVehicleId,
     96,
   );
+  const driverSessionToken = sanitizeTenantString(
+    issuedSession?.sessionToken ?? issuedSession?.driverSessionToken,
+    512,
+  );
+  const sessionExpiresAt = sanitizeTenantString(
+    issuedSession?.expiresAt ?? issuedSession?.driver_session_expires_at,
+    80,
+  );
+  const expiresInSeconds = Number.isFinite(Number(issuedSession?.expiresInSeconds))
+    ? Math.max(1, Math.round(Number(issuedSession.expiresInSeconds)))
+    : null;
   return {
     ok: true,
     role: "driver",
@@ -4410,6 +4421,86 @@ function _projectDriverSessionPayloadFromChallenge(challenge, nowIso) {
     },
     issued_at: nowIso,
     expires_at: _normalizeDriverPairingSessionExpiry(Date.parse(nowIso)),
+    ...(driverSessionToken
+      ? {
+          driver_session_token: driverSessionToken,
+          driverSessionToken: driverSessionToken,
+        }
+      : {}),
+    ...(sessionExpiresAt
+      ? {
+          driver_session_expires_at: sessionExpiresAt,
+          driverSessionExpiresAtUtc: sessionExpiresAt,
+        }
+      : {}),
+    ...(expiresInSeconds
+      ? {
+          expires_in: expiresInSeconds,
+          expiresIn: expiresInSeconds,
+        }
+      : {}),
+  };
+}
+
+async function _issuePublicDriverSessionToken(env, {
+  tenantId,
+  companyId,
+  driverId,
+  driverName,
+  companyDisplayName,
+  assignedVehicleId,
+  linkMethod,
+} = {}) {
+  if (!env?.BOOKING_KV) return { ok: false, error: "kv_missing" };
+  const normalizedTenantId = sanitizeTenantString(tenantId, 80);
+  const normalizedCompanyId = sanitizeTenantString(companyId, 80);
+  const normalizedDriverId = sanitizeTenantString(driverId, 96);
+  const normalizedDriverName = sanitizeTenantString(driverName, 160);
+  const normalizedCompanyDisplayName = sanitizeTenantString(companyDisplayName, 160);
+  const normalizedAssignedVehicleId = sanitizeTenantString(assignedVehicleId, 96);
+  const normalizedLinkMethod =
+    sanitizeTenantString(linkMethod, 64).toLowerCase() || "public_driver_login";
+  if (!normalizedTenantId || !normalizedCompanyId || !normalizedDriverId) {
+    return { ok: false, error: "invalid_scope" };
+  }
+  const sessionToken = _generateOpaqueToken(32);
+  const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
+  const sessionKey = _publicDriverSessionKey(sessionTokenHash);
+  if (!sessionKey) {
+    return { ok: false, error: "session_key_invalid" };
+  }
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + PUBLIC_DRIVER_SESSION_TTL_SECONDS * 1000).toISOString();
+  await env.BOOKING_KV.put(
+    sessionKey,
+    JSON.stringify({
+      role: "driver",
+      tenant_id: normalizedTenantId,
+      company_id: normalizedCompanyId,
+      driver_id: normalizedDriverId,
+      driver_name: normalizedDriverName,
+      company_display_name: normalizedCompanyDisplayName,
+      ...(normalizedAssignedVehicleId
+        ? {
+            assigned_vehicle_id: normalizedAssignedVehicleId,
+            assignedVehicleId: normalizedAssignedVehicleId,
+          }
+        : {}),
+      issued_at: issuedAt,
+      expires_at: expiresAt,
+      link_method: normalizedLinkMethod,
+    }),
+    { expirationTtl: PUBLIC_DRIVER_SESSION_TTL_SECONDS },
+  );
+  console.log(
+    `[DRIVER_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(normalizedTenantId)} company=${_maskPublicDriverLoginValue(normalizedCompanyId)} driver=${_maskPublicDriverLoginValue(normalizedDriverId)} method=${normalizedLinkMethod}`,
+  );
+  return {
+    ok: true,
+    sessionToken,
+    issuedAt,
+    expiresAt,
+    expiresInSeconds: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
   };
 }
 
@@ -11020,10 +11111,34 @@ async function handlePublicCompanyDriverLinkVerify(body, env) {
     expirationTtl: remainingSeconds,
   });
   await env.BOOKING_KV.delete(activeKey);
+  const issuedSession = await _issuePublicDriverSessionToken(env, {
+    tenantId: sanitizeTenantString(challenge.tenant_id, 80),
+    companyId: sanitizeTenantString(challenge.company_id, 80),
+    driverId: sanitizeTenantString(challenge.driver_id, 96),
+    driverName: sanitizeTenantString(challenge.driver_name, 160),
+    companyDisplayName: sanitizeTenantString(
+      companyRecord.display_name ?? companyRecord.company_name ?? companyRecord.companyName,
+      160,
+    ),
+    assignedVehicleId: sanitizeTenantString(
+      challenge.assigned_vehicle_id ?? challenge.assignedVehicleId,
+      96,
+    ),
+    linkMethod: "driver_pairing_code",
+  });
+  if (!issuedSession?.ok) {
+    console.info(
+      `[DRIVER_LINK_VERIFY][TOKEN_ISSUED] ok=false has_token=false reason=${sanitizeTenantString(issuedSession?.error, 80) || "unknown"}`,
+    );
+    return json({ ok: false, error: "session_issue_failed" }, 500);
+  }
+  console.info(
+    `[DRIVER_LINK_VERIFY][TOKEN_ISSUED] ok=true has_token=true expires_in=${Number(issuedSession.expiresInSeconds || 0)}`,
+  );
   console.info(
     `[DRIVER_LINK_VERIFY][RESULT] ok=true reason=verified company=${_maskPublicDriverLoginValue(codeValidation.code)}`,
   );
-  return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso), 200);
+  return json(_projectDriverSessionPayloadFromChallenge(challenge, nowIso, issuedSession), 200);
 }
 
 async function handlePublicDriverLogin(body, env) {
@@ -11209,38 +11324,18 @@ async function handlePublicDriverLogin(body, env) {
   } catch (_) {
     companyLogoUrl = "";
   }
-  const sessionToken = _generateOpaqueToken(32);
-  const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
-  const sessionKey = _publicDriverSessionKey(sessionTokenHash);
-  if (!sessionKey) {
-    return _publicDriverLoginFail("session_key_invalid");
+  const issuedSession = await _issuePublicDriverSessionToken(env, {
+    tenantId: scope.tenant_id,
+    companyId: scope.company_id,
+    driverId,
+    driverName,
+    companyDisplayName,
+    assignedVehicleId,
+    linkMethod: "public_driver_login",
+  });
+  if (!issuedSession?.ok) {
+    return _publicDriverLoginFail(issuedSession?.error || "session_issue_failed");
   }
-  const issuedAt = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + PUBLIC_DRIVER_SESSION_TTL_SECONDS * 1000).toISOString();
-  await env.BOOKING_KV.put(
-    sessionKey,
-    JSON.stringify({
-      role: "driver",
-      tenant_id: scope.tenant_id,
-      company_id: scope.company_id,
-      driver_id: driverId,
-      driver_name: driverName,
-      company_display_name: companyDisplayName,
-      ...(assignedVehicleId
-        ? {
-            assigned_vehicle_id: assignedVehicleId,
-            assignedVehicleId: assignedVehicleId,
-          }
-        : {}),
-      issued_at: issuedAt,
-      expires_at: expiresAt,
-      link_method: "public_driver_login",
-    }),
-    { expirationTtl: PUBLIC_DRIVER_SESSION_TTL_SECONDS },
-  );
-  console.log(
-    `[DRIVER_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
-  );
   console.log(
     `[PUBLIC_DRIVER_LOGIN][OK] tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)} driver=${_maskPublicDriverLoginValue(driverId)}`,
   );
@@ -11277,10 +11372,10 @@ async function handlePublicDriverLogin(body, env) {
             vehiclePhotoUrl: vehiclePhotoUrl,
           }
         : {}),
-      driver_session_token: sessionToken,
-      driverSessionToken: sessionToken,
-      expires_in: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
-      expiresIn: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
+      driver_session_token: issuedSession.sessionToken,
+      driverSessionToken: issuedSession.sessionToken,
+      expires_in: issuedSession.expiresInSeconds,
+      expiresIn: issuedSession.expiresInSeconds,
     },
     200,
   );

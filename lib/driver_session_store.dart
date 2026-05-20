@@ -438,12 +438,81 @@ class DriverSessionStore {
     return false;
   }
 
+  ({String? token, String? tokenExpiryUtc, bool matched, bool preserved})
+  _resolvePreservedDriverToken({
+    required String source,
+    required ActiveDriverSession? existing,
+    required String newDriverId,
+    required String newTenantId,
+    required String newCompanyId,
+  }) {
+    final existingToken = (existing?.driverSessionToken ?? '').trim();
+    final existingDriverId = (existing?.driverId ?? '').trim();
+    final existingTenantId = (existing?.tenantId ?? '').trim();
+    final existingCompanyId = (existing?.companyId ?? '').trim();
+    final matched =
+        existing != null &&
+        existingDriverId.isNotEmpty &&
+        existingTenantId.isNotEmpty &&
+        existingCompanyId.isNotEmpty &&
+        existingDriverId == newDriverId &&
+        existingTenantId == newTenantId &&
+        existingCompanyId == newCompanyId;
+    if (!matched) {
+      debugPrint(
+        '[DRIVER_SESSION][TOKEN_PRESERVE] source=$source matched=false preserved=false',
+      );
+      debugPrint(
+        '[DRIVER_SESSION][TOKEN_DROP] source=$source reason=identity_mismatch',
+      );
+      return (
+        token: null,
+        tokenExpiryUtc: null,
+        matched: false,
+        preserved: false,
+      );
+    }
+    if (existingToken.isEmpty) {
+      debugPrint(
+        '[DRIVER_SESSION][TOKEN_PRESERVE] source=$source matched=true preserved=false',
+      );
+      debugPrint(
+        '[DRIVER_SESSION][TOKEN_DROP] source=$source reason=no_existing_token',
+      );
+      return (
+        token: null,
+        tokenExpiryUtc: null,
+        matched: true,
+        preserved: false,
+      );
+    }
+    debugPrint(
+      '[DRIVER_SESSION][TOKEN_PRESERVE] source=$source matched=true preserved=true',
+    );
+    final existingTokenExpiry = (existing.driverSessionExpiresAtUtc ?? '')
+        .trim();
+    return (
+      token: existingToken,
+      tokenExpiryUtc: existingTokenExpiry.isEmpty ? null : existingTokenExpiry,
+      matched: true,
+      preserved: true,
+    );
+  }
+
   Future<void> saveFromDriverProfile(
     DriverProfile driver, {
     ActiveDriverSession? previous,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
     final activeScope = _activeScope();
+    final effectivePrevious = previous ?? await load();
+    final preservedToken = _resolvePreservedDriverToken(
+      source: 'saveFromDriverProfile',
+      existing: effectivePrevious,
+      newDriverId: driver.id.trim(),
+      newTenantId: (activeScope?.tenantId ?? '').trim(),
+      newCompanyId: (activeScope?.companyId ?? '').trim(),
+    );
     final session = ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -453,6 +522,8 @@ class DriverSessionStore {
       updatedAt: now,
       tenantId: activeScope?.tenantId,
       companyId: activeScope?.companyId,
+      driverSessionToken: preservedToken.token,
+      driverSessionExpiresAtUtc: preservedToken.tokenExpiryUtc,
     );
     try {
       final file = await _file();
@@ -483,6 +554,8 @@ class DriverSessionStore {
     required String driverName,
     required String employeeNumber,
     String? assignedVehicleId,
+    String? driverSessionToken,
+    DateTime? driverSessionExpiresAtUtc,
     DateTime? issuedAt,
     DateTime? expiresAt,
   }) async {
@@ -493,6 +566,10 @@ class DriverSessionStore {
     final normalizedDriverName = driverName.trim();
     final normalizedEmployeeNumber = employeeNumber.trim();
     final normalizedAssignedVehicleId = (assignedVehicleId ?? '').trim();
+    final normalizedIncomingToken = (driverSessionToken ?? '').trim();
+    final incomingTokenExpiryUtc = driverSessionExpiresAtUtc
+        ?.toUtc()
+        .toIso8601String();
     if (normalizedTenantId.isEmpty ||
         normalizedCompanyId.isEmpty ||
         normalizedCompanyCode.isEmpty ||
@@ -502,6 +579,28 @@ class DriverSessionStore {
       return;
     }
     final now = DateTime.now().toUtc();
+    final scopedFile = await _scopedFile(
+      tenantId: normalizedTenantId,
+      companyId: normalizedCompanyId,
+    );
+    final existingScopedSession = await _readSession(scopedFile);
+    final preservedToken = _resolvePreservedDriverToken(
+      source: 'saveVerifiedDriverPairingSession',
+      existing: existingScopedSession,
+      newDriverId: normalizedDriverId,
+      newTenantId: normalizedTenantId,
+      newCompanyId: normalizedCompanyId,
+    );
+    final tokenFromPairing = normalizedIncomingToken.isNotEmpty;
+    debugPrint(
+      '[DRIVER_SESSION][TOKEN_FROM_PAIRING] has_token=$tokenFromPairing',
+    );
+    final resolvedToken = tokenFromPairing
+        ? normalizedIncomingToken
+        : preservedToken.token;
+    final resolvedTokenExpiryUtc = tokenFromPairing
+        ? incomingTokenExpiryUtc
+        : preservedToken.tokenExpiryUtc;
     final session = ActiveDriverSession(
       driverId: normalizedDriverId,
       employeeNumber: normalizedEmployeeNumber,
@@ -517,20 +616,18 @@ class DriverSessionStore {
       assignedVehicleId: normalizedAssignedVehicleId.isEmpty
           ? null
           : normalizedAssignedVehicleId,
+      driverSessionToken: resolvedToken,
+      driverSessionExpiresAtUtc: resolvedTokenExpiryUtc,
       linkMethod: 'driver_pairing_code',
       expiresAt: expiresAt?.toUtc().toIso8601String(),
     );
     try {
-      final file = await _scopedFile(
-        tenantId: normalizedTenantId,
-        companyId: normalizedCompanyId,
-      );
-      await file.writeAsString(jsonEncode(session.toJson()));
+      await scopedFile.writeAsString(jsonEncode(session.toJson()));
       _cache = session;
       _cacheScopeKey = '$normalizedTenantId::$normalizedCompanyId';
       activeDriverSessionNotifier.value = session;
       debugPrint(
-        '[DRIVER_SESSION][SAVE_VERIFIED] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=driver_pairing_code path=${file.path}',
+        '[DRIVER_SESSION][SAVE_VERIFIED] tenant=$normalizedTenantId company=$normalizedCompanyId driver=${_maskIdForLog(session.driverId)} method=driver_pairing_code path=${scopedFile.path}',
       );
     } catch (e) {
       debugPrint('[DRIVER_LOGIN][WARN] persist_failed reason=$e');
