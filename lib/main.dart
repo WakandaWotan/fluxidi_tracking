@@ -10137,6 +10137,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         );
         return;
       }
+      if (!context.mounted) return;
       await openDriverDocumentFile(context, downloaded.localPath, _lang);
       debugPrint(
         '[DRIVER_DOC_OPEN][DONE] driver=$safeDriverRef doc=$safeDocRef',
@@ -19914,9 +19915,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
     } finally {
-      if (!mounted) return;
-      setState(() => _bookingActionInFlight.remove(bookingId));
-      _markBookingsUiDirty();
+      if (mounted) {
+        setState(() => _bookingActionInFlight.remove(bookingId));
+        _markBookingsUiDirty();
+      }
     }
   }
 
@@ -19997,9 +19999,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (e) {
       _toast('❌ Delete failed: $e');
     } finally {
-      if (!mounted) return;
-      setState(() => _bookingActionInFlight.remove(bookingId));
-      _markBookingsUiDirty();
+      if (mounted) {
+        setState(() => _bookingActionInFlight.remove(bookingId));
+        _markBookingsUiDirty();
+      }
     }
   }
 
@@ -30376,16 +30379,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
 class _RideReceiptPage extends StatelessWidget {
   final _TripHistoryItem item;
-  final _ReceiptQuickAction? initialAction;
-  final bool autoPopAfterInitialAction;
-  final bool showReceiptUi;
 
-  const _RideReceiptPage({
-    required this.item,
-    this.initialAction,
-    this.autoPopAfterInitialAction = false,
-    this.showReceiptUi = true,
-  });
+  const _RideReceiptPage({required this.item});
 
   @override
   Widget build(BuildContext context) {
@@ -30393,9 +30388,9 @@ class _RideReceiptPage extends StatelessWidget {
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => _RideReceiptBody(
         item: item,
-        initialAction: initialAction,
-        autoPopAfterInitialAction: autoPopAfterInitialAction,
-        showReceiptUi: showReceiptUi,
+        initialAction: null,
+        autoPopAfterInitialAction: false,
+        showReceiptUi: true,
       ),
     );
   }
@@ -30535,6 +30530,7 @@ class _ReceiptPdfActionRunner {
   }) async {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
+      if (!context.mounted) return;
       await _fallbackCopyText(context: context, item: item);
       return;
     }
@@ -30556,6 +30552,7 @@ class _ReceiptPdfActionRunner {
   }) async {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
+      if (!context.mounted) return;
       await _fallbackCopyText(context: context, item: item);
       return;
     }
@@ -30574,6 +30571,7 @@ class _ReceiptPdfActionRunner {
   }) async {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
+      if (!context.mounted) return;
       await _fallbackWhatsAppText(context: context, item: item);
       return;
     }
@@ -30619,6 +30617,7 @@ class _ReceiptPdfActionRunner {
         subject: _receiptText('whatsappPdf'),
       );
     } catch (_) {
+      if (!context.mounted) return;
       await _fallbackWhatsAppText(context: context, item: item);
     }
   }
@@ -30631,6 +30630,7 @@ class _ReceiptPdfActionRunner {
     final recipient = (contact.email ?? '').trim();
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
+      if (!context.mounted) return;
       await _fallbackEmailText(context: context, item: item);
       return;
     }
@@ -31005,6 +31005,7 @@ class _ReceiptPdfActionRunner {
         // Fall through to share fallback.
       }
     }
+    if (!context.mounted) return;
     await _sharePdfFallback(
       context: context,
       bundle: bundle,
