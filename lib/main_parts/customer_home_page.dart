@@ -89,13 +89,24 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
-  void _openCalculator(BuildContext context, {required bool scheduledIntent}) {
+  void _openCalculator(
+    BuildContext context, {
+    required bool scheduledIntent,
+    String? initialToAddress,
+    double? initialToLat,
+    double? initialToLng,
+    String? initialServiceId,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CalculatorPage(
           bookingBaseUrl: kBookingBaseUrl,
           mapboxToken: kMapboxToken,
           persistToCustomerBookings: true,
+          initialToAddress: initialToAddress,
+          initialToLat: initialToLat,
+          initialToLng: initialToLng,
+          initialServiceId: initialServiceId,
           onGoToStartPage: () {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const CustomerHomePage()),
@@ -119,6 +130,30 @@ class CustomerHomePage extends StatelessWidget {
         ),
       );
     }
+  }
+
+  void _openEventsPage(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EventsPage(
+          onBookEvent: (event) {
+            final destination = event.address.trim().isNotEmpty
+                ? event.address.trim()
+                : (event.locationName.trim().isNotEmpty
+                      ? event.locationName.trim()
+                      : event.title.trim());
+            _openCalculator(
+              context,
+              scheduledIntent: false,
+              initialToAddress: destination,
+              initialToLat: event.lat,
+              initialToLng: event.lng,
+              initialServiceId: 'event',
+            );
+          },
+        ),
+      ),
+    );
   }
 
   String _partnerSelectionValue(Map<String, String>? map, String key) {
@@ -878,11 +913,7 @@ class CustomerHomePage extends StatelessWidget {
                             visualAsset: eventsAsset,
                             visualHeight: customerWideCardHeight,
                             visualAlignment: Alignment.centerRight,
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const EventsPage(),
-                              ),
-                            ),
+                            onTap: () => _openEventsPage(context),
                           ),
                           _customerWideCard(
                             context: context,
@@ -967,9 +998,7 @@ class CustomerHomePage extends StatelessWidget {
                       visualAsset: eventsAsset,
                       visualHeight: customerWideCardHeight,
                       visualAlignment: Alignment.centerRight,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const EventsPage()),
-                      ),
+                      onTap: () => _openEventsPage(context),
                     ),
                     const SizedBox(height: 10),
                     _customerWideCard(

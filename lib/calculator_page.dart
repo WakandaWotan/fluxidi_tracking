@@ -310,6 +310,10 @@ class CalculatorPage extends StatefulWidget {
     this.publicPartnerId,
     this.publicPartnerName,
     this.entryContext = BookingEntryContext.customer,
+    this.initialToAddress,
+    this.initialToLat,
+    this.initialToLng,
+    this.initialServiceId,
   });
 
   final String
@@ -320,6 +324,10 @@ class CalculatorPage extends StatefulWidget {
   final String? publicPartnerId;
   final String? publicPartnerName;
   final BookingEntryContext entryContext;
+  final String? initialToAddress;
+  final double? initialToLat;
+  final double? initialToLng;
+  final String? initialServiceId;
 
   @override
   State<CalculatorPage> createState() => _CalculatorPageState();
@@ -962,6 +970,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
     appLanguageNotifier.addListener(_onLanguageChanged);
     businessSettingsNotifier.addListener(_onBusinessSettingsChanged);
     localBackendTaxProfileNotifier.addListener(_onVatProfileChanged);
+    final initialServiceId = (widget.initialServiceId ?? '').trim();
+    if (initialServiceId.isNotEmpty &&
+        _services.any((service) => service.id == initialServiceId)) {
+      _service = initialServiceId;
+    }
+    final initialToAddress = (widget.initialToAddress ?? '').trim();
+    if (initialToAddress.isNotEmpty) {
+      _toCtrl.text = initialToAddress;
+    }
+    if (_hasFiniteCoordPair(widget.initialToLat, widget.initialToLng)) {
+      _toLat = widget.initialToLat;
+      _toLng = widget.initialToLng;
+    }
+    _toSuggestions = const <_PlaceSuggestion>[];
   }
 
   void _onLanguageChanged() {
