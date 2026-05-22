@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'event_data_source.dart';
 import 'event_models.dart';
-import 'event_seed_data.dart';
 import 'events_detail_page.dart';
 
 class EventsPage extends StatefulWidget {
-  const EventsPage({this.onBookEvent, super.key});
+  const EventsPage({this.onBookEvent, this.dataSource, super.key});
 
   final EventBookCallback? onBookEvent;
+  final EventDataSource? dataSource;
 
   @override
   State<EventsPage> createState() => _EventsPageState();
@@ -122,12 +123,31 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  final List<EventDetailData> _events = kEventSeedData;
+  late final EventDataSource _dataSource;
+  List<EventDetailData> _events = const <EventDetailData>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _dataSource = widget.dataSource ?? const LocalSeedEventDataSource();
+    _events = List<EventDetailData>.from(
+      _dataSource.getInitialEvents() ?? const <EventDetailData>[],
+    );
+    _loadEvents();
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadEvents() async {
+    final loaded = await _dataSource.loadEvents();
+    if (!mounted) return;
+    setState(() {
+      _events = List<EventDetailData>.from(loaded);
+    });
   }
 
   List<EventDetailData> get _visibleEvents {
