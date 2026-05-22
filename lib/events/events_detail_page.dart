@@ -1,48 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
-
-typedef EventBookCallback = void Function(EventDetailData event);
-
-class EventDetailData {
-  const EventDetailData({
-    required this.id,
-    required this.title,
-    required this.category,
-    required this.dateTimeLabel,
-    required this.locationName,
-    required this.city,
-    required this.address,
-    required this.lat,
-    required this.lng,
-    required this.distanceOrStatus,
-    required this.gradient,
-    this.visualAssetPath,
-    this.sourceLabel,
-  });
-
-  final String id;
-  final String title;
-  final String category;
-  final String dateTimeLabel;
-  final String locationName;
-  final String city;
-  final String address;
-  final double lat;
-  final double lng;
-  final String distanceOrStatus;
-  final List<Color> gradient;
-  final String? visualAssetPath;
-  final String? sourceLabel;
-
-  String get destinationLabel {
-    final location = locationName.trim();
-    final destination = address.trim();
-    if (location.isEmpty) return destination;
-    if (destination.isEmpty) return location;
-    return '$location, $destination';
-  }
-}
+import 'event_models.dart';
 
 class EventDetailPage extends StatelessWidget {
   const EventDetailPage({required this.event, this.onBookEvent, super.key});

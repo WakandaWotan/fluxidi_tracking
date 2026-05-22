@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'event_models.dart';
+import 'event_seed_data.dart';
 import 'events_detail_page.dart';
 
 class EventsPage extends StatefulWidget {
@@ -120,78 +122,7 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  final List<EventDetailData> _events = const <EventDetailData>[
-    EventDetailData(
-      id: 'evt_antwerp_jazz_2026',
-      title: 'Antwerp Jazz Nights 2026',
-      category: 'Muziek',
-      dateTimeLabel: 'Vrijdag • 19:30',
-      locationName: 'Stadspark Arena',
-      city: 'Antwerpen',
-      address: 'Van Eycklei 1, 2018 Antwerpen, België',
-      lat: 51.208186,
-      lng: 4.418731,
-      distanceOrStatus: '2.1 km',
-      gradient: <Color>[Color(0xFF2A1F08), Color(0xFF15120A)],
-      sourceLabel: 'Fluxidi Curated',
-    ),
-    EventDetailData(
-      id: 'evt_brussels_mobility_summit_2026',
-      title: 'Brussels Mobility Summit',
-      category: 'Zakelijk',
-      dateTimeLabel: 'Dinsdag • 09:00',
-      locationName: 'Brussels Expo Hall 7',
-      city: 'Brussel',
-      address: 'Belgiëplein 1, 1020 Brussel, België',
-      lat: 50.897227,
-      lng: 4.338472,
-      distanceOrStatus: 'Gepland',
-      gradient: <Color>[Color(0xFF2A260E), Color(0xFF12110A)],
-      sourceLabel: 'Fluxidi Curated',
-    ),
-    EventDetailData(
-      id: 'evt_ghent_night_run_2026',
-      title: 'Ghent Night Run',
-      category: 'Sport',
-      dateTimeLabel: 'Zaterdag • 20:30',
-      locationName: 'Sport Vlaanderen Gent',
-      city: 'Gent',
-      address: 'Zuiderlaan 14, 9000 Gent, België',
-      lat: 51.026364,
-      lng: 3.703992,
-      distanceOrStatus: '5.4 km',
-      gradient: <Color>[Color(0xFF1F1A0C), Color(0xFF100F0A)],
-      sourceLabel: 'Fluxidi Curated',
-    ),
-    EventDetailData(
-      id: 'evt_leuven_food_market_2026',
-      title: 'Leuven Food & Culture Market',
-      category: 'Vandaag',
-      dateTimeLabel: 'Vandaag • 17:00',
-      locationName: 'Grote Markt Leuven',
-      city: 'Leuven',
-      address: 'Grote Markt 1, 3000 Leuven, België',
-      lat: 50.879842,
-      lng: 4.700517,
-      distanceOrStatus: 'Actief',
-      gradient: <Color>[Color(0xFF2E220B), Color(0xFF141108)],
-      sourceLabel: 'Fluxidi Curated',
-    ),
-    EventDetailData(
-      id: 'evt_barcelona_sonar_2026',
-      title: 'Barcelona Sonar Weekender',
-      category: 'Muziek',
-      dateTimeLabel: 'Vrijdag • 21:00',
-      locationName: 'Fira Barcelona Gran Via',
-      city: 'Barcelona',
-      address: 'Av. Joan Carles I, 64, 08908 L Hospitalet de Llobregat, Spanje',
-      lat: 41.354780,
-      lng: 2.126349,
-      distanceOrStatus: 'Internationaal',
-      gradient: <Color>[Color(0xFF311E0D), Color(0xFF160E08)],
-      sourceLabel: 'Fluxidi Curated',
-    ),
-  ];
+  final List<EventDetailData> _events = kEventSeedData;
 
   @override
   void dispose() {
