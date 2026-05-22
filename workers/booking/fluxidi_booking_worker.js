@@ -16780,23 +16780,31 @@ GET /oauth/callback
         }
         const query = _normalizePublicEventsQuery(url);
         const receivedAtUtc = new Date().toISOString();
-        const seedEvents = _buildPublicEventSeedList(receivedAtUtc);
-        const filtered = seedEvents.filter((eventItem) =>
-          _publicEventMatchesQuery(eventItem, query),
-        );
-        const limited = filtered.slice(0, query.limit);
-        const events = limited.map((eventItem) => ({
-          ...eventItem,
-          distance_label: _publicEventDistanceLabel(eventItem, query),
-        }));
+        const ticketmasterResult = await _fetchTicketmasterPublicEvents({
+          env,
+          query,
+          receivedAtUtc,
+        });
+        if (ticketmasterResult.ok === true) {
+          return json({
+            ok: true,
+            source: "ticketmaster",
+            received_at_utc: receivedAtUtc,
+            is_from_cache: false,
+            error_code: null,
+            warnings: _mergePublicEventWarnings(
+              query.warnings,
+              ticketmasterResult.warnings,
+            ),
+            events: ticketmasterResult.events,
+          });
+        }
         return json({
-          ok: true,
-          source: "worker_seed",
-          received_at_utc: receivedAtUtc,
-          is_from_cache: false,
-          error_code: null,
-          warnings: query.warnings,
-          events,
+          ..._buildPublicEventsSeedPayload({
+            query,
+            receivedAtUtc,
+            extraWarnings: [ticketmasterResult.warning],
+          }),
         });
       }
 
@@ -19347,6 +19355,9 @@ function _normalizePublicEventsQuery(url) {
   const countryRaw = String(url?.searchParams?.get("country") ?? "").trim();
   const marketRaw = String(url?.searchParams?.get("market") ?? "").trim();
   const categoryRaw = String(url?.searchParams?.get("category") ?? "").trim();
+  const searchRaw = String(
+    url?.searchParams?.get("q") ?? url?.searchParams?.get("search") ?? "",
+  ).trim();
   const limitRaw = String(url?.searchParams?.get("limit") ?? "").trim();
   const latRaw = String(url?.searchParams?.get("lat") ?? "").trim();
   const lngRaw = String(url?.searchParams?.get("lng") ?? "").trim();
@@ -19380,6 +19391,7 @@ function _normalizePublicEventsQuery(url) {
     country: countryRaw.toUpperCase(),
     market: marketRaw.toLowerCase(),
     category: categoryRaw.toLowerCase(),
+    keyword: searchRaw.slice(0, 120),
     limit,
     latitude,
     longitude,
@@ -19447,6 +19459,233 @@ function _publicEventDistanceLabel(eventItem, query) {
     return null;
   }
   return `${dist.toFixed(1)} km`;
+}
+
+function _mergePublicEventWarnings(...groups) {
+  const out = [];
+  for (const group of groups) {
+    if (!Array.isArray(group)) continue;
+    for (const item of group) {
+      const warning = String(item || "").trim();
+      if (!warning || out.includes(warning)) continue;
+      out.push(warning);
+    }
+  }
+  return out;
+}
+
+function _buildPublicEventsSeedPayload({ query, receivedAtUtc, extraWarnings = [] } = {}) {
+  const seedEvents = _buildPublicEventSeedList(receivedAtUtc);
+  const filtered = seedEvents.filter((eventItem) =>
+    _publicEventMatchesQuery(eventItem, query),
+  );
+  const limited = filtered.slice(0, query.limit);
+  const events = limited.map((eventItem) => ({
+    ...eventItem,
+    distance_label: _publicEventDistanceLabel(eventItem, query),
+  }));
+  return {
+    ok: true,
+    source: "worker_seed",
+    received_at_utc: receivedAtUtc,
+    is_from_cache: false,
+    error_code: null,
+    warnings: _mergePublicEventWarnings(query?.warnings, extraWarnings),
+    events,
+  };
+}
+
+function _ticketmasterCategoryHints(category) {
+  switch (String(category || "").toLowerCase()) {
+    case "music":
+      return { classificationName: "music", keywordHint: "" };
+    case "sport":
+      return { classificationName: "sports", keywordHint: "" };
+    case "culture":
+      return { classificationName: "arts", keywordHint: "culture" };
+    case "family":
+      return { classificationName: "family", keywordHint: "" };
+    case "business":
+      return { classificationName: "", keywordHint: "business conference summit" };
+    case "food":
+      return { classificationName: "", keywordHint: "food market culinary gastronomy" };
+    default:
+      return { classificationName: "", keywordHint: "" };
+  }
+}
+
+function _ticketmasterDateToUtc(dateTimeValue, dateValue) {
+  const dt = safeStr(dateTimeValue);
+  if (dt) {
+    const parsed = new Date(dt);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  const dateOnly = safeStr(dateValue);
+  if (dateOnly) {
+    const parsed = new Date(`${dateOnly}T00:00:00.000Z`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return null;
+}
+
+function _ticketmasterCategoryFromEvent(tmEvent) {
+  const list = Array.isArray(tmEvent?.classifications) ? tmEvent.classifications : [];
+  let raw = "";
+  for (const item of list) {
+    raw = safeStr(item?.segment?.name || item?.genre?.name || item?.subGenre?.name);
+    if (raw) break;
+  }
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("music")) return { key: "music", label: "Muziek" };
+  if (normalized.includes("sport")) return { key: "sport", label: "Sport" };
+  if (normalized.includes("arts") || normalized.includes("culture")) {
+    return { key: "culture", label: "Cultuur" };
+  }
+  if (normalized.includes("family")) return { key: "family", label: "Familie" };
+  if (
+    normalized.includes("business") ||
+    normalized.includes("conference") ||
+    normalized.includes("convention")
+  ) {
+    return { key: "business", label: "Zakelijk" };
+  }
+  if (normalized.includes("food") || normalized.includes("culinary")) {
+    return { key: "food", label: "Vandaag" };
+  }
+  return { key: "other", label: raw || "Event" };
+}
+
+function _ticketmasterVenueAddress(venue) {
+  const line1 = safeStr(venue?.address?.line1);
+  const line2 = safeStr(venue?.address?.line2);
+  if (line1 && line2) return `${line1}, ${line2}`;
+  return line1 || line2 || "";
+}
+
+function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
+  const eventId = safeStr(tmEvent?.id);
+  const title = safeStr(tmEvent?.name);
+  if (!eventId || !title) return null;
+  const venue = Array.isArray(tmEvent?._embedded?.venues) ? tmEvent._embedded.venues[0] : null;
+  const venueName = safeStr(venue?.name);
+  const city = safeStr(venue?.city?.name);
+  const countryCode = safeStr(venue?.country?.countryCode || query?.country || "BE").toUpperCase();
+  const marketCode = countryCode ? countryCode.toLowerCase() : "";
+  const latitude = _publicEventsToNumberOrNull(venue?.location?.latitude);
+  const longitude = _publicEventsToNumberOrNull(venue?.location?.longitude);
+  if (latitude == null || longitude == null) return null;
+  const categoryMeta = _ticketmasterCategoryFromEvent(tmEvent);
+  const startsAtUtc = _ticketmasterDateToUtc(
+    tmEvent?.dates?.start?.dateTime,
+    tmEvent?.dates?.start?.localDate,
+  );
+  const endsAtUtc = _ticketmasterDateToUtc(
+    tmEvent?.dates?.end?.dateTime,
+    tmEvent?.dates?.end?.localDate,
+  );
+  const mapped = {
+    id: `tm_${eventId}`,
+    title,
+    subtitle: safeStr(tmEvent?.info || tmEvent?.pleaseNote),
+    description: safeStr(tmEvent?.pleaseNote || tmEvent?.info),
+    location_name: venueName || city || "",
+    venue_name: venueName || "",
+    category: categoryMeta.label,
+    category_key: categoryMeta.key,
+    address: _ticketmasterVenueAddress(venue),
+    city,
+    country_code: countryCode || "BE",
+    market_code: marketCode || "be",
+    latitude,
+    longitude,
+    distance_label: null,
+    starts_at_utc: startsAtUtc,
+    ends_at_utc: endsAtUtc,
+    time_zone: safeStr(tmEvent?.dates?.timezone),
+    provider: "ticketmaster",
+    source_event_id: eventId,
+    source_url: safeStr(tmEvent?.url),
+    status: safeStr(tmEvent?.dates?.status?.code || tmEvent?.dates?.status?.description || "scheduled"),
+    updated_at_utc: receivedAtUtc,
+  };
+  mapped.distance_label = _publicEventDistanceLabel(mapped, query);
+  return mapped;
+}
+
+async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
+  const apiKey = safeStr(env?.TICKETMASTER_API_KEY);
+  if (!apiKey) {
+    return { ok: false, warning: "ticketmaster_api_key_missing" };
+  }
+  const params = new URLSearchParams();
+  params.set("apikey", apiKey);
+  params.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
+  params.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 20))));
+  const categoryHints = _ticketmasterCategoryHints(query?.category);
+  if (categoryHints.classificationName) {
+    params.set("classificationName", categoryHints.classificationName);
+  }
+  const keywordParts = [];
+  if (query?.keyword) keywordParts.push(safeStr(query.keyword));
+  if (categoryHints.keywordHint) keywordParts.push(categoryHints.keywordHint);
+  const keyword = keywordParts.join(" ").trim().slice(0, 120);
+  if (keyword) params.set("keyword", keyword);
+  if (
+    query?.latitude != null &&
+    query?.longitude != null &&
+    query?.radiusKm != null &&
+    Number.isFinite(query.radiusKm)
+  ) {
+    params.set("latlong", `${query.latitude},${query.longitude}`);
+    params.set("radius", String(Math.max(0, Math.min(500, query.radiusKm))));
+    params.set("unit", "km");
+  }
+  params.set("sort", "date,asc");
+  const requestUrl = `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`;
+  const controller = new AbortController();
+  const timeoutMs = 4000;
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  let response;
+  try {
+    response = await fetch(requestUrl, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (_) {
+    return { ok: false, warning: "ticketmaster_http_error" };
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response || !response.ok) {
+    return { ok: false, warning: "ticketmaster_http_error" };
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    return { ok: false, warning: "ticketmaster_invalid_payload" };
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, warning: "ticketmaster_invalid_payload" };
+  }
+  const rawEvents = Array.isArray(payload?._embedded?.events)
+    ? payload._embedded.events
+    : [];
+  if (!rawEvents.length) {
+    return { ok: false, warning: "ticketmaster_empty" };
+  }
+  const mapped = rawEvents
+    .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
+    .filter((item) => !!item)
+    .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))
+    .slice(0, query.limit);
+  if (!mapped.length) {
+    return { ok: false, warning: "ticketmaster_empty" };
+  }
+  return { ok: true, warnings: [], events: mapped };
 }
 
 function _buildPublicEventSeedList(updatedAtUtc) {
