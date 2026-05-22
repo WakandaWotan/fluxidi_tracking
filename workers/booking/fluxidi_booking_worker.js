@@ -16803,7 +16803,9 @@ GET /oauth/callback
           ..._buildPublicEventsSeedPayload({
             query,
             receivedAtUtc,
-            extraWarnings: [ticketmasterResult.warning],
+            extraWarnings:
+              ticketmasterResult.warnings ??
+              [ticketmasterResult.warning],
           }),
         });
       }
@@ -19681,6 +19683,20 @@ function _ticketmasterStatusCode(tmEvent) {
   return safeStr(tmEvent?.dates?.status?.code || tmEvent?.dates?.status?.description).toLowerCase();
 }
 
+function _ticketmasterDateTimeParam(rawValue) {
+  const text = String(rawValue || "").trim();
+  if (!text) return "";
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const yyyy = String(parsed.getUTCFullYear()).padStart(4, "0");
+  const mm = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(parsed.getUTCDate()).padStart(2, "0");
+  const hh = String(parsed.getUTCHours()).padStart(2, "0");
+  const mi = String(parsed.getUTCMinutes()).padStart(2, "0");
+  const ss = String(parsed.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}Z`;
+}
+
 function _ticketmasterIsActionable(tmEvent) {
   const statusCode = _ticketmasterStatusCode(tmEvent);
   if (!statusCode) return true;
@@ -19742,69 +19758,107 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
 async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   const apiKey = safeStr(env?.TICKETMASTER_API_KEY);
   if (!apiKey) {
-    return { ok: false, warning: "ticketmaster_api_key_missing" };
+    return { ok: false, warnings: ["ticketmaster_api_key_missing"] };
   }
-  const params = new URLSearchParams();
-  params.set("apikey", apiKey);
-  params.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
-  params.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 50))));
+  const baseParams = new URLSearchParams();
+  baseParams.set("apikey", apiKey);
+  baseParams.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
+  baseParams.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 50))));
   const categoryHints = _ticketmasterCategoryHints(query?.category);
   if (categoryHints.classificationName) {
-    params.set("classificationName", categoryHints.classificationName);
+    baseParams.set("classificationName", categoryHints.classificationName);
   }
   const keywordParts = [];
   if (query?.keyword) keywordParts.push(safeStr(query.keyword));
   if (categoryHints.keywordHint) keywordParts.push(categoryHints.keywordHint);
   const keyword = keywordParts.join(" ").trim().slice(0, 120);
-  if (keyword) params.set("keyword", keyword);
-  if (query?.startAtUtc) params.set("startDateTime", String(query.startAtUtc));
-  if (query?.endAtUtc) params.set("endDateTime", String(query.endAtUtc));
+  if (keyword) baseParams.set("keyword", keyword);
+  const startDateTime = _ticketmasterDateTimeParam(query?.startAtUtc);
+  const endDateTime = _ticketmasterDateTimeParam(query?.endAtUtc);
+  if (startDateTime) baseParams.set("startDateTime", startDateTime);
+  if (endDateTime) baseParams.set("endDateTime", endDateTime);
   if (
     query?.latitude != null &&
     query?.longitude != null &&
     query?.radiusKm != null &&
     Number.isFinite(query.radiusKm)
   ) {
-    params.set("latlong", `${query.latitude},${query.longitude}`);
-    params.set("radius", String(Math.max(0, Math.min(500, query.radiusKm))));
-    params.set("unit", "km");
+    baseParams.set("latlong", `${query.latitude},${query.longitude}`);
+    baseParams.set("radius", String(Math.max(0, Math.min(500, query.radiusKm))));
+    baseParams.set("unit", "km");
   }
-  params.set("sort", "date,asc");
-  const requestUrl = `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`;
-  const controller = new AbortController();
-  const timeoutMs = 4000;
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-  let response;
-  try {
-    response = await fetch(requestUrl, {
-      method: "GET",
-      headers: { accept: "application/json" },
-      signal: controller.signal,
-    });
-  } catch (_) {
-    return { ok: false, warning: "ticketmaster_http_error" };
-  } finally {
-    clearTimeout(timer);
+  const fetchTicketmasterAttempt = async ({ includeSort }) => {
+    const params = new URLSearchParams(baseParams.toString());
+    if (includeSort) params.set("sort", "date,asc");
+    const requestUrl = `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`;
+    const controller = new AbortController();
+    const timeoutMs = 4000;
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+    try {
+      const response = await fetch(requestUrl, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      return { ok: true, response };
+    } catch (_) {
+      return { ok: false, error: "ticketmaster_http_error" };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let attempt = await fetchTicketmasterAttempt({ includeSort: true });
+  let response = attempt.response;
+  const fallbackWarnings = [];
+  if (!attempt.ok) {
+    return { ok: false, warnings: ["ticketmaster_http_error"] };
   }
   if (!response || !response.ok) {
-    return { ok: false, warning: "ticketmaster_http_error" };
+    if (response && Number.isFinite(response.status)) {
+      fallbackWarnings.push(`ticketmaster_http_status_${response.status}`);
+    }
+    // Some API configurations reject sort=date,asc for certain queries; retry once without sort.
+    attempt = await fetchTicketmasterAttempt({ includeSort: false });
+    if (!attempt.ok) {
+      return {
+        ok: false,
+        warnings: _mergePublicEventWarnings(
+          fallbackWarnings,
+          ["ticketmaster_http_error"],
+        ),
+      };
+    }
+    response = attempt.response;
+    if (!response || !response.ok) {
+      return {
+        ok: false,
+        warnings: _mergePublicEventWarnings(
+          fallbackWarnings,
+          ["ticketmaster_http_error"],
+          response && Number.isFinite(response.status)
+            ? [`ticketmaster_http_status_${response.status}`]
+            : [],
+        ),
+      };
+    }
   }
   let payload;
   try {
     payload = await response.json();
   } catch (_) {
-    return { ok: false, warning: "ticketmaster_invalid_payload" };
+    return { ok: false, warnings: ["ticketmaster_invalid_payload"] };
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { ok: false, warning: "ticketmaster_invalid_payload" };
+    return { ok: false, warnings: ["ticketmaster_invalid_payload"] };
   }
   const rawEvents = Array.isArray(payload?._embedded?.events)
     ? payload._embedded.events
     : [];
   if (!rawEvents.length) {
-    return { ok: false, warning: "ticketmaster_empty" };
+    return { ok: false, warnings: ["ticketmaster_empty"] };
   }
   const actionableEvents = rawEvents.filter((item) => _ticketmasterIsActionable(item));
   const mapped = actionableEvents
@@ -19813,7 +19867,7 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
     .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))
     .slice(0, query.limit);
   if (!mapped.length) {
-    return { ok: false, warning: "ticketmaster_empty" };
+    return { ok: false, warnings: ["ticketmaster_empty"] };
   }
   return { ok: true, warnings: [], events: mapped };
 }
