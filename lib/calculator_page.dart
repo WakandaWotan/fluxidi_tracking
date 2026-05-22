@@ -1291,12 +1291,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
       lastDate: now.add(const Duration(days: 365)),
     );
     if (d == null) return;
+    if (!mounted) return;
 
     final t = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(base),
     );
     if (t == null) return;
+    if (!mounted) return;
 
     setState(() {
       _pickupDateTime = DateTime(d.year, d.month, d.day, t.hour, t.minute);
@@ -1318,12 +1320,14 @@ class _CalculatorPageState extends State<CalculatorPage> {
       lastDate: basePickup.add(const Duration(days: 365)),
     );
     if (d == null) return;
+    if (!mounted) return;
 
     final t = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(base),
     );
     if (t == null) return;
+    if (!mounted) return;
 
     setState(() {
       _returnPickupDateTime = DateTime(
@@ -1384,8 +1388,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
       if (!mounted) return;
       setState(() => _error = e.toString());
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -3848,6 +3853,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           payload,
           customerSessionToken: customerSessionToken,
         );
+        if (!mounted) return;
         if (verified != null) {
           await _handleBookSuccess(
             body: verified,
@@ -3884,10 +3890,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _submitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+        });
+      }
     }
   }
 
