@@ -93,6 +93,7 @@ class EventDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return Scaffold(
       backgroundColor: _bgBlack,
       body: SafeArea(
@@ -101,14 +102,19 @@ class EventDetailPage extends StatelessWidget {
             _buildHeader(context),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 6, 14, 16),
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  10,
+                  14,
+                  18 + bottomInset * 0.35,
+                ),
                 children: [
                   _buildHeroVisual(),
-                  const SizedBox(height: 12),
-                  _buildPrimaryContent(),
-                  const SizedBox(height: 12),
-                  _buildInfoPanel(),
                   const SizedBox(height: 14),
+                  _buildPrimaryContent(),
+                  const SizedBox(height: 13),
+                  _buildInfoPanel(),
+                  const SizedBox(height: 15),
                   _buildCtaArea(context),
                 ],
               ),
@@ -121,7 +127,7 @@ class EventDetailPage extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 7, 8, 2),
+      padding: const EdgeInsets.fromLTRB(8, 9, 8, 4),
       child: Row(
         children: [
           IconButton(
@@ -132,19 +138,28 @@ class EventDetailPage extends StatelessWidget {
           ),
           const SizedBox(width: 2),
           Expanded(
-            child: Text(
-              _t(
-                nl: 'Evenementdetail',
-                en: 'Event details',
-                fr: 'Details de l evenement',
-                es: 'Detalle del evento',
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: _panelBlack.withOpacity(0.92),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _gold.withOpacity(0.2)),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
+              child: Text(
+                _t(
+                  nl: 'Evenementdetail',
+                  en: 'Event details',
+                  fr: 'Details de l evenement',
+                  es: 'Detalle del evento',
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.2,
+                ),
               ),
             ),
           ),
@@ -155,7 +170,7 @@ class EventDetailPage extends StatelessWidget {
 
   Widget _buildHeroVisual() {
     return Container(
-      height: 196,
+      height: 206,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _gold.withOpacity(0.32)),
@@ -227,14 +242,14 @@ class EventDetailPage extends StatelessWidget {
           Positioned(
             left: 16,
             right: 16,
-            bottom: 16,
+            bottom: 18,
             child: Text(
               event.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 22,
+                fontSize: 23,
                 fontWeight: FontWeight.w800,
                 height: 1.2,
               ),
@@ -247,11 +262,11 @@ class EventDetailPage extends StatelessWidget {
 
   Widget _buildPrimaryContent() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(color: _gold.withOpacity(0.26)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -261,9 +276,9 @@ class EventDetailPage extends StatelessWidget {
           _buildMetaRow(Icons.location_on_outlined, event.locationName),
           const SizedBox(height: 8),
           _buildMetaRow(Icons.pin_drop_outlined, event.address),
-          const SizedBox(height: 10),
+          const SizedBox(height: 11),
           const Divider(color: Color(0x33E5B641), height: 1),
-          const SizedBox(height: 10),
+          const SizedBox(height: 11),
           Text(
             _description,
             style: const TextStyle(
@@ -280,11 +295,11 @@ class EventDetailPage extends StatelessWidget {
 
   Widget _buildInfoPanel() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(color: _gold.withOpacity(0.26)),
       ),
       child: Column(
         children: [
@@ -351,11 +366,11 @@ class EventDetailPage extends StatelessWidget {
 
   Widget _buildCtaArea(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
+        border: Border.all(color: _gold.withOpacity(0.3)),
       ),
       child: Column(
         children: [
@@ -367,7 +382,7 @@ class EventDetailPage extends StatelessWidget {
                 backgroundColor: _gold,
                 foregroundColor: Colors.black,
                 elevation: 0,
-                minimumSize: const Size.fromHeight(52),
+                minimumSize: const Size.fromHeight(54),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -398,9 +413,10 @@ class EventDetailPage extends StatelessWidget {
                 ),
               ),
               style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF171209),
                 foregroundColor: _gold,
                 side: BorderSide(color: _gold.withOpacity(0.6)),
-                minimumSize: const Size.fromHeight(46),
+                minimumSize: const Size.fromHeight(48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
