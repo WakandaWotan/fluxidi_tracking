@@ -16774,6 +16774,32 @@ GET /oauth/callback
         return handlePublicAddressReverse(url, env);
       }
 
+      if (url.pathname === "/public/events") {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const query = _normalizePublicEventsQuery(url);
+        const receivedAtUtc = new Date().toISOString();
+        const seedEvents = _buildPublicEventSeedList(receivedAtUtc);
+        const filtered = seedEvents.filter((eventItem) =>
+          _publicEventMatchesQuery(eventItem, query),
+        );
+        const limited = filtered.slice(0, query.limit);
+        const events = limited.map((eventItem) => ({
+          ...eventItem,
+          distance_label: _publicEventDistanceLabel(eventItem, query),
+        }));
+        return json({
+          ok: true,
+          source: "worker_seed",
+          received_at_utc: receivedAtUtc,
+          is_from_cache: false,
+          error_code: null,
+          warnings: query.warnings,
+          events,
+        });
+      }
+
       if (url.pathname === "/public/quote" && request.method === "POST") {
         const body = await safeJson(request);
         if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -19308,6 +19334,239 @@ async function safeJson(request) {
   const text = await request.text();
   if (!text) return {};
   try { return JSON.parse(text); } catch { return {}; }
+}
+
+function _publicEventsToNumberOrNull(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+function _normalizePublicEventsQuery(url) {
+  const countryRaw = String(url?.searchParams?.get("country") ?? "").trim();
+  const marketRaw = String(url?.searchParams?.get("market") ?? "").trim();
+  const categoryRaw = String(url?.searchParams?.get("category") ?? "").trim();
+  const limitRaw = String(url?.searchParams?.get("limit") ?? "").trim();
+  const latRaw = String(url?.searchParams?.get("lat") ?? "").trim();
+  const lngRaw = String(url?.searchParams?.get("lng") ?? "").trim();
+  const radiusRaw = String(url?.searchParams?.get("radius_km") ?? "").trim();
+  const warnings = [];
+
+  let limit = 20;
+  if (limitRaw) {
+    const parsed = Number.parseInt(limitRaw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      limit = Math.max(1, Math.min(50, parsed));
+    } else {
+      warnings.push("invalid_limit");
+    }
+  }
+
+  const latitude = _publicEventsToNumberOrNull(latRaw);
+  const longitude = _publicEventsToNumberOrNull(lngRaw);
+  let radiusKm = _publicEventsToNumberOrNull(radiusRaw);
+  if (radiusRaw && radiusKm == null) {
+    warnings.push("invalid_radius_km");
+  }
+  if (radiusKm != null) {
+    radiusKm = Math.max(0, Math.min(500, radiusKm));
+  }
+  if ((latitude == null) !== (longitude == null)) {
+    warnings.push("lat_lng_pair_required");
+  }
+
+  return {
+    country: countryRaw.toUpperCase(),
+    market: marketRaw.toLowerCase(),
+    category: categoryRaw.toLowerCase(),
+    limit,
+    latitude,
+    longitude,
+    radiusKm,
+    warnings,
+  };
+}
+
+function _publicEventsHaversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
+}
+
+function _publicEventMatchesQuery(eventItem, query) {
+  if (query.country && String(eventItem.country_code || "").toUpperCase() !== query.country) {
+    return false;
+  }
+  if (query.market && String(eventItem.market_code || "").toLowerCase() !== query.market) {
+    return false;
+  }
+  if (query.category) {
+    const key = String(eventItem.category_key || "").toLowerCase();
+    const category = String(eventItem.category || "").toLowerCase();
+    if (key !== query.category && !category.includes(query.category)) {
+      return false;
+    }
+  }
+  if (
+    query.latitude != null &&
+    query.longitude != null &&
+    query.radiusKm != null &&
+    Number.isFinite(query.radiusKm)
+  ) {
+    const dist = _publicEventsHaversineKm(
+      query.latitude,
+      query.longitude,
+      Number(eventItem.latitude),
+      Number(eventItem.longitude),
+    );
+    return Number.isFinite(dist) && dist <= query.radiusKm;
+  }
+  return true;
+}
+
+function _publicEventDistanceLabel(eventItem, query) {
+  if (query.latitude == null || query.longitude == null) {
+    return String(eventItem.distance_label || "").trim() || null;
+  }
+  const dist = _publicEventsHaversineKm(
+    query.latitude,
+    query.longitude,
+    Number(eventItem.latitude),
+    Number(eventItem.longitude),
+  );
+  if (!Number.isFinite(dist)) {
+    return String(eventItem.distance_label || "").trim() || null;
+  }
+  return `${dist.toFixed(1)} km`;
+}
+
+function _buildPublicEventSeedList(updatedAtUtc) {
+  return [
+    {
+      id: "evt_antwerp_jazz_2026",
+      title: "Antwerp Jazz Nights 2026",
+      subtitle: "Live jazz & city crowd",
+      description: "Premium evening jazz sessions in Antwerp city center.",
+      category: "Muziek",
+      category_key: "music",
+      address: "Van Eycklei 1, 2018 Antwerpen, België",
+      city: "Antwerpen",
+      country_code: "BE",
+      market_code: "be",
+      latitude: 51.208186,
+      longitude: 4.418731,
+      distance_label: "2.1 km",
+      starts_at_utc: "2026-06-12T17:30:00.000Z",
+      ends_at_utc: "2026-06-12T22:30:00.000Z",
+      time_zone: "Europe/Brussels",
+      provider: "worker_seed",
+      source_event_id: "seed-antwerp-jazz-2026",
+      source_url: null,
+      status: "scheduled",
+      updated_at_utc: updatedAtUtc,
+    },
+    {
+      id: "evt_brussels_mobility_summit_2026",
+      title: "Brussels Mobility Summit",
+      subtitle: "Conference and B2B mobility sessions",
+      description: "Business mobility summit with peak arrival/departure windows.",
+      category: "Zakelijk",
+      category_key: "business",
+      address: "Belgiëplein 1, 1020 Brussel, België",
+      city: "Brussel",
+      country_code: "BE",
+      market_code: "be",
+      latitude: 50.897227,
+      longitude: 4.338472,
+      distance_label: "Gepland",
+      starts_at_utc: "2026-06-16T07:00:00.000Z",
+      ends_at_utc: "2026-06-16T16:00:00.000Z",
+      time_zone: "Europe/Brussels",
+      provider: "worker_seed",
+      source_event_id: "seed-brussels-mobility-2026",
+      source_url: null,
+      status: "scheduled",
+      updated_at_utc: updatedAtUtc,
+    },
+    {
+      id: "evt_ghent_night_run_2026",
+      title: "Ghent Night Run",
+      subtitle: "Evening sport event",
+      description: "Night run with concentrated ride demand before and after start.",
+      category: "Sport",
+      category_key: "sport",
+      address: "Zuiderlaan 14, 9000 Gent, België",
+      city: "Gent",
+      country_code: "BE",
+      market_code: "be",
+      latitude: 51.026364,
+      longitude: 3.703992,
+      distance_label: "5.4 km",
+      starts_at_utc: "2026-06-20T18:30:00.000Z",
+      ends_at_utc: "2026-06-20T21:00:00.000Z",
+      time_zone: "Europe/Brussels",
+      provider: "worker_seed",
+      source_event_id: "seed-ghent-run-2026",
+      source_url: null,
+      status: "scheduled",
+      updated_at_utc: updatedAtUtc,
+    },
+    {
+      id: "evt_leuven_food_market_2026",
+      title: "Leuven Food & Culture Market",
+      subtitle: "Food, drinks and cultural stands",
+      description: "City-center market with spread demand across the evening.",
+      category: "Vandaag",
+      category_key: "food",
+      address: "Grote Markt 1, 3000 Leuven, België",
+      city: "Leuven",
+      country_code: "BE",
+      market_code: "be",
+      latitude: 50.879842,
+      longitude: 4.700517,
+      distance_label: "Actief",
+      starts_at_utc: "2026-06-10T15:00:00.000Z",
+      ends_at_utc: "2026-06-10T21:00:00.000Z",
+      time_zone: "Europe/Brussels",
+      provider: "worker_seed",
+      source_event_id: "seed-leuven-food-2026",
+      source_url: null,
+      status: "scheduled",
+      updated_at_utc: updatedAtUtc,
+    },
+    {
+      id: "evt_barcelona_sonar_2026",
+      title: "Barcelona Sonar Weekender",
+      subtitle: "Electronic music weekender",
+      description: "International music event with high nighttime demand.",
+      category: "Muziek",
+      category_key: "music",
+      address: "Av. Joan Carles I, 64, 08908 L Hospitalet de Llobregat, Spanje",
+      city: "Barcelona",
+      country_code: "ES",
+      market_code: "es",
+      latitude: 41.35478,
+      longitude: 2.126349,
+      distance_label: "Internationaal",
+      starts_at_utc: "2026-06-19T19:00:00.000Z",
+      ends_at_utc: "2026-06-20T02:30:00.000Z",
+      time_zone: "Europe/Madrid",
+      provider: "worker_seed",
+      source_event_id: "seed-barcelona-sonar-2026",
+      source_url: null,
+      status: "scheduled",
+      updated_at_utc: updatedAtUtc,
+    },
+  ];
 }
 
 function _scopeText(value, maxLen = 80) {
