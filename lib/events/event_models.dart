@@ -2,6 +2,105 @@ import 'package:flutter/material.dart';
 
 typedef EventBookCallback = void Function(EventDetailData event);
 
+class EventCategoryKey {
+  static const String music = 'music';
+  static const String sport = 'sport';
+  static const String food = 'food';
+  static const String family = 'family';
+  static const String culture = 'culture';
+  static const String business = 'business';
+  static const String airport = 'airport';
+  static const String other = 'other';
+
+  static const Set<String> values = <String>{
+    music,
+    sport,
+    food,
+    family,
+    culture,
+    business,
+    airport,
+    other,
+  };
+}
+
+class EventCategoryMeta {
+  const EventCategoryMeta({
+    required this.key,
+    required this.icon,
+    this.aliases = const <String>[],
+  });
+
+  final String key;
+  final IconData icon;
+  final List<String> aliases;
+}
+
+const List<EventCategoryMeta> kEventCategoryMeta = <EventCategoryMeta>[
+  EventCategoryMeta(
+    key: EventCategoryKey.music,
+    icon: Icons.graphic_eq_rounded,
+    aliases: <String>['muziek', 'music', 'musique', 'música'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.sport,
+    icon: Icons.sports_soccer_rounded,
+    aliases: <String>['sport', 'deporte'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.food,
+    icon: Icons.restaurant_rounded,
+    aliases: <String>['food', 'eten', 'culinary', 'gastronomy', 'gastronomie'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.family,
+    icon: Icons.family_restroom_rounded,
+    aliases: <String>['family', 'familie', 'famille'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.culture,
+    icon: Icons.museum_outlined,
+    aliases: <String>['culture', 'cultuur'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.business,
+    icon: Icons.apartment_rounded,
+    aliases: <String>['business', 'zakelijk', 'negocios', 'affaires'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.airport,
+    icon: Icons.flight_takeoff_rounded,
+    aliases: <String>['airport', 'luchthaven', 'aéroport', 'aeropuerto'],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.other,
+    icon: Icons.event_rounded,
+    aliases: <String>['other', 'overig', 'autre', 'otro'],
+  ),
+];
+
+String resolveEventCategoryKey({
+  String? explicitKey,
+  required String fallbackLabel,
+}) {
+  final normalizedExplicit = (explicitKey ?? '').trim().toLowerCase();
+  if (EventCategoryKey.values.contains(normalizedExplicit)) {
+    return normalizedExplicit;
+  }
+  final normalizedLabel = fallbackLabel.trim().toLowerCase();
+  for (final meta in kEventCategoryMeta) {
+    if (meta.aliases.contains(normalizedLabel)) return meta.key;
+  }
+  return EventCategoryKey.other;
+}
+
+EventCategoryMeta? eventCategoryMetaByKey(String key) {
+  for (final meta in kEventCategoryMeta) {
+    if (meta.key == key) return meta;
+  }
+  return null;
+}
+
 class EventFeedQuery {
   const EventFeedQuery({
     this.marketCode,
@@ -107,5 +206,12 @@ class EventDetailData {
     if (location.isEmpty) return destination;
     if (destination.isEmpty) return location;
     return '$location, $destination';
+  }
+
+  String get resolvedCategoryKey {
+    return resolveEventCategoryKey(
+      explicitKey: categoryKey,
+      fallbackLabel: category,
+    );
   }
 }

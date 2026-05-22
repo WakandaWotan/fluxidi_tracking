@@ -184,20 +184,14 @@ class _EventsPageState extends State<EventsPage> {
                 dateLabel.contains('aujourd') ||
                 dateLabel.contains('hoy');
           }
-          final category = event.category.toLowerCase();
           if (selectedFilter == 'music') {
-            return category.contains('muziek') ||
-                category.contains('music') ||
-                category.contains('musique') ||
-                category.contains('música');
+            return event.resolvedCategoryKey == EventCategoryKey.music;
           }
           if (selectedFilter == 'business') {
-            return category.contains('zakelijk') ||
-                category.contains('business') ||
-                category.contains('negocios');
+            return event.resolvedCategoryKey == EventCategoryKey.business;
           }
           if (selectedFilter == 'sport') {
-            return category.contains('sport') || category.contains('deporte');
+            return event.resolvedCategoryKey == EventCategoryKey.sport;
           }
           return true;
         })
@@ -542,19 +536,12 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  IconData _categoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'muziek':
-        return Icons.graphic_eq_rounded;
-      case 'zakelijk':
-        return Icons.apartment_rounded;
-      case 'sport':
-        return Icons.sports_soccer_rounded;
-      case 'vandaag':
-        return Icons.schedule_rounded;
-      default:
-        return Icons.event_rounded;
+  IconData _categoryIcon(EventDetailData event) {
+    if (event.category.toLowerCase() == 'vandaag') {
+      return Icons.schedule_rounded;
     }
+    return eventCategoryMetaByKey(event.resolvedCategoryKey)?.icon ??
+        Icons.event_rounded;
   }
 
   Widget _buildEventCard(EventDetailData event) {
@@ -669,7 +656,7 @@ class _EventsPageState extends State<EventsPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(
-                                  _categoryIcon(event.category),
+                                  _categoryIcon(event),
                                   color: _gold,
                                   size: 12,
                                 ),
