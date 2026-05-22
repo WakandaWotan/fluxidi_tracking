@@ -2,6 +2,50 @@ import 'package:flutter/material.dart';
 
 typedef EventBookCallback = void Function(EventDetailData event);
 
+class EventFeedQuery {
+  const EventFeedQuery({
+    this.marketCode,
+    this.countryCode,
+    this.categoryKey,
+    this.locale,
+    this.fromUtc,
+    this.untilUtc,
+    this.latitude,
+    this.longitude,
+    this.radiusKm,
+    this.limit,
+  });
+
+  final String? marketCode;
+  final String? countryCode;
+  final String? categoryKey;
+  final String? locale;
+  final DateTime? fromUtc;
+  final DateTime? untilUtc;
+  final double? latitude;
+  final double? longitude;
+  final double? radiusKm;
+  final int? limit;
+}
+
+class EventFeedResult {
+  const EventFeedResult({
+    this.events = const <EventDetailData>[],
+    this.source = 'unknown',
+    this.receivedAtUtc,
+    this.isFromCache = false,
+    this.errorCode,
+    this.warnings = const <String>[],
+  });
+
+  final List<EventDetailData> events;
+  final String source;
+  final DateTime? receivedAtUtc;
+  final bool isFromCache;
+  final String? errorCode;
+  final List<String> warnings;
+}
+
 class EventDetailData {
   const EventDetailData({
     required this.id,
