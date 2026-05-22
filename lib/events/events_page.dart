@@ -266,19 +266,19 @@ class _EventsPageState extends State<EventsPage> {
               child: ListView(
                 padding: EdgeInsets.fromLTRB(
                   contentPadding,
-                  6,
+                  10,
                   contentPadding,
-                  14,
+                  18,
                 ),
                 children: [
                   _buildSearchField(),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   _buildMarketChips(),
-                  const SizedBox(height: 7),
-                  _buildFilterChips(),
                   const SizedBox(height: 9),
+                  _buildFilterChips(),
+                  const SizedBox(height: 12),
                   _buildSegmentedToggle(),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   if (_selectedTabIndex == 0) ...[
                     if (events.isEmpty)
                       _buildEmptyState()
@@ -297,7 +297,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget _buildHeader(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 7, 8, 2),
+      padding: const EdgeInsets.fromLTRB(8, 9, 8, 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -309,8 +309,13 @@ class _EventsPageState extends State<EventsPage> {
           ),
           const SizedBox(width: 2),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: _panelBlack.withOpacity(0.92),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _gold.withOpacity(0.2)),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -327,9 +332,10 @@ class _EventsPageState extends State<EventsPage> {
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
+                      letterSpacing: 0.2,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     _t(
                       nl: 'Evenementen en vervoer in uw regio',
@@ -339,9 +345,9 @@ class _EventsPageState extends State<EventsPage> {
                     ),
                     style: const TextStyle(
                       color: _softText,
-                      fontSize: 11.4,
+                      fontSize: 11.6,
                       fontWeight: FontWeight.w500,
-                      height: 1.2,
+                      height: 1.25,
                     ),
                   ),
                 ],
@@ -380,7 +386,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget _buildMarketChips() {
     return SizedBox(
-      height: 40,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -408,8 +414,8 @@ class _EventsPageState extends State<EventsPage> {
             ),
             showCheckmark: false,
             visualDensity: VisualDensity.compact,
-            labelPadding: const EdgeInsets.symmetric(horizontal: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           );
         },
       ),
@@ -418,7 +424,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget _buildFilterChips() {
     return SizedBox(
-      height: 40,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -444,8 +450,8 @@ class _EventsPageState extends State<EventsPage> {
             ),
             showCheckmark: false,
             visualDensity: VisualDensity.compact,
-            labelPadding: const EdgeInsets.symmetric(horizontal: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           );
         },
       ),
@@ -731,7 +737,7 @@ class _EventsPageState extends State<EventsPage> {
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(11, 8, 11, 9),
+                    padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -741,7 +747,7 @@ class _EventsPageState extends State<EventsPage> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 16,
+                            fontSize: 16.4,
                             height: 1.2,
                             fontWeight: FontWeight.w800,
                           ),
@@ -812,7 +818,7 @@ class _EventsPageState extends State<EventsPage> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 9),
                         Row(
                           children: [
                             Container(
@@ -852,9 +858,10 @@ class _EventsPageState extends State<EventsPage> {
               child: OutlinedButton.icon(
                 onPressed: () => _bookEvent(event),
                 style: OutlinedButton.styleFrom(
+                  backgroundColor: const Color(0xFF171209),
                   foregroundColor: _gold,
                   side: BorderSide(color: _gold.withOpacity(0.55)),
-                  minimumSize: const Size.fromHeight(44),
+                  minimumSize: const Size.fromHeight(46),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(11),
                   ),
@@ -862,7 +869,10 @@ class _EventsPageState extends State<EventsPage> {
                 icon: const Icon(Icons.local_taxi_rounded, size: 17),
                 label: Text(
                   _ctaCardLabel,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.15,
+                  ),
                 ),
               ),
             ),
