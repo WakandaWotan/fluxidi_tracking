@@ -106,6 +106,8 @@ class EventFeedQuery {
     this.marketCode,
     this.countryCode,
     this.categoryKey,
+    this.dateMode,
+    this.searchQuery,
     this.locale,
     this.fromUtc,
     this.untilUtc,
@@ -118,6 +120,8 @@ class EventFeedQuery {
   final String? marketCode;
   final String? countryCode;
   final String? categoryKey;
+  final String? dateMode;
+  final String? searchQuery;
   final String? locale;
   final DateTime? fromUtc;
   final DateTime? untilUtc;

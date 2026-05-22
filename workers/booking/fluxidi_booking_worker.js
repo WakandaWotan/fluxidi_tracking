@@ -19351,10 +19351,92 @@ function _publicEventsToNumberOrNull(raw) {
   return Number.isFinite(value) ? value : null;
 }
 
+function _publicEventsToIsoDateOrNull(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function _publicEventsEndOfUtcDayIso(date) {
+  const d = new Date(date);
+  d.setUTCHours(23, 59, 59, 999);
+  return d.toISOString();
+}
+
+function _publicEventsResolveDateRange({
+  dateMode,
+  startAtRaw,
+  endAtRaw,
+  nowUtc,
+  warnings,
+} = {}) {
+  const normalizedMode = String(dateMode || "upcoming").trim().toLowerCase();
+  const mode =
+    normalizedMode === "today" ||
+    normalizedMode === "weekend" ||
+    normalizedMode === "upcoming" ||
+    normalizedMode === "year"
+      ? normalizedMode
+      : "upcoming";
+  if (normalizedMode && normalizedMode !== mode) {
+    warnings.push("invalid_date_mode");
+  }
+  const now = new Date(nowUtc || new Date().toISOString());
+  let startAtUtc = now.toISOString();
+  let endAtUtc = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  if (mode === "today") {
+    const startOfTodayUtc = new Date(now);
+    startOfTodayUtc.setUTCHours(0, 0, 0, 0);
+    startAtUtc = now.toISOString();
+    endAtUtc = _publicEventsEndOfUtcDayIso(startOfTodayUtc);
+  } else if (mode === "weekend") {
+    const startOfTodayUtc = new Date(now);
+    startOfTodayUtc.setUTCHours(0, 0, 0, 0);
+    const daysUntilSaturday = (6 - startOfTodayUtc.getUTCDay() + 7) % 7;
+    const weekendStart = new Date(startOfTodayUtc);
+    weekendStart.setUTCDate(weekendStart.getUTCDate() + daysUntilSaturday);
+    const weekendEnd = new Date(weekendStart);
+    weekendEnd.setUTCDate(weekendEnd.getUTCDate() + 2);
+    weekendEnd.setUTCHours(23, 59, 59, 999);
+    startAtUtc = weekendStart.toISOString();
+    endAtUtc = weekendEnd.toISOString();
+  }
+  const startOverride = _publicEventsToIsoDateOrNull(startAtRaw);
+  const endOverride = _publicEventsToIsoDateOrNull(endAtRaw);
+  if (String(startAtRaw || "").trim() && !startOverride) warnings.push("invalid_start_at");
+  if (String(endAtRaw || "").trim() && !endOverride) warnings.push("invalid_end_at");
+  if (startOverride) startAtUtc = startOverride;
+  if (endOverride) endAtUtc = endOverride;
+  const startMs = Date.parse(startAtUtc);
+  const endMs = Date.parse(endAtUtc);
+  if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs > endMs) {
+    warnings.push("invalid_date_range");
+    const swap = startAtUtc;
+    startAtUtc = endAtUtc;
+    endAtUtc = swap;
+  }
+  return { dateMode: mode, startAtUtc, endAtUtc };
+}
+
 function _normalizePublicEventsQuery(url) {
   const countryRaw = String(url?.searchParams?.get("country") ?? "").trim();
   const marketRaw = String(url?.searchParams?.get("market") ?? "").trim();
   const categoryRaw = String(url?.searchParams?.get("category") ?? "").trim();
+  const dateRaw = String(url?.searchParams?.get("date") ?? "").trim();
+  const startAtRaw = String(
+    url?.searchParams?.get("start_at") ??
+      url?.searchParams?.get("startAt") ??
+      url?.searchParams?.get("start_date") ??
+      "",
+  ).trim();
+  const endAtRaw = String(
+    url?.searchParams?.get("end_at") ??
+      url?.searchParams?.get("endAt") ??
+      url?.searchParams?.get("end_date") ??
+      "",
+  ).trim();
   const searchRaw = String(
     url?.searchParams?.get("q") ?? url?.searchParams?.get("search") ?? "",
   ).trim();
@@ -19364,7 +19446,7 @@ function _normalizePublicEventsQuery(url) {
   const radiusRaw = String(url?.searchParams?.get("radius_km") ?? "").trim();
   const warnings = [];
 
-  let limit = 20;
+  let limit = 50;
   if (limitRaw) {
     const parsed = Number.parseInt(limitRaw, 10);
     if (Number.isFinite(parsed) && parsed > 0) {
@@ -19386,11 +19468,22 @@ function _normalizePublicEventsQuery(url) {
   if ((latitude == null) !== (longitude == null)) {
     warnings.push("lat_lng_pair_required");
   }
+  const nowUtc = new Date().toISOString();
+  const dateRange = _publicEventsResolveDateRange({
+    dateMode: dateRaw,
+    startAtRaw,
+    endAtRaw,
+    nowUtc,
+    warnings,
+  });
 
   return {
     country: countryRaw.toUpperCase(),
     market: marketRaw.toLowerCase(),
     category: categoryRaw.toLowerCase(),
+    dateMode: dateRange.dateMode,
+    startAtUtc: dateRange.startAtUtc,
+    endAtUtc: dateRange.endAtUtc,
     keyword: searchRaw.slice(0, 120),
     limit,
     latitude,
@@ -19414,6 +19507,13 @@ function _publicEventsHaversineKm(lat1, lng1, lat2, lng2) {
   return 6371 * c;
 }
 
+function _publicEventStartsAtMs(eventItem) {
+  const raw = String(eventItem?.starts_at_utc ?? eventItem?.startAtUtc ?? "").trim();
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function _publicEventMatchesQuery(eventItem, query) {
   if (query.country && String(eventItem.country_code || "").toUpperCase() !== query.country) {
     return false;
@@ -19426,6 +19526,21 @@ function _publicEventMatchesQuery(eventItem, query) {
     const category = String(eventItem.category || "").toLowerCase();
     if (key !== query.category && !category.includes(query.category)) {
       return false;
+    }
+  }
+  const eventStartMs = _publicEventStartsAtMs(eventItem);
+  if (eventStartMs != null) {
+    if (query.startAtUtc) {
+      const rangeStartMs = Date.parse(query.startAtUtc);
+      if (Number.isFinite(rangeStartMs) && eventStartMs < rangeStartMs) {
+        return false;
+      }
+    }
+    if (query.endAtUtc) {
+      const rangeEndMs = Date.parse(query.endAtUtc);
+      if (Number.isFinite(rangeEndMs) && eventStartMs > rangeEndMs) {
+        return false;
+      }
     }
   }
   if (
@@ -19562,6 +19677,18 @@ function _ticketmasterVenueAddress(venue) {
   return line1 || line2 || "";
 }
 
+function _ticketmasterStatusCode(tmEvent) {
+  return safeStr(tmEvent?.dates?.status?.code || tmEvent?.dates?.status?.description).toLowerCase();
+}
+
+function _ticketmasterIsActionable(tmEvent) {
+  const statusCode = _ticketmasterStatusCode(tmEvent);
+  if (!statusCode) return true;
+  if (statusCode.includes("cancel")) return false;
+  if (statusCode.includes("offsale")) return false;
+  return true;
+}
+
 function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
   const eventId = safeStr(tmEvent?.id);
   const title = safeStr(tmEvent?.name);
@@ -19605,7 +19732,7 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
     provider: "ticketmaster",
     source_event_id: eventId,
     source_url: safeStr(tmEvent?.url),
-    status: safeStr(tmEvent?.dates?.status?.code || tmEvent?.dates?.status?.description || "scheduled"),
+    status: _ticketmasterStatusCode(tmEvent) || "scheduled",
     updated_at_utc: receivedAtUtc,
   };
   mapped.distance_label = _publicEventDistanceLabel(mapped, query);
@@ -19620,7 +19747,7 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   const params = new URLSearchParams();
   params.set("apikey", apiKey);
   params.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
-  params.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 20))));
+  params.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 50))));
   const categoryHints = _ticketmasterCategoryHints(query?.category);
   if (categoryHints.classificationName) {
     params.set("classificationName", categoryHints.classificationName);
@@ -19630,6 +19757,8 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   if (categoryHints.keywordHint) keywordParts.push(categoryHints.keywordHint);
   const keyword = keywordParts.join(" ").trim().slice(0, 120);
   if (keyword) params.set("keyword", keyword);
+  if (query?.startAtUtc) params.set("startDateTime", String(query.startAtUtc));
+  if (query?.endAtUtc) params.set("endDateTime", String(query.endAtUtc));
   if (
     query?.latitude != null &&
     query?.longitude != null &&
@@ -19677,7 +19806,8 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   if (!rawEvents.length) {
     return { ok: false, warning: "ticketmaster_empty" };
   }
-  const mapped = rawEvents
+  const actionableEvents = rawEvents.filter((item) => _ticketmasterIsActionable(item));
+  const mapped = actionableEvents
     .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
     .filter((item) => !!item)
     .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))

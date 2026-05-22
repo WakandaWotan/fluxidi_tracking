@@ -150,11 +150,30 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Future<void> _loadEvents() async {
-    final feed = await _dataSource.loadEventFeed();
+    final feed = await _dataSource.loadEventFeed(query: _buildEventFeedQuery());
     if (!mounted) return;
     setState(() {
       _events = List<EventDetailData>.from(feed.events);
     });
+  }
+
+  EventFeedQuery _buildEventFeedQuery() {
+    final selectedFilter = _filterKeys[_selectedFilterIndex];
+    final selectedMarket = _marketKeys[_selectedMarketIndex];
+    String dateMode = 'upcoming';
+    if (selectedFilter == 'today') {
+      dateMode = 'today';
+    } else if (selectedFilter == 'weekend') {
+      dateMode = 'weekend';
+    } else if (selectedFilter == 'all') {
+      dateMode = 'year';
+    }
+    return EventFeedQuery(
+      countryCode: selectedMarket.toUpperCase(),
+      marketCode: selectedMarket,
+      dateMode: dateMode,
+      limit: 50,
+    );
   }
 
   List<EventDetailData> get _visibleEvents {
@@ -172,24 +191,12 @@ class _EventsPageState extends State<EventsPage> {
               event.address.toLowerCase().contains(query) ||
               event.category.toLowerCase().contains(query);
           if (!matchesSearch) return false;
-          if (selectedFilter == 'all') return true;
+          if (selectedFilter == 'all') return _matchesUpcomingFilter(event);
           if (selectedFilter == 'weekend') {
-            final dateLabel = event.dateTimeLabel.toLowerCase();
-            return dateLabel.contains('zaterdag') ||
-                dateLabel.contains('zondag') ||
-                dateLabel.contains('vrijdag') ||
-                dateLabel.contains('sábado') ||
-                dateLabel.contains('domingo') ||
-                dateLabel.contains('friday') ||
-                dateLabel.contains('saturday') ||
-                dateLabel.contains('sunday');
+            return _matchesWeekendFilter(event);
           }
           if (selectedFilter == 'today') {
-            final dateLabel = event.dateTimeLabel.toLowerCase();
-            return dateLabel.contains('vandaag') ||
-                dateLabel.contains('today') ||
-                dateLabel.contains('aujourd') ||
-                dateLabel.contains('hoy');
+            return _matchesTodayFilter(event);
           }
           if (selectedFilter == 'music') {
             return event.resolvedCategoryKey == EventCategoryKey.music;
@@ -203,6 +210,59 @@ class _EventsPageState extends State<EventsPage> {
           return true;
         })
         .toList(growable: false);
+  }
+
+  static bool _matchesUpcomingFilter(EventDetailData event) {
+    final start = event.startAtUtc?.toLocal();
+    if (start == null) return true;
+    return !start.isBefore(DateTime.now());
+  }
+
+  static bool _matchesTodayFilter(EventDetailData event) {
+    final start = event.startAtUtc?.toLocal();
+    if (start == null) {
+      final dateLabel = event.dateTimeLabel.toLowerCase();
+      return dateLabel.contains('vandaag') ||
+          dateLabel.contains('today') ||
+          dateLabel.contains('aujourd') ||
+          dateLabel.contains('hoy');
+    }
+    final now = DateTime.now();
+    if (start.isBefore(now)) return false;
+    return start.year == now.year &&
+        start.month == now.month &&
+        start.day == now.day;
+  }
+
+  static bool _matchesWeekendFilter(EventDetailData event) {
+    final start = event.startAtUtc?.toLocal();
+    if (start == null) {
+      final dateLabel = event.dateTimeLabel.toLowerCase();
+      return dateLabel.contains('zaterdag') ||
+          dateLabel.contains('zondag') ||
+          dateLabel.contains('vrijdag') ||
+          dateLabel.contains('sábado') ||
+          dateLabel.contains('domingo') ||
+          dateLabel.contains('friday') ||
+          dateLabel.contains('saturday') ||
+          dateLabel.contains('sunday');
+    }
+    final now = DateTime.now();
+    if (start.isBefore(now)) return false;
+    final weekendRange = _upcomingWeekendRange(now);
+    if (weekendRange == null) return false;
+    final weekendStart = weekendRange.$1;
+    final weekendEndExclusive = weekendRange.$2;
+    return !start.isBefore(weekendStart) && start.isBefore(weekendEndExclusive);
+  }
+
+  static (DateTime, DateTime)? _upcomingWeekendRange(DateTime now) {
+    final startOfToday = DateTime(now.year, now.month, now.day);
+    final int daysUntilSaturday = (DateTime.saturday - now.weekday + 7) % 7;
+    final weekendStart = startOfToday.add(Duration(days: daysUntilSaturday));
+    final weekendEndExclusive = weekendStart.add(const Duration(days: 2));
+    if (weekendEndExclusive.isBefore(now)) return null;
+    return (weekendStart, weekendEndExclusive);
   }
 
   bool _marketMatchesEvent(EventDetailData event, String marketKey) {
@@ -474,7 +534,10 @@ class _EventsPageState extends State<EventsPage> {
               ),
             ),
             selected: selected,
-            onSelected: (_) => setState(() => _selectedMarketIndex = index),
+            onSelected: (_) {
+              setState(() => _selectedMarketIndex = index);
+              _loadEvents();
+            },
             selectedColor: _gold,
             backgroundColor: _panelBlack,
             shape: StadiumBorder(
@@ -512,7 +575,10 @@ class _EventsPageState extends State<EventsPage> {
               ),
             ),
             selected: selected,
-            onSelected: (_) => setState(() => _selectedFilterIndex = index),
+            onSelected: (_) {
+              setState(() => _selectedFilterIndex = index);
+              _loadEvents();
+            },
             selectedColor: _gold,
             backgroundColor: _panelBlack,
             shape: StadiumBorder(

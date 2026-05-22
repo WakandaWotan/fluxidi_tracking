@@ -179,6 +179,14 @@ class RemoteEventDataSource implements EventDataSource {
     _putIfNotEmpty(qp, 'country', query.countryCode?.toUpperCase());
     _putIfNotEmpty(qp, 'market', query.marketCode?.toLowerCase());
     _putIfNotEmpty(qp, 'category', query.categoryKey?.toLowerCase());
+    _putIfNotEmpty(qp, 'date', query.dateMode?.toLowerCase());
+    _putIfNotEmpty(qp, 'q', query.searchQuery);
+    if (query.fromUtc != null) {
+      qp['start_at'] = query.fromUtc!.toUtc().toIso8601String();
+    }
+    if (query.untilUtc != null) {
+      qp['end_at'] = query.untilUtc!.toUtc().toIso8601String();
+    }
     if (query.limit != null && query.limit! > 0)
       qp['limit'] = query.limit.toString();
     if (query.latitude != null && query.latitude!.isFinite) {
