@@ -5,6 +5,13 @@ import 'event_data_source.dart';
 import 'event_models.dart';
 import 'events_detail_page.dart';
 
+EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
+  return RemoteEventDataSource(
+    baseUrl: baseUrl,
+    fallbackDataSource: const LocalSeedEventDataSource(),
+  );
+}
+
 class EventsPage extends StatefulWidget {
   const EventsPage({this.onBookEvent, this.dataSource, super.key});
 

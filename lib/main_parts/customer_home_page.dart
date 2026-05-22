@@ -136,6 +136,9 @@ class CustomerHomePage extends StatelessWidget {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => EventsPage(
+          dataSource: buildDefaultEventLocatorDataSource(
+            baseUrl: kBookingBaseUrl,
+          ),
           onBookEvent: (event) {
             final destination = event.address.trim().isNotEmpty
                 ? event.address.trim()
