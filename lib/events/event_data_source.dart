@@ -255,20 +255,22 @@ class RemoteEventDataSource implements EventDataSource {
       explicitKey: categoryKey,
       fallbackLabel: category,
     );
+    final resolvedLocationName =
+        _readString(event, const <String>[
+          'location_name',
+          'locationName',
+          'venue_name',
+          'venueName',
+          'venue',
+        ]) ??
+        (_readString(event, const <String>['city']) ?? '');
     return EventDetailData(
       id: id,
       title: _readString(event, const <String>['title']) ?? 'Event',
       category: category,
       categoryKey: resolvedCategoryKey,
       dateTimeLabel: dateTimeLabel,
-      locationName:
-          _readString(event, const <String>[
-            'location_name',
-            'locationName',
-            'venue',
-            'subtitle',
-          ]) ??
-          (_readString(event, const <String>['city']) ?? ''),
+      locationName: resolvedLocationName,
       city: _readString(event, const <String>['city']) ?? '',
       address: _readString(event, const <String>['address']) ?? '',
       lat: lat,

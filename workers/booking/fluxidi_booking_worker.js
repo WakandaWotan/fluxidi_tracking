@@ -19435,7 +19435,7 @@ function _publicEventMatchesQuery(eventItem, query) {
 
 function _publicEventDistanceLabel(eventItem, query) {
   if (query.latitude == null || query.longitude == null) {
-    return String(eventItem.distance_label || "").trim() || null;
+    return null;
   }
   const dist = _publicEventsHaversineKm(
     query.latitude,
@@ -19444,7 +19444,7 @@ function _publicEventDistanceLabel(eventItem, query) {
     Number(eventItem.longitude),
   );
   if (!Number.isFinite(dist)) {
-    return String(eventItem.distance_label || "").trim() || null;
+    return null;
   }
   return `${dist.toFixed(1)} km`;
 }
@@ -19456,6 +19456,8 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       title: "Antwerp Jazz Nights 2026",
       subtitle: "Live jazz & city crowd",
       description: "Premium evening jazz sessions in Antwerp city center.",
+      location_name: "Stadspark Arena",
+      venue_name: "Stadspark Arena",
       category: "Muziek",
       category_key: "music",
       address: "Van Eycklei 1, 2018 Antwerpen, België",
@@ -19464,7 +19466,6 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       market_code: "be",
       latitude: 51.208186,
       longitude: 4.418731,
-      distance_label: "2.1 km",
       starts_at_utc: "2026-06-12T17:30:00.000Z",
       ends_at_utc: "2026-06-12T22:30:00.000Z",
       time_zone: "Europe/Brussels",
@@ -19479,6 +19480,8 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       title: "Brussels Mobility Summit",
       subtitle: "Conference and B2B mobility sessions",
       description: "Business mobility summit with peak arrival/departure windows.",
+      location_name: "Brussels Expo",
+      venue_name: "Brussels Expo",
       category: "Zakelijk",
       category_key: "business",
       address: "Belgiëplein 1, 1020 Brussel, België",
@@ -19487,7 +19490,6 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       market_code: "be",
       latitude: 50.897227,
       longitude: 4.338472,
-      distance_label: "Gepland",
       starts_at_utc: "2026-06-16T07:00:00.000Z",
       ends_at_utc: "2026-06-16T16:00:00.000Z",
       time_zone: "Europe/Brussels",
@@ -19502,6 +19504,8 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       title: "Ghent Night Run",
       subtitle: "Evening sport event",
       description: "Night run with concentrated ride demand before and after start.",
+      location_name: "Sport Vlaanderen Gent",
+      venue_name: "Sport Vlaanderen Gent",
       category: "Sport",
       category_key: "sport",
       address: "Zuiderlaan 14, 9000 Gent, België",
@@ -19510,7 +19514,6 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       market_code: "be",
       latitude: 51.026364,
       longitude: 3.703992,
-      distance_label: "5.4 km",
       starts_at_utc: "2026-06-20T18:30:00.000Z",
       ends_at_utc: "2026-06-20T21:00:00.000Z",
       time_zone: "Europe/Brussels",
@@ -19525,6 +19528,8 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       title: "Leuven Food & Culture Market",
       subtitle: "Food, drinks and cultural stands",
       description: "City-center market with spread demand across the evening.",
+      location_name: "Grote Markt Leuven",
+      venue_name: "Grote Markt Leuven",
       category: "Vandaag",
       category_key: "food",
       address: "Grote Markt 1, 3000 Leuven, België",
@@ -19533,7 +19538,6 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       market_code: "be",
       latitude: 50.879842,
       longitude: 4.700517,
-      distance_label: "Actief",
       starts_at_utc: "2026-06-10T15:00:00.000Z",
       ends_at_utc: "2026-06-10T21:00:00.000Z",
       time_zone: "Europe/Brussels",
@@ -19548,6 +19552,8 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       title: "Barcelona Sonar Weekender",
       subtitle: "Electronic music weekender",
       description: "International music event with high nighttime demand.",
+      location_name: "Fira Barcelona Gran Via",
+      venue_name: "Fira Barcelona Gran Via",
       category: "Muziek",
       category_key: "music",
       address: "Av. Joan Carles I, 64, 08908 L Hospitalet de Llobregat, Spanje",
@@ -19556,7 +19562,6 @@ function _buildPublicEventSeedList(updatedAtUtc) {
       market_code: "es",
       latitude: 41.35478,
       longitude: 2.126349,
-      distance_label: "Internationaal",
       starts_at_utc: "2026-06-19T19:00:00.000Z",
       ends_at_utc: "2026-06-20T02:30:00.000Z",
       time_zone: "Europe/Madrid",
