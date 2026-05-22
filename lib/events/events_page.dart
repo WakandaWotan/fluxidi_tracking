@@ -143,10 +143,10 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Future<void> _loadEvents() async {
-    final loaded = await _dataSource.loadEvents();
+    final feed = await _dataSource.loadEventFeed();
     if (!mounted) return;
     setState(() {
-      _events = List<EventDetailData>.from(loaded);
+      _events = List<EventDetailData>.from(feed.events);
     });
   }
 
