@@ -206,26 +206,89 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   bool _marketMatchesEvent(EventDetailData event, String marketKey) {
-    final haystack = '${event.city} ${event.address}'.toLowerCase();
+    final aliasValues = <String>{
+      _normalizedMarketValue(event.marketCode),
+      _normalizedMarketValue(event.countryCode),
+      _normalizedMarketValue(event.city),
+      _normalizedMarketValue(event.address),
+    }..removeWhere((value) => value.isEmpty);
+    final haystack = _normalizedMarketValue(
+      '${event.city} ${event.address} ${event.countryCode ?? ''} ${event.marketCode ?? ''}',
+    );
     switch (marketKey) {
       case 'be':
-        return haystack.contains('belgië') || haystack.contains('belg');
+        return _matchesMarketAliases(
+          aliasValues: aliasValues,
+          haystack: haystack,
+          aliases: const <String>[
+            'be',
+            'belgium',
+            'belgie',
+            'belgië',
+            'belgïe',
+            'belgique',
+          ],
+        );
       case 'nl':
-        return haystack.contains('nederland') ||
-            haystack.contains('netherlands');
+        return _matchesMarketAliases(
+          aliasValues: aliasValues,
+          haystack: haystack,
+          aliases: const <String>['nl', 'netherlands', 'nederland', 'pays-bas'],
+        );
       case 'fr':
-        return haystack.contains('frankrijk') || haystack.contains('france');
+        return _matchesMarketAliases(
+          aliasValues: aliasValues,
+          haystack: haystack,
+          aliases: const <String>['fr', 'france', 'frankrijk'],
+        );
       case 'uk':
-        return haystack.contains('uk') ||
-            haystack.contains('united kingdom') ||
-            haystack.contains('verenigd koninkrijk');
+        return _matchesMarketAliases(
+          aliasValues: aliasValues,
+          haystack: haystack,
+          aliases: const <String>[
+            'uk',
+            'gb',
+            'united kingdom',
+            'verenigd koninkrijk',
+            'royaume-uni',
+          ],
+        );
       case 'es':
-        return haystack.contains('spanje') ||
-            haystack.contains('españa') ||
-            haystack.contains('spain');
+        return _matchesMarketAliases(
+          aliasValues: aliasValues,
+          haystack: haystack,
+          aliases: const <String>[
+            'es',
+            'spain',
+            'spanje',
+            'espana',
+            'españa',
+            'espagne',
+          ],
+        );
       default:
         return true;
     }
+  }
+
+  static bool _matchesMarketAliases({
+    required Set<String> aliasValues,
+    required String haystack,
+    required List<String> aliases,
+  }) {
+    for (final alias in aliases) {
+      final normalizedAlias = _normalizedMarketValue(alias);
+      if (normalizedAlias.isEmpty) continue;
+      if (aliasValues.contains(normalizedAlias)) return true;
+      if (haystack.contains(normalizedAlias)) return true;
+    }
+    return false;
+  }
+
+  static String _normalizedMarketValue(String? raw) {
+    final text = (raw ?? '').trim().toLowerCase();
+    if (text.isEmpty) return '';
+    return text.replaceAll('ï', 'i').replaceAll('é', 'e');
   }
 
   void _openEventDetails(EventDetailData event) {
