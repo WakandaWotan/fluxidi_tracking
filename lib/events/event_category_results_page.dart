@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'event_data_source.dart';
 import 'event_models.dart';
@@ -48,6 +49,13 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   Map<String, SavedEventRecord> _savedEventByKey =
       const <String, SavedEventRecord>{};
   int _selectedTabIndex = 0;
+  mb.MapboxMap? _mapboxMap;
+  mb.CircleAnnotationManager? _mapCircleManager;
+  mb.Cancelable? _mapTapCancelable;
+  final Map<String, EventDetailData> _mapEventByAnnotationId =
+      <String, EventDetailData>{};
+  EventDetailData? _selectedMapEvent;
+  late final ValueKey<String> _mapWidgetKey;
 
   String _t({
     required String nl,
@@ -72,6 +80,18 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     super.initState();
     _loadSavedEvents();
     _loadEvents();
+    _mapWidgetKey = ValueKey<String>(
+      'results_map_${widget.marketKey}_${widget.categoryKey}_${widget.dateMode}_${widget.searchQuery}',
+    );
+  }
+
+  @override
+  void dispose() {
+    try {
+      _mapTapCancelable?.cancel();
+    } catch (_) {}
+    _mapTapCancelable = null;
+    super.dispose();
   }
 
   Future<void> _loadSavedEvents() async {
@@ -86,7 +106,216 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     );
     if (!mounted) return;
     setState(() => _events = List<EventDetailData>.from(feed.events));
+    _syncMapData();
     _prefetchTopThumbnails();
+  }
+
+  List<EventDetailData> get _mappableEvents {
+    return _visibleEvents
+        .where((event) {
+          return _isValidMapCoordinate(event.lat, event.lng);
+        })
+        .toList(growable: false);
+  }
+
+  bool _isValidMapCoordinate(double lat, double lng) {
+    if (!lat.isFinite || !lng.isFinite) return false;
+    if (lat < -90 || lat > 90) return false;
+    if (lng < -180 || lng > 180) return false;
+    if (lat == 0.0 && lng == 0.0) return false;
+    return true;
+  }
+
+  mb.Point _mbPoint(double lon, double lat) {
+    return mb.Point(coordinates: mb.Position(lon, lat));
+  }
+
+  mb.Point _marketFallbackCenter() {
+    switch (widget.marketKey.trim().toLowerCase()) {
+      case 'nl':
+        return _mbPoint(5.2913, 52.1326);
+      case 'fr':
+        return _mbPoint(2.2137, 46.2276);
+      case 'uk':
+      case 'gb':
+        return _mbPoint(-3.4360, 55.3781);
+      case 'es':
+        return _mbPoint(-3.7038, 40.4168);
+      case 'be':
+      default:
+        return _mbPoint(4.4699, 50.5039);
+    }
+  }
+
+  mb.Point _initialMapCenter() {
+    final events = _mappableEvents;
+    if (events.isNotEmpty) {
+      final first = events.first;
+      return _mbPoint(first.lng, first.lat);
+    }
+    return _marketFallbackCenter();
+  }
+
+  ({double minLat, double maxLat, double minLng, double maxLng}) _mapBounds(
+    List<EventDetailData> events,
+  ) {
+    var minLat = events.first.lat;
+    var maxLat = events.first.lat;
+    var minLng = events.first.lng;
+    var maxLng = events.first.lng;
+    for (var i = 1; i < events.length; i++) {
+      final event = events[i];
+      if (event.lat < minLat) minLat = event.lat;
+      if (event.lat > maxLat) maxLat = event.lat;
+      if (event.lng < minLng) minLng = event.lng;
+      if (event.lng > maxLng) maxLng = event.lng;
+    }
+    return (minLat: minLat, maxLat: maxLat, minLng: minLng, maxLng: maxLng);
+  }
+
+  double _zoomForBounds({
+    required double minLat,
+    required double maxLat,
+    required double minLng,
+    required double maxLng,
+  }) {
+    final latSpan = (maxLat - minLat).abs();
+    final lngSpan = (maxLng - minLng).abs();
+    final span = latSpan > lngSpan ? latSpan : lngSpan;
+    if (span < 0.03) return 12.8;
+    if (span < 0.08) return 12.2;
+    if (span < 0.16) return 11.6;
+    if (span < 0.35) return 10.9;
+    if (span < 0.70) return 10.2;
+    if (span < 1.20) return 9.6;
+    if (span < 2.00) return 8.8;
+    if (span < 3.50) return 8.1;
+    if (span < 6.00) return 7.4;
+    return 6.6;
+  }
+
+  ({mb.Point center, double zoom}) _cameraTargetForEvents(
+    List<EventDetailData> events,
+  ) {
+    if (events.isEmpty) {
+      return (center: _marketFallbackCenter(), zoom: 5.8);
+    }
+    if (events.length == 1) {
+      final first = events.first;
+      return (center: _mbPoint(first.lng, first.lat), zoom: 11.8);
+    }
+    final bounds = _mapBounds(events);
+    final centerLat = (bounds.minLat + bounds.maxLat) / 2.0;
+    final centerLng = (bounds.minLng + bounds.maxLng) / 2.0;
+    final zoom = _zoomForBounds(
+      minLat: bounds.minLat,
+      maxLat: bounds.maxLat,
+      minLng: bounds.minLng,
+      maxLng: bounds.maxLng,
+    );
+    return (center: _mbPoint(centerLng, centerLat), zoom: zoom);
+  }
+
+  Future<void> _onMapCreated(mb.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    _mapCircleManager = await mapboxMap.annotations
+        .createCircleAnnotationManager();
+    try {
+      _mapTapCancelable?.cancel();
+    } catch (_) {}
+    _mapTapCancelable = null;
+    _mapTapCancelable = _mapCircleManager!.tapEvents(
+      onTap: (annotation) {
+        debugPrint('[EVENT_MAP] markerTapped id=${annotation.id}');
+        final event = _mapEventByAnnotationId[annotation.id];
+        if (event == null || !mounted) return;
+        setState(() => _selectedMapEvent = event);
+        _openEventDetails(event);
+      },
+    );
+    await _syncMapData(forceCameraReset: true);
+  }
+
+  Future<void> _syncMapData({bool forceCameraReset = false}) async {
+    final map = _mapboxMap;
+    final manager = _mapCircleManager;
+    if (map == null || manager == null) return;
+
+    final visibleEvents = _visibleEvents;
+    debugPrint('[EVENT_MAP] visibleEvents=${visibleEvents.length}');
+    final events = <EventDetailData>[];
+    for (final event in visibleEvents) {
+      final lat = event.lat;
+      final lng = event.lng;
+      final valid = _isValidMapCoordinate(lat, lng);
+      debugPrint(
+        '[EVENT_MAP] eventCoord title=${event.title} lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)} valid=$valid',
+      );
+      if (valid) events.add(event);
+    }
+    final market = widget.marketKey.trim().toLowerCase();
+    final category = widget.categoryKey.trim().toLowerCase();
+    final visibleCount = visibleEvents.length;
+    debugPrint(
+      '[EVENT_MAP] market=$market category=$category visibleEvents=$visibleCount validMarkers=${events.length}',
+    );
+    if (market == 'fr') {
+      debugPrint(
+        '[EVENT_MAP] market=fr visibleEvents=$visibleCount validMarkers=${events.length}',
+      );
+    }
+    if (events.isEmpty) {
+      debugPrint('[EVENT_MAP] noValidCoordinates market=$market');
+    }
+    _mapEventByAnnotationId.clear();
+    await manager.deleteAll();
+    for (var i = 0; i < events.length; i++) {
+      final event = events[i];
+      debugPrint(
+        '[EVENT_MAP] circleMarkerCreate title=${event.title} lat=${event.lat.toStringAsFixed(6)} lng=${event.lng.toStringAsFixed(6)}',
+      );
+      final annotation = await manager.create(
+        mb.CircleAnnotationOptions(
+          geometry: _mbPoint(event.lng, event.lat),
+          circleColor: 0xFFE5B641,
+          circleRadius: 10.5,
+          circleStrokeColor: 0xFFFFFFFF,
+          circleStrokeWidth: 2.5,
+        ),
+      );
+      _mapEventByAnnotationId[annotation.id] = event;
+    }
+
+    if (events.isNotEmpty) {
+      final bounds = _mapBounds(events);
+      debugPrint(
+        '[EVENT_MAP] bounds minLat=${bounds.minLat.toStringAsFixed(6)} maxLat=${bounds.maxLat.toStringAsFixed(6)} minLng=${bounds.minLng.toStringAsFixed(6)} maxLng=${bounds.maxLng.toStringAsFixed(6)}',
+      );
+    }
+
+    final selected = _selectedMapEvent;
+    if (selected != null) {
+      final stillVisible = events.any((event) => event.id == selected.id);
+      if (!stillVisible && mounted) {
+        setState(() => _selectedMapEvent = null);
+      }
+    } else if (events.isNotEmpty && mounted) {
+      setState(() => _selectedMapEvent = events.first);
+    }
+    if (forceCameraReset || events.isNotEmpty) {
+      final cameraTarget = _cameraTargetForEvents(events);
+      final center = cameraTarget.center;
+      final zoom = cameraTarget.zoom;
+      final centerLon = center.coordinates.lng.toStringAsFixed(6);
+      final centerLat = center.coordinates.lat.toStringAsFixed(6);
+      debugPrint(
+        '[EVENT_MAP] camera centerLat=$centerLat centerLng=$centerLon zoom=${zoom.toStringAsFixed(2)}',
+      );
+      await map.flyTo(
+        mb.CameraOptions(center: center, zoom: zoom),
+        mb.MapAnimationOptions(duration: 500),
+      );
+    }
   }
 
   void _prefetchTopThumbnails() {
@@ -538,22 +767,32 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
           children: [
             _buildHeader(context),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
-                children: [
-                  _buildSummaryPanel(),
-                  const SizedBox(height: 12),
-                  _buildSegmentedToggle(),
-                  const SizedBox(height: 12),
-                  if (_selectedTabIndex == 0) ...[
-                    if (events.isEmpty)
-                      _buildEmptyState()
-                    else
-                      _buildEventList(events),
-                  ] else
-                    _buildMapPlaceholder(),
-                ],
-              ),
+              child: _selectedTabIndex == 0
+                  ? ListView(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
+                      children: [
+                        _buildSummaryPanel(),
+                        const SizedBox(height: 12),
+                        _buildSegmentedToggle(),
+                        const SizedBox(height: 12),
+                        if (events.isEmpty)
+                          _buildEmptyState()
+                        else
+                          _buildEventList(events),
+                      ],
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
+                      child: Column(
+                        children: [
+                          _buildSummaryPanel(),
+                          const SizedBox(height: 12),
+                          _buildSegmentedToggle(),
+                          const SizedBox(height: 12),
+                          Expanded(child: _buildMapPlaceholder()),
+                        ],
+                      ),
+                    ),
             ),
           ],
         ),
@@ -957,40 +1196,185 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   }
 
   Widget _buildMapPlaceholder() {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 280),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _gold.withOpacity(0.28)),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[Color(0xFF0F0F0F), Color(0xFF07080C)],
+    final mappableEvents = _mappableEvents;
+    if (mappableEvents.isEmpty) {
+      return Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _gold.withOpacity(0.28)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[Color(0xFF0F0F0F), Color(0xFF07080C)],
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.map_rounded, color: _gold.withOpacity(0.96), size: 44),
-            const SizedBox(height: 12),
-            Text(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Center(
+            child: Text(
               _t(
-                nl: 'Kaartmodus komt binnenkort',
-                en: 'Map mode is coming soon',
-                fr: 'Le mode carte arrive bientôt',
-                es: 'El modo mapa estará disponible pronto',
+                nl: 'Geen kaartlocaties gevonden voor deze selectie.',
+                en: 'No map locations found for this selection.',
+                fr: 'Aucune localisation cartographique trouvée pour cette sélection.',
+                es: 'No se encontraron ubicaciones en el mapa para esta selección.',
               ),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ],
+          ),
         ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportHeight = MediaQuery.of(context).size.height;
+        final preferredHeight = (viewportHeight * 0.62)
+            .clamp(520.0, 620.0)
+            .toDouble();
+        final availableHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : preferredHeight;
+        final mapHeight = availableHeight < preferredHeight
+            ? availableHeight
+            : availableHeight.clamp(520.0, 760.0).toDouble();
+        debugPrint('[EVENT_MAP] mapHeight=${mapHeight.toStringAsFixed(1)}');
+        return SizedBox(
+          height: mapHeight,
+          width: double.infinity,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: _gold.withOpacity(0.28)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: mb.MapWidget(
+                    key: _mapWidgetKey,
+                    onMapCreated: _onMapCreated,
+                    textureView: true,
+                    styleUri: mb.MapboxStyles.DARK,
+                    cameraOptions: mb.CameraOptions(
+                      center: _marketFallbackCenter(),
+                      zoom: 5.8,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  right: 10,
+                  bottom: 10,
+                  child: _buildMapPreviewCard(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMapPreviewCard() {
+    final event = _selectedMapEvent;
+    if (event == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.72),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _gold.withOpacity(0.38)),
+        ),
+        child: Text(
+          _t(
+            nl: 'Tik op een marker om dit event te bekijken.',
+            en: 'Tap a marker to preview this event.',
+            fr: 'Touchez un marqueur pour prévisualiser cet événement.',
+            es: 'Pulsa un marcador para previsualizar este evento.',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.78),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.38)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            event.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.6,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            event.dateTimeLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _softText,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${event.locationName}, ${event.city}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _softText,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _bookEvent(event),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF171209),
+                foregroundColor: _gold,
+                side: BorderSide(color: _gold.withOpacity(0.55)),
+                minimumSize: const Size.fromHeight(40),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.local_taxi_rounded, size: 16),
+              label: Text(
+                _t(
+                  nl: 'Taxi naar dit event',
+                  en: 'Taxi to this event',
+                  fr: 'Taxi vers cet événement',
+                  es: 'Taxi a este evento',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
