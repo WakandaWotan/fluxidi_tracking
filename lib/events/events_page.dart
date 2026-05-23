@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'event_ai_intent_parser.dart';
 import 'event_category_results_page.dart';
@@ -560,6 +562,74 @@ class _EventsPageState extends State<EventsPage> {
     );
     String currentInput = aiController.text;
     String? validationError;
+    bool isListening = false;
+    bool speechAvailable = false;
+    String? voiceErrorMessage;
+    String? voiceStatusMessage;
+    bool voiceAutoSubmitted = false;
+    var sheetIsOpen = true;
+    StateSetter? sheetStateSetter;
+    final speech = stt.SpeechToText();
+
+    void safeSetSheetState(VoidCallback fn) {
+      if (!sheetIsOpen) return;
+      final setter = sheetStateSetter;
+      if (setter == null) return;
+      setter(fn);
+    }
+
+    Future<void> stopListening() async {
+      try {
+        await speech.stop();
+      } catch (_) {}
+      safeSetSheetState(() {
+        isListening = false;
+        voiceStatusMessage = null;
+      });
+    }
+
+    Future<void> autoSubmitVoiceInput() async {
+      if (voiceAutoSubmitted || !sheetIsOpen) return;
+      final voiceText = currentInput.trim();
+      if (voiceText.isEmpty) {
+        safeSetSheetState(() {
+          voiceStatusMessage = null;
+          voiceErrorMessage = _t(
+            nl: 'Geen spraaktekst herkend. Probeer opnieuw.',
+            en: 'No speech recognized. Please try again.',
+            fr: 'Aucun texte vocal reconnu. Réessayez.',
+            es: 'No se reconoció texto de voz. Inténtalo de nuevo.',
+          );
+        });
+        return;
+      }
+      voiceAutoSubmitted = true;
+      if (speech.isListening) {
+        try {
+          await speech.stop();
+        } catch (_) {}
+      }
+      safeSetSheetState(() {
+        isListening = false;
+        validationError = null;
+        voiceErrorMessage = null;
+        voiceStatusMessage = _t(
+          nl: 'Zoeken…',
+          en: 'Searching…',
+          fr: 'Recherche…',
+          es: 'Buscando…',
+        );
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!sheetIsOpen || !mounted) return;
+      await _submitEventAiInput(
+        rawInput: voiceText,
+        showValidation: (message) => safeSetSheetState(() {
+          validationError = message;
+        }),
+      );
+    }
+
     EventAiIntent currentIntent = parseEventAiIntent(
       input: currentInput,
       fallbackMarketKey: _selectedMarketKey,
@@ -576,6 +646,167 @@ class _EventsPageState extends State<EventsPage> {
         final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            sheetStateSetter = setSheetState;
+
+            Future<void> onMicTap() async {
+              if (isListening || speech.isListening) {
+                await stopListening();
+                return;
+              }
+              voiceAutoSubmitted = false;
+
+              final micPermission = await Permission.microphone.request();
+              if (!micPermission.isGranted) {
+                safeSetSheetState(() {
+                  speechAvailable = false;
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = micPermission.isPermanentlyDenied
+                      ? _t(
+                          nl: 'Microfoon staat uit in instellingen.',
+                          en: 'Microphone access is disabled in settings.',
+                          fr: 'L’accès micro est désactivé dans les réglages.',
+                          es: 'El acceso al micrófono está desactivado en ajustes.',
+                        )
+                      : _t(
+                          nl: 'Microfoon-toegang is nodig voor spraakinvoer.',
+                          en: 'Microphone access is required for voice input.',
+                          fr: 'L’accès micro est nécessaire pour la saisie vocale.',
+                          es: 'Se necesita acceso al micrófono para la entrada por voz.',
+                        );
+                });
+                return;
+              }
+
+              bool available;
+              try {
+                available = await speech.initialize(
+                  onStatus: (status) {
+                    final lowered = status.toLowerCase();
+                    if (lowered.contains('listening')) {
+                      safeSetSheetState(() {
+                        isListening = true;
+                        voiceErrorMessage = null;
+                        voiceStatusMessage = _t(
+                          nl: 'Luisteren…',
+                          en: 'Listening…',
+                          fr: 'Écoute…',
+                          es: 'Escuchando…',
+                        );
+                      });
+                      return;
+                    }
+                    if (lowered.contains('done') ||
+                        lowered.contains('notlistening') ||
+                        lowered.contains('not listening')) {
+                      safeSetSheetState(() {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                      });
+                    }
+                  },
+                  onError: (_) {
+                    safeSetSheetState(() {
+                      isListening = false;
+                      voiceStatusMessage = null;
+                      voiceErrorMessage = _t(
+                        nl: 'Spraakherkenning is tijdelijk niet beschikbaar.',
+                        en: 'Speech recognition is temporarily unavailable.',
+                        fr: 'La reconnaissance vocale est temporairement indisponible.',
+                        es: 'El reconocimiento de voz no está disponible temporalmente.',
+                      );
+                    });
+                  },
+                );
+              } catch (_) {
+                available = false;
+              }
+
+              if (!available) {
+                safeSetSheetState(() {
+                  speechAvailable = false;
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = _t(
+                    nl: 'Spraakherkenning wordt niet ondersteund op dit toestel.',
+                    en: 'Speech recognition is not supported on this device.',
+                    fr: 'La reconnaissance vocale n’est pas prise en charge sur cet appareil.',
+                    es: 'El reconocimiento de voz no es compatible en este dispositivo.',
+                  );
+                });
+                return;
+              }
+
+              safeSetSheetState(() {
+                speechAvailable = true;
+                isListening = true;
+                voiceErrorMessage = null;
+                voiceStatusMessage = _t(
+                  nl: 'Luisteren…',
+                  en: 'Listening…',
+                  fr: 'Écoute…',
+                  es: 'Escuchando…',
+                );
+              });
+
+              try {
+                await speech.listen(
+                  listenMode: stt.ListenMode.search,
+                  partialResults: true,
+                  cancelOnError: true,
+                  onResult: (result) async {
+                    final words = result.recognizedWords.trim();
+                    if (words.isNotEmpty) {
+                      aiController.text = words;
+                      aiController.selection = TextSelection.fromPosition(
+                        TextPosition(offset: aiController.text.length),
+                      );
+                    }
+                    safeSetSheetState(() {
+                      currentInput = aiController.text;
+                      validationError = null;
+                      voiceErrorMessage = null;
+                      if (!speech.isListening) {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                      }
+                      currentIntent = parseEventAiIntent(
+                        input: currentInput,
+                        fallbackMarketKey: _selectedMarketKey,
+                        fallbackDateMode: _selectedDateMode,
+                      );
+                    });
+                    if (!result.finalResult) return;
+                    if (currentInput.trim().isEmpty) {
+                      safeSetSheetState(() {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                        voiceErrorMessage = _t(
+                          nl: 'Geen spraaktekst herkend. Probeer opnieuw.',
+                          en: 'No speech recognized. Please try again.',
+                          fr: 'Aucun texte vocal reconnu. Réessayez.',
+                          es: 'No se reconoció texto de voz. Inténtalo de nuevo.',
+                        );
+                      });
+                      return;
+                    }
+                    await autoSubmitVoiceInput();
+                  },
+                );
+              } catch (_) {
+                safeSetSheetState(() {
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = _t(
+                    nl: 'Kon spraakherkenning niet starten.',
+                    en: 'Could not start speech recognition.',
+                    fr: 'Impossible de démarrer la reconnaissance vocale.',
+                    es: 'No se pudo iniciar el reconocimiento de voz.',
+                  );
+                });
+              }
+            }
+
             final hasInput = currentInput.trim().isNotEmpty;
             return SafeArea(
               child: Padding(
@@ -649,6 +880,28 @@ class _EventsPageState extends State<EventsPage> {
                               width: 1.2,
                             ),
                           ),
+                          suffixIcon: IconButton(
+                            onPressed: onMicTap,
+                            tooltip: isListening
+                                ? _t(
+                                    nl: 'Stop luisteren',
+                                    en: 'Stop listening',
+                                    fr: 'Arrêter l’écoute',
+                                    es: 'Detener escucha',
+                                  )
+                                : _t(
+                                    nl: 'Gebruik microfoon',
+                                    en: 'Use microphone',
+                                    fr: 'Utiliser le micro',
+                                    es: 'Usar micrófono',
+                                  ),
+                            icon: Icon(
+                              isListening
+                                  ? Icons.graphic_eq_rounded
+                                  : Icons.mic_rounded,
+                              color: _gold,
+                            ),
+                          ),
                         ),
                       ),
                       if (validationError != null) ...[
@@ -658,6 +911,44 @@ class _EventsPageState extends State<EventsPage> {
                           style: const TextStyle(
                             color: Color(0xFFFF8D8D),
                             fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (voiceStatusMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          voiceStatusMessage!,
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.9),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (voiceErrorMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          voiceErrorMessage!,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8D8D),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (speechAvailable && !isListening) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _t(
+                            nl: 'Spraak ingevuld. Controleer en tik op Zoeken.',
+                            en: 'Voice input captured. Review and tap Search.',
+                            fr: 'Saisie vocale capturée. Vérifiez puis appuyez sur Rechercher.',
+                            es: 'Entrada de voz capturada. Revisa y pulsa Buscar.',
+                          ),
+                          style: const TextStyle(
+                            color: _softText,
+                            fontSize: 11.4,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -762,6 +1053,16 @@ class _EventsPageState extends State<EventsPage> {
         );
       },
     );
+    sheetIsOpen = false;
+    sheetStateSetter = null;
+    if (speech.isListening) {
+      try {
+        await speech.stop();
+      } catch (_) {}
+    }
+    try {
+      await speech.cancel();
+    } catch (_) {}
     aiController.dispose();
   }
 
