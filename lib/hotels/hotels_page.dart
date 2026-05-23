@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
@@ -231,6 +232,15 @@ class _HotelsPageState extends State<HotelsPage> {
     return _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde');
   }
 
+  String get _viewStayLabel {
+    return _t(
+      nl: 'Bekijk verblijf',
+      en: 'View stay',
+      fr: 'Voir le séjour',
+      es: 'Ver alojamiento',
+    );
+  }
+
   bool _isPremiumStay(HotelStay stay) {
     if ((stay.rating ?? 0) >= 4.7) return true;
     final joined = <String>[
@@ -284,6 +294,48 @@ class _HotelsPageState extends State<HotelsPage> {
       if (highlights.length >= 2) break;
     }
     return highlights;
+  }
+
+  Uri? _preferredStayUri(HotelStay stay) {
+    final booking = (stay.bookingUrl ?? '').trim();
+    final website = (stay.websiteUrl ?? '').trim();
+    final candidate = booking.isNotEmpty ? booking : website;
+    if (candidate.isEmpty) return null;
+    return Uri.tryParse(candidate);
+  }
+
+  Future<void> _openStayLink(HotelStay stay) async {
+    final uri = _preferredStayUri(stay);
+    if (uri == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Verblijflink is nog niet beschikbaar.',
+              en: 'Stay link is not available yet.',
+              fr: 'Le lien du séjour n’est pas encore disponible.',
+              es: 'El enlace del alojamiento aún no está disponible.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (opened) return;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Kon verblijflink niet openen.',
+            en: 'Could not open stay link.',
+            fr: 'Impossible d’ouvrir le lien du séjour.',
+            es: 'No se pudo abrir el enlace del alojamiento.',
+          ),
+        ),
+      ),
+    );
   }
 
   String get _allCountriesLabel {
@@ -667,7 +719,7 @@ class _HotelsPageState extends State<HotelsPage> {
           );
         }
         final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final safeMainAxisExtent = (372.0 * textScale).clamp(372.0, 470.0);
+        final safeMainAxisExtent = (422.0 * textScale).clamp(422.0, 520.0);
         const spacing = 10.0;
         return GridView.builder(
           shrinkWrap: true,
@@ -689,6 +741,8 @@ class _HotelsPageState extends State<HotelsPage> {
     final premium = _isPremiumStay(stay);
     final displayPrice = _displayPriceHint(stay);
     final highlights = _semanticHighlights(stay);
+    final imageUrl = (stay.imageUrl ?? '').trim();
+    final hasExternalLink = _preferredStayUri(stay) != null;
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -732,6 +786,42 @@ class _HotelsPageState extends State<HotelsPage> {
                           Colors.black.withOpacity(0.12),
                           Colors.black.withOpacity(0.24),
                           Colors.black.withOpacity(0.58),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (imageUrl.isNotEmpty)
+                  Positioned.fill(
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _gold.withOpacity(0.9),
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: <Color>[
+                          Colors.black.withOpacity(0.16),
+                          Colors.black.withOpacity(0.34),
+                          Colors.black.withOpacity(0.62),
                         ],
                       ),
                     ),
@@ -903,12 +993,11 @@ class _HotelsPageState extends State<HotelsPage> {
                   const Spacer(),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
+                    child: ElevatedButton.icon(
                       onPressed: () => _onTaxiCtaTap(stay),
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: const Color(0xFF171209),
-                        foregroundColor: _gold,
-                        side: BorderSide(color: _gold.withOpacity(0.5)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _gold,
+                        foregroundColor: const Color(0xFF141414),
                         minimumSize: const Size.fromHeight(42),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(11),
@@ -926,6 +1015,33 @@ class _HotelsPageState extends State<HotelsPage> {
                       ),
                     ),
                   ),
+                  if (hasExternalLink) ...[
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _openStayLink(stay),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: const Color(0xFF121212),
+                          foregroundColor: Colors.white.withOpacity(0.92),
+                          side: BorderSide(color: _gold.withOpacity(0.28)),
+                          minimumSize: const Size.fromHeight(38),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: Icon(
+                          Icons.open_in_new_rounded,
+                          size: 15,
+                          color: _gold.withOpacity(0.92),
+                        ),
+                        label: Text(
+                          _viewStayLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

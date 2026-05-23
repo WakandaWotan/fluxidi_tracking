@@ -25,6 +25,13 @@ class HotelStay {
     required this.imageRef,
     required this.lat,
     required this.lng,
+    this.latitude,
+    this.longitude,
+    this.imageUrl,
+    this.websiteUrl,
+    this.bookingUrl,
+    this.source = 'seed',
+    this.sourceId,
     this.priceHint,
     this.rating,
     this.tags = const <String>[],
@@ -47,6 +54,13 @@ class HotelStay {
 
   final double lat;
   final double lng;
+  final double? latitude;
+  final double? longitude;
+  final String? imageUrl;
+  final String? websiteUrl;
+  final String? bookingUrl;
+  final String source;
+  final String? sourceId;
   final String? priceHint;
   final double? rating;
   final List<String> tags;
