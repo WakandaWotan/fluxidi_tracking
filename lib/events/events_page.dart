@@ -89,6 +89,22 @@ class _EventsPageState extends State<EventsPage> {
     es: 'Taxi a este evento',
   );
 
+  String get _activeFiltersLabel => _t(
+    nl: 'Actieve filters',
+    en: 'Active filters',
+    fr: 'Filtres actifs',
+    es: 'Filtros activos',
+  );
+
+  String get _regionSectionLabel =>
+      _t(nl: 'Regio', en: 'Region', fr: 'Region', es: 'Region');
+
+  String get _whenSectionLabel =>
+      _t(nl: 'Wanneer', en: 'When', fr: 'Quand', es: 'Cuando');
+
+  String get _categorySectionLabel =>
+      _t(nl: 'Categorie', en: 'Category', fr: 'Categorie', es: 'Categoria');
+
   String _marketLabel(String key) {
     switch (key) {
       case 'be':
@@ -241,6 +257,17 @@ class _EventsPageState extends State<EventsPage> {
   String _formatMonthLabel(DateTime monthStartUtc) {
     final local = monthStartUtc.toLocal();
     return '${_monthName(local.month)} ${local.year}';
+  }
+
+  List<String> get _activeFilterLabels {
+    final out = <String>[
+      _marketLabel(_selectedMarketKey),
+      _dateFilterLabel(_selectedDateMode),
+    ];
+    if (_selectedCategoryKey != 'all') {
+      out.add(_categoryFilterLabel(_selectedCategoryKey));
+    }
+    return out;
   }
 
   late final EventDataSource _dataSource;
@@ -702,12 +729,8 @@ class _EventsPageState extends State<EventsPage> {
                 ),
                 children: [
                   _buildSearchField(),
-                  const SizedBox(height: 8),
-                  _buildMarketChips(),
-                  const SizedBox(height: 9),
-                  _buildDateFilterChips(),
-                  const SizedBox(height: 9),
-                  _buildCategoryChips(),
+                  const SizedBox(height: 10),
+                  _buildDiscoveryControlsPanel(),
                   const SizedBox(height: 12),
                   _buildSegmentedToggle(),
                   const SizedBox(height: 12),
@@ -821,6 +844,81 @@ class _EventsPageState extends State<EventsPage> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: _gold, width: 1.2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiscoveryControlsPanel() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _activeFiltersLabel,
+            style: TextStyle(
+              color: _gold.withOpacity(0.95),
+              fontSize: 11.4,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 7,
+            runSpacing: 6,
+            children: [
+              for (final label in _activeFilterLabels)
+                _buildActiveFilterSummaryChip(label: label),
+            ],
+          ),
+          const SizedBox(height: 11),
+          _buildFilterSectionTitle(_regionSectionLabel),
+          const SizedBox(height: 5),
+          _buildMarketChips(),
+          const SizedBox(height: 8),
+          _buildFilterSectionTitle(_whenSectionLabel),
+          const SizedBox(height: 5),
+          _buildDateFilterChips(),
+          const SizedBox(height: 8),
+          _buildFilterSectionTitle(_categorySectionLabel),
+          const SizedBox(height: 5),
+          _buildCategoryChips(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterSectionTitle(String label) {
+    return Text(
+      label,
+      style: const TextStyle(
+        color: _softText,
+        fontSize: 11.4,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+
+  Widget _buildActiveFilterSummaryChip({required String label}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _gold.withOpacity(0.35)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _gold,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
