@@ -493,6 +493,91 @@ class SavedEventRecord {
     if (normalized == 'false' || normalized == '0') return false;
     return fallback;
   }
+
+  EventDetailData toEventDetailData() {
+    final parsedStart = DateTime.tryParse(startsAtUtc);
+    return EventDetailData(
+      id: id,
+      title: title,
+      category: _categoryLabelFromKey(categoryKey),
+      dateTimeLabel: _dateTimeLabelFromUtc(parsedStart),
+      locationName: locationName,
+      city: city,
+      address: address,
+      lat: latitude ?? 0,
+      lng: longitude ?? 0,
+      distanceOrStatus: '',
+      distanceLabel: null,
+      isDistanceLabelTrusted: false,
+      description: null,
+      imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
+      heroImageUrl: heroImageUrl.isNotEmpty ? heroImageUrl : null,
+      thumbnailUrl: thumbnailUrl.isNotEmpty ? thumbnailUrl : null,
+      gradient: _gradientForCategoryKey(categoryKey),
+      visualAssetPath: null,
+      sourceLabel: provider.isNotEmpty ? provider : null,
+      marketCode: '',
+      countryCode: countryCode.isNotEmpty ? countryCode : null,
+      categoryKey: categoryKey,
+      startAtUtc: parsedStart?.toUtc(),
+      endAtUtc: null,
+      timeZone: null,
+      sourceEventId: sourceEventId.isNotEmpty ? sourceEventId : null,
+      provider: provider.isNotEmpty ? provider : null,
+      status: null,
+      sourceUrl: sourceUrl.isNotEmpty ? sourceUrl : null,
+      updatedAtUtc: null,
+    );
+  }
+
+  static List<Color> _gradientForCategoryKey(String key) {
+    switch (key) {
+      case EventCategoryKey.music:
+        return const <Color>[Color(0xFF2A1F08), Color(0xFF15120A)];
+      case EventCategoryKey.business:
+        return const <Color>[Color(0xFF2A260E), Color(0xFF12110A)];
+      case EventCategoryKey.sport:
+        return const <Color>[Color(0xFF1F1A0C), Color(0xFF100F0A)];
+      case EventCategoryKey.food:
+        return const <Color>[Color(0xFF2E220B), Color(0xFF141108)];
+      default:
+        return const <Color>[Color(0xFF1D1A12), Color(0xFF0F0D08)];
+    }
+  }
+
+  static String _categoryLabelFromKey(String key) {
+    switch (key) {
+      case EventCategoryKey.music:
+        return 'Muziek';
+      case EventCategoryKey.sport:
+        return 'Sport';
+      case EventCategoryKey.food:
+        return 'Eten';
+      case EventCategoryKey.family:
+        return 'Familie';
+      case EventCategoryKey.culture:
+        return 'Cultuur';
+      case EventCategoryKey.theater:
+        return 'Theater';
+      case EventCategoryKey.comedy:
+        return 'Comedy';
+      case EventCategoryKey.business:
+        return 'Zakelijk';
+      default:
+        return 'Event';
+    }
+  }
+
+  static String _dateTimeLabelFromUtc(DateTime? utc) {
+    if (utc == null) return 'Gepland';
+    final local = utc.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final year = local.year.toString().padLeft(4, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day-$month-$year • $hour:$minute';
+  }
 }
 
 class EventLocalSavedStore {
@@ -562,6 +647,33 @@ class EventLocalSavedStore {
       saved: true,
       savedAtUtc: existing?.savedAtUtc,
     );
+    await saveAll(all);
+    return all;
+  }
+
+  Future<Map<String, SavedEventRecord>> removeByKey(String storageKey) async {
+    final key = storageKey.trim();
+    if (key.isEmpty) return loadAll();
+    final all = await loadAll();
+    all.remove(key);
+    await saveAll(all);
+    return all;
+  }
+
+  Future<Map<String, SavedEventRecord>> updateFavoriteByKey({
+    required String storageKey,
+    required bool favorite,
+  }) async {
+    final key = storageKey.trim();
+    if (key.isEmpty) return loadAll();
+    final all = await loadAll();
+    final existing = all[key];
+    if (existing == null) return all;
+    if (favorite || existing.saved) {
+      all[key] = existing.copyWith(favorite: favorite);
+    } else {
+      all.remove(key);
+    }
     await saveAll(all);
     return all;
   }

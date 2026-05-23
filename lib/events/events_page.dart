@@ -4,6 +4,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'event_data_source.dart';
 import 'event_models.dart';
 import 'events_detail_page.dart';
+import 'saved_events_page.dart';
 
 EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
   return RemoteEventDataSource(
@@ -608,6 +609,16 @@ class _EventsPageState extends State<EventsPage> {
     _loadSavedEvents();
   }
 
+  Future<void> _openSavedEventsPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<SavedEventsPage>(
+        builder: (_) => SavedEventsPage(onBookEvent: widget.onBookEvent),
+      ),
+    );
+    if (!mounted) return;
+    _loadSavedEvents();
+  }
+
   void _bookEvent(EventDetailData event) {
     if (widget.onBookEvent != null) {
       widget.onBookEvent!.call(event);
@@ -773,6 +784,17 @@ class _EventsPageState extends State<EventsPage> {
                   ),
                 ],
               ),
+            ),
+          ),
+          IconButton(
+            onPressed: _openSavedEventsPage,
+            icon: const Icon(Icons.bookmark_rounded),
+            color: _gold,
+            tooltip: _t(
+              nl: 'Opgeslagen',
+              en: 'Saved',
+              fr: 'Enregistres',
+              es: 'Guardados',
             ),
           ),
         ],
