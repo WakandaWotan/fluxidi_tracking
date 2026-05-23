@@ -26,6 +26,7 @@ class _HotelsPageState extends State<HotelsPage> {
   final TextEditingController _searchController = TextEditingController();
 
   late final List<HotelStay> _allStays;
+  String _selectedCountry = 'all';
   String _selectedCity = 'all';
   String _selectedRegion = 'all';
   String _selectedType = 'all';
@@ -54,12 +55,41 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   List<String> get _cityOptions {
-    final values = _allStays.map((stay) => stay.city).toSet().toList()..sort();
+    final values =
+        _allStays
+            .where((stay) {
+              if (_selectedCountry != 'all' &&
+                  stay.country != _selectedCountry) {
+                return false;
+              }
+              if (_selectedRegion != 'all' && stay.region != _selectedRegion) {
+                return false;
+              }
+              return true;
+            })
+            .map((stay) => stay.city)
+            .toSet()
+            .toList()
+          ..sort();
     return <String>['all', ...values];
   }
 
   List<String> get _regionOptions {
-    final values = _allStays.map((stay) => stay.region).toSet().toList()
+    final values =
+        _allStays
+            .where(
+              (stay) =>
+                  _selectedCountry == 'all' || stay.country == _selectedCountry,
+            )
+            .map((stay) => stay.region)
+            .toSet()
+            .toList()
+          ..sort();
+    return <String>['all', ...values];
+  }
+
+  List<String> get _countryOptions {
+    final values = _allStays.map((stay) => stay.country).toSet().toList()
       ..sort();
     return <String>['all', ...values];
   }
@@ -68,11 +98,14 @@ class _HotelsPageState extends State<HotelsPage> {
     final query = _searchController.text.trim().toLowerCase();
     return _allStays
         .where((stay) {
-          if (_selectedCity != 'all' && stay.city != _selectedCity)
+          if (_selectedCountry != 'all' && stay.country != _selectedCountry) {
             return false;
+          }
           if (_selectedRegion != 'all' && stay.region != _selectedRegion) {
             return false;
           }
+          if (_selectedCity != 'all' && stay.city != _selectedCity)
+            return false;
           if (_selectedType != 'all' && stay.type != _selectedType)
             return false;
           if (query.isEmpty) return true;
@@ -110,13 +143,15 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   String _cityLabel(String city) {
-    return city == 'all' ? _t(nl: 'Alle steden', en: 'All cities') : city;
+    return city == 'all' ? 'Alle steden' : city;
   }
 
   String _regionLabel(String region) {
-    return region == 'all'
-        ? _t(nl: 'Alle regio\'s', en: 'All regions')
-        : region;
+    return region == 'all' ? 'Alle regio\'s' : region;
+  }
+
+  String _countryLabel(String country) {
+    return country == 'all' ? 'Alle landen' : country;
   }
 
   void _onTaxiCtaTap(HotelStay stay) {
@@ -244,26 +279,44 @@ class _HotelsPageState extends State<HotelsPage> {
             children: [
               Expanded(
                 child: _buildDropdownFilter(
-                  label: _t(nl: 'Stad', en: 'City'),
-                  value: _selectedCity,
-                  options: _cityOptions,
-                  itemLabelBuilder: _cityLabel,
-                  onChanged: (value) =>
-                      setState(() => _selectedCity = value ?? 'all'),
+                  label: 'Land',
+                  value: _selectedCountry,
+                  options: _countryOptions,
+                  itemLabelBuilder: _countryLabel,
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedCountry = value ?? 'all';
+                      _selectedRegion = 'all';
+                      _selectedCity = 'all';
+                    });
+                  },
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _buildDropdownFilter(
-                  label: _t(nl: 'Regio', en: 'Region'),
+                  label: 'Regio',
                   value: _selectedRegion,
                   options: _regionOptions,
                   itemLabelBuilder: _regionLabel,
-                  onChanged: (value) =>
-                      setState(() => _selectedRegion = value ?? 'all'),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedRegion = value ?? 'all';
+                      _selectedCity = 'all';
+                    });
+                  },
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          _buildDropdownFilter(
+            label: 'Stad',
+            value: _selectedCity,
+            options: _cityOptions,
+            itemLabelBuilder: _cityLabel,
+            onChanged: (value) =>
+                setState(() => _selectedCity = value ?? 'all'),
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -403,6 +456,18 @@ class _HotelsPageState extends State<HotelsPage> {
         final columns = constraints.maxWidth >= 900
             ? 3
             : (constraints.maxWidth >= 620 ? 2 : 1);
+        if (columns == 1) {
+          return Column(
+            children: [
+              for (var i = 0; i < stays.length; i++) ...[
+                _buildStayCard(stays[i]),
+                if (i != stays.length - 1) const SizedBox(height: 10),
+              ],
+            ],
+          );
+        }
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final safeMainAxisExtent = (338.0 * textScale).clamp(338.0, 430.0);
         const spacing = 10.0;
         return GridView.builder(
           shrinkWrap: true,
@@ -412,7 +477,7 @@ class _HotelsPageState extends State<HotelsPage> {
             crossAxisCount: columns,
             crossAxisSpacing: spacing,
             mainAxisSpacing: spacing,
-            mainAxisExtent: 315,
+            mainAxisExtent: safeMainAxisExtent,
           ),
           itemBuilder: (_, index) => _buildStayCard(stays[index]),
         );
@@ -422,6 +487,7 @@ class _HotelsPageState extends State<HotelsPage> {
 
   Widget _buildStayCard(HotelStay stay) {
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),

@@ -96,6 +96,7 @@ class CustomerHomePage extends StatelessWidget {
     double? initialToLat,
     double? initialToLng,
     String? initialServiceId,
+    String? entryContext,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -116,6 +117,9 @@ class CustomerHomePage extends StatelessWidget {
         ),
       ),
     );
+    if ((entryContext ?? '').trim().isNotEmpty) {
+      debugPrint('[CUSTOMER_HOME][CALCULATOR] entry_context=$entryContext');
+    }
     if (scheduledIntent) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -160,9 +164,26 @@ class CustomerHomePage extends StatelessWidget {
   }
 
   void _openHotelsPage(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const HotelsPage()));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HotelsPage(
+          onTaxiToStay: (stay) {
+            final destination = stay.address.trim().isNotEmpty
+                ? stay.address.trim()
+                : stay.name.trim();
+            _openCalculator(
+              context,
+              scheduledIntent: false,
+              initialToAddress: destination,
+              initialToLat: stay.lat,
+              initialToLng: stay.lng,
+              initialServiceId: 'hotel',
+              entryContext: 'hotel_stay',
+            );
+          },
+        ),
+      ),
+    );
   }
 
   String _partnerSelectionValue(Map<String, String>? map, String key) {
