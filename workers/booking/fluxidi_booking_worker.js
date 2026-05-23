@@ -19621,9 +19621,9 @@ function _ticketmasterCategoryHints(category) {
     case "culture":
       return { classificationName: "arts", keywordHint: "culture" };
     case "theater":
-      return { classificationName: "arts", keywordHint: "theatre theater arts stage drama" };
+      return { classificationName: "", keywordHint: "theater" };
     case "comedy":
-      return { classificationName: "arts", keywordHint: "comedy stand-up humor humour comedie comédie" };
+      return { classificationName: "", keywordHint: "comedy" };
     case "family":
       return { classificationName: "family", keywordHint: "" };
     case "business":
@@ -19641,17 +19641,25 @@ function _ticketmasterCategoryHintStrategies(category) {
   const strategies = [primary];
   if (normalizedCategory === "theater") {
     strategies.push({
+      classificationName: "",
+      keywordHint: "theatre theater musical drama spectacle",
+      keywordStrategy: true,
+    });
+    strategies.push({
       classificationName: "Arts & Theatre",
       keywordHint: "theatre theater musical drama spectacle",
+      keywordStrategy: false,
     });
     strategies.push({
       classificationName: "",
       keywordHint: "theatre theater musical drama spectacle stage play",
+      keywordStrategy: true,
     });
   } else if (normalizedCategory === "comedy") {
     strategies.push({
       classificationName: "",
-      keywordHint: "comedy stand-up comedian humor humour comedie comédie",
+      keywordHint: "comedy stand-up comedian humor humour",
+      keywordStrategy: true,
     });
   }
   const deduped = [];
@@ -19662,7 +19670,11 @@ function _ticketmasterCategoryHintStrategies(category) {
     const key = `${classificationName}::${keywordHint}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ classificationName, keywordHint });
+    deduped.push({
+      classificationName,
+      keywordHint,
+      keywordStrategy: item?.keywordStrategy === true,
+    });
   }
   return deduped;
 }
@@ -19867,6 +19879,7 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   const providerKeyword = safeStr(query?.keyword);
   let mergedWarnings = [];
   let retryUsed = false;
+  let keywordStrategyUsed = false;
   for (let i = 0; i < strategies.length; i += 1) {
     const strategy = strategies[i] || {};
     const params = new URLSearchParams(staticParams.toString());
@@ -19959,11 +19972,18 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
     const mapped = actionableEvents
       .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
       .filter((item) => !!item)
+      .filter((eventItem) => {
+        if (!isRetryCategory) return true;
+        return String(eventItem?.category_key || "").toLowerCase() === normalizedCategory;
+      })
       .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))
       .slice(0, query.limit);
     if (mapped.length) {
-      const warnings = retryUsed
-        ? _mergePublicEventWarnings(["ticketmaster_category_retry_used"])
+      if (retryUsed && strategy.keywordStrategy === true) {
+        keywordStrategyUsed = true;
+      }
+      const warnings = keywordStrategyUsed
+        ? _mergePublicEventWarnings(["ticketmaster_category_keyword_strategy_used"])
         : [];
       return { ok: true, warnings, events: mapped };
     }
@@ -19976,7 +19996,7 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   if (retryUsed) {
     mergedWarnings = _mergePublicEventWarnings(
       mergedWarnings,
-      ["ticketmaster_category_retry_used", "ticketmaster_category_retry_empty"],
+      ["ticketmaster_category_retry_empty"],
     );
   }
   return { ok: false, warnings: _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]) };
