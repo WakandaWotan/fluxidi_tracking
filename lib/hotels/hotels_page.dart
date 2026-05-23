@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
@@ -37,9 +41,13 @@ class _HotelsPageState extends State<HotelsPage> {
   static const Color _softText = Color(0xFFB4B4B4);
 
   final TextEditingController _searchController = TextEditingController();
+  final DiscoveryLocalSavedStore _savedStore = const DiscoveryLocalSavedStore(
+    namespace: 'hotels',
+  );
   static const String _allKey = 'all';
 
   late final List<HotelStay> _allStays;
+  Set<String> _savedStayIds = <String>{};
   String _selectedCountryCode = _allKey;
   String _selectedSettlementKey = _allKey;
   String _selectedRegionKey = _allKey;
@@ -102,6 +110,7 @@ class _HotelsPageState extends State<HotelsPage> {
     super.initState();
     _allStays = List<HotelStay>.from(widget.stays ?? kBelgiumHotelSeedData);
     _searchController.addListener(_onSearchChanged);
+    _loadSavedStayIds();
   }
 
   @override
@@ -249,6 +258,82 @@ class _HotelsPageState extends State<HotelsPage> {
       en: 'View stay',
       fr: 'Voir le séjour',
       es: 'Ver alojamiento',
+    );
+  }
+
+  String get _saveStayLabel {
+    return _t(nl: 'Opslaan', en: 'Save', fr: 'Enregistrer', es: 'Guardar');
+  }
+
+  String get _savedStayLabel {
+    return _t(nl: 'Opgeslagen', en: 'Saved', fr: 'Enregistré', es: 'Guardado');
+  }
+
+  String _staySavedMessage(String name) {
+    return _t(
+      nl: '$name opgeslagen.',
+      en: '$name saved.',
+      fr: '$name enregistré.',
+      es: '$name guardado.',
+    );
+  }
+
+  String _stayUnsavedMessage(String name) {
+    return _t(
+      nl: '$name verwijderd uit opgeslagen verblijven.',
+      en: '$name removed from saved stays.',
+      fr: '$name retiré des séjours enregistrés.',
+      es: '$name eliminado de alojamientos guardados.',
+    );
+  }
+
+  String get _saveSyncFailedLabel {
+    return _t(
+      nl: 'Kon opslaan lokaal niet bijwerken.',
+      en: 'Could not update local saved state.',
+      fr: 'Impossible de mettre à jour l’état enregistré local.',
+      es: 'No se pudo actualizar el estado guardado local.',
+    );
+  }
+
+  bool _isSaved(HotelStay stay) => _savedStayIds.contains(stay.id);
+
+  Future<void> _loadSavedStayIds() async {
+    final ids = await _savedStore.loadSavedIds();
+    if (!mounted) return;
+    setState(() => _savedStayIds = ids);
+  }
+
+  Future<void> _toggleSaved(HotelStay stay) async {
+    final previous = Set<String>.from(_savedStayIds);
+    final currentlySaved = _isSaved(stay);
+    final nextSaved = !currentlySaved;
+    final next = Set<String>.from(_savedStayIds);
+    if (nextSaved) {
+      next.add(stay.id);
+    } else {
+      next.remove(stay.id);
+    }
+    setState(() => _savedStayIds = next);
+    try {
+      await _savedStore.setSaved(stay.id, saved: nextSaved);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _savedStayIds = previous);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_saveSyncFailedLabel)));
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          nextSaved
+              ? _staySavedMessage(stay.name)
+              : _stayUnsavedMessage(stay.name),
+        ),
+      ),
     );
   }
 
@@ -437,6 +522,10 @@ class _HotelsPageState extends State<HotelsPage> {
       MaterialPageRoute(
         builder: (_) => HotelStayDetailPage(
           stay: stay,
+          isSaved: _isSaved(stay),
+          saveLabel: _saveStayLabel,
+          savedLabel: _savedStayLabel,
+          onToggleSaved: () => _toggleSaved(stay),
           onTaxiTap: () => _onTaxiCtaTap(stay),
           onViewStayTap: () => _openStayLink(stay),
         ),
@@ -802,6 +891,7 @@ class _HotelsPageState extends State<HotelsPage> {
     final highlights = _semanticHighlights(stay);
     final imageUrl = (stay.imageUrl ?? '').trim();
     final hasExternalLink = _preferredStayUri(stay) != null;
+    final isSaved = _isSaved(stay);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -923,7 +1013,7 @@ class _HotelsPageState extends State<HotelsPage> {
                     ),
                     if (stay.rating != null)
                       Positioned(
-                        right: 10,
+                        right: 52,
                         top: 8,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -945,6 +1035,27 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                         ),
                       ),
+                    Positioned(
+                      right: 8,
+                      top: 6,
+                      child: IconButton(
+                        onPressed: () => _toggleSaved(stay),
+                        tooltip: isSaved ? _savedStayLabel : _saveStayLabel,
+                        icon: Icon(
+                          isSaved
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: isSaved
+                              ? _gold
+                              : Colors.white.withOpacity(0.9),
+                          size: 22,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black.withOpacity(0.35),
+                          side: BorderSide(color: _gold.withOpacity(0.34)),
+                        ),
+                      ),
+                    ),
                     if (premium)
                       Positioned(
                         left: 10,
@@ -1123,12 +1234,20 @@ class _HotelsPageState extends State<HotelsPage> {
 class HotelStayDetailPage extends StatelessWidget {
   const HotelStayDetailPage({
     required this.stay,
+    required this.isSaved,
+    required this.saveLabel,
+    required this.savedLabel,
+    required this.onToggleSaved,
     required this.onTaxiTap,
     required this.onViewStayTap,
     super.key,
   });
 
   final HotelStay stay;
+  final bool isSaved;
+  final String saveLabel;
+  final String savedLabel;
+  final VoidCallback onToggleSaved;
   final VoidCallback onTaxiTap;
   final VoidCallback onViewStayTap;
 
@@ -1402,13 +1521,38 @@ class HotelStayDetailPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          stay.name,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                stay.name,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: onToggleSaved,
+                              tooltip: isSaved ? savedLabel : saveLabel,
+                              icon: Icon(
+                                isSaved
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                color: isSaved
+                                    ? _gold
+                                    : Colors.white.withOpacity(0.92),
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor: const Color(0xFF161616),
+                                side: BorderSide(
+                                  color: _gold.withOpacity(0.32),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -1552,5 +1696,71 @@ class HotelStayDetailPage extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Generic local saved-ID store for discovery modules.
+class DiscoveryLocalSavedStore {
+  const DiscoveryLocalSavedStore({required this.namespace});
+
+  final String namespace;
+  static const String _fileName = 'saved_ids_v1.json';
+
+  Future<Set<String>> loadSavedIds() async {
+    try {
+      final file = await _storeFile();
+      if (!await file.exists()) return <String>{};
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return <String>{};
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .whereType<String>()
+            .map((id) => id.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      }
+      if (decoded is Map) {
+        return decoded.keys
+            .whereType<String>()
+            .map((id) => id.trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      }
+      return <String>{};
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<void> setSaved(String id, {required bool saved}) async {
+    final key = id.trim();
+    if (key.isEmpty) return;
+    final all = await loadSavedIds();
+    if (saved) {
+      all.add(key);
+    } else {
+      all.remove(key);
+    }
+    await _saveAll(all);
+  }
+
+  Future<void> _saveAll(Set<String> ids) async {
+    final file = await _storeFile();
+    final sorted = ids.toList()..sort();
+    await file.writeAsString(jsonEncode(sorted), flush: true);
+  }
+
+  Future<File> _storeFile() async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+      '${base.path}${Platform.pathSeparator}fluxidi'
+      '${Platform.pathSeparator}discovery'
+      '${Platform.pathSeparator}$namespace',
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return File('${dir.path}${Platform.pathSeparator}$_fileName');
   }
 }
