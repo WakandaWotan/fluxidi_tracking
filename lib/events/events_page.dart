@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 
+import 'event_ai_intent_parser.dart';
 import 'event_category_results_page.dart';
 import 'event_data_source.dart';
 import 'event_models.dart';
@@ -62,6 +63,13 @@ class _EventsPageState extends State<EventsPage> {
   ];
 
   final TextEditingController _searchController = TextEditingController();
+  static const List<String> _eventAiPromptExamples = <String>[
+    'Concerten dit weekend in België',
+    'Sportevents in Spanje',
+    'Comedy in UK',
+    'Familie events in Nederland',
+    'Theater in Frankrijk',
+  ];
   late final EventDataSource _dataSource;
   late String _selectedMarketKey;
   String _selectedDateMode = EventDateMode.all;
@@ -384,19 +392,34 @@ class _EventsPageState extends State<EventsPage> {
     required String title,
     required String categoryKey,
     required String searchQuery,
+    String? marketKey,
+    String? dateMode,
+    DateTime? monthStartUtc,
+    DateTime? monthEndUtc,
+    String? sortMode,
+    bool useProvidedMonthRangeOnly = false,
   }) async {
+    final targetMarketKey = marketKey ?? _selectedMarketKey;
+    final targetDateMode = dateMode ?? _selectedDateMode;
+    final targetSortMode = sortMode ?? _selectedSortMode;
+    final targetMonthStartUtc = useProvidedMonthRangeOnly
+        ? monthStartUtc
+        : (monthStartUtc ?? _selectedMonthStartUtc);
+    final targetMonthEndUtc = useProvidedMonthRangeOnly
+        ? monthEndUtc
+        : (monthEndUtc ?? _selectedMonthEndUtc);
     await Navigator.of(context).push(
       MaterialPageRoute<EventCategoryResultsPage>(
         builder: (_) => EventCategoryResultsPage(
           title: title,
           dataSource: _dataSource,
-          marketKey: _selectedMarketKey,
-          dateMode: _selectedDateMode,
-          monthStartUtc: _selectedMonthStartUtc,
-          monthEndUtc: _selectedMonthEndUtc,
+          marketKey: targetMarketKey,
+          dateMode: targetDateMode,
+          monthStartUtc: targetMonthStartUtc,
+          monthEndUtc: targetMonthEndUtc,
           categoryKey: categoryKey,
           searchQuery: searchQuery.trim(),
-          sortMode: _selectedSortMode,
+          sortMode: targetSortMode,
           onBookEvent: widget.onBookEvent,
         ),
       ),
@@ -411,6 +434,335 @@ class _EventsPageState extends State<EventsPage> {
       categoryKey: _selectedCategoryKey,
       searchQuery: query,
     );
+  }
+
+  String _eventAiDateLabel(String dateSignal) {
+    switch (dateSignal) {
+      case EventDateMode.today:
+        return _t(nl: 'vandaag', en: 'today', fr: 'aujourd’hui', es: 'hoy');
+      case EventDateMode.weekend:
+        return _t(
+          nl: 'dit weekend',
+          en: 'this weekend',
+          fr: 'ce week-end',
+          es: 'este fin de semana',
+        );
+      case EventDateMode.month:
+        return _t(
+          nl: 'deze maand',
+          en: 'this month',
+          fr: 'ce mois',
+          es: 'este mes',
+        );
+      case 'year':
+        return _t(
+          nl: 'dit jaar',
+          en: 'this year',
+          fr: 'cette année',
+          es: 'este año',
+        );
+      default:
+        return '';
+    }
+  }
+
+  String _eventAiExplanation(EventAiIntent intent) {
+    final categoryPart = intent.categoryKey == 'all'
+        ? _t(nl: 'events', en: 'events', fr: 'événements', es: 'eventos')
+        : '${_categoryFilterLabel(intent.categoryKey).toLowerCase()}-events';
+    final locationPart = _marketLabel(intent.marketKey);
+    final datePart = _eventAiDateLabel(intent.dateSignal);
+    final queryPart = intent.searchQuery.isEmpty
+        ? ''
+        : _t(
+            nl: ' Zoekterm: "${intent.searchQuery}".',
+            en: ' Query: "${intent.searchQuery}".',
+            fr: ' Terme: "${intent.searchQuery}".',
+            es: ' Búsqueda: "${intent.searchQuery}".',
+          );
+    if (datePart.isNotEmpty) {
+      return _t(
+            nl: 'Ik zoek $categoryPart in $locationPart voor $datePart.',
+            en: 'I am looking for $categoryPart in $locationPart for $datePart.',
+            fr: 'Je cherche des $categoryPart en $locationPart pour $datePart.',
+            es: 'Busco $categoryPart en $locationPart para $datePart.',
+          ) +
+          queryPart;
+    }
+    return _t(
+          nl: 'Ik zoek $categoryPart in $locationPart.',
+          en: 'I am looking for $categoryPart in $locationPart.',
+          fr: 'Je cherche des $categoryPart en $locationPart.',
+          es: 'Busco $categoryPart en $locationPart.',
+        ) +
+        queryPart;
+  }
+
+  Future<void> _submitEventAiInput({
+    required String rawInput,
+    required void Function(String errorText) showValidation,
+  }) async {
+    final trimmed = rawInput.trim();
+    if (trimmed.isEmpty) {
+      showValidation(
+        _t(
+          nl: 'Voer een vraag in voor Fluxidi AI.',
+          en: 'Enter a request for Fluxidi AI.',
+          fr: 'Saisissez une demande pour Fluxidi AI.',
+          es: 'Introduce una solicitud para Fluxidi AI.',
+        ),
+      );
+      return;
+    }
+    final intent = parseEventAiIntent(
+      input: trimmed,
+      fallbackMarketKey: _selectedMarketKey,
+      fallbackDateMode: _selectedDateMode,
+    );
+    debugPrint('[EVENT_AI] input=$trimmed');
+    debugPrint(
+      '[EVENT_AI] parsed market=${intent.marketKey} category=${intent.categoryKey} date=${intent.dateSignal} query=${intent.searchQuery}',
+    );
+    if (!mounted) return;
+    final aiMarketKey = intent.marketKey;
+    final aiCategoryKey = intent.categoryKey;
+    final aiDateKey = intent.dateMode;
+    final aiSearchQuery = intent.searchQuery;
+    debugPrint(
+      '[EVENT_AI] navigate market=$aiMarketKey category=$aiCategoryKey date=$aiDateKey query=$aiSearchQuery',
+    );
+    debugPrint('[EVENT_AI] state_isolated=true');
+    Navigator.of(context).pop();
+    await _openResultsPage(
+      title: _t(
+        nl: 'Fluxidi AI resultaten',
+        en: 'Fluxidi AI results',
+        fr: 'Résultats Fluxidi AI',
+        es: 'Resultados Fluxidi AI',
+      ),
+      marketKey: aiMarketKey,
+      dateMode: aiDateKey,
+      monthStartUtc: aiDateKey == EventDateMode.month
+          ? _selectedMonthStartUtc
+          : null,
+      monthEndUtc: aiDateKey == EventDateMode.month
+          ? _selectedMonthEndUtc
+          : null,
+      useProvidedMonthRangeOnly: true,
+      categoryKey: aiCategoryKey,
+      searchQuery: aiSearchQuery,
+    );
+  }
+
+  Future<void> _openEventAiAssistant() async {
+    final aiController = TextEditingController(
+      text: _searchController.text.trim(),
+    );
+    String currentInput = aiController.text;
+    String? validationError;
+    EventAiIntent currentIntent = parseEventAiIntent(
+      input: currentInput,
+      fallbackMarketKey: _selectedMarketKey,
+      fallbackDateMode: _selectedDateMode,
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final hasInput = currentInput.trim().isNotEmpty;
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(14, 10, 14, 16 + bottomInset),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _t(
+                          nl: 'Vraag Fluxidi AI',
+                          en: 'Ask Fluxidi AI',
+                          fr: 'Demander à Fluxidi AI',
+                          es: 'Preguntar a Fluxidi AI',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16.2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: aiController,
+                        minLines: 1,
+                        maxLines: 3,
+                        textInputAction: TextInputAction.search,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            currentInput = value;
+                            validationError = null;
+                            currentIntent = parseEventAiIntent(
+                              input: value,
+                              fallbackMarketKey: _selectedMarketKey,
+                              fallbackDateMode: _selectedDateMode,
+                            );
+                          });
+                        },
+                        onSubmitted: (_) => _submitEventAiInput(
+                          rawInput: currentInput,
+                          showValidation: (message) => setSheetState(() {
+                            validationError = message;
+                          }),
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: _t(
+                            nl: 'Bijv. concerten dit weekend in België',
+                            en: 'E.g. concerts this weekend in Belgium',
+                            fr: 'Ex. concerts ce week-end en Belgique',
+                            es: 'Ej. conciertos este fin de semana en Bélgica',
+                          ),
+                          hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
+                          filled: true,
+                          fillColor: const Color(0xFF151515),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 10,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: _gold.withOpacity(0.24),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(
+                              color: _gold,
+                              width: 1.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (validationError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          validationError!,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8D8D),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _eventAiPromptExamples.map((prompt) {
+                          return ActionChip(
+                            label: Text(
+                              prompt,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11.2,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            backgroundColor: const Color(0xFF171717),
+                            side: BorderSide(color: _gold.withOpacity(0.3)),
+                            onPressed: () {
+                              aiController.text = prompt;
+                              aiController
+                                  .selection = TextSelection.fromPosition(
+                                TextPosition(offset: aiController.text.length),
+                              );
+                              setSheetState(() {
+                                currentInput = prompt;
+                                validationError = null;
+                                currentIntent = parseEventAiIntent(
+                                  input: prompt,
+                                  fallbackMarketKey: _selectedMarketKey,
+                                  fallbackDateMode: _selectedDateMode,
+                                );
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      if (hasInput) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _gold.withOpacity(0.26)),
+                          ),
+                          child: Text(
+                            _eventAiExplanation(currentIntent),
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 11.8,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _submitEventAiInput(
+                            rawInput: currentInput,
+                            showValidation: (message) => setSheetState(() {
+                              validationError = message;
+                            }),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: const Color(0xFF1A1307),
+                            minimumSize: const Size.fromHeight(42),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                          ),
+                          icon: const Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 17,
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Zoeken',
+                              en: 'Search',
+                              fr: 'Rechercher',
+                              es: 'Buscar',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    aiController.dispose();
   }
 
   Future<void> _openMarketPicker() async {
@@ -1006,6 +1358,44 @@ class _EventsPageState extends State<EventsPage> {
               const SizedBox(width: 8),
               Expanded(child: _buildActiveSummaryBar()),
             ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openEventAiAssistant,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF161616),
+                foregroundColor: _gold,
+                side: BorderSide(color: _gold.withOpacity(0.34)),
+                minimumSize: const Size.fromHeight(37),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+              label: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _t(
+                    nl: 'Vraag Fluxidi AI',
+                    en: 'Ask Fluxidi AI',
+                    fr: 'Demander à Fluxidi AI',
+                    es: 'Preguntar a Fluxidi AI',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.2,
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
