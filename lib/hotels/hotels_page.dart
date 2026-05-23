@@ -432,6 +432,18 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
+  void _openStayDetail(HotelStay stay) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HotelStayDetailPage(
+          stay: stay,
+          onTaxiTap: () => _onTaxiCtaTap(stay),
+          onViewStayTap: () => _openStayLink(stay),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final stays = _visibleStays;
@@ -790,296 +802,740 @@ class _HotelsPageState extends State<HotelsPage> {
     final highlights = _semanticHighlights(stay);
     final imageUrl = (stay.imageUrl ?? '').trim();
     final hasExternalLink = _preferredStayUri(stay) != null;
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: _panelBlack,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.22)),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: _gold.withOpacity(0.06),
-            blurRadius: 14,
-            spreadRadius: 0.2,
-            offset: const Offset(0, 4),
+        onTap: () => _openStayDetail(stay),
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: _panelBlack,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _gold.withOpacity(0.22)),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: _gold.withOpacity(0.06),
+                blurRadius: 14,
+                spreadRadius: 0.2,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 132,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-              ),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: <Color>[Color(0xFF23304A), Color(0xFF111827)],
-              ),
-            ),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: <Color>[
-                          Colors.black.withOpacity(0.12),
-                          Colors.black.withOpacity(0.24),
-                          Colors.black.withOpacity(0.58),
-                        ],
-                      ),
-                    ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 132,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[Color(0xFF23304A), Color(0xFF111827)],
                   ),
                 ),
-                if (imageUrl.isNotEmpty)
-                  Positioned.fill(
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: _gold.withOpacity(0.9),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: <Color>[
+                              Colors.black.withOpacity(0.12),
+                              Colors.black.withOpacity(0.24),
+                              Colors.black.withOpacity(0.58),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (imageUrl.isNotEmpty)
+                      Positioned.fill(
+                        child: Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _gold.withOpacity(0.9),
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: <Color>[
+                              Colors.black.withOpacity(0.16),
+                              Colors.black.withOpacity(0.34),
+                              Colors.black.withOpacity(0.62),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Center(
+                      child: Icon(
+                        Icons.hotel_rounded,
+                        size: 50,
+                        color: _gold.withOpacity(0.92),
+                      ),
+                    ),
+                    Positioned(
+                      left: 10,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: _gold.withOpacity(0.45)),
+                        ),
+                        child: Text(
+                          _typeLabel(stay.type),
+                          style: const TextStyle(
+                            color: _gold,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (stay.rating != null)
+                      Positioned(
+                        right: 10,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.38),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.44)),
+                          ),
+                          child: Text(
+                            '★ ${stay.rating!.toStringAsFixed(1)}',
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                        );
-                      },
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    ),
-                  ),
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: <Color>[
-                          Colors.black.withOpacity(0.16),
-                          Colors.black.withOpacity(0.34),
-                          Colors.black.withOpacity(0.62),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Center(
-                  child: Icon(
-                    Icons.hotel_rounded,
-                    size: 50,
-                    color: _gold.withOpacity(0.92),
-                  ),
-                ),
-                Positioned(
-                  left: 10,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.35),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: _gold.withOpacity(0.45)),
-                    ),
-                    child: Text(
-                      _typeLabel(stay.type),
-                      style: const TextStyle(
-                        color: _gold,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                if (stay.rating != null)
-                  Positioned(
-                    right: 10,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.38),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.44)),
-                      ),
-                      child: Text(
-                        '★ ${stay.rating!.toStringAsFixed(1)}',
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                    ),
-                  ),
-                if (premium)
-                  Positioned(
-                    left: 10,
-                    bottom: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _gold.withOpacity(0.22),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: _gold.withOpacity(0.62)),
-                      ),
-                      child: Text(
-                        _recommendedLabel,
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 10.4,
-                          fontWeight: FontWeight.w800,
+                    if (premium)
+                      Positioned(
+                        left: 10,
+                        bottom: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.22),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.62)),
+                          ),
+                          child: Text(
+                            _recommendedLabel,
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 10.4,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        stay.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15.8,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${stay.city}, ${stay.region}, ${stay.country}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.92),
+                          fontSize: 11.4,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        stay.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _softText,
+                          fontSize: 11.8,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (highlights.isNotEmpty)
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: highlights
+                              .map(
+                                (tag) => Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF171717),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.32),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    tag,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.78),
+                                      fontSize: 10.2,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      if (displayPrice.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Text(
+                          displayPrice,
+                          style: const TextStyle(
+                            color: _gold,
+                            fontSize: 11.7,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _onTaxiCtaTap(stay),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: const Color(0xFF141414),
+                            minimumSize: const Size.fromHeight(42),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                          ),
+                          icon: const Icon(Icons.local_taxi_rounded, size: 16),
+                          label: Text(
+                            _t(
+                              nl: 'Taxi naar dit verblijf',
+                              en: 'Taxi to this stay',
+                              fr: 'Taxi vers cet hébergement',
+                              es: 'Taxi a este alojamiento',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                      if (hasExternalLink) ...[
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _openStayLink(stay),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: const Color(0xFF121212),
+                              foregroundColor: Colors.white.withOpacity(0.92),
+                              side: BorderSide(color: _gold.withOpacity(0.28)),
+                              minimumSize: const Size.fromHeight(38),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            icon: Icon(
+                              Icons.open_in_new_rounded,
+                              size: 15,
+                              color: _gold.withOpacity(0.92),
+                            ),
+                            label: Text(
+                              _viewStayLabel,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+      ),
+    );
+  }
+}
+
+class HotelStayDetailPage extends StatelessWidget {
+  const HotelStayDetailPage({
+    required this.stay,
+    required this.onTaxiTap,
+    required this.onViewStayTap,
+    super.key,
+  });
+
+  final HotelStay stay;
+  final VoidCallback onTaxiTap;
+  final VoidCallback onViewStayTap;
+
+  static const Color _bgBlack = Color(0xFF07080C);
+  static const Color _panelBlack = Color(0xFF101010);
+  static const Color _gold = Color(0xFFE5B641);
+  static const Color _softText = Color(0xFFB4B4B4);
+
+  String get _languageCode => appConfig.currentLanguage.name;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_languageCode) {
+      case 'en':
+        return en;
+      case 'fr':
+        return fr;
+      case 'es':
+        return es;
+      case 'nl':
+      default:
+        return nl;
+    }
+  }
+
+  String _typeLabel(String typeKey) {
+    switch (typeKey) {
+      case HotelStayType.hotel:
+        return 'Hotel';
+      case HotelStayType.bedAndBreakfast:
+        return 'B&B';
+      case HotelStayType.aparthotel:
+        return _t(
+          nl: 'Aparthotel',
+          en: 'Aparthotel',
+          fr: 'Aparthotel',
+          es: 'Aparthotel',
+        );
+      case HotelStayType.guesthouse:
+        return _t(
+          nl: 'Guesthouse',
+          en: 'Guesthouse',
+          fr: 'Guesthouse',
+          es: 'Guesthouse',
+        );
+      default:
+        return typeKey;
+    }
+  }
+
+  String get _fromLabel {
+    return _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde');
+  }
+
+  String get _viewStayLabel {
+    return _t(
+      nl: 'Bekijk verblijf',
+      en: 'View stay',
+      fr: 'Voir le séjour',
+      es: 'Ver alojamiento',
+    );
+  }
+
+  String get _taxiLabel {
+    return _t(
+      nl: 'Taxi naar dit verblijf',
+      en: 'Taxi to this stay',
+      fr: 'Taxi vers cet hébergement',
+      es: 'Taxi a este alojamiento',
+    );
+  }
+
+  String get _highlightsLabel {
+    return _t(
+      nl: 'Highlights',
+      en: 'Highlights',
+      fr: 'Points forts',
+      es: 'Destacados',
+    );
+  }
+
+  String get _providerLabel {
+    return _t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente');
+  }
+
+  List<String> _highlights() {
+    final values = <String>[...stay.tags, ...stay.travelStyles];
+    final seen = <String>{};
+    final result = <String>[];
+    for (final value in values) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) continue;
+      final key = normalized.toLowerCase();
+      if (!seen.add(key)) continue;
+      result.add(normalized);
+      if (result.length >= 8) break;
+    }
+    return result;
+  }
+
+  String _displayPriceHint() {
+    final raw = (stay.priceHint ?? '').trim();
+    if (raw.isEmpty) return '';
+    final normalized = raw.toLowerCase();
+    if (normalized.startsWith('vanaf ') ||
+        normalized.startsWith('from ') ||
+        normalized.startsWith('desde ') ||
+        normalized.startsWith('à partir')) {
+      return raw;
+    }
+    return '$_fromLabel $raw';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = (stay.imageUrl ?? '').trim();
+    final hasExternalLink = (stay.effectiveBookingUrl ?? '').trim().isNotEmpty;
+    final displayPrice = _displayPriceHint();
+    final highlights = _highlights();
+    return Scaffold(
+      backgroundColor: _bgBlack,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
                 children: [
-                  Text(
-                    stay.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15.8,
-                    ),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        color: _gold,
+                        tooltip: _t(
+                          nl: 'Terug',
+                          en: 'Back',
+                          fr: 'Retour',
+                          es: 'Volver',
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${stay.city}, ${stay.region}, ${stay.country}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: _gold.withOpacity(0.92),
-                      fontSize: 11.4,
-                      fontWeight: FontWeight.w700,
+                  Container(
+                    height: 248,
+                    width: double.infinity,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: _panelBlack,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: _gold.withOpacity(0.24)),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: <Color>[Color(0xFF22314C), Color(0xFF101828)],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    stay.description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _softText,
-                      fontSize: 11.8,
-                      height: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (highlights.isNotEmpty)
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: highlights
-                          .map(
-                            (tag) => Container(
+                    child: Stack(
+                      children: [
+                        if (imageUrl.isNotEmpty)
+                          Positioned.fill(
+                            child: Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (context, child, progress) {
+                                if (progress == null) return child;
+                                return Center(
+                                  child: SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      color: _gold.withOpacity(0.9),
+                                    ),
+                                  ),
+                                );
+                              },
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: <Color>[
+                                  Colors.black.withOpacity(0.16),
+                                  Colors.black.withOpacity(0.34),
+                                  Colors.black.withOpacity(0.66),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Center(
+                          child: Icon(
+                            Icons.hotel_rounded,
+                            color: _gold.withOpacity(0.95),
+                            size: 64,
+                          ),
+                        ),
+                        Positioned(
+                          left: 12,
+                          top: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.34),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: _gold.withOpacity(0.44),
+                              ),
+                            ),
+                            child: Text(
+                              _typeLabel(stay.type),
+                              style: const TextStyle(
+                                color: _gold,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (stay.rating != null)
+                          Positioned(
+                            right: 12,
+                            top: 10,
+                            child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
+                                horizontal: 9,
+                                vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF171717),
+                                color: Colors.black.withOpacity(0.36),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
-                                  color: _gold.withOpacity(0.32),
+                                  color: _gold.withOpacity(0.44),
                                 ),
                               ),
                               child: Text(
-                                tag,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.78),
-                                  fontSize: 10.2,
-                                  fontWeight: FontWeight.w600,
+                                '★ ${stay.rating!.toStringAsFixed(1)}',
+                                style: const TextStyle(
+                                  color: _gold,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
                             ),
-                          )
-                          .toList(),
+                          ),
+                      ],
                     ),
-                  if (displayPrice.isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Text(
-                      displayPrice,
-                      style: const TextStyle(
-                        color: _gold,
-                        fontSize: 11.7,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    decoration: BoxDecoration(
+                      color: _panelBlack,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _gold.withOpacity(0.22)),
                     ),
-                  ],
-                  const Spacer(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          stay.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${stay.city}, ${stay.region}, ${stay.country}',
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.92),
+                            fontSize: 13.2,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (displayPrice.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            displayPrice,
+                            style: const TextStyle(
+                              color: _gold,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 10),
+                        Text(
+                          stay.description,
+                          style: const TextStyle(
+                            color: _softText,
+                            fontSize: 13.2,
+                            height: 1.3,
+                          ),
+                        ),
+                        if (highlights.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _highlightsLabel,
+                            style: TextStyle(
+                              color: _gold.withOpacity(0.9),
+                              fontSize: 12.6,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 6,
+                            children: highlights
+                                .map(
+                                  (tag) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF171717),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color: _gold.withOpacity(0.28),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      tag,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.82),
+                                        fontSize: 11.2,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Text(
+                          '$_providerLabel: ${stay.effectiveProvider}',
+                          style: TextStyle(
+                            color: _softText.withOpacity(0.95),
+                            fontSize: 11.7,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: Column(
+                children: [
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () => _onTaxiCtaTap(stay),
+                      onPressed: onTaxiTap,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _gold,
-                        foregroundColor: const Color(0xFF141414),
-                        minimumSize: const Size.fromHeight(42),
+                        foregroundColor: const Color(0xFF161616),
+                        minimumSize: const Size.fromHeight(46),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(11),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      icon: const Icon(Icons.local_taxi_rounded, size: 16),
+                      icon: const Icon(Icons.local_taxi_rounded, size: 17),
                       label: Text(
-                        _t(
-                          nl: 'Taxi naar dit verblijf',
-                          en: 'Taxi to this stay',
-                          fr: 'Taxi vers cet hébergement',
-                          es: 'Taxi a este alojamiento',
-                        ),
+                        _taxiLabel,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
                   if (hasExternalLink) ...[
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () => _openStayLink(stay),
+                        onPressed: onViewStayTap,
                         style: OutlinedButton.styleFrom(
-                          backgroundColor: const Color(0xFF121212),
-                          foregroundColor: Colors.white.withOpacity(0.92),
-                          side: BorderSide(color: _gold.withOpacity(0.28)),
-                          minimumSize: const Size.fromHeight(38),
+                          backgroundColor: const Color(0xFF111111),
+                          foregroundColor: Colors.white.withOpacity(0.94),
+                          side: BorderSide(color: _gold.withOpacity(0.3)),
+                          minimumSize: const Size.fromHeight(44),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         icon: Icon(
                           Icons.open_in_new_rounded,
-                          size: 15,
+                          size: 16,
                           color: _gold.withOpacity(0.92),
                         ),
                         label: Text(
@@ -1092,8 +1548,8 @@ class _HotelsPageState extends State<HotelsPage> {
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
