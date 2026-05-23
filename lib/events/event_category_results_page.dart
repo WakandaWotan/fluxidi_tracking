@@ -307,20 +307,18 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     } else if (events.isNotEmpty && mounted) {
       setState(() => _selectedMapEvent = events.first);
     }
-    if (forceCameraReset || events.isNotEmpty) {
-      final cameraTarget = _cameraTargetForEvents(events);
-      final center = cameraTarget.center;
-      final zoom = cameraTarget.zoom;
-      final centerLon = center.coordinates.lng.toStringAsFixed(6);
-      final centerLat = center.coordinates.lat.toStringAsFixed(6);
-      debugPrint(
-        '[EVENT_MAP] camera centerLat=$centerLat centerLng=$centerLon zoom=${zoom.toStringAsFixed(2)}',
-      );
-      await map.flyTo(
-        mb.CameraOptions(center: center, zoom: zoom),
-        mb.MapAnimationOptions(duration: 500),
-      );
-    }
+    final cameraTarget = _cameraTargetForEvents(events);
+    final center = cameraTarget.center;
+    final zoom = cameraTarget.zoom;
+    final centerLon = center.coordinates.lng.toStringAsFixed(6);
+    final centerLat = center.coordinates.lat.toStringAsFixed(6);
+    debugPrint(
+      '[EVENT_MAP] camera centerLat=$centerLat centerLng=$centerLon zoom=${zoom.toStringAsFixed(2)}',
+    );
+    await map.flyTo(
+      mb.CameraOptions(center: center, zoom: zoom),
+      mb.MapAnimationOptions(duration: 500),
+    );
   }
 
   void _ensureMapClearedForNoMappableEvents() {
@@ -1221,6 +1219,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
 
   Widget _buildMapPlaceholder() {
     final mappableEvents = _mappableEvents;
+    final noMappableEvents = mappableEvents.isEmpty;
     final market = widget.marketKey.trim().toLowerCase();
     final visibleCount = _visibleEvents.length;
     if (market == 'fr') {
@@ -1228,39 +1227,13 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
         '[EVENT_MAP] market=fr visibleEvents=$visibleCount mappableEvents=${mappableEvents.length}',
       );
     }
-    if (mappableEvents.isEmpty) {
+    if (noMappableEvents) {
+      if (market == 'fr') {
+        debugPrint(
+          '[EVENT_MAP] fallbackMarketMap market=fr reason=no_mappable_events',
+        );
+      }
       _ensureMapClearedForNoMappableEvents();
-      return Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _gold.withOpacity(0.28)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[Color(0xFF0F0F0F), Color(0xFF07080C)],
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Center(
-            child: Text(
-              _t(
-                nl: 'Geen kaartlocaties gevonden voor deze selectie.',
-                en: 'No map locations found for this selection.',
-                fr: 'Aucune localisation cartographique trouvée pour cette sélection.',
-                es: 'No se encontraron ubicaciones en el mapa para esta selección.',
-              ),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ),
-      );
     }
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1298,17 +1271,50 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 10,
-                  right: 10,
-                  bottom: 10,
-                  child: _buildMapPreviewCard(),
-                ),
+                if (noMappableEvents)
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    top: 12,
+                    child: _buildNoMappableEventsOverlay(),
+                  ),
+                if (!noMappableEvents)
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    bottom: 10,
+                    child: _buildMapPreviewCard(),
+                  ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildNoMappableEventsOverlay() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.78),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.42)),
+      ),
+      child: Text(
+        _t(
+          nl: 'Geen exacte eventlocaties gevonden voor deze selectie.',
+          en: 'No exact event locations found for this selection.',
+          fr: 'Aucun emplacement exact trouvé pour cette sélection.',
+          es: 'No se encontraron ubicaciones exactas para esta selección.',
+        ),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12.9,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 
