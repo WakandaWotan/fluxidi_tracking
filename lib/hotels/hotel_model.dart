@@ -30,6 +30,11 @@ class HotelStay {
     this.imageUrl,
     this.websiteUrl,
     this.bookingUrl,
+    this.provider,
+    this.externalProviderId,
+    this.affiliateTrackingId,
+    this.directBookingUrl,
+    this.preferredBookingUrl,
     this.source = 'seed',
     this.sourceId,
     this.priceHint,
@@ -59,6 +64,11 @@ class HotelStay {
   final String? imageUrl;
   final String? websiteUrl;
   final String? bookingUrl;
+  final String? provider;
+  final String? externalProviderId;
+  final String? affiliateTrackingId;
+  final String? directBookingUrl;
+  final String? preferredBookingUrl;
   final String source;
   final String? sourceId;
   final String? priceHint;
@@ -67,4 +77,30 @@ class HotelStay {
   final List<String> travelStyles;
   final String? ambience;
   final List<String> popularFor;
+
+  String? get effectiveBookingUrl {
+    // TODO(H1-F): Support provider-built deep links
+    // (e.g. Booking.com affiliate and future Demand API).
+    final candidates = <String?>[
+      preferredBookingUrl,
+      bookingUrl,
+      directBookingUrl,
+      websiteUrl,
+    ];
+    for (final candidate in candidates) {
+      final trimmed = candidate?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
+  }
+
+  String get effectiveProvider {
+    final providerValue = provider?.trim();
+    if (providerValue != null && providerValue.isNotEmpty) {
+      return providerValue;
+    }
+    final sourceValue = source.trim();
+    if (sourceValue.isNotEmpty) return sourceValue;
+    return 'curated';
+  }
 }

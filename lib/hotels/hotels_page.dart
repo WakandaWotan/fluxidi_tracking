@@ -297,9 +297,7 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Uri? _preferredStayUri(HotelStay stay) {
-    final booking = (stay.bookingUrl ?? '').trim();
-    final website = (stay.websiteUrl ?? '').trim();
-    final candidate = booking.isNotEmpty ? booking : website;
+    final candidate = (stay.effectiveBookingUrl ?? '').trim();
     if (candidate.isEmpty) return null;
     return Uri.tryParse(candidate);
   }
