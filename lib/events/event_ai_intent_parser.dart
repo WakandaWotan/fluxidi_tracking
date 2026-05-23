@@ -287,6 +287,7 @@ const Set<String> _searchStopWords = <String>{
   'del',
   'events',
   'event',
+  'eventen',
   'eventos',
   'evenementen',
   'evenements',
