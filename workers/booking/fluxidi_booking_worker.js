@@ -19635,6 +19635,38 @@ function _ticketmasterCategoryHints(category) {
   }
 }
 
+function _ticketmasterCategoryHintStrategies(category) {
+  const normalizedCategory = String(category || "").toLowerCase();
+  const primary = _ticketmasterCategoryHints(normalizedCategory);
+  const strategies = [primary];
+  if (normalizedCategory === "theater") {
+    strategies.push({
+      classificationName: "Arts & Theatre",
+      keywordHint: "theatre theater musical drama spectacle",
+    });
+    strategies.push({
+      classificationName: "",
+      keywordHint: "theatre theater musical drama spectacle stage play",
+    });
+  } else if (normalizedCategory === "comedy") {
+    strategies.push({
+      classificationName: "",
+      keywordHint: "comedy stand-up comedian humor humour comedie comédie",
+    });
+  }
+  const deduped = [];
+  const seen = new Set();
+  for (const item of strategies) {
+    const classificationName = safeStr(item?.classificationName);
+    const keywordHint = safeStr(item?.keywordHint);
+    const key = `${classificationName}::${keywordHint}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({ classificationName, keywordHint });
+  }
+  return deduped;
+}
+
 function _ticketmasterDateToUtc(dateTimeValue, dateValue) {
   const dt = safeStr(dateTimeValue);
   if (dt) {
@@ -19789,37 +19821,28 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   if (!apiKey) {
     return { ok: false, warnings: ["ticketmaster_api_key_missing"] };
   }
-  const baseParams = new URLSearchParams();
-  baseParams.set("apikey", apiKey);
-  baseParams.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
-  baseParams.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 50))));
-  const categoryHints = _ticketmasterCategoryHints(query?.category);
-  if (categoryHints.classificationName) {
-    baseParams.set("classificationName", categoryHints.classificationName);
-  }
-  const keywordParts = [];
-  if (query?.keyword) keywordParts.push(safeStr(query.keyword));
-  if (categoryHints.keywordHint) keywordParts.push(categoryHints.keywordHint);
-  const keyword = keywordParts.join(" ").trim().slice(0, 120);
-  if (keyword) baseParams.set("keyword", keyword);
+  const staticParams = new URLSearchParams();
+  staticParams.set("apikey", apiKey);
+  staticParams.set("countryCode", safeStr(query?.country || "BE").toUpperCase() || "BE");
+  staticParams.set("size", String(Math.max(1, Math.min(50, Number(query?.limit) || 50))));
   const startDateTime = _ticketmasterDateTimeParam(query?.startAtUtc);
   const endDateTime = _ticketmasterDateTimeParam(query?.endAtUtc);
-  if (startDateTime) baseParams.set("startDateTime", startDateTime);
-  if (endDateTime) baseParams.set("endDateTime", endDateTime);
+  if (startDateTime) staticParams.set("startDateTime", startDateTime);
+  if (endDateTime) staticParams.set("endDateTime", endDateTime);
   if (
     query?.latitude != null &&
     query?.longitude != null &&
     query?.radiusKm != null &&
     Number.isFinite(query.radiusKm)
   ) {
-    baseParams.set("latlong", `${query.latitude},${query.longitude}`);
-    baseParams.set("radius", String(Math.max(0, Math.min(500, query.radiusKm))));
-    baseParams.set("unit", "km");
+    staticParams.set("latlong", `${query.latitude},${query.longitude}`);
+    staticParams.set("radius", String(Math.max(0, Math.min(500, query.radiusKm))));
+    staticParams.set("unit", "km");
   }
-  const fetchTicketmasterAttempt = async ({ includeSort }) => {
-    const params = new URLSearchParams(baseParams.toString());
-    if (includeSort) params.set("sort", "date,asc");
-    const requestUrl = `https://app.ticketmaster.com/discovery/v2/events.json?${params.toString()}`;
+  const fetchTicketmasterAttempt = async ({ params, includeSort }) => {
+    const nextParams = new URLSearchParams(params.toString());
+    if (includeSort) nextParams.set("sort", "date,asc");
+    const requestUrl = `https://app.ticketmaster.com/discovery/v2/events.json?${nextParams.toString()}`;
     const controller = new AbortController();
     const timeoutMs = 4000;
     const timer = setTimeout(() => {
@@ -19838,67 +19861,125 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
       clearTimeout(timer);
     }
   };
-
-  let attempt = await fetchTicketmasterAttempt({ includeSort: true });
-  let response = attempt.response;
-  const fallbackWarnings = [];
-  if (!attempt.ok) {
-    return { ok: false, warnings: ["ticketmaster_http_error"] };
-  }
-  if (!response || !response.ok) {
-    if (response && Number.isFinite(response.status)) {
-      fallbackWarnings.push(`ticketmaster_http_status_${response.status}`);
+  const normalizedCategory = String(query?.category || "").toLowerCase();
+  const strategies = _ticketmasterCategoryHintStrategies(normalizedCategory);
+  const isRetryCategory = normalizedCategory === "theater" || normalizedCategory === "comedy";
+  const providerKeyword = safeStr(query?.keyword);
+  let mergedWarnings = [];
+  let retryUsed = false;
+  for (let i = 0; i < strategies.length; i += 1) {
+    const strategy = strategies[i] || {};
+    const params = new URLSearchParams(staticParams.toString());
+    if (strategy.classificationName) {
+      params.set("classificationName", strategy.classificationName);
     }
-    // Some API configurations reject sort=date,asc for certain queries; retry once without sort.
-    attempt = await fetchTicketmasterAttempt({ includeSort: false });
+    const keywordParts = [];
+    if (providerKeyword) keywordParts.push(providerKeyword);
+    if (strategy.keywordHint) keywordParts.push(strategy.keywordHint);
+    const keyword = keywordParts.join(" ").trim().slice(0, 120);
+    if (keyword) params.set("keyword", keyword);
+
+    let attempt = await fetchTicketmasterAttempt({ params, includeSort: true });
+    let response = attempt.response;
+    const fallbackWarnings = [];
     if (!attempt.ok) {
-      return {
-        ok: false,
-        warnings: _mergePublicEventWarnings(
+      mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_http_error"]);
+      if (isRetryCategory && i < strategies.length - 1) {
+        retryUsed = true;
+        continue;
+      }
+      return { ok: false, warnings: mergedWarnings };
+    }
+    if (!response || !response.ok) {
+      if (response && Number.isFinite(response.status)) {
+        fallbackWarnings.push(`ticketmaster_http_status_${response.status}`);
+      }
+      // Some API configurations reject sort=date,asc for certain queries; retry once without sort.
+      attempt = await fetchTicketmasterAttempt({ params, includeSort: false });
+      if (!attempt.ok) {
+        mergedWarnings = _mergePublicEventWarnings(
+          mergedWarnings,
           fallbackWarnings,
           ["ticketmaster_http_error"],
-        ),
-      };
-    }
-    response = attempt.response;
-    if (!response || !response.ok) {
-      return {
-        ok: false,
-        warnings: _mergePublicEventWarnings(
+        );
+        if (isRetryCategory && i < strategies.length - 1) {
+          retryUsed = true;
+          continue;
+        }
+        return { ok: false, warnings: mergedWarnings };
+      }
+      response = attempt.response;
+      if (!response || !response.ok) {
+        mergedWarnings = _mergePublicEventWarnings(
+          mergedWarnings,
           fallbackWarnings,
           ["ticketmaster_http_error"],
           response && Number.isFinite(response.status)
             ? [`ticketmaster_http_status_${response.status}`]
             : [],
-        ),
-      };
+        );
+        if (isRetryCategory && i < strategies.length - 1) {
+          retryUsed = true;
+          continue;
+        }
+        return { ok: false, warnings: mergedWarnings };
+      }
+    }
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (_) {
+      mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_invalid_payload"]);
+      if (isRetryCategory && i < strategies.length - 1) {
+        retryUsed = true;
+        continue;
+      }
+      return { ok: false, warnings: mergedWarnings };
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_invalid_payload"]);
+      if (isRetryCategory && i < strategies.length - 1) {
+        retryUsed = true;
+        continue;
+      }
+      return { ok: false, warnings: mergedWarnings };
+    }
+    const rawEvents = Array.isArray(payload?._embedded?.events)
+      ? payload._embedded.events
+      : [];
+    if (!rawEvents.length) {
+      mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]);
+      if (isRetryCategory && i < strategies.length - 1) {
+        retryUsed = true;
+        continue;
+      }
+      break;
+    }
+    const actionableEvents = rawEvents.filter((item) => _ticketmasterIsActionable(item));
+    const mapped = actionableEvents
+      .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
+      .filter((item) => !!item)
+      .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))
+      .slice(0, query.limit);
+    if (mapped.length) {
+      const warnings = retryUsed
+        ? _mergePublicEventWarnings(["ticketmaster_category_retry_used"])
+        : [];
+      return { ok: true, warnings, events: mapped };
+    }
+    mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]);
+    if (isRetryCategory && i < strategies.length - 1) {
+      retryUsed = true;
+      continue;
     }
   }
-  let payload;
-  try {
-    payload = await response.json();
-  } catch (_) {
-    return { ok: false, warnings: ["ticketmaster_invalid_payload"] };
+  if (retryUsed) {
+    mergedWarnings = _mergePublicEventWarnings(
+      mergedWarnings,
+      ["ticketmaster_category_retry_used", "ticketmaster_category_retry_empty"],
+    );
   }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { ok: false, warnings: ["ticketmaster_invalid_payload"] };
-  }
-  const rawEvents = Array.isArray(payload?._embedded?.events)
-    ? payload._embedded.events
-    : [];
-  if (!rawEvents.length) {
-    return { ok: false, warnings: ["ticketmaster_empty"] };
-  }
-  const actionableEvents = rawEvents.filter((item) => _ticketmasterIsActionable(item));
-  const mapped = actionableEvents
-    .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
-    .filter((item) => !!item)
-    .filter((eventItem) => _publicEventMatchesQuery(eventItem, query))
-    .slice(0, query.limit);
-  if (!mapped.length) {
-    return { ok: false, warnings: ["ticketmaster_empty"] };
-  }
-  return { ok: true, warnings: [], events: mapped };
+  return { ok: false, warnings: _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]) };
 }
 
 function _buildPublicEventSeedList(updatedAtUtc) {
