@@ -44,6 +44,16 @@ class DiscoveryDestination {
   final String providerId;
   final String? tenantId;
   final String? companyId;
+
+  String get prefillDestinationText {
+    final address = destinationAddress.trim();
+    if (address.isNotEmpty) return address;
+    final name = destinationName.trim();
+    if (name.isNotEmpty) return name;
+    final cityValue = city.trim();
+    if (cityValue.isNotEmpty) return cityValue;
+    return '$region, $country';
+  }
 }
 
 class HotelStay {

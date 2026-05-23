@@ -1,19 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:fluxidi_tracking/calculator_page.dart';
 
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 import 'hotel_seed_data.dart';
 
 class HotelsPage extends StatefulWidget {
-  const HotelsPage({this.stays, this.onTaxiToStay, super.key});
+  const HotelsPage({
+    this.stays,
+    this.onTaxiToStay,
+    this.onTaxiToDestination,
+    this.tenantId,
+    this.companyId,
+    super.key,
+  });
 
   /// Optional data injection for later phases (API/provider).
   final List<HotelStay>? stays;
 
   /// Optional CTA callback for later taxi-prefill integration.
   final void Function(HotelStay stay)? onTaxiToStay;
+  final void Function(DiscoveryDestination destination)? onTaxiToDestination;
+  final String? tenantId;
+  final String? companyId;
 
   @override
   State<HotelsPage> createState() => _HotelsPageState();
@@ -241,12 +252,12 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
-  String _taxiHandoffPreparedLabel(String destinationName) {
+  String get _taxiNavigationFallbackLabel {
     return _t(
-      nl: 'Taxi handoff voorbereid voor $destinationName',
-      en: 'Taxi handoff prepared for $destinationName',
-      fr: 'Transfert taxi prêt pour $destinationName',
-      es: 'Transferencia de taxi preparada para $destinationName',
+      nl: 'Taxi-handoff gebruikt fallbackmodus.',
+      en: 'Taxi handoff is using fallback mode.',
+      fr: 'Le transfert taxi utilise le mode de secours.',
+      es: 'La transferencia de taxi usa el modo de respaldo.',
     );
   }
 
@@ -373,7 +384,10 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   void _onTaxiCtaTap(HotelStay stay) {
-    final destination = stay.toDiscoveryDestination();
+    final destination = stay.toDiscoveryDestination(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+    );
     debugPrint(
       '[hotels.discovery_handoff] type=${destination.discoveryType} '
       'name="${destination.destinationName}" '
@@ -381,16 +395,41 @@ class _HotelsPageState extends State<HotelsPage> {
       'lat=${destination.latitude} lng=${destination.longitude} '
       'city="${destination.city}" region="${destination.region}" country="${destination.country}"',
     );
-    final snackBar = SnackBar(
-      content: Text(_taxiHandoffPreparedLabel(destination.destinationName)),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+
+    final destinationCallback = widget.onTaxiToDestination;
+    if (destinationCallback != null) {
+      destinationCallback(destination);
+      return;
+    }
 
     final callback = widget.onTaxiToStay;
     if (callback != null) {
       callback(stay);
       return;
     }
+
+    final destinationText = destination.prefillDestinationText;
+    final nav = Navigator.of(context);
+    nav
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CalculatorPage(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              mapboxToken: kMapboxToken,
+              initialToAddress: destinationText,
+              initialToLat: destination.latitude,
+              initialToLng: destination.longitude,
+              initialDestinationLabel: destination.destinationName,
+              initialServiceId: 'hotel',
+            ),
+          ),
+        )
+        .catchError((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(_taxiNavigationFallbackLabel)));
+        });
   }
 
   @override
