@@ -218,6 +218,74 @@ class _HotelsPageState extends State<HotelsPage> {
     }
   }
 
+  String get _recommendedLabel {
+    return _t(
+      nl: 'Aanbevolen',
+      en: 'Recommended',
+      fr: 'Recommandé',
+      es: 'Recomendado',
+    );
+  }
+
+  String get _fromLabel {
+    return _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde');
+  }
+
+  bool _isPremiumStay(HotelStay stay) {
+    if ((stay.rating ?? 0) >= 4.7) return true;
+    final joined = <String>[
+      ...stay.tags,
+      ...stay.travelStyles,
+      ...stay.popularFor,
+      stay.ambience ?? '',
+    ].join(' ').toLowerCase();
+    const premiumKeywords = <String>[
+      'premium',
+      'luxury',
+      'luxe',
+      'wellness',
+      'resort',
+      'boutique',
+      'spa',
+    ];
+    for (final keyword in premiumKeywords) {
+      if (joined.contains(keyword)) return true;
+    }
+    return false;
+  }
+
+  String _displayPriceHint(HotelStay stay) {
+    final raw = (stay.priceHint ?? '').trim();
+    if (raw.isEmpty) return '';
+    final normalized = raw.toLowerCase();
+    if (normalized.startsWith('vanaf ') ||
+        normalized.startsWith('from ') ||
+        normalized.startsWith('desde ') ||
+        normalized.startsWith('à partir')) {
+      return raw;
+    }
+    return '$_fromLabel $raw';
+  }
+
+  List<String> _semanticHighlights(HotelStay stay) {
+    final values = <String>[
+      ...stay.tags,
+      ...stay.travelStyles,
+      ...stay.popularFor,
+    ];
+    final seen = <String>{};
+    final highlights = <String>[];
+    for (final value in values) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) continue;
+      final key = trimmed.toLowerCase();
+      if (!seen.add(key)) continue;
+      highlights.add(trimmed);
+      if (highlights.length >= 2) break;
+    }
+    return highlights;
+  }
+
   String get _allCountriesLabel {
     return _t(
       nl: 'Alle landen',
@@ -599,7 +667,7 @@ class _HotelsPageState extends State<HotelsPage> {
           );
         }
         final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final safeMainAxisExtent = (338.0 * textScale).clamp(338.0, 430.0);
+        final safeMainAxisExtent = (372.0 * textScale).clamp(372.0, 470.0);
         const spacing = 10.0;
         return GridView.builder(
           shrinkWrap: true,
@@ -618,18 +686,29 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Widget _buildStayCard(HotelStay stay) {
+    final premium = _isPremiumStay(stay);
+    final displayPrice = _displayPriceHint(stay);
+    final highlights = _semanticHighlights(stay);
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _gold.withOpacity(0.22)),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _gold.withOpacity(0.06),
+            blurRadius: 14,
+            spreadRadius: 0.2,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 118,
+            height: 132,
             width: double.infinity,
             decoration: BoxDecoration(
               borderRadius: const BorderRadius.vertical(
@@ -638,16 +717,31 @@ class _HotelsPageState extends State<HotelsPage> {
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: <Color>[Color(0xFF1D2538), Color(0xFF101522)],
+                colors: <Color>[Color(0xFF23304A), Color(0xFF111827)],
               ),
             ),
             child: Stack(
               children: [
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: <Color>[
+                          Colors.black.withOpacity(0.12),
+                          Colors.black.withOpacity(0.24),
+                          Colors.black.withOpacity(0.58),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
                 Center(
                   child: Icon(
                     Icons.hotel_rounded,
-                    size: 46,
-                    color: _gold.withOpacity(0.85),
+                    size: 50,
+                    color: _gold.withOpacity(0.92),
                   ),
                 ),
                 Positioned(
@@ -673,6 +767,54 @@ class _HotelsPageState extends State<HotelsPage> {
                     ),
                   ),
                 ),
+                if (stay.rating != null)
+                  Positioned(
+                    right: 10,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.38),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _gold.withOpacity(0.44)),
+                      ),
+                      child: Text(
+                        '★ ${stay.rating!.toStringAsFixed(1)}',
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (premium)
+                  Positioned(
+                    left: 10,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _gold.withOpacity(0.22),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _gold.withOpacity(0.62)),
+                      ),
+                      child: Text(
+                        _recommendedLabel,
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 10.4,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -689,17 +831,17 @@ class _HotelsPageState extends State<HotelsPage> {
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w800,
-                      fontSize: 15.4,
+                      fontSize: 15.8,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${stay.city}, ${stay.region}',
-                    maxLines: 1,
+                    '${stay.city}, ${stay.region}, ${stay.country}',
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: _gold.withOpacity(0.92),
-                      fontSize: 11.8,
+                      fontSize: 11.4,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -714,25 +856,46 @@ class _HotelsPageState extends State<HotelsPage> {
                       height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 7),
-                  if (stay.tags.isNotEmpty)
-                    Text(
-                      stay.tags.take(3).join('  |  '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.68),
-                        fontSize: 10.8,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  const SizedBox(height: 8),
+                  if (highlights.isNotEmpty)
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: highlights
+                          .map(
+                            (tag) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF171717),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: _gold.withOpacity(0.32),
+                                ),
+                              ),
+                              child: Text(
+                                tag,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.78),
+                                  fontSize: 10.2,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
-                  if (stay.priceHint != null) ...[
+                  if (displayPrice.isNotEmpty) ...[
                     const SizedBox(height: 5),
                     Text(
-                      stay.priceHint!,
+                      displayPrice,
                       style: const TextStyle(
                         color: _gold,
-                        fontSize: 11.5,
+                        fontSize: 11.7,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
