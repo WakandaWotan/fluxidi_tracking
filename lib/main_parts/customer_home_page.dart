@@ -159,6 +159,12 @@ class CustomerHomePage extends StatelessWidget {
     );
   }
 
+  void _openHotelsPage(BuildContext context) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const HotelsPage()));
+  }
+
   String _partnerSelectionValue(Map<String, String>? map, String key) {
     if (map == null) return '';
     return (map[key] ?? '').trim();
@@ -502,7 +508,7 @@ class CustomerHomePage extends StatelessWidget {
             fr: 'Hôtels & B&B',
             es: 'Hoteles & B&B',
           ),
-          onTap: () => _comingSoon(context),
+          onTap: () => _openHotelsPage(context),
         ),
       ]);
     }
@@ -901,7 +907,7 @@ class CustomerHomePage extends StatelessWidget {
                                 'assets/fluxidi/Hotel&B&B_background.png',
                             visualHeight: customerWideCardHeight,
                             visualAlignment: const Alignment(0.62, 0.08),
-                            onTap: () => _comingSoon(context),
+                            onTap: () => _openHotelsPage(context),
                           ),
                           _customerWideCard(
                             context: context,
@@ -984,7 +990,7 @@ class CustomerHomePage extends StatelessWidget {
                         visualOverlayOpacityMultiplier: isTabletPortrait
                             ? 0.9
                             : 1.0,
-                        onTap: () => _comingSoon(context),
+                        onTap: () => _openHotelsPage(context),
                       ),
                       const SizedBox(height: 10),
                     ],

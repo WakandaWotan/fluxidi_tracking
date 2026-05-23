@@ -58,6 +58,7 @@ import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'airport/airport_page.dart';
 import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
+import 'hotels/hotels_page.dart';
 import 'nearby_partners_page.dart';
 import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_draw_state.dart';
