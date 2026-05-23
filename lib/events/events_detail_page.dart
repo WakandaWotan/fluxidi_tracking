@@ -193,7 +193,7 @@ class EventDetailPage extends StatelessWidget {
     final heroImageUrl = _heroImageUrl;
     final secondaryChipLabel = _heroSecondaryChipLabel;
     return Container(
-      height: 206,
+      height: 236,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _gold.withOpacity(0.32)),
