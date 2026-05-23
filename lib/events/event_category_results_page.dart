@@ -105,9 +105,15 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
 
   EventFeedQuery _buildEventFeedQuery() {
     final isMonth = widget.dateMode == EventDateMode.month;
+    final providerCountryCode = _providerCountryCodeFromMarketKey(
+      widget.marketKey,
+    );
+    final providerMarketCode = _providerMarketCodeFromMarketKey(
+      widget.marketKey,
+    );
     return EventFeedQuery(
-      countryCode: widget.marketKey.toUpperCase(),
-      marketCode: widget.marketKey,
+      countryCode: providerCountryCode,
+      marketCode: providerMarketCode,
       dateMode: widget.dateMode,
       startAtUtc: isMonth ? widget.monthStartUtc : null,
       endAtUtc: isMonth ? widget.monthEndUtc : null,
@@ -115,6 +121,34 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       searchQuery: widget.searchQuery.trim(),
       limit: 50,
     );
+  }
+
+  String _providerCountryCodeFromMarketKey(String marketKey) {
+    switch (marketKey.trim().toLowerCase()) {
+      case 'be':
+        return 'BE';
+      case 'nl':
+        return 'NL';
+      case 'fr':
+        return 'FR';
+      case 'uk':
+      case 'gb':
+        return 'GB';
+      case 'es':
+        return 'ES';
+      default:
+        return marketKey.trim().toUpperCase();
+    }
+  }
+
+  String _providerMarketCodeFromMarketKey(String marketKey) {
+    switch (marketKey.trim().toLowerCase()) {
+      case 'uk':
+      case 'gb':
+        return 'gb';
+      default:
+        return marketKey.trim().toLowerCase();
+    }
   }
 
   String _marketLabel(String key) {
@@ -971,10 +1005,10 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       ),
       child: Text(
         _t(
-          nl: 'Geen evenementen gevonden voor deze selectie.',
-          en: 'No events found for this selection.',
-          fr: 'Aucun evenement trouve pour cette selection.',
-          es: 'No se encontraron eventos para esta seleccion.',
+          nl: 'Geen evenementen gevonden voor deze regio en filters. Probeer een andere datum, categorie of zoekterm.',
+          en: 'No events found for this market and filter set. Try another date, category, or search term.',
+          fr: 'Aucun evenement trouve pour ce marche et ces filtres. Essayez une autre date, categorie ou recherche.',
+          es: 'No se encontraron eventos para este mercado y filtros. Prueba otra fecha, categoria o busqueda.',
         ),
         textAlign: TextAlign.center,
         style: const TextStyle(color: _softText, fontSize: 13),

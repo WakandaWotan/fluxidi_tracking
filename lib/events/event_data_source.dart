@@ -176,8 +176,12 @@ class RemoteEventDataSource implements EventDataSource {
         : '${base.replaceAll(RegExp(r'/+$'), '')}/public/events';
     final uri = Uri.parse(raw);
     final qp = <String, String>{...uri.queryParameters};
-    _putIfNotEmpty(qp, 'country', query.countryCode?.toUpperCase());
-    _putIfNotEmpty(qp, 'market', query.marketCode?.toLowerCase());
+    final normalizedCountry = _normalizedCountryCodeForProvider(
+      query.countryCode,
+    );
+    final normalizedMarket = _normalizedMarketCodeForProvider(query.marketCode);
+    _putIfNotEmpty(qp, 'country', normalizedCountry);
+    _putIfNotEmpty(qp, 'market', normalizedMarket);
     _putIfNotEmpty(qp, 'category', query.categoryKey?.toLowerCase());
     final normalizedDateMode = query.dateMode?.trim().toLowerCase();
     if (normalizedDateMode == EventDateMode.today) {
@@ -222,6 +226,20 @@ class RemoteEventDataSource implements EventDataSource {
   ) {
     final normalized = (value ?? '').trim();
     if (normalized.isNotEmpty) target[key] = normalized;
+  }
+
+  static String? _normalizedCountryCodeForProvider(String? value) {
+    final normalized = (value ?? '').trim().toUpperCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'UK') return 'GB';
+    return normalized;
+  }
+
+  static String? _normalizedMarketCodeForProvider(String? value) {
+    final normalized = (value ?? '').trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'uk') return 'gb';
+    return normalized;
   }
 
   EventDetailData? _mapEvent(Map<String, dynamic> event) {

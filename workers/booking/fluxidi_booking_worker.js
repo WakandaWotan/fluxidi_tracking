@@ -19479,9 +19479,18 @@ function _normalizePublicEventsQuery(url) {
     warnings,
   });
 
+  const normalizedMarket = _normalizePublicEventsMarketCode(marketRaw);
+  const normalizedCountry = _normalizePublicEventsCountryCode(countryRaw, normalizedMarket);
+  if (countryRaw && normalizedCountry && countryRaw.toUpperCase() !== normalizedCountry) {
+    warnings.push("country_alias_normalized");
+  }
+  if (marketRaw && normalizedMarket && marketRaw.toLowerCase() !== normalizedMarket) {
+    warnings.push("market_alias_normalized");
+  }
+
   return {
-    country: countryRaw.toUpperCase(),
-    market: marketRaw.toLowerCase(),
+    country: normalizedCountry,
+    market: normalizedMarket,
     category: categoryRaw.toLowerCase(),
     dateMode: dateRange.dateMode,
     startAtUtc: dateRange.startAtUtc,
@@ -19493,6 +19502,21 @@ function _normalizePublicEventsQuery(url) {
     radiusKm,
     warnings,
   };
+}
+
+function _normalizePublicEventsMarketCode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "uk") return "gb";
+  return normalized;
+}
+
+function _normalizePublicEventsCountryCode(value, normalizedMarket) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "UK") return "GB";
+  if (normalized) return normalized;
+  if (String(normalizedMarket || "").toLowerCase() === "gb") return "GB";
+  return "";
 }
 
 function _publicEventsHaversineKm(lat1, lng1, lat2, lng2) {
@@ -19971,6 +19995,12 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
   const strategies = _ticketmasterCategoryHintStrategies(normalizedCategory);
   const isRetryCategory = normalizedCategory === "theater" || normalizedCategory === "comedy";
   const providerKeyword = safeStr(query?.keyword);
+  const queryDiagnostics = [
+    query?.country ? `diag_country_${String(query.country).toLowerCase()}` : "",
+    query?.market ? `diag_market_${String(query.market).toLowerCase()}` : "",
+    query?.category ? `diag_category_${String(query.category).toLowerCase()}` : "",
+    query?.dateMode ? `diag_date_${String(query.dateMode).toLowerCase()}` : "",
+  ].filter(Boolean);
   let mergedWarnings = [];
   let retryUsed = false;
   let keywordStrategyUsed = false;
@@ -20077,8 +20107,8 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
         keywordStrategyUsed = true;
       }
       const warnings = keywordStrategyUsed
-        ? _mergePublicEventWarnings(["ticketmaster_category_keyword_strategy_used"])
-        : [];
+        ? _mergePublicEventWarnings(["ticketmaster_category_keyword_strategy_used"], queryDiagnostics)
+        : _mergePublicEventWarnings(queryDiagnostics);
       return { ok: true, warnings, events: mapped };
     }
     mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]);
@@ -20093,7 +20123,10 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
       ["ticketmaster_category_retry_empty"],
     );
   }
-  return { ok: false, warnings: _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]) };
+  return {
+    ok: false,
+    warnings: _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"], queryDiagnostics),
+  };
 }
 
 function _buildPublicEventSeedList(updatedAtUtc) {
