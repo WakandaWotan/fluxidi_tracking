@@ -28,6 +28,9 @@ class HotelStay {
     this.priceHint,
     this.rating,
     this.tags = const <String>[],
+    this.travelStyles = const <String>[],
+    this.ambience,
+    this.popularFor = const <String>[],
   });
 
   final String id;
@@ -47,4 +50,7 @@ class HotelStay {
   final String? priceHint;
   final double? rating;
   final List<String> tags;
+  final List<String> travelStyles;
+  final String? ambience;
+  final List<String> popularFor;
 }
