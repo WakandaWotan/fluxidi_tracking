@@ -1117,20 +1117,22 @@ class _EventsPageState extends State<EventsPage> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final mediaQuery = MediaQuery.of(context);
             const horizontalPadding = 14.0;
             const topPadding = 10.0;
             const bottomPadding = 18.0;
-            const tileSpacing = 10.0;
-            const headerToSearchSpacing = 8.0;
-            const searchToControlsSpacing = 8.0;
-            const controlsToHeadingSpacing = 10.0;
-            const headingToGridSpacing = 8.0;
-            const estimatedHeaderHeight = 50.0;
-            const estimatedSearchHeight = 48.0;
-            const estimatedControlsHeight = 102.0;
-            const estimatedHeadingHeight = 22.0;
-
             final screenWidth = constraints.maxWidth;
+            final shortestSide = mediaQuery.size.shortestSide;
+            final isTabletLayout = shortestSide >= 600 || screenWidth >= 700;
+            final headerToSearchSpacing = isTabletLayout ? 10.0 : 8.0;
+            final searchToControlsSpacing = isTabletLayout ? 10.0 : 8.0;
+            final controlsToHeadingSpacing = isTabletLayout ? 12.0 : 10.0;
+            final headingToGridSpacing = isTabletLayout ? 10.0 : 8.0;
+            final estimatedHeaderHeight = isTabletLayout ? 58.0 : 50.0;
+            final estimatedSearchHeight = isTabletLayout ? 56.0 : 48.0;
+            final estimatedControlsHeight = isTabletLayout ? 132.0 : 102.0;
+            final estimatedHeadingHeight = isTabletLayout ? 30.0 : 22.0;
+            final tileSpacing = isTabletLayout ? 12.0 : 10.0;
             final columns = screenWidth < 360 ? 2 : 3;
             final rows = (_categoryFilterKeys.length / columns).ceil();
             final contentWidth = screenWidth - (horizontalPadding * 2);
@@ -1152,13 +1154,23 @@ class _EventsPageState extends State<EventsPage> {
                 constraints.maxHeight - estimatedTopContentHeight;
             final unclampedTileHeight =
                 (remainingHeight - ((rows - 1) * tileSpacing)) / rows;
-            final minTileHeight = screenWidth < 360 ? 108.0 : 130.0;
-            final maxTileHeight = screenWidth < 360 ? 145.0 : 165.0;
+            final minTileHeight = isTabletLayout
+                ? 215.0
+                : (screenWidth < 360 ? 108.0 : 130.0);
+            final maxTileHeight = isTabletLayout
+                ? 300.0
+                : (screenWidth < 360 ? 145.0 : 165.0);
             final tileHeight = unclampedTileHeight
                 .clamp(minTileHeight, maxTileHeight)
                 .toDouble();
             final gridHeight = (tileHeight * rows) + ((rows - 1) * tileSpacing);
             final tileAspectRatio = tileWidth / tileHeight;
+            final categoryLabelFontSize = isTabletLayout ? 22.0 : 12.2;
+            final categoryIconSize = isTabletLayout ? 28.0 : 16.0;
+            final categoryTileInset = isTabletLayout ? 14.0 : 8.0;
+            final categoryLabelMaxLines = isTabletLayout ? 2 : 1;
+            final categoryLabelSpacing = isTabletLayout ? 6.0 : 3.0;
+            final headingFontSize = isTabletLayout ? 22.0 : 14.0;
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(
@@ -1168,12 +1180,12 @@ class _EventsPageState extends State<EventsPage> {
                 bottomPadding,
               ),
               children: [
-                _buildHeader(context),
-                const SizedBox(height: headerToSearchSpacing),
-                _buildSearchField(),
-                const SizedBox(height: searchToControlsSpacing),
-                _buildCompactDiscoveryControls(),
-                const SizedBox(height: controlsToHeadingSpacing),
+                _buildHeader(context, isTabletLayout: isTabletLayout),
+                SizedBox(height: headerToSearchSpacing),
+                _buildSearchField(isTabletLayout: isTabletLayout),
+                SizedBox(height: searchToControlsSpacing),
+                _buildCompactDiscoveryControls(isTabletLayout: isTabletLayout),
+                SizedBox(height: controlsToHeadingSpacing),
                 Text(
                   _t(
                     nl: 'Categorieën',
@@ -1181,13 +1193,13 @@ class _EventsPageState extends State<EventsPage> {
                     fr: 'Categories',
                     es: 'Categorias',
                   ),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
+                    fontSize: headingFontSize,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: headingToGridSpacing),
+                SizedBox(height: headingToGridSpacing),
                 SizedBox(
                   height: gridHeight,
                   child: GridView.builder(
@@ -1200,8 +1212,14 @@ class _EventsPageState extends State<EventsPage> {
                       mainAxisSpacing: tileSpacing,
                       childAspectRatio: tileAspectRatio,
                     ),
-                    itemBuilder: (context, index) =>
-                        _buildCategoryTile(_categoryFilterKeys[index]),
+                    itemBuilder: (context, index) => _buildCategoryTile(
+                      _categoryFilterKeys[index],
+                      iconSize: categoryIconSize,
+                      labelFontSize: categoryLabelFontSize,
+                      labelMaxLines: categoryLabelMaxLines,
+                      contentInset: categoryTileInset,
+                      labelSpacing: categoryLabelSpacing,
+                    ),
                   ),
                 ),
               ],
@@ -1212,12 +1230,12 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, {required bool isTabletLayout}) {
     return Row(
       children: [
         IconButton(
           onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back_rounded),
+          icon: Icon(Icons.arrow_back_rounded, size: isTabletLayout ? 27 : 24),
           color: _gold,
           tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
         ),
@@ -1231,9 +1249,9 @@ class _EventsPageState extends State<EventsPage> {
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 20,
+              fontSize: isTabletLayout ? 24 : 20,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.2,
             ),
@@ -1245,13 +1263,16 @@ class _EventsPageState extends State<EventsPage> {
             backgroundColor: _panelBlack,
             foregroundColor: _gold,
             side: BorderSide(color: _gold.withOpacity(0.34)),
-            minimumSize: const Size(0, 38),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            minimumSize: Size(0, isTabletLayout ? 46 : 38),
+            padding: EdgeInsets.symmetric(
+              horizontal: isTabletLayout ? 13 : 10,
+              vertical: isTabletLayout ? 8 : 6,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(999),
             ),
           ),
-          icon: const Icon(Icons.bookmark_rounded, size: 16),
+          icon: Icon(Icons.bookmark_rounded, size: isTabletLayout ? 20 : 16),
           label: Text(
             _t(
               nl: 'Opgeslagen',
@@ -1259,19 +1280,22 @@ class _EventsPageState extends State<EventsPage> {
               fr: 'Enregistres',
               es: 'Guardados',
             ),
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11.8),
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: isTabletLayout ? 14.5 : 11.8,
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSearchField() {
+  Widget _buildSearchField({required bool isTabletLayout}) {
     return TextField(
       controller: _searchController,
       textInputAction: TextInputAction.search,
       onSubmitted: (_) => _openSearchResults(),
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: Colors.white, fontSize: isTabletLayout ? 16 : 14),
       decoration: InputDecoration(
         hintText: _t(
           nl: 'Zoek evenement of locatie',
@@ -1279,16 +1303,30 @@ class _EventsPageState extends State<EventsPage> {
           fr: 'Rechercher un evenement ou un lieu',
           es: 'Buscar evento o ubicación',
         ),
-        hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
-        prefixIcon: const Icon(Icons.search_rounded, color: _gold, size: 20),
+        hintStyle: TextStyle(
+          color: const Color(0xFF8C8C8C),
+          fontSize: isTabletLayout ? 15.2 : 14,
+        ),
+        prefixIcon: Icon(
+          Icons.search_rounded,
+          color: _gold,
+          size: isTabletLayout ? 24 : 20,
+        ),
         suffixIcon: IconButton(
           onPressed: _openSearchResults,
-          icon: const Icon(Icons.arrow_forward_rounded, color: _gold, size: 20),
+          icon: Icon(
+            Icons.arrow_forward_rounded,
+            color: _gold,
+            size: isTabletLayout ? 24 : 20,
+          ),
         ),
         filled: true,
         fillColor: _panelBlack,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-        isDense: true,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: isTabletLayout ? 14 : 11,
+          vertical: isTabletLayout ? 12 : 9,
+        ),
+        isDense: !isTabletLayout,
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: _gold.withOpacity(0.24)),
@@ -1301,9 +1339,14 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildCompactDiscoveryControls() {
+  Widget _buildCompactDiscoveryControls({required bool isTabletLayout}) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      padding: EdgeInsets.fromLTRB(
+        isTabletLayout ? 12 : 10,
+        isTabletLayout ? 11 : 9,
+        isTabletLayout ? 12 : 10,
+        isTabletLayout ? 12 : 10,
+      ),
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(12),
@@ -1319,9 +1362,10 @@ class _EventsPageState extends State<EventsPage> {
                   value: _dateFilterLabel(_selectedDateMode),
                   icon: Icons.calendar_month_rounded,
                   onTap: _openDatePicker,
+                  isTabletLayout: isTabletLayout,
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: isTabletLayout ? 10 : 8),
               Expanded(
                 child: _buildCompactFilterButton(
                   label: _t(
@@ -1333,9 +1377,10 @@ class _EventsPageState extends State<EventsPage> {
                   value: _categoryFilterLabel(_selectedCategoryKey),
                   icon: Icons.grid_view_rounded,
                   onTap: _openCategoryPicker,
+                  isTabletLayout: isTabletLayout,
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: isTabletLayout ? 10 : 8),
               Expanded(
                 child: _buildCompactFilterButton(
                   label: _t(
@@ -1347,19 +1392,22 @@ class _EventsPageState extends State<EventsPage> {
                   value: _sortModeLabel(_selectedSortMode),
                   icon: Icons.swap_vert_rounded,
                   onTap: _openSortPicker,
+                  isTabletLayout: isTabletLayout,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: isTabletLayout ? 10 : 8),
           Row(
             children: [
-              _buildRegionSelectorChip(),
-              const SizedBox(width: 8),
-              Expanded(child: _buildActiveSummaryBar()),
+              _buildRegionSelectorChip(isTabletLayout: isTabletLayout),
+              SizedBox(width: isTabletLayout ? 10 : 8),
+              Expanded(
+                child: _buildActiveSummaryBar(isTabletLayout: isTabletLayout),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: isTabletLayout ? 10 : 8),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -1368,16 +1416,19 @@ class _EventsPageState extends State<EventsPage> {
                 backgroundColor: const Color(0xFF161616),
                 foregroundColor: _gold,
                 side: BorderSide(color: _gold.withOpacity(0.34)),
-                minimumSize: const Size.fromHeight(37),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
+                minimumSize: Size.fromHeight(isTabletLayout ? 50 : 37),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isTabletLayout ? 12 : 10,
+                  vertical: isTabletLayout ? 10 : 8,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+              icon: Icon(
+                Icons.auto_awesome_rounded,
+                size: isTabletLayout ? 20 : 16,
+              ),
               label: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
@@ -1389,9 +1440,9 @@ class _EventsPageState extends State<EventsPage> {
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    fontSize: 12.2,
+                    fontSize: isTabletLayout ? 14.8 : 12.2,
                   ),
                 ),
               ),
@@ -1407,6 +1458,7 @@ class _EventsPageState extends State<EventsPage> {
     required String value,
     required IconData icon,
     required VoidCallback onTap,
+    required bool isTabletLayout,
   }) {
     return Material(
       color: const Color(0xFF161616),
@@ -1415,11 +1467,20 @@ class _EventsPageState extends State<EventsPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+          padding: EdgeInsets.fromLTRB(
+            isTabletLayout ? 10 : 8,
+            isTabletLayout ? 10 : 7,
+            isTabletLayout ? 10 : 8,
+            isTabletLayout ? 10 : 7,
+          ),
           child: Row(
             children: [
-              Icon(icon, size: 13, color: _gold.withOpacity(0.95)),
-              const SizedBox(width: 5),
+              Icon(
+                icon,
+                size: isTabletLayout ? 18 : 13,
+                color: _gold.withOpacity(0.95),
+              ),
+              SizedBox(width: isTabletLayout ? 7 : 5),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1430,18 +1491,18 @@ class _EventsPageState extends State<EventsPage> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: _softText.withOpacity(0.92),
-                        fontSize: 10.2,
+                        fontSize: isTabletLayout ? 12.4 : 10.2,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    SizedBox(height: isTabletLayout ? 3 : 2),
                     Text(
                       value,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 11.4,
+                        fontSize: isTabletLayout ? 14.4 : 11.4,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1455,7 +1516,7 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildRegionSelectorChip() {
+  Widget _buildRegionSelectorChip({required bool isTabletLayout}) {
     return Material(
       color: const Color(0xFF161616),
       borderRadius: BorderRadius.circular(999),
@@ -1463,21 +1524,24 @@ class _EventsPageState extends State<EventsPage> {
         onTap: _openMarketPicker,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          padding: EdgeInsets.symmetric(
+            horizontal: isTabletLayout ? 13 : 10,
+            vertical: isTabletLayout ? 9 : 7,
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.public_rounded,
-                size: 13,
+                size: isTabletLayout ? 17 : 13,
                 color: _gold.withOpacity(0.95),
               ),
-              const SizedBox(width: 4),
+              SizedBox(width: isTabletLayout ? 6 : 4),
               Text(
                 _marketLabel(_selectedMarketKey),
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 11.6,
+                  fontSize: isTabletLayout ? 14.2 : 11.6,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1488,10 +1552,13 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildActiveSummaryBar() {
+  Widget _buildActiveSummaryBar({required bool isTabletLayout}) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: isTabletLayout ? 12 : 9,
+        vertical: isTabletLayout ? 8 : 6,
+      ),
       decoration: BoxDecoration(
         color: _gold.withOpacity(0.1),
         borderRadius: BorderRadius.circular(999),
@@ -1501,16 +1568,23 @@ class _EventsPageState extends State<EventsPage> {
         _activeFilterSummaryText,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           color: _gold,
-          fontSize: 10.8,
+          fontSize: isTabletLayout ? 13.2 : 10.8,
           fontWeight: FontWeight.w700,
         ),
       ),
     );
   }
 
-  Widget _buildCategoryTile(String categoryKey) {
+  Widget _buildCategoryTile(
+    String categoryKey, {
+    required double iconSize,
+    required double labelFontSize,
+    required int labelMaxLines,
+    required double contentInset,
+    required double labelSpacing,
+  }) {
     final selected = _selectedCategoryKey == categoryKey;
     final icon = categoryKey == 'all'
         ? Icons.grid_view_rounded
@@ -1568,21 +1642,21 @@ class _EventsPageState extends State<EventsPage> {
               ),
             ),
             Positioned(
-              left: 8,
-              right: 8,
-              bottom: 8,
+              left: contentInset,
+              right: contentInset,
+              bottom: contentInset,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, size: 16, color: _gold),
-                  const SizedBox(height: 3),
+                  Icon(icon, size: iconSize, color: _gold),
+                  SizedBox(height: labelSpacing),
                   Text(
                     _categoryFilterLabel(categoryKey),
-                    maxLines: 1,
+                    maxLines: labelMaxLines,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 12.2,
+                      fontSize: labelFontSize,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
