@@ -19575,11 +19575,18 @@ function _publicEventMatchesQuery(eventItem, query) {
     query.radiusKm != null &&
     Number.isFinite(query.radiusKm)
   ) {
+    const eventCoordinate = _publicEventValidateCoordinatePair(
+      eventItem?.latitude,
+      eventItem?.longitude,
+    );
+    if (!eventCoordinate.ok) {
+      return false;
+    }
     const dist = _publicEventsHaversineKm(
       query.latitude,
       query.longitude,
-      Number(eventItem.latitude),
-      Number(eventItem.longitude),
+      eventCoordinate.latitude,
+      eventCoordinate.longitude,
     );
     return Number.isFinite(dist) && dist <= query.radiusKm;
   }
@@ -19590,11 +19597,18 @@ function _publicEventDistanceLabel(eventItem, query) {
   if (query.latitude == null || query.longitude == null) {
     return null;
   }
+  const eventCoordinate = _publicEventValidateCoordinatePair(
+    eventItem?.latitude,
+    eventItem?.longitude,
+  );
+  if (!eventCoordinate.ok) {
+    return null;
+  }
   const dist = _publicEventsHaversineKm(
     query.latitude,
     query.longitude,
-    Number(eventItem.latitude),
-    Number(eventItem.longitude),
+    eventCoordinate.latitude,
+    eventCoordinate.longitude,
   );
   if (!Number.isFinite(dist)) {
     return null;
@@ -19866,6 +19880,204 @@ function _ticketmasterVenueAddress(venue) {
   return line1 || line2 || "";
 }
 
+function _publicEventCoordinateFromRaw(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "string" && raw.trim() === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return value;
+}
+
+function _publicEventValidateCoordinatePair(latRaw, lngRaw) {
+  const latitude = _publicEventCoordinateFromRaw(latRaw);
+  const longitude = _publicEventCoordinateFromRaw(lngRaw);
+  if (latitude == null || longitude == null) {
+    return {
+      ok: false,
+      latitude: null,
+      longitude: null,
+      invalidReason: "missing_or_non_finite",
+    };
+  }
+  if (latitude < -90 || latitude > 90) {
+    return {
+      ok: false,
+      latitude: null,
+      longitude: null,
+      invalidReason: "out_of_range",
+    };
+  }
+  if (longitude < -180 || longitude > 180) {
+    return {
+      ok: false,
+      latitude: null,
+      longitude: null,
+      invalidReason: "out_of_range",
+    };
+  }
+  if (Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001) {
+    return {
+      ok: false,
+      latitude: null,
+      longitude: null,
+      invalidReason: "null_island",
+    };
+  }
+  return {
+    ok: true,
+    latitude,
+    longitude,
+    invalidReason: null,
+  };
+}
+
+function _publicEventsVenueGeocodeQueryParts(venue, query) {
+  const venueName = safeStr(venue?.name, 120);
+  const addressLine1 = safeStr(venue?.address?.line1, 160);
+  const addressLine2 = safeStr(venue?.address?.line2, 160);
+  const city = safeStr(venue?.city?.name, 120);
+  const region = safeStr(
+    venue?.state?.name || venue?.state?.stateCode || venue?.state?.code,
+    80,
+  );
+  const countryName = safeStr(venue?.country?.name, 80);
+  const countryCode = safeStr(venue?.country?.countryCode || query?.country, 8).toUpperCase();
+  const parts = [
+    venueName,
+    addressLine1,
+    addressLine2,
+    city,
+    region,
+    countryName || countryCode,
+  ]
+    .map((item) => safeStr(item, 180).trim())
+    .filter(Boolean);
+  const deduped = [];
+  for (const item of parts) {
+    const lowered = item.toLowerCase();
+    if (deduped.some((entry) => entry.toLowerCase() === lowered)) continue;
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+async function _publicEventsVenueGeocodeCacheKey(countryCode, normalizedText) {
+  const scopedCountry = safeStr(countryCode, 8).trim().toUpperCase() || "XX";
+  const digest = await _sha256Hex(normalizedText);
+  return `event_venue_geocode:v1:${scopedCountry}:${digest}`;
+}
+
+function _publicEventsCoordinateFromMapboxFeature(feature) {
+  const extracted = _allocatorExtractGeocodePoint(feature);
+  const validated = _publicEventValidateCoordinatePair(extracted?.lat, extracted?.lng);
+  if (!validated.ok) return null;
+  return {
+    latitude: validated.latitude,
+    longitude: validated.longitude,
+  };
+}
+
+async function _publicEventsGeocodeVenueCoordinates({ env, venue, query }) {
+  const token = safeStr(env?.MAPBOX_TOKEN, 400).trim();
+  if (!token) {
+    return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+  }
+  const parts = _publicEventsVenueGeocodeQueryParts(venue, query);
+  if (parts.length < 2) {
+    return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+  }
+  const geocodeText = parts.join(", ").slice(0, 320);
+  const normalizedForHash = geocodeText.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalizedForHash) {
+    return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+  }
+  const countryHint = _allocatorMapboxCountryHint(
+    venue?.country?.countryCode || query?.country || query?.market,
+  );
+  const cacheKey = await _publicEventsVenueGeocodeCacheKey(countryHint, normalizedForHash);
+  const missMarker = "__MISS__";
+  if (env?.BOOKING_KV) {
+    try {
+      const cached = await env.BOOKING_KV.get(cacheKey, { type: "json" });
+      if (cached && cached.miss === true) {
+        return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+      }
+      const cachedValidated = _publicEventValidateCoordinatePair(
+        cached?.latitude,
+        cached?.longitude,
+      );
+      if (cachedValidated.ok) {
+        return {
+          ok: true,
+          coordinate: {
+            latitude: cachedValidated.latitude,
+            longitude: cachedValidated.longitude,
+          },
+          coordSource: "venue_geocoded",
+          warnings: ["coord_source=venue_geocoded"],
+        };
+      }
+    } catch (_) {}
+  }
+  const queryText = encodeURIComponent(geocodeText);
+  const countryPart = countryHint ? `&country=${encodeURIComponent(countryHint)}` : "";
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${queryText}.json?limit=1&autocomplete=false&types=address,poi,place,locality,neighborhood&language=fr,en,nl,es${countryPart}&access_token=${token}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3500);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    const coordinate = features.length
+      ? _publicEventsCoordinateFromMapboxFeature(features[0])
+      : null;
+    if (coordinate) {
+      if (env?.BOOKING_KV) {
+        try {
+          await env.BOOKING_KV.put(
+            cacheKey,
+            JSON.stringify({
+              latitude: coordinate.latitude,
+              longitude: coordinate.longitude,
+              source: "venue_geocoded",
+              updated_at_utc: new Date().toISOString(),
+            }),
+            { expirationTtl: 60 * 60 * 24 * 30 },
+          );
+        } catch (_) {}
+      }
+      return {
+        ok: true,
+        coordinate,
+        coordSource: "venue_geocoded",
+        warnings: ["coord_source=venue_geocoded"],
+      };
+    }
+    if (env?.BOOKING_KV) {
+      try {
+        await env.BOOKING_KV.put(
+          cacheKey,
+          JSON.stringify({
+            miss: true,
+            marker: missMarker,
+            updated_at_utc: new Date().toISOString(),
+          }),
+          { expirationTtl: 60 * 30 },
+        );
+      } catch (_) {}
+    }
+    return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+  } catch (_) {
+    return { ok: false, coordinate: null, coordSource: "missing", warnings: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function _ticketmasterStatusCode(tmEvent) {
   return safeStr(tmEvent?.dates?.status?.code || tmEvent?.dates?.status?.description).toLowerCase();
 }
@@ -19892,18 +20104,40 @@ function _ticketmasterIsActionable(tmEvent) {
   return true;
 }
 
-function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
+async function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc, env) {
   const eventId = safeStr(tmEvent?.id);
   const title = safeStr(tmEvent?.name);
-  if (!eventId || !title) return null;
+  if (!eventId || !title) return { event: null, warnings: [] };
   const venue = Array.isArray(tmEvent?._embedded?.venues) ? tmEvent._embedded.venues[0] : null;
   const venueName = safeStr(venue?.name);
   const city = safeStr(venue?.city?.name);
   const countryCode = safeStr(venue?.country?.countryCode || query?.country || "BE").toUpperCase();
   const marketCode = countryCode ? countryCode.toLowerCase() : "";
-  const latitude = _publicEventsToNumberOrNull(venue?.location?.latitude);
-  const longitude = _publicEventsToNumberOrNull(venue?.location?.longitude);
-  if (latitude == null || longitude == null) return null;
+  const directCoordinate = _publicEventValidateCoordinatePair(
+    venue?.location?.latitude,
+    venue?.location?.longitude,
+  );
+  const diagnostics = [];
+  let latitude = null;
+  let longitude = null;
+  if (directCoordinate.ok) {
+    latitude = directCoordinate.latitude;
+    longitude = directCoordinate.longitude;
+    diagnostics.push("coord_source=ticketmaster_venue_location");
+  } else if (directCoordinate.invalidReason === "null_island") {
+    diagnostics.push("coord_invalid_reason=null_island");
+  }
+  if (latitude == null || longitude == null) {
+    const geocoded = await _publicEventsGeocodeVenueCoordinates({ env, venue, query });
+    if (geocoded?.ok === true && geocoded.coordinate) {
+      latitude = geocoded.coordinate.latitude;
+      longitude = geocoded.coordinate.longitude;
+      diagnostics.push(...(Array.isArray(geocoded.warnings) ? geocoded.warnings : []));
+    }
+  }
+  if (latitude == null || longitude == null) {
+    diagnostics.push("coord_source=missing");
+  }
   const categoryMeta = _ticketmasterCategoryFromEvent(tmEvent);
   const imageUrls = _ticketmasterBestImageUrls(tmEvent);
   const startsAtUtc = _ticketmasterDateToUtc(
@@ -19927,8 +20161,8 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
     city,
     country_code: countryCode || "BE",
     market_code: marketCode || "be",
-    latitude,
-    longitude,
+    latitude: latitude ?? null,
+    longitude: longitude ?? null,
     distance_label: null,
     image_url: imageUrls.image_url,
     hero_image_url: imageUrls.hero_image_url,
@@ -19943,7 +20177,10 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
     updated_at_utc: receivedAtUtc,
   };
   mapped.distance_label = _publicEventDistanceLabel(mapped, query);
-  return mapped;
+  return {
+    event: mapped,
+    warnings: _mergePublicEventWarnings(diagnostics),
+  };
 }
 
 async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
@@ -20093,9 +20330,18 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
       break;
     }
     const actionableEvents = rawEvents.filter((item) => _ticketmasterIsActionable(item));
-    const mapped = actionableEvents
-      .map((item) => _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc))
-      .filter((item) => !!item)
+    const mappedWithWarnings = [];
+    for (const item of actionableEvents) {
+      const mappedItem = await _mapTicketmasterEventToPublicEvent(item, query, receivedAtUtc, env);
+      if (!mappedItem || !mappedItem.event) continue;
+      mappedWithWarnings.push(mappedItem);
+    }
+    const mappingWarnings = _mergePublicEventWarnings(
+      ...mappedWithWarnings.map((item) => item.warnings),
+    );
+    const mapped = mappedWithWarnings
+      .map((item) => item.event)
+      .filter((eventItem) => !!eventItem)
       .filter((eventItem) => {
         if (!isRetryCategory) return true;
         return String(eventItem?.category_key || "").toLowerCase() === normalizedCategory;
@@ -20107,8 +20353,12 @@ async function _fetchTicketmasterPublicEvents({ env, query, receivedAtUtc }) {
         keywordStrategyUsed = true;
       }
       const warnings = keywordStrategyUsed
-        ? _mergePublicEventWarnings(["ticketmaster_category_keyword_strategy_used"], queryDiagnostics)
-        : _mergePublicEventWarnings(queryDiagnostics);
+        ? _mergePublicEventWarnings(
+          ["ticketmaster_category_keyword_strategy_used"],
+          mappingWarnings,
+          queryDiagnostics,
+        )
+        : _mergePublicEventWarnings(mappingWarnings, queryDiagnostics);
       return { ok: true, warnings, events: mapped };
     }
     mergedWarnings = _mergePublicEventWarnings(mergedWarnings, ["ticketmaster_empty"]);
