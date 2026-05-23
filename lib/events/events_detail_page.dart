@@ -99,7 +99,7 @@ class EventDetailPage extends StatelessWidget {
   }
 
   String get _heroImageUrl {
-    return (event.heroImageUrl ?? event.imageUrl ?? event.thumbnailUrl ?? '')
+    return (event.heroImageUrl ?? event.thumbnailUrl ?? event.imageUrl ?? '')
         .trim();
   }
 
@@ -212,6 +212,8 @@ class EventDetailPage extends StatelessWidget {
                 child: Image.network(
                   heroImageUrl,
                   fit: BoxFit.cover,
+                  cacheWidth: 1280,
+                  gaplessPlayback: true,
                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),

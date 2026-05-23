@@ -19729,14 +19729,22 @@ function _ticketmasterNormalizedImages(tmEvent) {
   return out;
 }
 
-function _ticketmasterHeroImageScore(imageItem) {
-  const width = Number(imageItem?.width) || 0;
-  const height = Number(imageItem?.height) || 0;
-  const areaScore = width * height;
-  const ratio = Number(imageItem?.ratio);
-  const ratioPenalty = Number.isFinite(ratio) ? Math.abs(ratio - 16 / 9) : 0.5;
-  const ratioScore = Math.max(0, 1 - ratioPenalty) * 250000;
-  return areaScore + ratioScore;
+function _ticketmasterIsNearSixteenByNine(ratio) {
+  if (!Number.isFinite(ratio)) return false;
+  return Math.abs(ratio - 16 / 9) <= 0.2;
+}
+
+function _ticketmasterPickClosestWidth(items, targetWidth) {
+  if (!Array.isArray(items) || !items.length) return null;
+  const sorted = [...items].sort((a, b) => {
+    const widthA = Number(a?.width) || 0;
+    const widthB = Number(b?.width) || 0;
+    const diffA = Math.abs(widthA - targetWidth);
+    const diffB = Math.abs(widthB - targetWidth);
+    if (diffA !== diffB) return diffA - diffB;
+    return widthB - widthA;
+  });
+  return sorted[0] || null;
 }
 
 function _ticketmasterBestImageUrls(tmEvent) {
@@ -19744,17 +19752,30 @@ function _ticketmasterBestImageUrls(tmEvent) {
   if (!candidates.length) {
     return { image_url: null, hero_image_url: null, thumbnail_url: null };
   }
-  const sortedForHero = [...candidates].sort(
-    (a, b) => _ticketmasterHeroImageScore(b) - _ticketmasterHeroImageScore(a),
+
+  const nearSixteenByNine = candidates.filter((item) =>
+    _ticketmasterIsNearSixteenByNine(Number(item?.ratio)),
   );
-  const hero = sortedForHero[0];
-  const sortedForThumb = [...candidates].sort((a, b) => {
-    const areaA = (Number(a?.width) || 0) * (Number(a?.height) || 0);
-    const areaB = (Number(b?.width) || 0) * (Number(b?.height) || 0);
-    return areaA - areaB;
+
+  const thumbnailBand = nearSixteenByNine.filter((item) => {
+    const width = Number(item?.width) || 0;
+    return width >= 640 && width <= 1280;
   });
-  const thumbnail = sortedForThumb.find((item) => (item.width || 0) >= 200) || sortedForThumb[0];
-  const image = hero || candidates[0];
+  const thumbnail =
+    _ticketmasterPickClosestWidth(thumbnailBand, 1024) ||
+    _ticketmasterPickClosestWidth(nearSixteenByNine, 1024) ||
+    _ticketmasterPickClosestWidth(candidates, 1024);
+
+  const heroBand = nearSixteenByNine.filter((item) => {
+    const width = Number(item?.width) || 0;
+    return width >= 1280 && width <= 1920;
+  });
+  const hero =
+    _ticketmasterPickClosestWidth(heroBand, 1600) ||
+    _ticketmasterPickClosestWidth(nearSixteenByNine, 1600) ||
+    _ticketmasterPickClosestWidth(candidates, 1600);
+
+  const image = hero || thumbnail || candidates[0];
   return {
     image_url: image?.url || null,
     hero_image_url: hero?.url || image?.url || null,

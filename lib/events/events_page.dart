@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+
+import 'event_category_results_page.dart';
 import 'event_data_source.dart';
 import 'event_models.dart';
-import 'events_detail_page.dart';
 import 'saved_events_page.dart';
 
 EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
@@ -39,12 +40,12 @@ class _EventsPageState extends State<EventsPage> {
     'all',
     EventCategoryKey.music,
     EventCategoryKey.sport,
-    EventCategoryKey.culture,
     EventCategoryKey.theater,
     EventCategoryKey.comedy,
-    EventCategoryKey.business,
     EventCategoryKey.family,
-    EventCategoryKey.other,
+    EventCategoryKey.food,
+    EventCategoryKey.business,
+    EventCategoryKey.culture,
   ];
   static const List<String> _marketKeys = <String>[
     'be',
@@ -53,16 +54,24 @@ class _EventsPageState extends State<EventsPage> {
     'uk',
     'es',
   ];
+  static const List<String> _sortModes = <String>[
+    'default',
+    'soonest',
+    'latest',
+    'popular',
+  ];
 
   final TextEditingController _searchController = TextEditingController();
-  final EventLocalSavedStore _savedStore = const EventLocalSavedStore();
+  late final EventDataSource _dataSource;
   late String _selectedMarketKey;
-  late String _selectedMarketCode;
   String _selectedDateMode = EventDateMode.all;
   DateTime? _selectedMonthStartUtc;
   DateTime? _selectedMonthEndUtc;
   String _selectedCategoryKey = 'all';
-  int _selectedTabIndex = 0;
+  String _selectedSortMode = 'default';
+  bool _didPrecacheCategoryImages = false;
+  final Map<String, ImageProvider<Object>> _categoryImageProviders =
+      <String, ImageProvider<Object>>{};
 
   String _t({
     required String nl,
@@ -82,28 +91,39 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  String get _ctaCardLabel => _t(
-    nl: 'Taxi naar dit event',
-    en: 'Taxi to this event',
-    fr: 'Taxi vers cet événement',
-    es: 'Taxi a este evento',
-  );
+  @override
+  void initState() {
+    super.initState();
+    _selectedMarketKey = _marketKeys.first;
+    _dataSource = widget.dataSource ?? const LocalSeedEventDataSource();
+  }
 
-  String get _activeFiltersLabel => _t(
-    nl: 'Actieve filters',
-    en: 'Active filters',
-    fr: 'Filtres actifs',
-    es: 'Filtros activos',
-  );
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _precacheCategoryTileImages();
+  }
 
-  String get _regionSectionLabel =>
-      _t(nl: 'Regio', en: 'Region', fr: 'Region', es: 'Region');
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
-  String get _whenSectionLabel =>
-      _t(nl: 'Wanneer', en: 'When', fr: 'Quand', es: 'Cuando');
+  void _precacheCategoryTileImages() {
+    if (_didPrecacheCategoryImages) return;
+    _didPrecacheCategoryImages = true;
+    for (final key in _categoryFilterKeys) {
+      precacheImage(_categoryImageProvider(key), context).catchError((_) {});
+    }
+  }
 
-  String get _categorySectionLabel =>
-      _t(nl: 'Categorie', en: 'Category', fr: 'Categorie', es: 'Categoria');
+  ImageProvider<Object> _categoryImageProvider(String categoryKey) {
+    return _categoryImageProviders.putIfAbsent(
+      categoryKey,
+      () => AssetImage(_categoryTileAssetPath(categoryKey)),
+    );
+  }
 
   String _marketLabel(String key) {
     switch (key) {
@@ -146,10 +166,11 @@ class _EventsPageState extends State<EventsPage> {
           es: 'Este fin de semana',
         );
       case EventDateMode.month:
-        return _selectedDateMode == EventDateMode.month &&
-                _selectedMonthStartUtc != null
-            ? _formatMonthLabel(_selectedMonthStartUtc!)
-            : _t(nl: 'Maand', en: 'Month', fr: 'Mois', es: 'Mes');
+        if (_selectedMonthStartUtc == null) {
+          return _t(nl: 'Maand', en: 'Month', fr: 'Mois', es: 'Mes');
+        }
+        final local = _selectedMonthStartUtc!.toLocal();
+        return '${local.month.toString().padLeft(2, '0')}-${local.year}';
       default:
         return key;
     }
@@ -166,6 +187,16 @@ class _EventsPageState extends State<EventsPage> {
         );
       case EventCategoryKey.music:
         return _t(nl: 'Muziek', en: 'Music', fr: 'Musique', es: 'Música');
+      case EventCategoryKey.sport:
+        return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
+      case EventCategoryKey.theater:
+        return _t(nl: 'Theater', en: 'Theater', fr: 'Théâtre', es: 'Teatro');
+      case EventCategoryKey.comedy:
+        return _t(nl: 'Comedy', en: 'Comedy', fr: 'Comédie', es: 'Comedia');
+      case EventCategoryKey.family:
+        return _t(nl: 'Familie', en: 'Family', fr: 'Famille', es: 'Familia');
+      case EventCategoryKey.food:
+        return _t(nl: 'Food', en: 'Food', fr: 'Cuisine', es: 'Comida');
       case EventCategoryKey.business:
         return _t(
           nl: 'Zakelijk',
@@ -173,25 +204,8 @@ class _EventsPageState extends State<EventsPage> {
           fr: 'Business',
           es: 'Negocios',
         );
-      case EventCategoryKey.sport:
-        return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
       case EventCategoryKey.culture:
         return _t(nl: 'Cultuur', en: 'Culture', fr: 'Culture', es: 'Cultura');
-      case EventCategoryKey.food:
-        return _t(nl: 'Eten', en: 'Food', fr: 'Cuisine', es: 'Comida');
-      case EventCategoryKey.theater:
-        return _t(nl: 'Theater', en: 'Theater', fr: 'Théâtre', es: 'Teatro');
-      case EventCategoryKey.comedy:
-        return _t(nl: 'Comedy', en: 'Comedy', fr: 'Comédie', es: 'Comedia');
-      case EventCategoryKey.family:
-        return _t(nl: 'Familie', en: 'Family', fr: 'Famille', es: 'Familia');
-      case EventCategoryKey.airport:
-        return _t(
-          nl: 'Luchthaven',
-          en: 'Airport',
-          fr: 'Aéroport',
-          es: 'Aeropuerto',
-        );
       case EventCategoryKey.other:
         return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
       default:
@@ -199,327 +213,61 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  String _eventCategoryBadgeLabel(EventDetailData event) {
-    return _categoryFilterLabel(event.resolvedCategoryKey);
-  }
-
-  bool _isFavorite(EventDetailData event) {
-    final key = buildSavedEventIdentityKey(event);
-    return _savedEventByKey[key]?.favorite == true;
-  }
-
-  String _monthName(int month) {
-    switch (month) {
-      case 1:
-        return _t(nl: 'Januari', en: 'January', fr: 'Janvier', es: 'Enero');
-      case 2:
-        return _t(nl: 'Februari', en: 'February', fr: 'Février', es: 'Febrero');
-      case 3:
-        return _t(nl: 'Maart', en: 'March', fr: 'Mars', es: 'Marzo');
-      case 4:
-        return _t(nl: 'April', en: 'April', fr: 'Avril', es: 'Abril');
-      case 5:
-        return _t(nl: 'Mei', en: 'May', fr: 'Mai', es: 'Mayo');
-      case 6:
-        return _t(nl: 'Juni', en: 'June', fr: 'Juin', es: 'Junio');
-      case 7:
-        return _t(nl: 'Juli', en: 'July', fr: 'Juillet', es: 'Julio');
-      case 8:
-        return _t(nl: 'Augustus', en: 'August', fr: 'Août', es: 'Agosto');
-      case 9:
+  String _sortModeLabel(String key) {
+    switch (key) {
+      case 'soonest':
         return _t(
-          nl: 'September',
-          en: 'September',
-          fr: 'Septembre',
-          es: 'Septiembre',
+          nl: 'Eerstkomend',
+          en: 'Soonest first',
+          fr: 'Plus proche',
+          es: 'Mas cercano',
         );
-      case 10:
-        return _t(nl: 'Oktober', en: 'October', fr: 'Octobre', es: 'Octubre');
-      case 11:
+      case 'latest':
         return _t(
-          nl: 'November',
-          en: 'November',
-          fr: 'Novembre',
-          es: 'Noviembre',
+          nl: 'Later/laatst',
+          en: 'Latest first',
+          fr: 'Plus tard',
+          es: 'Mas tarde',
         );
-      case 12:
+      case 'popular':
         return _t(
-          nl: 'December',
-          en: 'December',
-          fr: 'Décembre',
-          es: 'Diciembre',
+          nl: 'Populair',
+          en: 'Popular',
+          fr: 'Populaire',
+          es: 'Popular',
         );
+      case 'default':
       default:
-        return month.toString();
+        return _t(
+          nl: 'Standaard',
+          en: 'Default',
+          fr: 'Defaut',
+          es: 'Predeterminado',
+        );
     }
   }
 
-  String _formatMonthLabel(DateTime monthStartUtc) {
-    final local = monthStartUtc.toLocal();
-    return '${_monthName(local.month)} ${local.year}';
+  String _formatMonthLabel(DateTime startUtc) {
+    final local = startUtc.toLocal();
+    return '${local.month.toString().padLeft(2, '0')}-${local.year}';
   }
 
-  List<String> get _activeFilterLabels {
-    final out = <String>[
+  String get _activeFilterSummaryText {
+    final parts = <String>[
       _marketLabel(_selectedMarketKey),
       _dateFilterLabel(_selectedDateMode),
+      _sortModeLabel(_selectedSortMode),
     ];
     if (_selectedCategoryKey != 'all') {
-      out.add(_categoryFilterLabel(_selectedCategoryKey));
+      parts.add(_categoryFilterLabel(_selectedCategoryKey));
     }
-    return out;
-  }
-
-  late final EventDataSource _dataSource;
-  List<EventDetailData> _events = const <EventDetailData>[];
-  Map<String, SavedEventRecord> _savedEventByKey =
-      const <String, SavedEventRecord>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedMarketKey = _marketKeys.first;
-    _selectedMarketCode = _selectedMarketKey.toUpperCase();
-    _dataSource = widget.dataSource ?? const LocalSeedEventDataSource();
-    _events = List<EventDetailData>.from(
-      _dataSource.getInitialEvents() ?? const <EventDetailData>[],
+    final joined = parts.join(' · ');
+    return _t(
+      nl: 'Actief: $joined',
+      en: 'Active: $joined',
+      fr: 'Actif : $joined',
+      es: 'Activo: $joined',
     );
-    _loadSavedEvents();
-    _searchController.addListener(_onSearchChanged);
-    _loadEvents();
-  }
-
-  @override
-  void dispose() {
-    _searchController.removeListener(_onSearchChanged);
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onSearchChanged() {
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _loadEvents() async {
-    final feed = await _dataSource.loadEventFeed(query: _buildEventFeedQuery());
-    if (!mounted) return;
-    setState(() {
-      _events = List<EventDetailData>.from(feed.events);
-    });
-  }
-
-  Future<void> _loadSavedEvents() async {
-    final records = await _savedStore.loadAll();
-    if (!mounted) return;
-    setState(() => _savedEventByKey = records);
-  }
-
-  EventFeedQuery _buildEventFeedQuery() {
-    final dateRange = _resolveDateRangeForMode();
-    return EventFeedQuery(
-      countryCode: _selectedMarketCode,
-      marketCode: _selectedMarketKey,
-      dateMode: _selectedDateMode,
-      startAtUtc: dateRange?.$1,
-      endAtUtc: dateRange?.$2,
-      categoryKey: _selectedCategoryKey == 'all' ? null : _selectedCategoryKey,
-      searchQuery: _searchController.text.trim(),
-      limit: 50,
-    );
-  }
-
-  List<EventDetailData> get _visibleEvents {
-    final query = _searchController.text.trim().toLowerCase();
-    return _events
-        .where((event) {
-          if (!_marketMatchesEvent(event, _selectedMarketKey)) return false;
-          final matchesSearch =
-              query.isEmpty ||
-              event.title.toLowerCase().contains(query) ||
-              event.locationName.toLowerCase().contains(query) ||
-              event.city.toLowerCase().contains(query) ||
-              event.address.toLowerCase().contains(query) ||
-              event.category.toLowerCase().contains(query);
-          if (!matchesSearch) return false;
-          if (_selectedCategoryKey != 'all' &&
-              event.resolvedCategoryKey != _selectedCategoryKey) {
-            return false;
-          }
-          return _matchesDateMode(event);
-        })
-        .toList(growable: false);
-  }
-
-  bool _matchesDateMode(EventDetailData event) {
-    switch (_selectedDateMode) {
-      case EventDateMode.today:
-        return _matchesTodayFilter(event);
-      case EventDateMode.weekend:
-        return _matchesWeekendFilter(event);
-      case EventDateMode.month:
-        return _matchesMonthFilter(event);
-      case EventDateMode.all:
-      default:
-        return _matchesUpcomingYearFilter(event);
-    }
-  }
-
-  static bool _matchesUpcomingYearFilter(EventDetailData event) {
-    final start = event.startAtUtc?.toLocal();
-    if (start == null) return true;
-    final now = DateTime.now();
-    final horizon = now.add(const Duration(days: 365));
-    return !start.isBefore(now) && !start.isAfter(horizon);
-  }
-
-  static bool _matchesTodayFilter(EventDetailData event) {
-    final start = event.startAtUtc?.toLocal();
-    if (start == null) {
-      final dateLabel = event.dateTimeLabel.toLowerCase();
-      return dateLabel.contains('vandaag') ||
-          dateLabel.contains('today') ||
-          dateLabel.contains('aujourd') ||
-          dateLabel.contains('hoy');
-    }
-    final now = DateTime.now();
-    if (start.isBefore(now)) return false;
-    return start.year == now.year &&
-        start.month == now.month &&
-        start.day == now.day;
-  }
-
-  static bool _matchesWeekendFilter(EventDetailData event) {
-    final start = event.startAtUtc?.toLocal();
-    if (start == null) {
-      final dateLabel = event.dateTimeLabel.toLowerCase();
-      return dateLabel.contains('zaterdag') ||
-          dateLabel.contains('zondag') ||
-          dateLabel.contains('vrijdag') ||
-          dateLabel.contains('sábado') ||
-          dateLabel.contains('domingo') ||
-          dateLabel.contains('friday') ||
-          dateLabel.contains('saturday') ||
-          dateLabel.contains('sunday');
-    }
-    final now = DateTime.now();
-    if (start.isBefore(now)) return false;
-    final weekendRange = _upcomingWeekendRange(now);
-    if (weekendRange == null) return false;
-    final weekendStart = weekendRange.$1;
-    final weekendEndExclusive = weekendRange.$2;
-    return !start.isBefore(weekendStart) && start.isBefore(weekendEndExclusive);
-  }
-
-  bool _matchesMonthFilter(EventDetailData event) {
-    final start = event.startAtUtc;
-    final monthStart = _selectedMonthStartUtc;
-    final monthEnd = _selectedMonthEndUtc;
-    if (start == null || monthStart == null || monthEnd == null) return true;
-    final startUtc = start.toUtc();
-    return !startUtc.isBefore(monthStart) && !startUtc.isAfter(monthEnd);
-  }
-
-  static (DateTime, DateTime)? _upcomingWeekendRange(DateTime now) {
-    final startOfToday = DateTime(now.year, now.month, now.day);
-    final int daysUntilSaturday = (DateTime.saturday - now.weekday + 7) % 7;
-    final weekendStart = startOfToday.add(Duration(days: daysUntilSaturday));
-    final weekendEndExclusive = weekendStart.add(const Duration(days: 2));
-    if (weekendEndExclusive.isBefore(now)) return null;
-    return (weekendStart, weekendEndExclusive);
-  }
-
-  (DateTime, DateTime)? _resolveDateRangeForMode() {
-    if (_selectedDateMode != EventDateMode.month) return null;
-    final monthStart = _selectedMonthStartUtc;
-    final monthEnd = _selectedMonthEndUtc;
-    if (monthStart == null || monthEnd == null) return null;
-    return (monthStart, monthEnd);
-  }
-
-  bool _marketMatchesEvent(EventDetailData event, String marketKey) {
-    final aliasValues = <String>{
-      _normalizedMarketValue(event.marketCode),
-      _normalizedMarketValue(event.countryCode),
-      _normalizedMarketValue(event.city),
-      _normalizedMarketValue(event.address),
-    }..removeWhere((value) => value.isEmpty);
-    final haystack = _normalizedMarketValue(
-      '${event.city} ${event.address} ${event.countryCode ?? ''} ${event.marketCode ?? ''}',
-    );
-    switch (marketKey) {
-      case 'be':
-        return _matchesMarketAliases(
-          aliasValues: aliasValues,
-          haystack: haystack,
-          aliases: const <String>[
-            'be',
-            'belgium',
-            'belgie',
-            'belgië',
-            'belgïe',
-            'belgique',
-          ],
-        );
-      case 'nl':
-        return _matchesMarketAliases(
-          aliasValues: aliasValues,
-          haystack: haystack,
-          aliases: const <String>['nl', 'netherlands', 'nederland', 'pays-bas'],
-        );
-      case 'fr':
-        return _matchesMarketAliases(
-          aliasValues: aliasValues,
-          haystack: haystack,
-          aliases: const <String>['fr', 'france', 'frankrijk'],
-        );
-      case 'uk':
-        return _matchesMarketAliases(
-          aliasValues: aliasValues,
-          haystack: haystack,
-          aliases: const <String>[
-            'uk',
-            'gb',
-            'united kingdom',
-            'verenigd koninkrijk',
-            'royaume-uni',
-          ],
-        );
-      case 'es':
-        return _matchesMarketAliases(
-          aliasValues: aliasValues,
-          haystack: haystack,
-          aliases: const <String>[
-            'es',
-            'spain',
-            'spanje',
-            'espana',
-            'españa',
-            'espagne',
-          ],
-        );
-      default:
-        return true;
-    }
-  }
-
-  static bool _matchesMarketAliases({
-    required Set<String> aliasValues,
-    required String haystack,
-    required List<String> aliases,
-  }) {
-    for (final alias in aliases) {
-      final normalizedAlias = _normalizedMarketValue(alias);
-      if (normalizedAlias.isEmpty) continue;
-      if (aliasValues.contains(normalizedAlias)) return true;
-      if (haystack.contains(normalizedAlias)) return true;
-    }
-    return false;
-  }
-
-  static String _normalizedMarketValue(String? raw) {
-    final text = (raw ?? '').trim().toLowerCase();
-    if (text.isEmpty) return '';
-    return text.replaceAll('ï', 'i').replaceAll('é', 'e');
   }
 
   List<_MonthFilterOption> _nextTwelveMonthOptions() {
@@ -622,18 +370,6 @@ class _EventsPageState extends State<EventsPage> {
       _selectedMonthStartUtc = chosen.startUtc;
       _selectedMonthEndUtc = chosen.endUtc;
     });
-    _loadEvents();
-  }
-
-  Future<void> _openEventDetails(EventDetailData event) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<EventDetailPage>(
-        builder: (_) =>
-            EventDetailPage(event: event, onBookEvent: widget.onBookEvent),
-      ),
-    );
-    if (!mounted) return;
-    _loadSavedEvents();
   }
 
   Future<void> _openSavedEventsPage() async {
@@ -642,197 +378,561 @@ class _EventsPageState extends State<EventsPage> {
         builder: (_) => SavedEventsPage(onBookEvent: widget.onBookEvent),
       ),
     );
-    if (!mounted) return;
-    _loadSavedEvents();
   }
 
-  void _bookEvent(EventDetailData event) {
-    if (widget.onBookEvent != null) {
-      widget.onBookEvent!.call(event);
-      return;
-    }
-    _showInfoSnackBar(
-      _t(
-        nl: 'Boekingsflow voor dit event is binnenkort beschikbaar.',
-        en: 'Booking flow for this event is coming soon.',
-        fr: 'Le flux de réservation pour cet événement arrive bientôt.',
-        es: 'El flujo de reserva para este evento estará disponible pronto.',
+  Future<void> _openResultsPage({
+    required String title,
+    required String categoryKey,
+    required String searchQuery,
+  }) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<EventCategoryResultsPage>(
+        builder: (_) => EventCategoryResultsPage(
+          title: title,
+          dataSource: _dataSource,
+          marketKey: _selectedMarketKey,
+          dateMode: _selectedDateMode,
+          monthStartUtc: _selectedMonthStartUtc,
+          monthEndUtc: _selectedMonthEndUtc,
+          categoryKey: categoryKey,
+          searchQuery: searchQuery.trim(),
+          sortMode: _selectedSortMode,
+          onBookEvent: widget.onBookEvent,
+        ),
       ),
     );
   }
 
-  void _showInfoSnackBar(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  Future<void> _openSearchResults() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    await _openResultsPage(
+      title: _t(nl: 'Zoeken', en: 'Search', fr: 'Recherche', es: 'Buscar'),
+      categoryKey: _selectedCategoryKey,
+      searchQuery: query,
+    );
   }
 
-  Future<void> _toggleFavorite(EventDetailData event) async {
-    final wasFavorite = _isFavorite(event);
-    final favorite = !wasFavorite;
-    final key = buildSavedEventIdentityKey(event);
-    final optimistic = Map<String, SavedEventRecord>.from(_savedEventByKey);
-    final existing = optimistic[key];
-    if (favorite) {
-      optimistic[key] = SavedEventRecord.fromEvent(
-        event,
-        favorite: true,
-        saved: existing?.saved ?? false,
-        savedAtUtc: existing?.savedAtUtc,
-      );
-    } else if (existing != null) {
-      if (existing.saved) {
-        optimistic[key] = existing.copyWith(favorite: false);
-      } else {
-        optimistic.remove(key);
-      }
-    }
-    setState(() => _savedEventByKey = optimistic);
-    _showInfoSnackBar(
-      favorite
-          ? _t(
-              nl: 'Toegevoegd aan favorieten',
-              en: 'Added to favorites',
-              fr: 'Ajoute aux favoris',
-              es: 'Anadido a favoritos',
-            )
-          : _t(
-              nl: 'Verwijderd uit favorieten',
-              en: 'Removed from favorites',
-              fr: 'Retire des favoris',
-              es: 'Eliminado de favoritos',
+  Future<void> _openMarketPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies regio',
+                    en: 'Choose region',
+                    fr: 'Choisir la region',
+                    es: 'Elegir region',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _marketKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _marketKeys[index];
+                      final isSelected = key == _selectedMarketKey;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _marketLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : Colors.white,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
+          ),
+        );
+      },
     );
-    final updated = await _savedStore.toggleFavorite(event, favorite: favorite);
-    if (!mounted) return;
-    setState(() => _savedEventByKey = updated);
+    if (!mounted || selected == null || selected == _selectedMarketKey) return;
+    setState(() => _selectedMarketKey = selected);
+  }
+
+  Future<void> _openDatePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies datumfilter',
+                    en: 'Choose date filter',
+                    fr: 'Choisir le filtre de date',
+                    es: 'Elegir filtro de fecha',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _dateFilterKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _dateFilterKeys[index];
+                      final isSelected = key == _selectedDateMode;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _dateFilterLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : Colors.white,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    if (selected == EventDateMode.month) {
+      await _openMonthPicker();
+      return;
+    }
+    setState(() => _selectedDateMode = selected);
+  }
+
+  Future<void> _openCategoryPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies categorie',
+                    en: 'Choose category',
+                    fr: 'Choisir categorie',
+                    es: 'Elegir categoria',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _categoryFilterKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _categoryFilterKeys[index];
+                      final isSelected = key == _selectedCategoryKey;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _categoryFilterLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : Colors.white,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _selectedCategoryKey = selected);
+    await _openResultsPage(
+      title: _categoryFilterLabel(selected),
+      categoryKey: selected,
+      searchQuery: _searchController.text,
+    );
+  }
+
+  Future<void> _openSortPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Sorteer events',
+                    en: 'Sort events',
+                    fr: 'Trier evenements',
+                    es: 'Ordenar eventos',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _sortModes.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _sortModes[index];
+                      final isSelected = key == _selectedSortMode;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _sortModeLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : Colors.white,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _selectedSortMode = selected);
+  }
+
+  List<Color> _categoryTileGradient(String categoryKey) {
+    switch (categoryKey) {
+      case EventCategoryKey.music:
+        return const <Color>[Color(0xFF1C2144), Color(0xFF11152C)];
+      case EventCategoryKey.sport:
+        return const <Color>[Color(0xFF173228), Color(0xFF0E2019)];
+      case EventCategoryKey.theater:
+        return const <Color>[Color(0xFF3A2244), Color(0xFF1D1327)];
+      case EventCategoryKey.comedy:
+        return const <Color>[Color(0xFF3D2A1B), Color(0xFF1E140E)];
+      case EventCategoryKey.family:
+        return const <Color>[Color(0xFF293F53), Color(0xFF162433)];
+      case EventCategoryKey.food:
+        return const <Color>[Color(0xFF3F2A1A), Color(0xFF21150D)];
+      case EventCategoryKey.business:
+        return const <Color>[Color(0xFF26374A), Color(0xFF172331)];
+      case EventCategoryKey.culture:
+        return const <Color>[Color(0xFF3D2E4F), Color(0xFF1C1630)];
+      case EventCategoryKey.other:
+      case 'all':
+      default:
+        return const <Color>[Color(0xFF2A1B06), Color(0xFF100B04)];
+    }
+  }
+
+  String _categoryTileAssetPath(String categoryKey) {
+    switch (categoryKey) {
+      case 'all':
+        return 'assets/events/categories/event_category_all.webp';
+      case EventCategoryKey.music:
+        return 'assets/events/categories/event_category_music.webp';
+      case EventCategoryKey.sport:
+        return 'assets/events/categories/event_category_sport.webp';
+      case EventCategoryKey.theater:
+        return 'assets/events/categories/event_category_theater.webp';
+      case EventCategoryKey.comedy:
+        return 'assets/events/categories/event_category_comedy.webp';
+      case EventCategoryKey.family:
+        return 'assets/events/categories/event_category_family.webp';
+      case EventCategoryKey.food:
+        return 'assets/events/categories/event_category_food.webp';
+      case EventCategoryKey.business:
+        return 'assets/events/categories/event_category_business.webp';
+      case EventCategoryKey.culture:
+        return 'assets/events/categories/event_category_culture.webp';
+      case EventCategoryKey.other:
+        return 'assets/events/categories/event_category_other.webp';
+      default:
+        return 'assets/events/categories/event_category_all.webp';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final contentPadding = screenWidth < 360 ? 11.0 : 14.0;
-    final events = _visibleEvents;
     return Scaffold(
       backgroundColor: _bgBlack,
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(context),
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(
-                  contentPadding,
-                  10,
-                  contentPadding,
-                  18,
-                ),
-                children: [
-                  _buildSearchField(),
-                  const SizedBox(height: 10),
-                  _buildDiscoveryControlsPanel(),
-                  const SizedBox(height: 12),
-                  _buildSegmentedToggle(),
-                  const SizedBox(height: 12),
-                  if (_selectedTabIndex == 0) ...[
-                    if (events.isEmpty)
-                      _buildEmptyState()
-                    else
-                      _buildEventList(events),
-                  ] else
-                    _buildMapPlaceholder(),
-                ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const horizontalPadding = 14.0;
+            const topPadding = 10.0;
+            const bottomPadding = 18.0;
+            const tileSpacing = 10.0;
+            const headerToSearchSpacing = 8.0;
+            const searchToControlsSpacing = 8.0;
+            const controlsToHeadingSpacing = 10.0;
+            const headingToGridSpacing = 8.0;
+            const estimatedHeaderHeight = 50.0;
+            const estimatedSearchHeight = 48.0;
+            const estimatedControlsHeight = 102.0;
+            const estimatedHeadingHeight = 22.0;
+
+            final screenWidth = constraints.maxWidth;
+            final columns = screenWidth < 360 ? 2 : 3;
+            final rows = (_categoryFilterKeys.length / columns).ceil();
+            final contentWidth = screenWidth - (horizontalPadding * 2);
+            final tileWidth =
+                (contentWidth - ((columns - 1) * tileSpacing)) / columns;
+
+            final estimatedTopContentHeight =
+                topPadding +
+                estimatedHeaderHeight +
+                headerToSearchSpacing +
+                estimatedSearchHeight +
+                searchToControlsSpacing +
+                estimatedControlsHeight +
+                controlsToHeadingSpacing +
+                estimatedHeadingHeight +
+                headingToGridSpacing +
+                bottomPadding;
+            final remainingHeight =
+                constraints.maxHeight - estimatedTopContentHeight;
+            final unclampedTileHeight =
+                (remainingHeight - ((rows - 1) * tileSpacing)) / rows;
+            final minTileHeight = screenWidth < 360 ? 108.0 : 130.0;
+            final maxTileHeight = screenWidth < 360 ? 145.0 : 165.0;
+            final tileHeight = unclampedTileHeight
+                .clamp(minTileHeight, maxTileHeight)
+                .toDouble();
+            final gridHeight = (tileHeight * rows) + ((rows - 1) * tileSpacing);
+            final tileAspectRatio = tileWidth / tileHeight;
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(
+                horizontalPadding,
+                topPadding,
+                horizontalPadding,
+                bottomPadding,
               ),
-            ),
-          ],
+              children: [
+                _buildHeader(context),
+                const SizedBox(height: headerToSearchSpacing),
+                _buildSearchField(),
+                const SizedBox(height: searchToControlsSpacing),
+                _buildCompactDiscoveryControls(),
+                const SizedBox(height: controlsToHeadingSpacing),
+                Text(
+                  _t(
+                    nl: 'Categorieën',
+                    en: 'Categories',
+                    fr: 'Categories',
+                    es: 'Categorias',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: headingToGridSpacing),
+                SizedBox(
+                  height: gridHeight,
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _categoryFilterKeys.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      crossAxisSpacing: tileSpacing,
+                      mainAxisSpacing: tileSpacing,
+                      childAspectRatio: tileAspectRatio,
+                    ),
+                    itemBuilder: (context, index) =>
+                        _buildCategoryTile(_categoryFilterKeys[index]),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
   Widget _buildHeader(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 9, 8, 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: _gold,
-            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
-          ),
-          const SizedBox(width: 2),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: _panelBlack.withOpacity(0.92),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _gold.withOpacity(0.2)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      nl: 'Evenementen',
-                      en: 'Events',
-                      fr: 'Événements',
-                      es: 'Eventos',
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    _t(
-                      nl: 'Evenementen en vervoer in uw regio',
-                      en: 'Events and transport in your area',
-                      fr: 'Événements et transport dans votre région',
-                      es: 'Eventos y transporte en tu región',
-                    ),
-                    style: const TextStyle(
-                      color: _softText,
-                      fontSize: 11.6,
-                      fontWeight: FontWeight.w500,
-                      height: 1.25,
-                    ),
-                  ),
-                ],
-              ),
+    return Row(
+      children: [
+        IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+          color: _gold,
+          tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
+        ),
+        Expanded(
+          child: Text(
+            _t(
+              nl: 'Evenementen',
+              en: 'Events',
+              fr: 'Événements',
+              es: 'Eventos',
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
             ),
           ),
-          IconButton(
-            onPressed: _openSavedEventsPage,
-            icon: const Icon(Icons.bookmark_rounded),
-            color: _gold,
-            tooltip: _t(
+        ),
+        OutlinedButton.icon(
+          onPressed: _openSavedEventsPage,
+          style: OutlinedButton.styleFrom(
+            backgroundColor: _panelBlack,
+            foregroundColor: _gold,
+            side: BorderSide(color: _gold.withOpacity(0.34)),
+            minimumSize: const Size(0, 38),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          icon: const Icon(Icons.bookmark_rounded, size: 16),
+          label: Text(
+            _t(
               nl: 'Opgeslagen',
               en: 'Saved',
               fr: 'Enregistres',
               es: 'Guardados',
             ),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11.8),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildSearchField() {
     return TextField(
       controller: _searchController,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _openSearchResults(),
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        hintText: 'Zoek evenement of locatie',
+        hintText: _t(
+          nl: 'Zoek evenement of locatie',
+          en: 'Search event or location',
+          fr: 'Rechercher un evenement ou un lieu',
+          es: 'Buscar evento o ubicación',
+        ),
         hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
         prefixIcon: const Icon(Icons.search_rounded, color: _gold, size: 20),
+        suffixIcon: IconButton(
+          onPressed: _openSearchResults,
+          icon: const Icon(Icons.arrow_forward_rounded, color: _gold, size: 20),
+        ),
         filled: true,
         fillColor: _panelBlack,
         contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
@@ -849,274 +949,113 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildDiscoveryControlsPanel() {
+  Widget _buildCompactDiscoveryControls() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _activeFiltersLabel,
-            style: TextStyle(
-              color: _gold.withOpacity(0.95),
-              fontSize: 11.4,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Wrap(
-            spacing: 7,
-            runSpacing: 6,
-            children: [
-              for (final label in _activeFilterLabels)
-                _buildActiveFilterSummaryChip(label: label),
-            ],
-          ),
-          const SizedBox(height: 11),
-          _buildFilterSectionTitle(_regionSectionLabel),
-          const SizedBox(height: 5),
-          _buildMarketChips(),
-          const SizedBox(height: 8),
-          _buildFilterSectionTitle(_whenSectionLabel),
-          const SizedBox(height: 5),
-          _buildDateFilterChips(),
-          const SizedBox(height: 8),
-          _buildFilterSectionTitle(_categorySectionLabel),
-          const SizedBox(height: 5),
-          _buildCategoryChips(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterSectionTitle(String label) {
-    return Text(
-      label,
-      style: const TextStyle(
-        color: _softText,
-        fontSize: 11.4,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-
-  Widget _buildActiveFilterSummaryChip({required String label}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: _gold.withOpacity(0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _gold.withOpacity(0.35)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: _gold,
-          fontSize: 10.8,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMarketChips() {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        itemCount: _marketKeys.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final marketKey = _marketKeys[index];
-          final selected = marketKey == _selectedMarketKey;
-          return ChoiceChip(
-            label: Text(
-              _marketLabel(marketKey),
-              style: TextStyle(
-                color: selected ? Colors.black : Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-            selected: selected,
-            onSelected: (_) {
-              setState(() {
-                _selectedMarketKey = marketKey;
-                _selectedMarketCode = marketKey.toUpperCase();
-              });
-              _loadEvents();
-            },
-            selectedColor: _gold,
-            backgroundColor: _panelBlack,
-            shape: StadiumBorder(
-              side: BorderSide(
-                color: _gold.withOpacity(selected ? 0.15 : 0.34),
-              ),
-            ),
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildDateFilterChips() {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        itemCount: _dateFilterKeys.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final dateKey = _dateFilterKeys[index];
-          final selected = dateKey == _selectedDateMode;
-          return ChoiceChip(
-            label: Text(
-              _dateFilterLabel(dateKey),
-              style: TextStyle(
-                color: selected ? Colors.black : Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-            selected: selected,
-            onSelected: (_) {
-              if (dateKey == EventDateMode.month) {
-                _openMonthPicker();
-                return;
-              }
-              setState(() => _selectedDateMode = dateKey);
-              _loadEvents();
-            },
-            selectedColor: _gold,
-            backgroundColor: _panelBlack,
-            shape: StadiumBorder(
-              side: BorderSide(color: _gold.withOpacity(selected ? 0.1 : 0.32)),
-            ),
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildCategoryChips() {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        itemCount: _categoryFilterKeys.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final categoryKey = _categoryFilterKeys[index];
-          final selected = categoryKey == _selectedCategoryKey;
-          return ChoiceChip(
-            label: Text(
-              _categoryFilterLabel(categoryKey),
-              style: TextStyle(
-                color: selected ? Colors.black : Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-            selected: selected,
-            onSelected: (_) {
-              setState(() => _selectedCategoryKey = categoryKey);
-              _loadEvents();
-            },
-            selectedColor: _gold,
-            backgroundColor: _panelBlack,
-            shape: StadiumBorder(
-              side: BorderSide(color: _gold.withOpacity(selected ? 0.1 : 0.32)),
-            ),
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildSegmentedToggle() {
-    return Container(
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
       decoration: BoxDecoration(
         color: _panelBlack,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.28)),
+        border: Border.all(color: _gold.withOpacity(0.24)),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: _buildSegmentButton(
-              label: 'Lijst',
-              icon: Icons.view_list_rounded,
-              selected: _selectedTabIndex == 0,
-              onTap: () => setState(() => _selectedTabIndex = 0),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: _buildCompactFilterButton(
+                  label: _t(nl: 'Datum', en: 'Date', fr: 'Date', es: 'Fecha'),
+                  value: _dateFilterLabel(_selectedDateMode),
+                  icon: Icons.calendar_month_rounded,
+                  onTap: _openDatePicker,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildCompactFilterButton(
+                  label: _t(
+                    nl: 'Categorie',
+                    en: 'Category',
+                    fr: 'Categorie',
+                    es: 'Categoria',
+                  ),
+                  value: _categoryFilterLabel(_selectedCategoryKey),
+                  icon: Icons.grid_view_rounded,
+                  onTap: _openCategoryPicker,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildCompactFilterButton(
+                  label: _t(
+                    nl: 'Sorteren',
+                    en: 'Sort',
+                    fr: 'Trier',
+                    es: 'Ordenar',
+                  ),
+                  value: _sortModeLabel(_selectedSortMode),
+                  icon: Icons.swap_vert_rounded,
+                  onTap: _openSortPicker,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildSegmentButton(
-              label: 'Kaart',
-              icon: Icons.map_outlined,
-              selected: _selectedTabIndex == 1,
-              onTap: () => setState(() => _selectedTabIndex = 1),
-            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildRegionSelectorChip(),
+              const SizedBox(width: 8),
+              Expanded(child: _buildActiveSummaryBar()),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSegmentButton({
+  Widget _buildCompactFilterButton({
     required String label,
+    required String value,
     required IconData icon,
-    required bool selected,
     required VoidCallback onTap,
   }) {
     return Material(
-      color: selected ? _gold : Colors.transparent,
-      borderRadius: BorderRadius.circular(9),
+      color: const Color(0xFF161616),
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(9),
+        borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 16,
-                color: selected ? Colors.black : _gold.withOpacity(0.92),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: selected ? Colors.black : Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
+              Icon(icon, size: 13, color: _gold.withOpacity(0.95)),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _softText.withOpacity(0.92),
+                        fontSize: 10.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.4,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1126,495 +1065,141 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildEventList(List<EventDetailData> events) {
-    return Column(
-      children: [
-        for (var i = 0; i < events.length; i++) ...[
-          _buildEventCard(events[i]),
-          if (i != events.length - 1) const SizedBox(height: 10),
-        ],
-      ],
+  Widget _buildRegionSelectorChip() {
+    return Material(
+      color: const Color(0xFF161616),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: _openMarketPicker,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.public_rounded,
+                size: 13,
+                color: _gold.withOpacity(0.95),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                _marketLabel(_selectedMarketKey),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.6,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
-  IconData _categoryIcon(EventDetailData event) {
-    if (event.category.toLowerCase() == 'vandaag') {
-      return Icons.schedule_rounded;
-    }
-    return eventCategoryMetaByKey(event.resolvedCategoryKey)?.icon ??
-        Icons.event_rounded;
-  }
-
-  String _cardImageUrl(EventDetailData event) {
-    return (event.heroImageUrl ?? event.thumbnailUrl ?? event.imageUrl ?? '')
-        .trim();
-  }
-
-  Widget _buildEventCard(EventDetailData event) {
-    final cardImageUrl = _cardImageUrl(event);
-    final isFavorite = _isFavorite(event);
+  Widget _buildActiveSummaryBar() {
     return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-        boxShadow: [
-          BoxShadow(
-            color: _gold.withOpacity(0.05),
-            blurRadius: 12,
-            spreadRadius: 0.4,
-          ),
-        ],
+        color: _gold.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _gold.withOpacity(0.26)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => _openEventDetails(event),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
+      child: Text(
+        _activeFilterSummaryText,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: _gold,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryTile(String categoryKey) {
+    final selected = _selectedCategoryKey == categoryKey;
+    final icon = categoryKey == 'all'
+        ? Icons.grid_view_rounded
+        : (eventCategoryMetaByKey(categoryKey)?.icon ?? Icons.event_rounded);
+    final imageProvider = _categoryImageProvider(categoryKey);
+    final fallbackGradient = _categoryTileGradient(categoryKey);
+    return GestureDetector(
+      onTap: () async {
+        setState(() => _selectedCategoryKey = categoryKey);
+        await _openResultsPage(
+          title: _categoryFilterLabel(categoryKey),
+          categoryKey: categoryKey,
+          searchQuery: _searchController.text,
+        );
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? _gold : _gold.withOpacity(0.16),
+            width: selected ? 1.3 : 0.9,
+          ),
+          color: _panelBlack,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(
+              image: imageProvider,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, __, ___) => DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: fallbackGradient,
+                  ),
+                ),
               ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: <Color>[
+                    Colors.black.withOpacity(0.08),
+                    Colors.black.withOpacity(0.34),
+                    Colors.black.withOpacity(0.68),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 8,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    height: 158,
-                    decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(16),
-                      ),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: event.gradient,
-                      ),
-                    ),
-                    child: Stack(
-                      children: [
-                        if (cardImageUrl.isNotEmpty)
-                          Positioned.fill(
-                            child: ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(16),
-                              ),
-                              child: Image.network(
-                                cardImageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    const SizedBox.shrink(),
-                              ),
-                            ),
-                          ),
-                        if (cardImageUrl.isNotEmpty)
-                          Positioned.fill(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(16),
-                                ),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: <Color>[
-                                    Colors.black.withOpacity(0.26),
-                                    Colors.black.withOpacity(0.54),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        Positioned(
-                          left: 14,
-                          top: 14,
-                          child: Container(
-                            width: 60,
-                            height: 60,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  _gold.withOpacity(0.20),
-                                  _gold.withOpacity(0.04),
-                                  Colors.transparent,
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 44,
-                          top: 18,
-                          child: Container(
-                            width: 5,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: _gold.withOpacity(0.35),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 65,
-                          top: 31,
-                          child: Container(
-                            width: 3,
-                            height: 3,
-                            decoration: BoxDecoration(
-                              color: _gold.withOpacity(0.24),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 56,
-                          top: 46,
-                          child: Container(
-                            width: 4,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: _gold.withOpacity(0.18),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: 10,
-                          top: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.4),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: _gold.withOpacity(0.5)),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _categoryIcon(event),
-                                  color: _gold,
-                                  size: 12,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _eventCategoryBadgeLabel(event),
-                                  style: const TextStyle(
-                                    color: _gold,
-                                    fontSize: 10.6,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: 12,
-                          bottom: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.34),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: _gold.withOpacity(0.32),
-                              ),
-                            ),
-                            child: Text(
-                              event.locationName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: _gold.withOpacity(0.95),
-                                fontSize: 10.2,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 10,
-                          top: 6,
-                          child: IconButton(
-                            onPressed: () => _toggleFavorite(event),
-                            icon: Icon(
-                              isFavorite
-                                  ? Icons.favorite_rounded
-                                  : Icons.favorite_border_rounded,
-                            ),
-                            iconSize: 18,
-                            color: isFavorite
-                                ? _gold
-                                : Colors.white.withOpacity(0.92),
-                            tooltip: _t(
-                              nl: 'Favoriet',
-                              en: 'Favorite',
-                              fr: 'Favori',
-                              es: 'Favorito',
-                            ),
-                            visualDensity: const VisualDensity(
-                              horizontal: -2,
-                              vertical: -2,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          event.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16.4,
-                            height: 1.2,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.calendar_today_outlined,
-                              size: 13,
-                              color: _gold.withOpacity(0.95),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                event.dateTimeLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: _softText,
-                                  fontSize: 11.9,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.location_on_outlined,
-                              size: 14,
-                              color: _gold.withOpacity(0.95),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                '${event.locationName}, ${event.city}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: _softText,
-                                  fontSize: 11.9,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.pin_drop_outlined,
-                              size: 13,
-                              color: _gold.withOpacity(0.9),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                event.address,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: _softText,
-                                  fontSize: 11.2,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 9),
-                        _buildEventMetaChips(event),
-                      ],
+                  Icon(icon, size: 16, color: _gold),
+                  const SizedBox(height: 3),
+                  Text(
+                    _categoryFilterLabel(categoryKey),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.2,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(11, 0, 11, 10),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _bookEvent(event),
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: const Color(0xFF171209),
-                  foregroundColor: _gold,
-                  side: BorderSide(color: _gold.withOpacity(0.55)),
-                  minimumSize: const Size.fromHeight(46),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                ),
-                icon: const Icon(Icons.local_taxi_rounded, size: 17),
-                label: Text(
-                  _ctaCardLabel,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.15,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMapPlaceholder() {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 280),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _gold.withOpacity(0.28)),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[Color(0xFF0F0F0F), Color(0xFF07080C)],
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.map_rounded, color: _gold.withOpacity(0.96), size: 44),
-            const SizedBox(height: 12),
-            Text(
-              _t(
-                nl: 'Kaartmodus komt binnenkort',
-                en: 'Map mode is coming soon',
-                fr: 'Le mode carte arrive bientôt',
-                es: 'El modo mapa estará disponible pronto',
-              ),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _t(
-                nl: 'Kaart- en locatiemodus wordt later gekoppeld. Gebruik voorlopig de lijstweergave voor een overzicht.',
-                en: 'Map and location mode will be connected later. For now, use the list view for an overview.',
-                fr: 'Le mode carte et localisation sera connecté plus tard. Utilisez la vue liste en attendant.',
-                es: 'El modo mapa y ubicación se conectará más adelante. Por ahora, usa la vista de lista.',
-              ),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _softText,
-                fontSize: 13,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: _gold.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: _gold.withOpacity(0.45)),
-              ),
-              child: Text(
-                _t(
-                  nl: 'Fluxidi Event Locator',
-                  en: 'Fluxidi Event Locator',
-                  fr: 'Fluxidi Event Locator',
-                  es: 'Fluxidi Event Locator',
-                ),
-                style: const TextStyle(
-                  color: _gold,
-                  fontSize: 11.8,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(0.24)),
-      ),
-      child: Text(
-        _t(
-          nl: 'Geen evenementen gevonden voor je zoekopdracht of filter.',
-          en: 'No events found for your search or filter.',
-          fr: 'Aucun événement trouvé pour votre recherche ou filtre.',
-          es: 'No se encontraron eventos para tu búsqueda o filtro.',
-        ),
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: _softText, fontSize: 13),
-      ),
-    );
-  }
-
-  Widget _buildEventMetaChips(EventDetailData event) {
-    final statusLabel = event.customerTicketStatusLabel;
-    final distanceLabel = event.isDistanceLabelTrusted
-        ? (event.distanceLabel ?? '').trim()
-        : '';
-    final chips = <Widget>[
-      if ((statusLabel ?? '').isNotEmpty) _buildMetaChip(label: statusLabel!),
-      if (distanceLabel.isNotEmpty) _buildMetaChip(label: distanceLabel),
-    ];
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return Wrap(spacing: 8, runSpacing: 6, children: chips);
-  }
-
-  Widget _buildMetaChip({required String label}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: _gold.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _gold.withOpacity(0.4)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: _gold,
-          fontSize: 10.8,
-          fontWeight: FontWeight.w700,
         ),
       ),
     );

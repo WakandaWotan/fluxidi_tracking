@@ -74,11 +74,11 @@ class _SavedEventsPageState extends State<SavedEventsPage> {
   }
 
   String _cardImageUrl(SavedEventRecord record) {
-    return (record.heroImageUrl.isNotEmpty
-            ? record.heroImageUrl
+    return (record.thumbnailUrl.isNotEmpty
+            ? record.thumbnailUrl
             : (record.imageUrl.isNotEmpty
                   ? record.imageUrl
-                  : record.thumbnailUrl))
+                  : record.heroImageUrl))
         .trim();
   }
 
@@ -328,6 +328,8 @@ class _SavedEventsPageState extends State<SavedEventsPage> {
                           child: Image.network(
                             imageUrl,
                             fit: BoxFit.cover,
+                            cacheWidth: 1024,
+                            gaplessPlayback: true,
                             errorBuilder: (_, __, ___) =>
                                 const SizedBox.shrink(),
                           ),
