@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -79,6 +80,7 @@ class _EventsPageState extends State<EventsPage> {
   DateTime? _selectedMonthEndUtc;
   String _selectedCategoryKey = 'all';
   String _selectedSortMode = 'default';
+  String? _pressedCategoryKey;
   bool _didPrecacheCategoryImages = false;
   final Map<String, ImageProvider<Object>> _categoryImageProviders =
       <String, ImageProvider<Object>>{};
@@ -1923,84 +1925,119 @@ class _EventsPageState extends State<EventsPage> {
     required double labelSpacing,
   }) {
     final selected = _selectedCategoryKey == categoryKey;
+    final pressed = _pressedCategoryKey == categoryKey;
     final icon = categoryKey == 'all'
         ? Icons.grid_view_rounded
         : (eventCategoryMetaByKey(categoryKey)?.icon ?? Icons.event_rounded);
     final imageProvider = _categoryImageProvider(categoryKey);
     final fallbackGradient = _categoryTileGradient(categoryKey);
     return GestureDetector(
+      onTapDown: (_) {
+        HapticFeedback.lightImpact();
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = categoryKey);
+      },
+      onTapUp: (_) {
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = null);
+      },
+      onTapCancel: () {
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = null);
+      },
       onTap: () async {
-        setState(() => _selectedCategoryKey = categoryKey);
+        setState(() {
+          _pressedCategoryKey = null;
+          _selectedCategoryKey = categoryKey;
+        });
         await _openResultsPage(
           title: _categoryFilterLabel(categoryKey),
           categoryKey: categoryKey,
           searchQuery: _searchController.text,
         );
       },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? _gold : _gold.withOpacity(0.16),
-            width: selected ? 1.3 : 0.9,
+      child: AnimatedScale(
+        scale: pressed ? 0.975 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: pressed
+                  ? _gold.withOpacity(0.7)
+                  : (selected ? _gold : _gold.withOpacity(0.16)),
+              width: pressed ? 1.8 : (selected ? 1.3 : 0.9),
+            ),
+            boxShadow: pressed
+                ? <BoxShadow>[
+                    BoxShadow(
+                      color: _gold.withOpacity(0.22),
+                      blurRadius: 16,
+                      spreadRadius: 0.4,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const <BoxShadow>[],
+            color: _panelBlack,
           ),
-          color: _panelBlack,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image(
-              image: imageProvider,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              errorBuilder: (_, __, ___) => DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: fallbackGradient,
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image(
+                image: imageProvider,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: fallbackGradient,
+                    ),
                   ),
                 ),
               ),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: <Color>[
-                    Colors.black.withOpacity(0.08),
-                    Colors.black.withOpacity(0.34),
-                    Colors.black.withOpacity(0.68),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[
+                      Colors.black.withOpacity(0.14),
+                      Colors.black.withOpacity(0.44),
+                      Colors.black.withOpacity(0.78),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: contentInset,
+                right: contentInset,
+                bottom: contentInset,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(icon, size: iconSize, color: _gold),
+                    SizedBox(height: labelSpacing),
+                    Text(
+                      _categoryFilterLabel(categoryKey),
+                      maxLines: labelMaxLines,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: labelFontSize,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ],
                 ),
               ),
-            ),
-            Positioned(
-              left: contentInset,
-              right: contentInset,
-              bottom: contentInset,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(icon, size: iconSize, color: _gold),
-                  SizedBox(height: labelSpacing),
-                  Text(
-                    _categoryFilterLabel(categoryKey),
-                    maxLines: labelMaxLines,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: labelFontSize,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
