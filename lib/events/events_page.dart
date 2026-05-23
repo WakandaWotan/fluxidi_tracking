@@ -1124,16 +1124,38 @@ class _EventsPageState extends State<EventsPage> {
             final screenWidth = constraints.maxWidth;
             final shortestSide = mediaQuery.size.shortestSide;
             final isTabletLayout = shortestSide >= 600 || screenWidth >= 700;
-            final headerToSearchSpacing = isTabletLayout ? 10.0 : 8.0;
-            final searchToControlsSpacing = isTabletLayout ? 10.0 : 8.0;
-            final controlsToHeadingSpacing = isTabletLayout ? 12.0 : 10.0;
-            final headingToGridSpacing = isTabletLayout ? 10.0 : 8.0;
-            final estimatedHeaderHeight = isTabletLayout ? 58.0 : 50.0;
-            final estimatedSearchHeight = isTabletLayout ? 56.0 : 48.0;
-            final estimatedControlsHeight = isTabletLayout ? 132.0 : 102.0;
-            final estimatedHeadingHeight = isTabletLayout ? 30.0 : 22.0;
-            final tileSpacing = isTabletLayout ? 12.0 : 10.0;
-            final columns = screenWidth < 360 ? 2 : 3;
+            final isTabletLandscape =
+                isTabletLayout && constraints.maxWidth > constraints.maxHeight;
+            final headerToSearchSpacing = isTabletLandscape
+                ? 8.0
+                : (isTabletLayout ? 10.0 : 8.0);
+            final searchToControlsSpacing = isTabletLandscape
+                ? 8.0
+                : (isTabletLayout ? 10.0 : 8.0);
+            final controlsToHeadingSpacing = isTabletLandscape
+                ? 10.0
+                : (isTabletLayout ? 12.0 : 10.0);
+            final headingToGridSpacing = isTabletLandscape
+                ? 8.0
+                : (isTabletLayout ? 10.0 : 8.0);
+            final estimatedHeaderHeight = isTabletLandscape
+                ? 56.0
+                : (isTabletLayout ? 58.0 : 50.0);
+            final estimatedSearchHeight = isTabletLandscape
+                ? 52.0
+                : (isTabletLayout ? 56.0 : 48.0);
+            final estimatedControlsHeight = isTabletLandscape
+                ? 124.0
+                : (isTabletLayout ? 132.0 : 102.0);
+            final estimatedHeadingHeight = isTabletLandscape
+                ? 28.0
+                : (isTabletLayout ? 30.0 : 22.0);
+            final tileSpacing = isTabletLandscape
+                ? 10.0
+                : (isTabletLayout ? 12.0 : 10.0);
+            final columns = isTabletLandscape
+                ? (screenWidth >= 980 ? 5 : 4)
+                : (screenWidth < 360 ? 2 : 3);
             final rows = (_categoryFilterKeys.length / columns).ceil();
             final contentWidth = screenWidth - (horizontalPadding * 2);
             final tileWidth =
@@ -1154,23 +1176,37 @@ class _EventsPageState extends State<EventsPage> {
                 constraints.maxHeight - estimatedTopContentHeight;
             final unclampedTileHeight =
                 (remainingHeight - ((rows - 1) * tileSpacing)) / rows;
-            final minTileHeight = isTabletLayout
-                ? 215.0
-                : (screenWidth < 360 ? 108.0 : 130.0);
-            final maxTileHeight = isTabletLayout
-                ? 300.0
-                : (screenWidth < 360 ? 145.0 : 165.0);
+            final minTileHeight = isTabletLandscape
+                ? 150.0
+                : (isTabletLayout
+                      ? 215.0
+                      : (screenWidth < 360 ? 108.0 : 130.0));
+            final maxTileHeight = isTabletLandscape
+                ? 200.0
+                : (isTabletLayout
+                      ? 300.0
+                      : (screenWidth < 360 ? 145.0 : 165.0));
             final tileHeight = unclampedTileHeight
                 .clamp(minTileHeight, maxTileHeight)
                 .toDouble();
             final gridHeight = (tileHeight * rows) + ((rows - 1) * tileSpacing);
             final tileAspectRatio = tileWidth / tileHeight;
-            final categoryLabelFontSize = isTabletLayout ? 22.0 : 12.2;
-            final categoryIconSize = isTabletLayout ? 28.0 : 16.0;
-            final categoryTileInset = isTabletLayout ? 14.0 : 8.0;
+            final categoryLabelFontSize = isTabletLandscape
+                ? 18.0
+                : (isTabletLayout ? 22.0 : 12.2);
+            final categoryIconSize = isTabletLandscape
+                ? 22.0
+                : (isTabletLayout ? 28.0 : 16.0);
+            final categoryTileInset = isTabletLandscape
+                ? 10.0
+                : (isTabletLayout ? 14.0 : 8.0);
             final categoryLabelMaxLines = isTabletLayout ? 2 : 1;
-            final categoryLabelSpacing = isTabletLayout ? 6.0 : 3.0;
-            final headingFontSize = isTabletLayout ? 22.0 : 14.0;
+            final categoryLabelSpacing = isTabletLandscape
+                ? 4.0
+                : (isTabletLayout ? 6.0 : 3.0);
+            final headingFontSize = isTabletLandscape
+                ? 20.0
+                : (isTabletLayout ? 22.0 : 14.0);
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(
