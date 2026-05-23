@@ -241,6 +241,15 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String _taxiHandoffPreparedLabel(String destinationName) {
+    return _t(
+      nl: 'Taxi handoff voorbereid voor $destinationName',
+      en: 'Taxi handoff prepared for $destinationName',
+      fr: 'Transfert taxi prêt pour $destinationName',
+      es: 'Transferencia de taxi preparada para $destinationName',
+    );
+  }
+
   bool _isPremiumStay(HotelStay stay) {
     if ((stay.rating ?? 0) >= 4.7) return true;
     final joined = <String>[
@@ -364,23 +373,24 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   void _onTaxiCtaTap(HotelStay stay) {
+    final destination = stay.toDiscoveryDestination();
+    debugPrint(
+      '[hotels.discovery_handoff] type=${destination.discoveryType} '
+      'name="${destination.destinationName}" '
+      'provider="${destination.provider}" providerId="${destination.providerId}" '
+      'lat=${destination.latitude} lng=${destination.longitude} '
+      'city="${destination.city}" region="${destination.region}" country="${destination.country}"',
+    );
+    final snackBar = SnackBar(
+      content: Text(_taxiHandoffPreparedLabel(destination.destinationName)),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+
     final callback = widget.onTaxiToStay;
     if (callback != null) {
       callback(stay);
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Taxi-prefill wordt gekoppeld in de volgende stap.',
-            en: 'Taxi prefill will be connected in the next step.',
-            fr: 'Le préremplissage taxi sera connecté à la prochaine étape.',
-            es: 'El prellenado de taxi se conectará en el siguiente paso.',
-          ),
-        ),
-      ),
-    );
   }
 
   @override

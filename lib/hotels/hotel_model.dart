@@ -12,6 +12,40 @@ class HotelStayType {
   };
 }
 
+/// Reusable discovery destination payload for structured taxi handoff.
+///
+/// This model is intentionally domain-agnostic to support hotels, events,
+/// airports, nightlife, restaurants, and future discovery modules.
+class DiscoveryDestination {
+  const DiscoveryDestination({
+    required this.discoveryType,
+    required this.destinationName,
+    required this.destinationAddress,
+    this.latitude,
+    this.longitude,
+    required this.city,
+    required this.region,
+    required this.country,
+    required this.provider,
+    required this.providerId,
+    this.tenantId,
+    this.companyId,
+  });
+
+  final String discoveryType;
+  final String destinationName;
+  final String destinationAddress;
+  final double? latitude;
+  final double? longitude;
+  final String city;
+  final String region;
+  final String country;
+  final String provider;
+  final String providerId;
+  final String? tenantId;
+  final String? companyId;
+}
+
 class HotelStay {
   const HotelStay({
     required this.id,
@@ -102,5 +136,31 @@ class HotelStay {
     final sourceValue = source.trim();
     if (sourceValue.isNotEmpty) return sourceValue;
     return 'curated';
+  }
+
+  DiscoveryDestination toDiscoveryDestination({
+    String? tenantId,
+    String? companyId,
+  }) {
+    final normalizedName = name.trim().isEmpty ? id : name.trim();
+    final normalizedAddress = address.trim().isEmpty
+        ? '$city, $region, $country'
+        : address.trim();
+    return DiscoveryDestination(
+      discoveryType: 'accommodation',
+      destinationName: normalizedName,
+      destinationAddress: normalizedAddress,
+      latitude: latitude ?? lat,
+      longitude: longitude ?? lng,
+      city: city,
+      region: region,
+      country: country,
+      provider: effectiveProvider,
+      providerId: externalProviderId?.trim().isNotEmpty == true
+          ? externalProviderId!.trim()
+          : (sourceId?.trim().isNotEmpty == true ? sourceId!.trim() : id),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
   }
 }
