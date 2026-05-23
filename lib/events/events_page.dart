@@ -54,6 +54,7 @@ class _EventsPageState extends State<EventsPage> {
   ];
 
   final TextEditingController _searchController = TextEditingController();
+  final EventLocalSavedStore _savedStore = const EventLocalSavedStore();
   late String _selectedMarketKey;
   late String _selectedMarketCode;
   String _selectedDateMode = EventDateMode.all;
@@ -185,6 +186,11 @@ class _EventsPageState extends State<EventsPage> {
     return _categoryFilterLabel(event.resolvedCategoryKey);
   }
 
+  bool _isFavorite(EventDetailData event) {
+    final key = buildSavedEventIdentityKey(event);
+    return _savedEventByKey[key]?.favorite == true;
+  }
+
   String _monthName(int month) {
     switch (month) {
       case 1:
@@ -238,6 +244,8 @@ class _EventsPageState extends State<EventsPage> {
 
   late final EventDataSource _dataSource;
   List<EventDetailData> _events = const <EventDetailData>[];
+  Map<String, SavedEventRecord> _savedEventByKey =
+      const <String, SavedEventRecord>{};
 
   @override
   void initState() {
@@ -248,6 +256,7 @@ class _EventsPageState extends State<EventsPage> {
     _events = List<EventDetailData>.from(
       _dataSource.getInitialEvents() ?? const <EventDetailData>[],
     );
+    _loadSavedEvents();
     _searchController.addListener(_onSearchChanged);
     _loadEvents();
   }
@@ -269,6 +278,12 @@ class _EventsPageState extends State<EventsPage> {
     setState(() {
       _events = List<EventDetailData>.from(feed.events);
     });
+  }
+
+  Future<void> _loadSavedEvents() async {
+    final records = await _savedStore.loadAll();
+    if (!mounted) return;
+    setState(() => _savedEventByKey = records);
   }
 
   EventFeedQuery _buildEventFeedQuery() {
@@ -582,13 +597,15 @@ class _EventsPageState extends State<EventsPage> {
     _loadEvents();
   }
 
-  void _openEventDetails(EventDetailData event) {
-    Navigator.of(context).push(
+  Future<void> _openEventDetails(EventDetailData event) async {
+    await Navigator.of(context).push(
       MaterialPageRoute<EventDetailPage>(
         builder: (_) =>
             EventDetailPage(event: event, onBookEvent: widget.onBookEvent),
       ),
     );
+    if (!mounted) return;
+    _loadSavedEvents();
   }
 
   void _bookEvent(EventDetailData event) {
@@ -610,6 +627,47 @@ class _EventsPageState extends State<EventsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _toggleFavorite(EventDetailData event) async {
+    final wasFavorite = _isFavorite(event);
+    final favorite = !wasFavorite;
+    final key = buildSavedEventIdentityKey(event);
+    final optimistic = Map<String, SavedEventRecord>.from(_savedEventByKey);
+    final existing = optimistic[key];
+    if (favorite) {
+      optimistic[key] = SavedEventRecord.fromEvent(
+        event,
+        favorite: true,
+        saved: existing?.saved ?? false,
+        savedAtUtc: existing?.savedAtUtc,
+      );
+    } else if (existing != null) {
+      if (existing.saved) {
+        optimistic[key] = existing.copyWith(favorite: false);
+      } else {
+        optimistic.remove(key);
+      }
+    }
+    setState(() => _savedEventByKey = optimistic);
+    _showInfoSnackBar(
+      favorite
+          ? _t(
+              nl: 'Toegevoegd aan favorieten',
+              en: 'Added to favorites',
+              fr: 'Ajoute aux favoris',
+              es: 'Anadido a favoritos',
+            )
+          : _t(
+              nl: 'Verwijderd uit favorieten',
+              en: 'Removed from favorites',
+              fr: 'Retire des favoris',
+              es: 'Eliminado de favoritos',
+            ),
+    );
+    final updated = await _savedStore.toggleFavorite(event, favorite: favorite);
+    if (!mounted) return;
+    setState(() => _savedEventByKey = updated);
   }
 
   @override
@@ -974,6 +1032,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget _buildEventCard(EventDetailData event) {
     final cardImageUrl = _cardImageUrl(event);
+    final isFavorite = _isFavorite(event);
     return Container(
       decoration: BoxDecoration(
         color: _panelBlack,
@@ -1165,17 +1224,16 @@ class _EventsPageState extends State<EventsPage> {
                           right: 10,
                           top: 6,
                           child: IconButton(
-                            onPressed: () => _showInfoSnackBar(
-                              _t(
-                                nl: 'Favorieten voor events komen binnenkort.',
-                                en: 'Event favorites are coming soon.',
-                                fr: 'Les favoris événement arrivent bientôt.',
-                                es: 'Los favoritos de eventos estarán disponibles pronto.',
-                              ),
+                            onPressed: () => _toggleFavorite(event),
+                            icon: Icon(
+                              isFavorite
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
                             ),
-                            icon: const Icon(Icons.favorite_border_rounded),
                             iconSize: 18,
-                            color: Colors.white.withOpacity(0.92),
+                            color: isFavorite
+                                ? _gold
+                                : Colors.white.withOpacity(0.92),
                             tooltip: _t(
                               nl: 'Favoriet',
                               en: 'Favorite',

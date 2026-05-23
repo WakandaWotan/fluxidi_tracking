@@ -423,125 +423,13 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  void _onBookPressed(BuildContext context) {
-    if (onBookEvent != null) {
-      onBookEvent!.call(event);
-      return;
-    }
-    _showInfoSnackBar(
-      context,
-      _t(
-        nl: 'Boekingsflow voor dit event is binnenkort beschikbaar.',
-        en: 'Booking flow for this event is coming soon.',
-        fr: 'Le flux de réservation pour cet événement arrive bientôt.',
-        es: 'El flujo de reserva para este evento estará disponible pronto.',
-      ),
-    );
-  }
-
-  void _showInfoSnackBar(BuildContext context, String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _onOpenTicketsPressed(BuildContext context) async {
-    final rawUrl = (event.sourceUrl ?? '').trim();
-    final uri = Uri.tryParse(rawUrl);
-    final isHttp =
-        uri != null &&
-        uri.hasScheme &&
-        (uri.scheme == 'https' || uri.scheme == 'http');
-    if (!isHttp) {
-      _showInfoSnackBar(
-        context,
-        _t(
-          nl: 'Geen ticketlink beschikbaar voor dit evenement.',
-          en: 'No ticket link is available for this event.',
-          fr: 'Aucun lien de billet disponible pour cet evenement.',
-          es: 'No hay enlace de entradas disponible para este evento.',
-        ),
-      );
-      return;
-    }
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!context.mounted) return;
-    if (!launched) {
-      _showInfoSnackBar(
-        context,
-        _t(
-          nl: 'Kon de ticketaanbieder niet openen.',
-          en: 'Could not open the ticket provider.',
-          fr: 'Impossible d ouvrir le fournisseur de billets.',
-          es: 'No se pudo abrir el proveedor de entradas.',
-        ),
-      );
-    }
-  }
-
   Widget _buildCtaArea(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
-      decoration: BoxDecoration(
-        color: _panelBlack,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _gold.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _onBookPressed(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: Colors.black,
-                elevation: 0,
-                minimumSize: const Size.fromHeight(54),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.local_taxi_rounded, size: 18),
-              label: Text(
-                _t(
-                  nl: 'Taxi naar dit event boeken',
-                  en: 'Book a taxi to this event',
-                  fr: 'Réserver un taxi vers cet événement',
-                  es: 'Reservar un taxi a este evento',
-                ),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _onOpenTicketsPressed(context),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF171209),
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.6)),
-                minimumSize: const Size.fromHeight(48),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.open_in_new_rounded, size: 18),
-              label: Text(
-                _t(
-                  nl: 'Tickets bekijken',
-                  en: 'View tickets',
-                  fr: 'Voir les billets',
-                  es: 'Ver entradas',
-                ),
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return _EventDetailActionPanel(
+      event: event,
+      onBookEvent: onBookEvent,
+      panelBlack: _panelBlack,
+      gold: _gold,
+      t: _t,
     );
   }
 
@@ -640,5 +528,233 @@ class EventDetailPage extends StatelessWidget {
       default:
         return Icons.event_rounded;
     }
+  }
+}
+
+class _EventDetailActionPanel extends StatefulWidget {
+  const _EventDetailActionPanel({
+    required this.event,
+    required this.onBookEvent,
+    required this.panelBlack,
+    required this.gold,
+    required this.t,
+  });
+
+  final EventDetailData event;
+  final EventBookCallback? onBookEvent;
+  final Color panelBlack;
+  final Color gold;
+  final String Function({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  })
+  t;
+
+  @override
+  State<_EventDetailActionPanel> createState() =>
+      _EventDetailActionPanelState();
+}
+
+class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
+  final EventLocalSavedStore _savedStore = const EventLocalSavedStore();
+  bool _isSaved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedState();
+  }
+
+  Future<void> _loadSavedState() async {
+    final all = await _savedStore.loadAll();
+    if (!mounted) return;
+    final key = buildSavedEventIdentityKey(widget.event);
+    setState(() => _isSaved = all[key]?.saved == true);
+  }
+
+  void _showInfoSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _onSavePressed() async {
+    if (_isSaved) {
+      _showInfoSnackBar(
+        widget.t(
+          nl: 'Details zijn al opgeslagen',
+          en: 'Details are already saved',
+          fr: 'Les details sont deja enregistres',
+          es: 'Los detalles ya estan guardados',
+        ),
+      );
+      return;
+    }
+    final all = await _savedStore.saveEventDetails(widget.event);
+    if (!mounted) return;
+    final key = buildSavedEventIdentityKey(widget.event);
+    setState(() => _isSaved = all[key]?.saved == true);
+    _showInfoSnackBar(
+      widget.t(
+        nl: 'Eventdetails opgeslagen',
+        en: 'Event details saved',
+        fr: 'Details de l evenement enregistres',
+        es: 'Detalles del evento guardados',
+      ),
+    );
+  }
+
+  void _onBookPressed() {
+    if (widget.onBookEvent != null) {
+      widget.onBookEvent!.call(widget.event);
+      return;
+    }
+    _showInfoSnackBar(
+      widget.t(
+        nl: 'Boekingsflow voor dit event is binnenkort beschikbaar.',
+        en: 'Booking flow for this event is coming soon.',
+        fr: 'Le flux de réservation pour cet événement arrive bientôt.',
+        es: 'El flujo de reserva para este evento estará disponible pronto.',
+      ),
+    );
+  }
+
+  Future<void> _onOpenTicketsPressed() async {
+    final rawUrl = (widget.event.sourceUrl ?? '').trim();
+    final uri = Uri.tryParse(rawUrl);
+    final isHttp =
+        uri != null &&
+        uri.hasScheme &&
+        (uri.scheme == 'https' || uri.scheme == 'http');
+    if (!isHttp) {
+      _showInfoSnackBar(
+        widget.t(
+          nl: 'Geen ticketlink beschikbaar voor dit evenement.',
+          en: 'No ticket link is available for this event.',
+          fr: 'Aucun lien de billet disponible pour cet evenement.',
+          es: 'No hay enlace de entradas disponible para este evento.',
+        ),
+      );
+      return;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!mounted) return;
+    if (!launched) {
+      _showInfoSnackBar(
+        widget.t(
+          nl: 'Kon de ticketaanbieder niet openen.',
+          en: 'Could not open the ticket provider.',
+          fr: 'Impossible d ouvrir le fournisseur de billets.',
+          es: 'No se pudo abrir el proveedor de entradas.',
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
+      decoration: BoxDecoration(
+        color: widget.panelBlack,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: widget.gold.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _onBookPressed,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: widget.gold,
+                foregroundColor: Colors.black,
+                elevation: 0,
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.local_taxi_rounded, size: 18),
+              label: Text(
+                widget.t(
+                  nl: 'Taxi naar dit event boeken',
+                  en: 'Book a taxi to this event',
+                  fr: 'Réserver un taxi vers cet événement',
+                  es: 'Reservar un taxi a este evento',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _onSavePressed,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF171209),
+                foregroundColor: widget.gold,
+                side: BorderSide(color: widget.gold.withOpacity(0.6)),
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: Icon(
+                _isSaved
+                    ? Icons.bookmark_rounded
+                    : Icons.bookmark_border_rounded,
+                size: 18,
+              ),
+              label: Text(
+                _isSaved
+                    ? widget.t(
+                        nl: 'Details opgeslagen',
+                        en: 'Details saved',
+                        fr: 'Details enregistres',
+                        es: 'Detalles guardados',
+                      )
+                    : widget.t(
+                        nl: 'Details opslaan',
+                        en: 'Save details',
+                        fr: 'Enregistrer les details',
+                        es: 'Guardar detalles',
+                      ),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _onOpenTicketsPressed,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF171209),
+                foregroundColor: widget.gold,
+                side: BorderSide(color: widget.gold.withOpacity(0.6)),
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              label: Text(
+                widget.t(
+                  nl: 'Tickets bekijken',
+                  en: 'View tickets',
+                  fr: 'Voir les billets',
+                  es: 'Ver entradas',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
