@@ -28,13 +28,20 @@ class _EventsPageState extends State<EventsPage> {
   static const Color _gold = Color(0xFFE5B641);
   static const Color _softText = Color(0xFFB4B4B4);
 
-  static const List<String> _filterKeys = <String>[
+  static const List<String> _dateFilterKeys = <String>[
+    EventDateMode.all,
+    EventDateMode.today,
+    EventDateMode.weekend,
+    EventDateMode.month,
+  ];
+  static const List<String> _categoryFilterKeys = <String>[
     'all',
-    'today',
-    'weekend',
-    'music',
-    'business',
-    'sport',
+    EventCategoryKey.music,
+    EventCategoryKey.sport,
+    EventCategoryKey.culture,
+    EventCategoryKey.business,
+    EventCategoryKey.family,
+    EventCategoryKey.other,
   ];
   static const List<String> _marketKeys = <String>[
     'be',
@@ -45,8 +52,12 @@ class _EventsPageState extends State<EventsPage> {
   ];
 
   final TextEditingController _searchController = TextEditingController();
-  int _selectedMarketIndex = 0;
-  int _selectedFilterIndex = 0;
+  late String _selectedMarketKey;
+  late String _selectedMarketCode;
+  String _selectedDateMode = EventDateMode.all;
+  DateTime? _selectedMonthStartUtc;
+  DateTime? _selectedMonthEndUtc;
+  String _selectedCategoryKey = 'all';
   int _selectedTabIndex = 0;
 
   String _t({
@@ -101,33 +112,109 @@ class _EventsPageState extends State<EventsPage> {
     }
   }
 
-  String _filterLabel(String key) {
+  String _dateFilterLabel(String key) {
     switch (key) {
-      case 'all':
+      case EventDateMode.all:
         return _t(nl: 'Alles', en: 'All', fr: 'Tout', es: 'Todo');
-      case 'today':
+      case EventDateMode.today:
         return _t(nl: 'Vandaag', en: 'Today', fr: 'Aujourd’hui', es: 'Hoy');
-      case 'weekend':
+      case EventDateMode.weekend:
         return _t(
           nl: 'Dit weekend',
           en: 'This weekend',
           fr: 'Ce week-end',
           es: 'Este fin de semana',
         );
-      case 'music':
+      case EventDateMode.month:
+        return _selectedDateMode == EventDateMode.month &&
+                _selectedMonthStartUtc != null
+            ? _formatMonthLabel(_selectedMonthStartUtc!)
+            : _t(nl: 'Maand', en: 'Month', fr: 'Mois', es: 'Mes');
+      default:
+        return key;
+    }
+  }
+
+  String _categoryFilterLabel(String key) {
+    switch (key) {
+      case 'all':
+        return _t(
+          nl: 'Alle categorieën',
+          en: 'All categories',
+          fr: 'Toutes catégories',
+          es: 'Todas categorías',
+        );
+      case EventCategoryKey.music:
         return _t(nl: 'Muziek', en: 'Music', fr: 'Musique', es: 'Música');
-      case 'business':
+      case EventCategoryKey.business:
         return _t(
           nl: 'Zakelijk',
           en: 'Business',
           fr: 'Business',
           es: 'Negocios',
         );
-      case 'sport':
+      case EventCategoryKey.sport:
         return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
+      case EventCategoryKey.culture:
+        return _t(nl: 'Cultuur', en: 'Culture', fr: 'Culture', es: 'Cultura');
+      case EventCategoryKey.family:
+        return _t(nl: 'Familie', en: 'Family', fr: 'Famille', es: 'Familia');
+      case EventCategoryKey.other:
+        return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
       default:
         return key;
     }
+  }
+
+  String _monthName(int month) {
+    switch (month) {
+      case 1:
+        return _t(nl: 'Januari', en: 'January', fr: 'Janvier', es: 'Enero');
+      case 2:
+        return _t(nl: 'Februari', en: 'February', fr: 'Février', es: 'Febrero');
+      case 3:
+        return _t(nl: 'Maart', en: 'March', fr: 'Mars', es: 'Marzo');
+      case 4:
+        return _t(nl: 'April', en: 'April', fr: 'Avril', es: 'Abril');
+      case 5:
+        return _t(nl: 'Mei', en: 'May', fr: 'Mai', es: 'Mayo');
+      case 6:
+        return _t(nl: 'Juni', en: 'June', fr: 'Juin', es: 'Junio');
+      case 7:
+        return _t(nl: 'Juli', en: 'July', fr: 'Juillet', es: 'Julio');
+      case 8:
+        return _t(nl: 'Augustus', en: 'August', fr: 'Août', es: 'Agosto');
+      case 9:
+        return _t(
+          nl: 'September',
+          en: 'September',
+          fr: 'Septembre',
+          es: 'Septiembre',
+        );
+      case 10:
+        return _t(nl: 'Oktober', en: 'October', fr: 'Octobre', es: 'Octubre');
+      case 11:
+        return _t(
+          nl: 'November',
+          en: 'November',
+          fr: 'Novembre',
+          es: 'Noviembre',
+        );
+      case 12:
+        return _t(
+          nl: 'December',
+          en: 'December',
+          fr: 'Décembre',
+          es: 'Diciembre',
+        );
+      default:
+        return month.toString();
+    }
+  }
+
+  String _formatMonthLabel(DateTime monthStartUtc) {
+    final local = monthStartUtc.toLocal();
+    return '${_monthName(local.month)} ${local.year}';
   }
 
   late final EventDataSource _dataSource;
@@ -136,17 +223,25 @@ class _EventsPageState extends State<EventsPage> {
   @override
   void initState() {
     super.initState();
+    _selectedMarketKey = _marketKeys.first;
+    _selectedMarketCode = _selectedMarketKey.toUpperCase();
     _dataSource = widget.dataSource ?? const LocalSeedEventDataSource();
     _events = List<EventDetailData>.from(
       _dataSource.getInitialEvents() ?? const <EventDetailData>[],
     );
+    _searchController.addListener(_onSearchChanged);
     _loadEvents();
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadEvents() async {
@@ -158,31 +253,24 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   EventFeedQuery _buildEventFeedQuery() {
-    final selectedFilter = _filterKeys[_selectedFilterIndex];
-    final selectedMarket = _marketKeys[_selectedMarketIndex];
-    String dateMode = 'upcoming';
-    if (selectedFilter == 'today') {
-      dateMode = 'today';
-    } else if (selectedFilter == 'weekend') {
-      dateMode = 'weekend';
-    } else if (selectedFilter == 'all') {
-      dateMode = 'year';
-    }
+    final dateRange = _resolveDateRangeForMode();
     return EventFeedQuery(
-      countryCode: selectedMarket.toUpperCase(),
-      marketCode: selectedMarket,
-      dateMode: dateMode,
+      countryCode: _selectedMarketCode,
+      marketCode: _selectedMarketKey,
+      dateMode: _selectedDateMode,
+      startAtUtc: dateRange?.$1,
+      endAtUtc: dateRange?.$2,
+      categoryKey: _selectedCategoryKey == 'all' ? null : _selectedCategoryKey,
+      searchQuery: _searchController.text.trim(),
       limit: 50,
     );
   }
 
   List<EventDetailData> get _visibleEvents {
     final query = _searchController.text.trim().toLowerCase();
-    final selectedFilter = _filterKeys[_selectedFilterIndex];
-    final selectedMarket = _marketKeys[_selectedMarketIndex];
     return _events
         .where((event) {
-          if (!_marketMatchesEvent(event, selectedMarket)) return false;
+          if (!_marketMatchesEvent(event, _selectedMarketKey)) return false;
           final matchesSearch =
               query.isEmpty ||
               event.title.toLowerCase().contains(query) ||
@@ -191,31 +279,35 @@ class _EventsPageState extends State<EventsPage> {
               event.address.toLowerCase().contains(query) ||
               event.category.toLowerCase().contains(query);
           if (!matchesSearch) return false;
-          if (selectedFilter == 'all') return _matchesUpcomingFilter(event);
-          if (selectedFilter == 'weekend') {
-            return _matchesWeekendFilter(event);
+          if (_selectedCategoryKey != 'all' &&
+              event.resolvedCategoryKey != _selectedCategoryKey) {
+            return false;
           }
-          if (selectedFilter == 'today') {
-            return _matchesTodayFilter(event);
-          }
-          if (selectedFilter == 'music') {
-            return event.resolvedCategoryKey == EventCategoryKey.music;
-          }
-          if (selectedFilter == 'business') {
-            return event.resolvedCategoryKey == EventCategoryKey.business;
-          }
-          if (selectedFilter == 'sport') {
-            return event.resolvedCategoryKey == EventCategoryKey.sport;
-          }
-          return true;
+          return _matchesDateMode(event);
         })
         .toList(growable: false);
   }
 
-  static bool _matchesUpcomingFilter(EventDetailData event) {
+  bool _matchesDateMode(EventDetailData event) {
+    switch (_selectedDateMode) {
+      case EventDateMode.today:
+        return _matchesTodayFilter(event);
+      case EventDateMode.weekend:
+        return _matchesWeekendFilter(event);
+      case EventDateMode.month:
+        return _matchesMonthFilter(event);
+      case EventDateMode.all:
+      default:
+        return _matchesUpcomingYearFilter(event);
+    }
+  }
+
+  static bool _matchesUpcomingYearFilter(EventDetailData event) {
     final start = event.startAtUtc?.toLocal();
     if (start == null) return true;
-    return !start.isBefore(DateTime.now());
+    final now = DateTime.now();
+    final horizon = now.add(const Duration(days: 365));
+    return !start.isBefore(now) && !start.isAfter(horizon);
   }
 
   static bool _matchesTodayFilter(EventDetailData event) {
@@ -256,6 +348,15 @@ class _EventsPageState extends State<EventsPage> {
     return !start.isBefore(weekendStart) && start.isBefore(weekendEndExclusive);
   }
 
+  bool _matchesMonthFilter(EventDetailData event) {
+    final start = event.startAtUtc;
+    final monthStart = _selectedMonthStartUtc;
+    final monthEnd = _selectedMonthEndUtc;
+    if (start == null || monthStart == null || monthEnd == null) return true;
+    final startUtc = start.toUtc();
+    return !startUtc.isBefore(monthStart) && !startUtc.isAfter(monthEnd);
+  }
+
   static (DateTime, DateTime)? _upcomingWeekendRange(DateTime now) {
     final startOfToday = DateTime(now.year, now.month, now.day);
     final int daysUntilSaturday = (DateTime.saturday - now.weekday + 7) % 7;
@@ -263,6 +364,14 @@ class _EventsPageState extends State<EventsPage> {
     final weekendEndExclusive = weekendStart.add(const Duration(days: 2));
     if (weekendEndExclusive.isBefore(now)) return null;
     return (weekendStart, weekendEndExclusive);
+  }
+
+  (DateTime, DateTime)? _resolveDateRangeForMode() {
+    if (_selectedDateMode != EventDateMode.month) return null;
+    final monthStart = _selectedMonthStartUtc;
+    final monthEnd = _selectedMonthEndUtc;
+    if (monthStart == null || monthEnd == null) return null;
+    return (monthStart, monthEnd);
   }
 
   bool _marketMatchesEvent(EventDetailData event, String marketKey) {
@@ -351,6 +460,109 @@ class _EventsPageState extends State<EventsPage> {
     return text.replaceAll('ï', 'i').replaceAll('é', 'e');
   }
 
+  List<_MonthFilterOption> _nextTwelveMonthOptions() {
+    final nowLocal = DateTime.now().toLocal();
+    final firstMonthLocal = DateTime(nowLocal.year, nowLocal.month, 1);
+    return List<_MonthFilterOption>.generate(12, (index) {
+      final monthStartLocal = DateTime(
+        firstMonthLocal.year,
+        firstMonthLocal.month + index,
+        1,
+      );
+      final nextMonthStartLocal = DateTime(
+        monthStartLocal.year,
+        monthStartLocal.month + 1,
+        1,
+      );
+      return _MonthFilterOption(
+        startUtc: monthStartLocal.toUtc(),
+        endUtc: nextMonthStartLocal
+            .subtract(const Duration(milliseconds: 1))
+            .toUtc(),
+      );
+    });
+  }
+
+  Future<void> _openMonthPicker() async {
+    final options = _nextTwelveMonthOptions();
+    final selectedStartUtc = _selectedMonthStartUtc;
+    final chosen = await showModalBottomSheet<_MonthFilterOption>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Selecteer maand',
+                    en: 'Select month',
+                    fr: 'Sélectionner le mois',
+                    es: 'Seleccionar mes',
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final option = options[index];
+                      final isSelected =
+                          selectedStartUtc != null &&
+                          option.startUtc.isAtSameMomentAs(selectedStartUtc);
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _formatMonthLabel(option.startUtc),
+                          style: TextStyle(
+                            color: isSelected ? _gold : Colors.white,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(option),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || chosen == null) return;
+    setState(() {
+      _selectedDateMode = EventDateMode.month;
+      _selectedMonthStartUtc = chosen.startUtc;
+      _selectedMonthEndUtc = chosen.endUtc;
+    });
+    _loadEvents();
+  }
+
   void _openEventDetails(EventDetailData event) {
     Navigator.of(context).push(
       MaterialPageRoute<EventDetailPage>(
@@ -405,7 +617,9 @@ class _EventsPageState extends State<EventsPage> {
                   const SizedBox(height: 8),
                   _buildMarketChips(),
                   const SizedBox(height: 9),
-                  _buildFilterChips(),
+                  _buildDateFilterChips(),
+                  const SizedBox(height: 9),
+                  _buildCategoryChips(),
                   const SizedBox(height: 12),
                   _buildSegmentedToggle(),
                   const SizedBox(height: 12),
@@ -492,7 +706,6 @@ class _EventsPageState extends State<EventsPage> {
   Widget _buildSearchField() {
     return TextField(
       controller: _searchController,
-      onChanged: (_) => setState(() {}),
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         hintText: 'Zoek evenement of locatie',
@@ -523,10 +736,11 @@ class _EventsPageState extends State<EventsPage> {
         itemCount: _marketKeys.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final selected = index == _selectedMarketIndex;
+          final marketKey = _marketKeys[index];
+          final selected = marketKey == _selectedMarketKey;
           return ChoiceChip(
             label: Text(
-              _marketLabel(_marketKeys[index]),
+              _marketLabel(marketKey),
               style: TextStyle(
                 color: selected ? Colors.black : Colors.white,
                 fontWeight: FontWeight.w700,
@@ -535,7 +749,10 @@ class _EventsPageState extends State<EventsPage> {
             ),
             selected: selected,
             onSelected: (_) {
-              setState(() => _selectedMarketIndex = index);
+              setState(() {
+                _selectedMarketKey = marketKey;
+                _selectedMarketCode = marketKey.toUpperCase();
+              });
               _loadEvents();
             },
             selectedColor: _gold,
@@ -555,19 +772,20 @@ class _EventsPageState extends State<EventsPage> {
     );
   }
 
-  Widget _buildFilterChips() {
+  Widget _buildDateFilterChips() {
     return SizedBox(
       height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        itemCount: _filterKeys.length,
+        itemCount: _dateFilterKeys.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final selected = index == _selectedFilterIndex;
+          final dateKey = _dateFilterKeys[index];
+          final selected = dateKey == _selectedDateMode;
           return ChoiceChip(
             label: Text(
-              _filterLabel(_filterKeys[index]),
+              _dateFilterLabel(dateKey),
               style: TextStyle(
                 color: selected ? Colors.black : Colors.white,
                 fontWeight: FontWeight.w700,
@@ -576,7 +794,51 @@ class _EventsPageState extends State<EventsPage> {
             ),
             selected: selected,
             onSelected: (_) {
-              setState(() => _selectedFilterIndex = index);
+              if (dateKey == EventDateMode.month) {
+                _openMonthPicker();
+                return;
+              }
+              setState(() => _selectedDateMode = dateKey);
+              _loadEvents();
+            },
+            selectedColor: _gold,
+            backgroundColor: _panelBlack,
+            shape: StadiumBorder(
+              side: BorderSide(color: _gold.withOpacity(selected ? 0.1 : 0.32)),
+            ),
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCategoryChips() {
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        itemCount: _categoryFilterKeys.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final categoryKey = _categoryFilterKeys[index];
+          final selected = categoryKey == _selectedCategoryKey;
+          return ChoiceChip(
+            label: Text(
+              _categoryFilterLabel(categoryKey),
+              style: TextStyle(
+                color: selected ? Colors.black : Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+            selected: selected,
+            onSelected: (_) {
+              setState(() => _selectedCategoryKey = categoryKey);
               _loadEvents();
             },
             selectedColor: _gold,
@@ -1114,4 +1376,11 @@ class _EventsPageState extends State<EventsPage> {
       ),
     );
   }
+}
+
+class _MonthFilterOption {
+  const _MonthFilterOption({required this.startUtc, required this.endUtc});
+
+  final DateTime startUtc;
+  final DateTime endUtc;
 }

@@ -107,10 +107,10 @@ class EventFeedQuery {
     this.countryCode,
     this.categoryKey,
     this.dateMode,
+    this.startAtUtc,
+    this.endAtUtc,
     this.searchQuery,
     this.locale,
-    this.fromUtc,
-    this.untilUtc,
     this.latitude,
     this.longitude,
     this.radiusKm,
@@ -121,14 +121,23 @@ class EventFeedQuery {
   final String? countryCode;
   final String? categoryKey;
   final String? dateMode;
+  final DateTime? startAtUtc;
+  final DateTime? endAtUtc;
   final String? searchQuery;
   final String? locale;
-  final DateTime? fromUtc;
-  final DateTime? untilUtc;
   final double? latitude;
   final double? longitude;
   final double? radiusKm;
   final int? limit;
+}
+
+class EventDateMode {
+  static const String all = 'all';
+  static const String today = 'today';
+  static const String weekend = 'weekend';
+  static const String month = 'month';
+
+  static const Set<String> values = <String>{all, today, weekend, month};
 }
 
 class EventFeedResult {

@@ -179,13 +179,25 @@ class RemoteEventDataSource implements EventDataSource {
     _putIfNotEmpty(qp, 'country', query.countryCode?.toUpperCase());
     _putIfNotEmpty(qp, 'market', query.marketCode?.toLowerCase());
     _putIfNotEmpty(qp, 'category', query.categoryKey?.toLowerCase());
-    _putIfNotEmpty(qp, 'date', query.dateMode?.toLowerCase());
-    _putIfNotEmpty(qp, 'q', query.searchQuery);
-    if (query.fromUtc != null) {
-      qp['start_at'] = query.fromUtc!.toUtc().toIso8601String();
+    final normalizedDateMode = query.dateMode?.trim().toLowerCase();
+    if (normalizedDateMode == EventDateMode.today) {
+      qp['date'] = 'today';
+    } else if (normalizedDateMode == EventDateMode.weekend) {
+      qp['date'] = 'weekend';
+    } else if (normalizedDateMode == EventDateMode.month ||
+        normalizedDateMode == EventDateMode.all ||
+        normalizedDateMode == 'year' ||
+        normalizedDateMode == 'upcoming') {
+      qp['date'] = 'year';
+    } else if ((normalizedDateMode ?? '').isNotEmpty) {
+      qp['date'] = normalizedDateMode!;
     }
-    if (query.untilUtc != null) {
-      qp['end_at'] = query.untilUtc!.toUtc().toIso8601String();
+    _putIfNotEmpty(qp, 'q', query.searchQuery);
+    if (query.startAtUtc != null) {
+      qp['start_at'] = query.startAtUtc!.toUtc().toIso8601String();
+    }
+    if (query.endAtUtc != null) {
+      qp['end_at'] = query.endAtUtc!.toUtc().toIso8601String();
     }
     if (query.limit != null && query.limit! > 0)
       qp['limit'] = query.limit.toString();
