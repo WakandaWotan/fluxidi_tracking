@@ -275,6 +275,11 @@ class RemoteEventDataSource implements EventDataSource {
       explicitKey: categoryKey,
       fallbackLabel: category,
     );
+    final distanceLabel = _readString(event, const <String>[
+      'distance_label',
+      'distanceLabel',
+    ]);
+    final isDistanceLabelTrusted = (distanceLabel ?? '').trim().isNotEmpty;
     final resolvedLocationName =
         _readString(event, const <String>[
           'location_name',
@@ -295,13 +300,9 @@ class RemoteEventDataSource implements EventDataSource {
       address: _readString(event, const <String>['address']) ?? '',
       lat: lat,
       lng: lng,
-      distanceOrStatus:
-          _readString(event, const <String>[
-            'distance_label',
-            'distanceLabel',
-            'status',
-          ]) ??
-          'Gepland',
+      distanceOrStatus: distanceLabel ?? '',
+      distanceLabel: distanceLabel,
+      isDistanceLabelTrusted: isDistanceLabelTrusted,
       gradient: _gradientForCategory(resolvedCategoryKey),
       sourceLabel: _readString(event, const <String>['provider', 'source']),
       marketCode: _readString(event, const <String>[

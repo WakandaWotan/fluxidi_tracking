@@ -39,6 +39,8 @@ class _EventsPageState extends State<EventsPage> {
     EventCategoryKey.music,
     EventCategoryKey.sport,
     EventCategoryKey.culture,
+    EventCategoryKey.theater,
+    EventCategoryKey.comedy,
     EventCategoryKey.business,
     EventCategoryKey.family,
     EventCategoryKey.other,
@@ -157,13 +159,30 @@ class _EventsPageState extends State<EventsPage> {
         return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
       case EventCategoryKey.culture:
         return _t(nl: 'Cultuur', en: 'Culture', fr: 'Culture', es: 'Cultura');
+      case EventCategoryKey.food:
+        return _t(nl: 'Eten', en: 'Food', fr: 'Cuisine', es: 'Comida');
+      case EventCategoryKey.theater:
+        return _t(nl: 'Theater', en: 'Theater', fr: 'Théâtre', es: 'Teatro');
+      case EventCategoryKey.comedy:
+        return _t(nl: 'Comedy', en: 'Comedy', fr: 'Comédie', es: 'Comedia');
       case EventCategoryKey.family:
         return _t(nl: 'Familie', en: 'Family', fr: 'Famille', es: 'Familia');
+      case EventCategoryKey.airport:
+        return _t(
+          nl: 'Luchthaven',
+          en: 'Airport',
+          fr: 'Aéroport',
+          es: 'Aeropuerto',
+        );
       case EventCategoryKey.other:
         return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
       default:
         return key;
     }
+  }
+
+  String _eventCategoryBadgeLabel(EventDetailData event) {
+    return _categoryFilterLabel(event.resolvedCategoryKey);
   }
 
   String _monthName(int month) {
@@ -1066,7 +1085,7 @@ class _EventsPageState extends State<EventsPage> {
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  event.category,
+                                  _eventCategoryBadgeLabel(event),
                                   style: const TextStyle(
                                     color: _gold,
                                     fontSize: 10.6,
@@ -1217,31 +1236,7 @@ class _EventsPageState extends State<EventsPage> {
                           ],
                         ),
                         const SizedBox(height: 9),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _gold.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: _gold.withOpacity(0.4),
-                                ),
-                              ),
-                              child: Text(
-                                event.distanceOrStatus,
-                                style: const TextStyle(
-                                  color: _gold,
-                                  fontSize: 10.8,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                        _buildEventMetaChips(event),
                       ],
                     ),
                   ),
@@ -1373,6 +1368,38 @@ class _EventsPageState extends State<EventsPage> {
         ),
         textAlign: TextAlign.center,
         style: const TextStyle(color: _softText, fontSize: 13),
+      ),
+    );
+  }
+
+  Widget _buildEventMetaChips(EventDetailData event) {
+    final statusLabel = event.customerTicketStatusLabel;
+    final distanceLabel = event.isDistanceLabelTrusted
+        ? (event.distanceLabel ?? '').trim()
+        : '';
+    final chips = <Widget>[
+      if ((statusLabel ?? '').isNotEmpty) _buildMetaChip(label: statusLabel!),
+      if (distanceLabel.isNotEmpty) _buildMetaChip(label: distanceLabel),
+    ];
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 8, runSpacing: 6, children: chips);
+  }
+
+  Widget _buildMetaChip({required String label}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _gold.withOpacity(0.4)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _gold,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

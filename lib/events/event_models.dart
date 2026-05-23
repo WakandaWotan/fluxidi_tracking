@@ -8,6 +8,8 @@ class EventCategoryKey {
   static const String food = 'food';
   static const String family = 'family';
   static const String culture = 'culture';
+  static const String theater = 'theater';
+  static const String comedy = 'comedy';
   static const String business = 'business';
   static const String airport = 'airport';
   static const String other = 'other';
@@ -18,6 +20,8 @@ class EventCategoryKey {
     food,
     family,
     culture,
+    theater,
+    comedy,
     business,
     airport,
     other,
@@ -63,6 +67,24 @@ const List<EventCategoryMeta> kEventCategoryMeta = <EventCategoryMeta>[
     aliases: <String>['culture', 'cultuur'],
   ),
   EventCategoryMeta(
+    key: EventCategoryKey.theater,
+    icon: Icons.theater_comedy_rounded,
+    aliases: <String>[
+      'arts & theatre',
+      'arts & theater',
+      'arts and theatre',
+      'arts and theater',
+      'theatre',
+      'theater',
+      'théâtre',
+    ],
+  ),
+  EventCategoryMeta(
+    key: EventCategoryKey.comedy,
+    icon: Icons.mic_rounded,
+    aliases: <String>['comedy', 'comédie', 'stand-up', 'humor', 'humour'],
+  ),
+  EventCategoryMeta(
     key: EventCategoryKey.business,
     icon: Icons.apartment_rounded,
     aliases: <String>['business', 'zakelijk', 'negocios', 'affaires'],
@@ -90,6 +112,9 @@ String resolveEventCategoryKey({
   final normalizedLabel = fallbackLabel.trim().toLowerCase();
   for (final meta in kEventCategoryMeta) {
     if (meta.aliases.contains(normalizedLabel)) return meta.key;
+    for (final alias in meta.aliases) {
+      if (alias.isNotEmpty && normalizedLabel.contains(alias)) return meta.key;
+    }
   }
   return EventCategoryKey.other;
 }
@@ -171,6 +196,8 @@ class EventDetailData {
     required this.lng,
     required this.distanceOrStatus,
     required this.gradient,
+    this.distanceLabel,
+    this.isDistanceLabelTrusted = false,
     this.visualAssetPath,
     this.sourceLabel,
     this.marketCode,
@@ -196,6 +223,8 @@ class EventDetailData {
   final double lat;
   final double lng;
   final String distanceOrStatus;
+  final String? distanceLabel;
+  final bool isDistanceLabelTrusted;
   final List<Color> gradient;
   final String? visualAssetPath;
   final String? sourceLabel;
@@ -227,4 +256,22 @@ class EventDetailData {
       fallbackLabel: category,
     );
   }
+
+  String? get customerTicketStatusLabel {
+    return mapEventStatusToCustomerLabel(status);
+  }
+}
+
+String? mapEventStatusToCustomerLabel(String? rawStatus) {
+  final normalized = (rawStatus ?? '').trim().toLowerCase();
+  if (normalized.isEmpty || normalized == 'unknown') return null;
+  if (normalized.contains('onsale')) return 'Tickets beschikbaar';
+  if (normalized.contains('soldout') || normalized.contains('sold out')) {
+    return 'Uitverkocht';
+  }
+  if (normalized.contains('offsale')) return 'Niet beschikbaar';
+  if (normalized.contains('cancelled') || normalized.contains('canceled')) {
+    return 'Geannuleerd';
+  }
+  return null;
 }

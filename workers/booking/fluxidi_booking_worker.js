@@ -19620,6 +19620,10 @@ function _ticketmasterCategoryHints(category) {
       return { classificationName: "sports", keywordHint: "" };
     case "culture":
       return { classificationName: "arts", keywordHint: "culture" };
+    case "theater":
+      return { classificationName: "arts", keywordHint: "theatre theater arts stage drama" };
+    case "comedy":
+      return { classificationName: "arts", keywordHint: "comedy stand-up humor humour comedie comédie" };
     case "family":
       return { classificationName: "family", keywordHint: "" };
     case "business":
@@ -19647,12 +19651,37 @@ function _ticketmasterDateToUtc(dateTimeValue, dateValue) {
 
 function _ticketmasterCategoryFromEvent(tmEvent) {
   const list = Array.isArray(tmEvent?.classifications) ? tmEvent.classifications : [];
-  let raw = "";
+  const parts = [];
   for (const item of list) {
-    raw = safeStr(item?.segment?.name || item?.genre?.name || item?.subGenre?.name);
-    if (raw) break;
+    const segment = safeStr(item?.segment?.name);
+    const genre = safeStr(item?.genre?.name);
+    const subGenre = safeStr(item?.subGenre?.name);
+    if (segment) parts.push(segment);
+    if (genre) parts.push(genre);
+    if (subGenre) parts.push(subGenre);
   }
+  const raw = parts.join(" ").trim();
   const normalized = raw.toLowerCase();
+  if (
+    normalized.includes("comedy") ||
+    normalized.includes("comédie") ||
+    normalized.includes("comedie") ||
+    normalized.includes("stand-up") ||
+    normalized.includes("humor") ||
+    normalized.includes("humour")
+  ) {
+    return { key: "comedy", label: "Comedy" };
+  }
+  if (
+    normalized.includes("theatre") ||
+    normalized.includes("theater") ||
+    normalized.includes("théâtre") ||
+    normalized.includes("drama") ||
+    normalized.includes("play") ||
+    normalized.includes("musical")
+  ) {
+    return { key: "theater", label: "Theater" };
+  }
   if (normalized.includes("music")) return { key: "music", label: "Muziek" };
   if (normalized.includes("sport")) return { key: "sport", label: "Sport" };
   if (normalized.includes("arts") || normalized.includes("culture")) {
