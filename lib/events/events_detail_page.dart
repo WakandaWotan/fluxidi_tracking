@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
 
 class EventDetailPage extends StatelessWidget {
@@ -82,13 +83,33 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
-  String get _description {
+  String? get _eventDescription {
+    final text = (event.description ?? '').trim();
+    if (text.isEmpty) return null;
+    return text;
+  }
+
+  String get _emptyDescriptionLabel {
     return _t(
-      nl: 'Dit evenement trekt een professioneel publiek en vraagt om betrouwbare mobiliteitsplanning. Fluxidi ondersteunt een vlotte instroom, gecontroleerde uitstroom en heldere operationele regie.',
-      en: 'This event attracts a professional audience and requires reliable mobility planning. Fluxidi supports smooth arrival flows, controlled departures, and clear operational coordination.',
-      fr: 'Cet evenement attire un public professionnel et demande une planification de mobilite fiable. Fluxidi soutient des arrivees fluides, des departs controles et une coordination operationnelle claire.',
-      es: 'Este evento atrae a un publico profesional y requiere una planificacion de movilidad fiable. Fluxidi apoya llegadas fluidas, salidas controladas y una coordinacion operativa clara.',
+      nl: 'Meer informatie vind je via de ticketaanbieder.',
+      en: 'More information can be found via the ticket provider.',
+      fr: 'Plus d informations sont disponibles via le fournisseur de billets.',
+      es: 'Encontraras mas informacion a traves del proveedor de entradas.',
     );
+  }
+
+  String get _heroImageUrl {
+    return (event.heroImageUrl ?? event.imageUrl ?? event.thumbnailUrl ?? '')
+        .trim();
+  }
+
+  String? get _heroSecondaryChipLabel {
+    final statusLabel = event.customerTicketStatusLabel;
+    if ((statusLabel ?? '').isNotEmpty) return statusLabel;
+    final distance = event.isDistanceLabelTrusted
+        ? (event.distanceLabel ?? '').trim()
+        : '';
+    return distance.isNotEmpty ? distance : null;
   }
 
   @override
@@ -169,6 +190,8 @@ class EventDetailPage extends StatelessWidget {
   }
 
   Widget _buildHeroVisual() {
+    final heroImageUrl = _heroImageUrl;
+    final secondaryChipLabel = _heroSecondaryChipLabel;
     return Container(
       height: 206,
       decoration: BoxDecoration(
@@ -182,6 +205,33 @@ class EventDetailPage extends StatelessWidget {
       ),
       child: Stack(
         children: [
+          if (heroImageUrl.isNotEmpty)
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Image.network(
+                  heroImageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          if (heroImageUrl.isNotEmpty)
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[
+                      Colors.black.withOpacity(0.25),
+                      Colors.black.withOpacity(0.58),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Positioned(
             left: -14,
             top: -14,
@@ -222,14 +272,15 @@ class EventDetailPage extends StatelessWidget {
               icon: _categoryIcon(event.category),
             ),
           ),
-          Positioned(
-            left: 16,
-            top: 48,
-            child: _buildChip(
-              label: event.distanceOrStatus,
-              icon: Icons.local_taxi_rounded,
+          if ((secondaryChipLabel ?? '').isNotEmpty)
+            Positioned(
+              left: 16,
+              top: 48,
+              child: _buildChip(
+                label: secondaryChipLabel!,
+                icon: Icons.local_taxi_rounded,
+              ),
             ),
-          ),
           Positioned(
             right: 18,
             top: 18,
@@ -261,6 +312,7 @@ class EventDetailPage extends StatelessWidget {
   }
 
   Widget _buildPrimaryContent() {
+    final description = _eventDescription;
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
@@ -280,7 +332,21 @@ class EventDetailPage extends StatelessWidget {
           const Divider(color: Color(0x33E5B641), height: 1),
           const SizedBox(height: 11),
           Text(
-            _description,
+            _t(
+              nl: 'Evenementinformatie',
+              en: 'Event information',
+              fr: 'Informations sur l evenement',
+              es: 'Informacion del evento',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.2,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            description ?? _emptyDescriptionLabel,
             style: const TextStyle(
               color: _softText,
               fontSize: 13,
@@ -302,6 +368,7 @@ class EventDetailPage extends StatelessWidget {
         border: Border.all(color: _gold.withOpacity(0.26)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildInfoRow(
             _t(
@@ -316,6 +383,20 @@ class EventDetailPage extends StatelessWidget {
           _buildInfoRow(
             _t(nl: 'Adres', en: 'Address', fr: 'Adresse', es: 'Direccion'),
             event.address,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _t(
+              nl: 'Mobiliteitsadvies',
+              en: 'Mobility advice',
+              fr: 'Conseil de mobilite',
+              es: 'Consejo de movilidad',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.2,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 10),
           _buildInfoRow(
@@ -364,6 +445,40 @@ class EventDetailPage extends StatelessWidget {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _onOpenTicketsPressed(BuildContext context) async {
+    final rawUrl = (event.sourceUrl ?? '').trim();
+    final uri = Uri.tryParse(rawUrl);
+    final isHttp =
+        uri != null &&
+        uri.hasScheme &&
+        (uri.scheme == 'https' || uri.scheme == 'http');
+    if (!isHttp) {
+      _showInfoSnackBar(
+        context,
+        _t(
+          nl: 'Geen ticketlink beschikbaar voor dit evenement.',
+          en: 'No ticket link is available for this event.',
+          fr: 'Aucun lien de billet disponible pour cet evenement.',
+          es: 'No hay enlace de entradas disponible para este evento.',
+        ),
+      );
+      return;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!context.mounted) return;
+    if (!launched) {
+      _showInfoSnackBar(
+        context,
+        _t(
+          nl: 'Kon de ticketaanbieder niet openen.',
+          en: 'Could not open the ticket provider.',
+          fr: 'Impossible d ouvrir le fournisseur de billets.',
+          es: 'No se pudo abrir el proveedor de entradas.',
+        ),
+      );
+    }
+  }
+
   Widget _buildCtaArea(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
@@ -403,15 +518,7 @@ class EventDetailPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _showInfoSnackBar(
-                context,
-                _t(
-                  nl: 'Opslaan van eventdetails komt binnenkort.',
-                  en: 'Saving event details is coming soon.',
-                  fr: 'L enregistrement des détails de l événement arrive bientôt.',
-                  es: 'Guardar detalles del evento estará disponible pronto.',
-                ),
-              ),
+              onPressed: () => _onOpenTicketsPressed(context),
               style: OutlinedButton.styleFrom(
                 backgroundColor: const Color(0xFF171209),
                 foregroundColor: _gold,
@@ -421,13 +528,13 @@ class EventDetailPage extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              icon: const Icon(Icons.bookmark_border_rounded, size: 18),
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
               label: Text(
                 _t(
-                  nl: 'Details opslaan',
-                  en: 'Save details',
-                  fr: 'Enregistrer les details',
-                  es: 'Guardar detalles',
+                  nl: 'Tickets bekijken',
+                  en: 'View tickets',
+                  fr: 'Voir les billets',
+                  es: 'Ver entradas',
                 ),
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),

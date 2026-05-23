@@ -967,7 +967,13 @@ class _EventsPageState extends State<EventsPage> {
         Icons.event_rounded;
   }
 
+  String _cardImageUrl(EventDetailData event) {
+    return (event.heroImageUrl ?? event.thumbnailUrl ?? event.imageUrl ?? '')
+        .trim();
+  }
+
   Widget _buildEventCard(EventDetailData event) {
+    final cardImageUrl = _cardImageUrl(event);
     return Container(
       decoration: BoxDecoration(
         color: _panelBlack,
@@ -1008,6 +1014,38 @@ class _EventsPageState extends State<EventsPage> {
                     ),
                     child: Stack(
                       children: [
+                        if (cardImageUrl.isNotEmpty)
+                          Positioned.fill(
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(16),
+                              ),
+                              child: Image.network(
+                                cardImageUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              ),
+                            ),
+                          ),
+                        if (cardImageUrl.isNotEmpty)
+                          Positioned.fill(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(16),
+                                ),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: <Color>[
+                                    Colors.black.withOpacity(0.26),
+                                    Colors.black.withOpacity(0.54),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         Positioned(
                           left: 14,
                           top: 14,

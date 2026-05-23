@@ -19693,6 +19693,75 @@ function _ticketmasterDateToUtc(dateTimeValue, dateValue) {
   return null;
 }
 
+function _ticketmasterImageRatioValue(imageItem) {
+  const ratioRaw = safeStr(imageItem?.ratio);
+  if (!ratioRaw) return null;
+  const normalized = ratioRaw.replace("-", "_");
+  const parts = normalized.split("_");
+  if (parts.length !== 2) return null;
+  const w = Number(parts[0]);
+  const h = Number(parts[1]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    return null;
+  }
+  return w / h;
+}
+
+function _ticketmasterNormalizedImages(tmEvent) {
+  const list = Array.isArray(tmEvent?.images) ? tmEvent.images : [];
+  const out = [];
+  for (const item of list) {
+    const url = safeStr(item?.url);
+    const lowerUrl = url.toLowerCase();
+    if (!url || (!lowerUrl.startsWith("https://") && !lowerUrl.startsWith("http://"))) {
+      continue;
+    }
+    const width = Number(item?.width);
+    const height = Number(item?.height);
+    const ratio = _ticketmasterImageRatioValue(item);
+    out.push({
+      url,
+      width: Number.isFinite(width) && width > 0 ? width : 0,
+      height: Number.isFinite(height) && height > 0 ? height : 0,
+      ratio,
+    });
+  }
+  return out;
+}
+
+function _ticketmasterHeroImageScore(imageItem) {
+  const width = Number(imageItem?.width) || 0;
+  const height = Number(imageItem?.height) || 0;
+  const areaScore = width * height;
+  const ratio = Number(imageItem?.ratio);
+  const ratioPenalty = Number.isFinite(ratio) ? Math.abs(ratio - 16 / 9) : 0.5;
+  const ratioScore = Math.max(0, 1 - ratioPenalty) * 250000;
+  return areaScore + ratioScore;
+}
+
+function _ticketmasterBestImageUrls(tmEvent) {
+  const candidates = _ticketmasterNormalizedImages(tmEvent);
+  if (!candidates.length) {
+    return { image_url: null, hero_image_url: null, thumbnail_url: null };
+  }
+  const sortedForHero = [...candidates].sort(
+    (a, b) => _ticketmasterHeroImageScore(b) - _ticketmasterHeroImageScore(a),
+  );
+  const hero = sortedForHero[0];
+  const sortedForThumb = [...candidates].sort((a, b) => {
+    const areaA = (Number(a?.width) || 0) * (Number(a?.height) || 0);
+    const areaB = (Number(b?.width) || 0) * (Number(b?.height) || 0);
+    return areaA - areaB;
+  });
+  const thumbnail = sortedForThumb.find((item) => (item.width || 0) >= 200) || sortedForThumb[0];
+  const image = hero || candidates[0];
+  return {
+    image_url: image?.url || null,
+    hero_image_url: hero?.url || image?.url || null,
+    thumbnail_url: thumbnail?.url || image?.url || null,
+  };
+}
+
 function _ticketmasterCategoryFromEvent(tmEvent) {
   const list = Array.isArray(tmEvent?.classifications) ? tmEvent.classifications : [];
   const parts = [];
@@ -19791,6 +19860,7 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
   const longitude = _publicEventsToNumberOrNull(venue?.location?.longitude);
   if (latitude == null || longitude == null) return null;
   const categoryMeta = _ticketmasterCategoryFromEvent(tmEvent);
+  const imageUrls = _ticketmasterBestImageUrls(tmEvent);
   const startsAtUtc = _ticketmasterDateToUtc(
     tmEvent?.dates?.start?.dateTime,
     tmEvent?.dates?.start?.localDate,
@@ -19815,6 +19885,9 @@ function _mapTicketmasterEventToPublicEvent(tmEvent, query, receivedAtUtc) {
     latitude,
     longitude,
     distance_label: null,
+    image_url: imageUrls.image_url,
+    hero_image_url: imageUrls.hero_image_url,
+    thumbnail_url: imageUrls.thumbnail_url,
     starts_at_utc: startsAtUtc,
     ends_at_utc: endsAtUtc,
     time_zone: safeStr(tmEvent?.dates?.timezone),

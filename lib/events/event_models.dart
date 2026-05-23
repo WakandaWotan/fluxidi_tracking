@@ -198,6 +198,10 @@ class EventDetailData {
     required this.gradient,
     this.distanceLabel,
     this.isDistanceLabelTrusted = false,
+    this.description,
+    this.imageUrl,
+    this.heroImageUrl,
+    this.thumbnailUrl,
     this.visualAssetPath,
     this.sourceLabel,
     this.marketCode,
@@ -225,6 +229,10 @@ class EventDetailData {
   final String distanceOrStatus;
   final String? distanceLabel;
   final bool isDistanceLabelTrusted;
+  final String? description;
+  final String? imageUrl;
+  final String? heroImageUrl;
+  final String? thumbnailUrl;
   final List<Color> gradient;
   final String? visualAssetPath;
   final String? sourceLabel;

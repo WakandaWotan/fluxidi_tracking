@@ -289,6 +289,18 @@ class RemoteEventDataSource implements EventDataSource {
           'venue',
         ]) ??
         (_readString(event, const <String>['city']) ?? '');
+    final imageUrl = _readString(event, const <String>[
+      'image_url',
+      'imageUrl',
+    ]);
+    final heroImageUrl = _readString(event, const <String>[
+      'hero_image_url',
+      'heroImageUrl',
+    ]);
+    final thumbnailUrl = _readString(event, const <String>[
+      'thumbnail_url',
+      'thumbnailUrl',
+    ]);
     return EventDetailData(
       id: id,
       title: _readString(event, const <String>['title']) ?? 'Event',
@@ -303,6 +315,13 @@ class RemoteEventDataSource implements EventDataSource {
       distanceOrStatus: distanceLabel ?? '',
       distanceLabel: distanceLabel,
       isDistanceLabelTrusted: isDistanceLabelTrusted,
+      description: _readString(event, const <String>[
+        'description',
+        'subtitle',
+      ]),
+      imageUrl: imageUrl,
+      heroImageUrl: heroImageUrl,
+      thumbnailUrl: thumbnailUrl,
       gradient: _gradientForCategory(resolvedCategoryKey),
       sourceLabel: _readString(event, const <String>['provider', 'source']),
       marketCode: _readString(event, const <String>[
