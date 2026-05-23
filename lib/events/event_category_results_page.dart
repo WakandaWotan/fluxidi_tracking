@@ -56,6 +56,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
       <String, EventDetailData>{};
   EventDetailData? _selectedMapEvent;
   late final ValueKey<String> _mapWidgetKey;
+  bool _isClearingEmptyMapState = false;
 
   String _t({
     required String nl,
@@ -294,7 +295,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     }
 
     final selected = _selectedMapEvent;
-    if (selected != null) {
+    if (events.isEmpty) {
+      if (mounted && selected != null) {
+        setState(() => _selectedMapEvent = null);
+      }
+    } else if (selected != null) {
       final stillVisible = events.any((event) => event.id == selected.id);
       if (!stillVisible && mounted) {
         setState(() => _selectedMapEvent = null);
@@ -316,6 +321,25 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
         mb.MapAnimationOptions(duration: 500),
       );
     }
+  }
+
+  void _ensureMapClearedForNoMappableEvents() {
+    if (_isClearingEmptyMapState) return;
+    _isClearingEmptyMapState = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        _mapEventByAnnotationId.clear();
+        if (_selectedMapEvent != null && mounted) {
+          setState(() => _selectedMapEvent = null);
+        }
+        final manager = _mapCircleManager;
+        if (manager != null) {
+          await manager.deleteAll();
+        }
+      } finally {
+        _isClearingEmptyMapState = false;
+      }
+    });
   }
 
   void _prefetchTopThumbnails() {
@@ -1197,7 +1221,15 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
 
   Widget _buildMapPlaceholder() {
     final mappableEvents = _mappableEvents;
+    final market = widget.marketKey.trim().toLowerCase();
+    final visibleCount = _visibleEvents.length;
+    if (market == 'fr') {
+      debugPrint(
+        '[EVENT_MAP] market=fr visibleEvents=$visibleCount mappableEvents=${mappableEvents.length}',
+      );
+    }
     if (mappableEvents.isEmpty) {
+      _ensureMapClearedForNoMappableEvents();
       return Container(
         width: double.infinity,
         decoration: BoxDecoration(
