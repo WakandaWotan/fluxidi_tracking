@@ -472,29 +472,25 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   Widget _summaryRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: _soft.withOpacity(0.9),
-                fontSize: 12.2,
-                fontWeight: FontWeight.w600,
-              ),
+          Text(
+            label,
+            style: TextStyle(
+              color: _soft.withOpacity(0.9),
+              fontSize: 12.2,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12.4,
-                fontWeight: FontWeight.w700,
-              ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12.4,
+              fontWeight: FontWeight.w700,
+              height: 1.25,
             ),
           ),
         ],
@@ -519,6 +515,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final payload = widget.payload;
     final quote = widget.quote;
     final priceIncl = quote['total_price_incl_vat'] ?? quote['price_incl_vat'];
+    final priceEx =
+        quote['total_price_ex_vat'] ??
+        quote['price_ex_vat'] ??
+        quote['total_ex_vat'];
+    final priceVat =
+        quote['total_price_vat'] ?? quote['price_vat'] ?? quote['vat'];
+    final priceExNum = _toNum(priceEx);
+    final priceVatNum = _toNum(priceVat);
+    final canShowVatBreakdown = priceExNum != null && priceVatNum != null;
     final distance = _toNum(quote['distance_km']);
     final duration = _toNum(quote['duration_min']);
     final hasFixedFare = _isFixedAirportFareQuote(quote);
@@ -599,6 +604,31 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: _gold.withOpacity(0.48)),
+                  ),
+                  child: Text(
+                    _t(
+                      nl: 'Enkele luchthavenrit',
+                      en: 'Single airport ride',
+                      fr: 'Trajet aéroport simple',
+                      es: 'Traslado de aeropuerto sencillo',
+                    ),
+                    style: TextStyle(
+                      color: _gold.withOpacity(0.97),
+                      fontSize: 10.9,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 9),
                 if (selectedCompanyLabel.isNotEmpty)
                   _summaryRow(
@@ -676,6 +706,21 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   _t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración'),
                   duration != null ? '${duration.toStringAsFixed(0)} min' : '—',
                 ),
+                if (canShowVatBreakdown) ...[
+                  _summaryRow(
+                    _t(
+                      nl: 'Prijs excl. btw',
+                      en: 'Price excl. VAT',
+                      fr: 'Prix hors TVA',
+                      es: 'Precio sin IVA',
+                    ),
+                    _fmtMoney(priceExNum),
+                  ),
+                  _summaryRow(
+                    _t(nl: 'Btw', en: 'VAT', fr: 'TVA', es: 'IVA'),
+                    _fmtMoney(priceVatNum),
+                  ),
+                ],
                 _summaryRow(
                   _t(
                     nl: 'Prijs incl. btw',
@@ -732,13 +777,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                     padding: const EdgeInsets.only(bottom: 7),
                     child: Text(
                       _t(
-                        nl: 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
-                        en: 'This price comes from the company’s configured airport rules.',
-                        fr: 'Ce prix provient des règles aéroport configurées par l’entreprise.',
-                        es: 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
+                        nl: 'Deze prijs geldt voor deze enkele luchthavenrit en komt uit de ingestelde luchthavenregels van het bedrijf.',
+                        en: 'This price applies to this single airport ride and comes from the company’s configured airport rules.',
+                        fr: "Ce prix s'applique à ce trajet aéroport simple et provient des règles aéroport configurées par l'entreprise.",
+                        es: 'Este precio se aplica a este traslado de aeropuerto sencillo y proviene de las reglas de aeropuerto configuradas por la empresa.',
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
+                      overflow: TextOverflow.fade,
                       style: TextStyle(
                         color: _soft.withOpacity(0.9),
                         fontSize: 10.8,
