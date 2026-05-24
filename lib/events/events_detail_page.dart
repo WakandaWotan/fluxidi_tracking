@@ -362,7 +362,7 @@ class EventDetailPage extends StatelessWidget {
               initialDestinationLabel: destination.destinationName,
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
-              initialServiceId: 'hotel',
+              initialServiceId: 'passenger',
             ),
           ),
         )
