@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
+import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
+import 'package:fluxidi_tracking/hotels/hotel_model.dart';
+import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
+import 'package:fluxidi_tracking/hotels/hotels_page.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 
@@ -529,6 +533,112 @@ class _AirportPageState extends State<AirportPage> {
       default:
         return nl;
     }
+  }
+
+  String get _nearbyStaysLabel {
+    return _t(
+      nl: 'Verblijven in de buurt',
+      en: 'Nearby stays',
+      fr: 'Hebergements a proximite',
+      es: 'Alojamientos cercanos',
+    );
+  }
+
+  String get _nearbyStaysMissingLabel {
+    return _t(
+      nl: 'Geen lokale verblijven gevonden bij deze luchthaven.',
+      en: 'No local stays found near this airport.',
+      fr: 'Aucun hebergement local trouve pres de cet aeroport.',
+      es: 'No se encontraron alojamientos locales cerca de este aeropuerto.',
+    );
+  }
+
+  bool get _hasNearbyStaysContext {
+    final airport = _selectedAirport;
+    return normalizeDiscoveryText(airport.city).isNotEmpty &&
+        normalizeDiscoveryText(airport.countryCode).isNotEmpty;
+  }
+
+  Set<String> _airportCountryMatchValues(_AirportOption airport) {
+    final aliases = <String>{airport.countryCode, airport.countryName};
+    switch (airport.countryCode.toUpperCase()) {
+      case 'BE':
+        aliases.addAll(<String>{'Belgium', 'Belgie', 'Belgique'});
+        break;
+      case 'NL':
+        aliases.addAll(<String>{'Netherlands', 'Nederland'});
+        break;
+      case 'FR':
+        aliases.addAll(<String>{'France', 'Frankrijk'});
+        break;
+      case 'DE':
+        aliases.addAll(<String>{'Germany', 'Duitsland'});
+        break;
+      case 'LU':
+        aliases.addAll(<String>{'Luxembourg', 'Luxemburg'});
+        break;
+      case 'ES':
+        aliases.addAll(<String>{'Spain', 'Spanje'});
+        break;
+      case 'GB':
+        aliases.addAll(<String>{
+          'United Kingdom',
+          'Verenigd Koninkrijk',
+          'UK',
+          'Great Britain',
+        });
+        break;
+    }
+    return normalizedDiscoveryTextSet(aliases);
+  }
+
+  Set<String> _airportCityMatchValues(_AirportOption airport) {
+    final normalizedCity = normalizeDiscoveryText(airport.city);
+    if (normalizedCity.isEmpty) return const <String>{};
+    final separators = RegExp(r'[/,\-]');
+    final parts = airport.city
+        .split(separators)
+        .map((part) => normalizeDiscoveryText(part))
+        .where((part) => part.isNotEmpty)
+        .toSet();
+    parts.add(normalizedCity);
+    return parts;
+  }
+
+  List<HotelStay> _nearbyStaysForSelectedAirport() {
+    final airport = _selectedAirport;
+    final countryValues = _airportCountryMatchValues(airport);
+    final cityValues = _airportCityMatchValues(airport);
+    if (countryValues.isEmpty || cityValues.isEmpty) return const <HotelStay>[];
+    return kBelgiumHotelSeedData
+        .where((stay) {
+          final stayCountry = normalizeDiscoveryText(stay.country);
+          if (!countryValues.contains(stayCountry)) return false;
+          final stayCity = normalizeDiscoveryText(stay.city);
+          if (stayCity.isEmpty) return false;
+          if (cityValues.contains(stayCity)) return true;
+          for (final city in cityValues) {
+            if (stayCity.contains(city) || city.contains(stayCity)) {
+              return true;
+            }
+          }
+          return false;
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _openNearbyStaysFromAirport() async {
+    final stays = _nearbyStaysForSelectedAirport();
+    if (stays.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_nearbyStaysMissingLabel)));
+      return;
+    }
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => HotelsPage(stays: stays)));
   }
 
   List<String> get _availableCountryCodes {
@@ -2766,6 +2876,33 @@ class _AirportPageState extends State<AirportPage> {
               ],
             ),
           ),
+          if (_hasNearbyStaysContext) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openNearbyStaysFromAirport,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: const Color(0xFF111111),
+                  foregroundColor: Colors.white.withOpacity(0.94),
+                  side: BorderSide(color: _gold.withOpacity(0.35)),
+                  minimumSize: const Size.fromHeight(42),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                ),
+                icon: Icon(
+                  Icons.hotel_rounded,
+                  size: 16,
+                  color: _gold.withOpacity(0.93),
+                ),
+                label: Text(
+                  _nearbyStaysLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
