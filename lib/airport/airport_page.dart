@@ -988,7 +988,7 @@ class _AirportPageState extends State<AirportPage> {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width < 360 ? 12.0 : 14.0;
-    final compactHero = width < 380;
+    final compactHero = width < 430;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -1028,6 +1028,8 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final compactHeader = width < 380;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
       child: Row(
@@ -1050,67 +1052,139 @@ class _AirportPageState extends State<AirportPage> {
                     fr: 'Transferts aéroport',
                     es: 'Traslados al aeropuerto',
                   ),
-                  maxLines: 1,
+                  maxLines: compactHeader ? 2 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
+                    fontSize: compactHeader ? 18.5 : 20,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 SizedBox(height: 2),
                 Text(
                   _t(
-                    nl: 'Premium transfers voor comfortabele ritten van en naar de luchthaven',
-                    en: 'Premium transfers for comfortable rides to and from the airport',
-                    fr: "Transferts premium pour des trajets confortables vers et depuis l'aéroport",
-                    es: 'Traslados premium para viajes cómodos hacia y desde el aeropuerto',
+                    nl: 'Naar en van de luchthaven',
+                    en: 'To and from the airport',
+                    fr: 'Vers et depuis l aeroport',
+                    es: 'Hacia y desde el aeropuerto',
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: _soft, fontSize: 11.5, height: 1.2),
                 ),
                 if (_hasSelectedPartnerScope) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    '${_t(nl: "Boeking bij", en: "Booking with", fr: "Réservation chez", es: "Reserva con")}: $_selectedCompanyLabel',
-                    style: TextStyle(
-                      color: _gold.withOpacity(0.95),
-                      fontSize: 11.6,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.52)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.verified_user_rounded,
+                                size: 13.5,
+                                color: _gold.withOpacity(0.94),
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  '${_t(nl: "Partner", en: "Partner", fr: "Partenaire", es: "Socio")}: $_selectedCompanyLabel',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: _gold.withOpacity(0.96),
+                                    fontSize: 11.1,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (widget.allowPartnerChange &&
+                          widget.onChangePartnerRequested != null) ...[
+                        const SizedBox(width: 6),
+                        TextButton.icon(
+                          onPressed: _changePartner,
+                          style: TextButton.styleFrom(
+                            foregroundColor: _gold.withOpacity(0.96),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 6,
+                            ),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            minimumSize: const Size(0, 0),
+                          ),
+                          icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+                          label: Text(
+                            _t(
+                              nl: 'Wijzig',
+                              en: 'Change',
+                              fr: 'Changer',
+                              es: 'Cambiar',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ],
             ),
           ),
-          if (widget.allowPartnerChange &&
-              widget.onChangePartnerRequested != null) ...[
-            const SizedBox(width: 6),
-            TextButton.icon(
-              onPressed: _changePartner,
-              style: TextButton.styleFrom(
-                foregroundColor: _gold.withOpacity(0.96),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-              ),
-              icon: const Icon(Icons.swap_horiz_rounded, size: 16),
-              label: Text(
-                _t(
-                  nl: 'Wijzig partner',
-                  en: 'Change partner',
-                  fr: 'Changer partenaire',
-                  es: 'Cambiar socio',
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
   Widget _buildHero({required bool compact}) {
+    if (compact) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _gold.withOpacity(0.26)),
+          color: const Color(0xFF0F100C),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.local_taxi_rounded,
+              color: _gold.withOpacity(0.96),
+              size: 16,
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Luchthavenritten',
+                  en: 'Airport rides',
+                  fr: 'Trajets aeroport',
+                  es: 'Traslados aeropuerto',
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: BoxDecoration(
