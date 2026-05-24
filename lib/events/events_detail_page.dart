@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
+import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -114,33 +116,6 @@ class EventDetailPage extends StatelessWidget {
     return distance.isNotEmpty ? distance : null;
   }
 
-  String _normalizeGeo(String value) {
-    return value
-        .trim()
-        .toLowerCase()
-        .replaceAll('é', 'e')
-        .replaceAll('è', 'e')
-        .replaceAll('ê', 'e')
-        .replaceAll('ë', 'e')
-        .replaceAll('á', 'a')
-        .replaceAll('à', 'a')
-        .replaceAll('â', 'a')
-        .replaceAll('ä', 'a')
-        .replaceAll('í', 'i')
-        .replaceAll('ì', 'i')
-        .replaceAll('î', 'i')
-        .replaceAll('ï', 'i')
-        .replaceAll('ó', 'o')
-        .replaceAll('ò', 'o')
-        .replaceAll('ô', 'o')
-        .replaceAll('ö', 'o')
-        .replaceAll('ú', 'u')
-        .replaceAll('ù', 'u')
-        .replaceAll('û', 'u')
-        .replaceAll('ü', 'u')
-        .replaceAll('ç', 'c');
-  }
-
   String _normalizedEventCountry() {
     final fromCode = (event.countryCode ?? '').trim().toUpperCase();
     if (fromCode == 'BE') return 'belgium';
@@ -156,7 +131,7 @@ class EventDetailPage extends StatelessWidget {
     if (fromMarket == 'de') return 'germany';
     if (fromMarket == 'uk' || fromMarket == 'gb') return 'united kingdom';
     if (fromMarket == 'es') return 'spain';
-    final address = _normalizeGeo(event.address);
+    final address = normalizeDiscoveryText(event.address);
     if (address.contains('belgie') || address.contains('belgium')) {
       return 'belgium';
     }
@@ -164,35 +139,28 @@ class EventDetailPage extends StatelessWidget {
   }
 
   List<HotelStay> _nearbyStays() {
-    final eventCity = _normalizeGeo(event.city);
+    final eventCity = normalizeDiscoveryText(event.city);
     final eventCountry = _normalizedEventCountry();
 
     final sameCity = <HotelStay>[
       for (final stay in kBelgiumHotelSeedData)
-        if (_normalizeGeo(stay.city) == eventCity) stay,
+        if (normalizeDiscoveryText(stay.city) == eventCity) stay,
     ];
     final sameCountry = eventCountry.isEmpty
         ? const <HotelStay>[]
         : <HotelStay>[
             for (final stay in kBelgiumHotelSeedData)
-              if (_normalizeGeo(stay.country) == eventCountry) stay,
+              if (normalizeDiscoveryText(stay.country) == eventCountry) stay,
           ];
     final belgiumFallback = eventCountry == 'belgium'
         ? <HotelStay>[
             for (final stay in kBelgiumHotelSeedData)
-              if (_normalizeGeo(stay.country) == 'belgium') stay,
+              if (normalizeDiscoveryText(stay.country) == 'belgium') stay,
           ]
         : const <HotelStay>[];
 
     final merged = <HotelStay>[...sameCity, ...sameCountry, ...belgiumFallback];
-    final deduped = <HotelStay>[];
-    final seenIds = <String>{};
-    for (final stay in merged) {
-      if (!seenIds.add(stay.id)) continue;
-      deduped.add(stay);
-      if (deduped.length >= 3) break;
-    }
-    return deduped;
+    return topUniqueById(items: merged, idOf: (stay) => stay.id, limit: 3);
   }
 
   String _stayTypeLabel(String typeKey) {

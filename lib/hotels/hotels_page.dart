@@ -11,6 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../discovery/discovery_geo.dart';
+import '../discovery/discovery_nearby.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 import 'hotel_seed_data.dart';
@@ -78,37 +80,6 @@ class _HotelsPageState extends State<HotelsPage> {
     }
   }
 
-  String _normalizeGeo(String value) {
-    return value
-        .trim()
-        .toLowerCase()
-        .replaceAll('é', 'e')
-        .replaceAll('è', 'e')
-        .replaceAll('ê', 'e')
-        .replaceAll('ë', 'e')
-        .replaceAll('á', 'a')
-        .replaceAll('à', 'a')
-        .replaceAll('â', 'a')
-        .replaceAll('ä', 'a')
-        .replaceAll('í', 'i')
-        .replaceAll('ì', 'i')
-        .replaceAll('î', 'i')
-        .replaceAll('ï', 'i')
-        .replaceAll('ó', 'o')
-        .replaceAll('ò', 'o')
-        .replaceAll('ô', 'o')
-        .replaceAll('ö', 'o')
-        .replaceAll('ú', 'u')
-        .replaceAll('ù', 'u')
-        .replaceAll('û', 'u')
-        .replaceAll('ü', 'u')
-        .replaceAll('ç', 'c');
-  }
-
-  Set<String> _normalizedSet(Iterable<String> values) {
-    return values.map(_normalizeGeo).where((value) => value.isNotEmpty).toSet();
-  }
-
   @override
   void initState() {
     super.initState();
@@ -156,11 +127,13 @@ class _HotelsPageState extends State<HotelsPage> {
     final query = _searchController.text.trim().toLowerCase();
     final countryMatchValues = _selectedCountryCode == _allKey
         ? const <String>{}
-        : _normalizedSet(hotelGeoCountryMatchValues(_selectedCountryCode));
+        : normalizedDiscoveryTextSet(
+            hotelGeoCountryMatchValues(_selectedCountryCode),
+          );
     final regionMatchValues =
         (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey)
         ? const <String>{}
-        : _normalizedSet(
+        : normalizedDiscoveryTextSet(
             hotelGeoRegionMatchValues(
               countryCode: _selectedCountryCode,
               regionKey: _selectedRegionKey,
@@ -171,7 +144,7 @@ class _HotelsPageState extends State<HotelsPage> {
             _selectedRegionKey == _allKey ||
             _selectedSettlementKey == _allKey)
         ? const <String>{}
-        : _normalizedSet(
+        : normalizedDiscoveryTextSet(
             hotelGeoSettlementMatchValues(
               countryCode: _selectedCountryCode,
               regionKey: _selectedRegionKey,
@@ -181,15 +154,21 @@ class _HotelsPageState extends State<HotelsPage> {
     return _allStays
         .where((stay) {
           if (countryMatchValues.isNotEmpty &&
-              !countryMatchValues.contains(_normalizeGeo(stay.country))) {
+              !countryMatchValues.contains(
+                normalizeDiscoveryText(stay.country),
+              )) {
             return false;
           }
           if (regionMatchValues.isNotEmpty &&
-              !regionMatchValues.contains(_normalizeGeo(stay.region))) {
+              !regionMatchValues.contains(
+                normalizeDiscoveryText(stay.region),
+              )) {
             return false;
           }
           if (settlementMatchValues.isNotEmpty &&
-              !settlementMatchValues.contains(_normalizeGeo(stay.city))) {
+              !settlementMatchValues.contains(
+                normalizeDiscoveryText(stay.city),
+              )) {
             return false;
           }
           if (_selectedType != _allKey && stay.type != _selectedType)
@@ -531,32 +510,32 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   List<EventDetailData> _nearbyEventsForStay(HotelStay stay) {
-    final stayCity = _normalizeGeo(stay.city);
-    final stayRegion = _normalizeGeo(stay.region);
+    final stayCity = normalizeDiscoveryText(stay.city);
+    final stayRegion = normalizeDiscoveryText(stay.region);
 
     final sameCity = <EventDetailData>[
       for (final event in kEventSeedData)
-        if (_normalizeGeo(event.city) == stayCity) event,
+        if (normalizeDiscoveryText(event.city) == stayCity) event,
     ];
 
     final regionCities = _allStays
-        .where((item) => _normalizeGeo(item.region) == stayRegion)
-        .map((item) => _normalizeGeo(item.city))
+        .where((item) => normalizeDiscoveryText(item.region) == stayRegion)
+        .map((item) => normalizeDiscoveryText(item.city))
         .where((city) => city.isNotEmpty)
         .toSet();
     final sameRegion = <EventDetailData>[
       for (final event in kEventSeedData)
-        if (regionCities.contains(_normalizeGeo(event.city))) event,
+        if (regionCities.contains(normalizeDiscoveryText(event.city))) event,
     ];
 
     final belgiumCities = _allStays
-        .where((item) => _normalizeGeo(item.country) == 'belgium')
-        .map((item) => _normalizeGeo(item.city))
+        .where((item) => normalizeDiscoveryText(item.country) == 'belgium')
+        .map((item) => normalizeDiscoveryText(item.city))
         .where((city) => city.isNotEmpty)
         .toSet();
     final belgiumFallback = <EventDetailData>[
       for (final event in kEventSeedData)
-        if (belgiumCities.contains(_normalizeGeo(event.city))) event,
+        if (belgiumCities.contains(normalizeDiscoveryText(event.city))) event,
     ];
 
     final merged = <EventDetailData>[
@@ -564,14 +543,7 @@ class _HotelsPageState extends State<HotelsPage> {
       ...sameRegion,
       ...belgiumFallback,
     ];
-    final deduped = <EventDetailData>[];
-    final seenIds = <String>{};
-    for (final event in merged) {
-      if (!seenIds.add(event.id)) continue;
-      deduped.add(event);
-      if (deduped.length >= 3) break;
-    }
-    return deduped;
+    return topUniqueById(items: merged, idOf: (event) => event.id, limit: 3);
   }
 
   void _onNearbyEventTaxiTap(EventDetailData event) {
