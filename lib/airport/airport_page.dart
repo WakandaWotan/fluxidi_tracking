@@ -3781,6 +3781,21 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Future<void> _prepareAirportBookingDetails() async {
+    if (_roundtripEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Retourritten worden in de volgende fase gekoppeld aan prijs en boeking. Schakel heen-en-terug uit om nu een enkele luchthavenrit voor te bereiden.',
+              en: 'Roundtrips will be connected to pricing and booking in the next phase. Turn off roundtrip to prepare a single airport ride now.',
+              fr: "Les aller-retour seront reliés au prix et à la réservation lors de la prochaine phase. Désactivez l'aller-retour pour préparer un trajet aéroport simple maintenant.",
+              es: 'Los viajes de ida y vuelta se conectarán con el precio y la reserva en la siguiente fase. Desactiva ida y vuelta para preparar ahora un traslado de aeropuerto sencillo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
     if (!resolvedUserSide || !mounted) {
       return;
@@ -3887,6 +3902,7 @@ class _AirportPageState extends State<AirportPage> {
   Widget _buildAirportQuoteCard() {
     final quote = _airportQuote;
     final error = _airportQuoteError;
+    final roundtripPricingGuardActive = _roundtripEnabled && quote != null;
     final totalIncl = _quoteNum(quote?['total_price_incl_vat']);
     final mainIncl = _quoteNum(quote?['price_incl_vat']);
     final displayPrice = totalIncl ?? mainIncl;
@@ -3915,10 +3931,18 @@ class _AirportPageState extends State<AirportPage> {
               Expanded(
                 child: Text(
                   _t(
-                    nl: 'Prijsindicatie',
-                    en: 'Price indication',
-                    fr: 'Indication de prix',
-                    es: 'Indicación de precio',
+                    nl: roundtripPricingGuardActive
+                        ? 'Heenrit prijsindicatie'
+                        : 'Prijsindicatie',
+                    en: roundtripPricingGuardActive
+                        ? 'Outbound fare estimate'
+                        : 'Price indication',
+                    fr: roundtripPricingGuardActive
+                        ? 'Estimation du trajet aller'
+                        : 'Indication de prix',
+                    es: roundtripPricingGuardActive
+                        ? 'Estimación del trayecto de ida'
+                        : 'Indicación de precio',
                   ),
                   style: TextStyle(
                     color: Colors.white,
@@ -3937,10 +3961,18 @@ class _AirportPageState extends State<AirportPage> {
               children: [
                 Text(
                   _t(
-                    nl: 'Geschatte prijs',
-                    en: 'Estimated price',
-                    fr: 'Prix estimé',
-                    es: 'Precio estimado',
+                    nl: roundtripPricingGuardActive
+                        ? 'Heenrit prijsindicatie'
+                        : 'Geschatte prijs',
+                    en: roundtripPricingGuardActive
+                        ? 'Outbound fare estimate'
+                        : 'Estimated price',
+                    fr: roundtripPricingGuardActive
+                        ? 'Estimation du trajet aller'
+                        : 'Prix estimé',
+                    es: roundtripPricingGuardActive
+                        ? 'Estimación del trayecto de ida'
+                        : 'Precio estimado',
                   ),
                   style: TextStyle(
                     color: _soft.withOpacity(0.95),
@@ -3961,6 +3993,24 @@ class _AirportPageState extends State<AirportPage> {
                 ),
               ],
             ),
+            if (roundtripPricingGuardActive) ...[
+              const SizedBox(height: 5),
+              Text(
+                _t(
+                  nl: 'Terugritprijs en totaal worden in de volgende fase berekend.',
+                  en: 'Return fare and total will be calculated in the next phase.',
+                  fr: 'Le prix du retour et le total seront calculés à la prochaine étape.',
+                  es: 'El precio de regreso y el total se calcularán en la siguiente fase.',
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _soft.withOpacity(0.9),
+                  fontSize: 10.9,
+                  height: 1.2,
+                ),
+              ),
+            ],
             const SizedBox(height: 6),
             if (hasFixedFare) ...[
               Container(
@@ -3982,10 +4032,18 @@ class _AirportPageState extends State<AirportPage> {
                     Expanded(
                       child: Text(
                         _t(
-                          nl: 'Vast tarief volgens bedrijfsregel',
-                          en: 'Fixed fare by company rule',
-                          fr: 'Tarif fixe selon la règle d’entreprise',
-                          es: 'Tarifa fija según regla de empresa',
+                          nl: roundtripPricingGuardActive
+                              ? 'Vast tarief heenrit volgens bedrijfsregel'
+                              : 'Vast tarief volgens bedrijfsregel',
+                          en: roundtripPricingGuardActive
+                              ? 'Outbound fixed fare by company rule'
+                              : 'Fixed fare by company rule',
+                          fr: roundtripPricingGuardActive
+                              ? "Tarif fixe aller selon la règle d’entreprise"
+                              : 'Tarif fixe selon la règle d’entreprise',
+                          es: roundtripPricingGuardActive
+                              ? 'Tarifa fija de ida según regla de empresa'
+                              : 'Tarifa fija según regla de empresa',
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -4002,10 +4060,18 @@ class _AirportPageState extends State<AirportPage> {
               const SizedBox(height: 4),
               Text(
                 _t(
-                  nl: 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
-                  en: 'This price comes from the company’s configured airport rules.',
-                  fr: 'Ce prix provient des règles aéroport configurées par l’entreprise.',
-                  es: 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
+                  nl: roundtripPricingGuardActive
+                      ? 'Deze heenritprijs komt uit de ingestelde luchthavenregels van het bedrijf.'
+                      : 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
+                  en: roundtripPricingGuardActive
+                      ? 'This outbound fare comes from the company’s configured airport rules.'
+                      : 'This price comes from the company’s configured airport rules.',
+                  fr: roundtripPricingGuardActive
+                      ? "Ce prix aller provient des règles aéroport configurées par l’entreprise."
+                      : 'Ce prix provient des règles aéroport configurées par l’entreprise.',
+                  es: roundtripPricingGuardActive
+                      ? 'Este precio de ida proviene de las reglas de aeropuerto configuradas por la empresa.'
+                      : 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
