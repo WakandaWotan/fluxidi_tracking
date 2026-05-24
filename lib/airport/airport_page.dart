@@ -1030,6 +1030,9 @@ class _AirportPageState extends State<AirportPage> {
   Widget _buildHeader(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final compactHeader = width < 380;
+    final selectedCompanyDisplay = _selectedCompanyLabel.trim().isNotEmpty
+        ? _selectedCompanyLabel.trim()
+        : 'Fluxidi';
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
       child: Row(
@@ -1097,9 +1100,10 @@ class _AirportPageState extends State<AirportPage> {
                               const SizedBox(width: 5),
                               Expanded(
                                 child: Text(
-                                  '${_t(nl: "Partner", en: "Partner", fr: "Partenaire", es: "Socio")}: $_selectedCompanyLabel',
+                                  selectedCompanyDisplay,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
                                   style: TextStyle(
                                     color: _gold.withOpacity(0.96),
                                     fontSize: 11.1,
