@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/hotels/hotel_model.dart';
+import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
 
@@ -112,9 +114,192 @@ class EventDetailPage extends StatelessWidget {
     return distance.isNotEmpty ? distance : null;
   }
 
+  String _normalizeGeo(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll('é', 'e')
+        .replaceAll('è', 'e')
+        .replaceAll('ê', 'e')
+        .replaceAll('ë', 'e')
+        .replaceAll('á', 'a')
+        .replaceAll('à', 'a')
+        .replaceAll('â', 'a')
+        .replaceAll('ä', 'a')
+        .replaceAll('í', 'i')
+        .replaceAll('ì', 'i')
+        .replaceAll('î', 'i')
+        .replaceAll('ï', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ò', 'o')
+        .replaceAll('ô', 'o')
+        .replaceAll('ö', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ù', 'u')
+        .replaceAll('û', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ç', 'c');
+  }
+
+  String _normalizedEventCountry() {
+    final fromCode = (event.countryCode ?? '').trim().toUpperCase();
+    if (fromCode == 'BE') return 'belgium';
+    if (fromCode == 'NL') return 'netherlands';
+    if (fromCode == 'FR') return 'france';
+    if (fromCode == 'DE') return 'germany';
+    if (fromCode == 'GB' || fromCode == 'UK') return 'united kingdom';
+    if (fromCode == 'ES') return 'spain';
+    final fromMarket = (event.marketCode ?? '').trim().toLowerCase();
+    if (fromMarket == 'be') return 'belgium';
+    if (fromMarket == 'nl') return 'netherlands';
+    if (fromMarket == 'fr') return 'france';
+    if (fromMarket == 'de') return 'germany';
+    if (fromMarket == 'uk' || fromMarket == 'gb') return 'united kingdom';
+    if (fromMarket == 'es') return 'spain';
+    final address = _normalizeGeo(event.address);
+    if (address.contains('belgie') || address.contains('belgium')) {
+      return 'belgium';
+    }
+    return '';
+  }
+
+  List<HotelStay> _nearbyStays() {
+    final eventCity = _normalizeGeo(event.city);
+    final eventCountry = _normalizedEventCountry();
+
+    final sameCity = <HotelStay>[
+      for (final stay in kBelgiumHotelSeedData)
+        if (_normalizeGeo(stay.city) == eventCity) stay,
+    ];
+    final sameCountry = eventCountry.isEmpty
+        ? const <HotelStay>[]
+        : <HotelStay>[
+            for (final stay in kBelgiumHotelSeedData)
+              if (_normalizeGeo(stay.country) == eventCountry) stay,
+          ];
+    final belgiumFallback = eventCountry == 'belgium'
+        ? <HotelStay>[
+            for (final stay in kBelgiumHotelSeedData)
+              if (_normalizeGeo(stay.country) == 'belgium') stay,
+          ]
+        : const <HotelStay>[];
+
+    final merged = <HotelStay>[...sameCity, ...sameCountry, ...belgiumFallback];
+    final deduped = <HotelStay>[];
+    final seenIds = <String>{};
+    for (final stay in merged) {
+      if (!seenIds.add(stay.id)) continue;
+      deduped.add(stay);
+      if (deduped.length >= 3) break;
+    }
+    return deduped;
+  }
+
+  String _stayTypeLabel(String typeKey) {
+    switch (typeKey) {
+      case HotelStayType.hotel:
+        return 'Hotel';
+      case HotelStayType.bedAndBreakfast:
+        return 'B&B';
+      case HotelStayType.aparthotel:
+        return _t(
+          nl: 'Aparthotel',
+          en: 'Aparthotel',
+          fr: 'Aparthotel',
+          es: 'Aparthotel',
+        );
+      case HotelStayType.guesthouse:
+        return _t(
+          nl: 'Guesthouse',
+          en: 'Guesthouse',
+          fr: 'Guesthouse',
+          es: 'Guesthouse',
+        );
+      default:
+        return typeKey;
+    }
+  }
+
+  String _stayPriceLabel(HotelStay stay) {
+    final raw = (stay.priceHint ?? '').trim();
+    if (raw.isEmpty) return '';
+    final normalized = raw.toLowerCase();
+    if (normalized.startsWith('vanaf ') ||
+        normalized.startsWith('from ') ||
+        normalized.startsWith('desde ') ||
+        normalized.startsWith('à partir')) {
+      return raw;
+    }
+    return _t(
+      nl: 'Vanaf $raw',
+      en: 'From $raw',
+      fr: 'À partir de $raw',
+      es: 'Desde $raw',
+    );
+  }
+
+  Future<void> _openStayUrl(BuildContext context, HotelStay stay) async {
+    final url = (stay.effectiveBookingUrl ?? '').trim();
+    final uri = Uri.tryParse(url);
+    final valid =
+        uri != null &&
+        uri.hasScheme &&
+        (uri.scheme == 'https' || uri.scheme == 'http');
+    if (!valid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Geen verblijflink beschikbaar.',
+              en: 'No stay link available.',
+              fr: 'Aucun lien d’hébergement disponible.',
+              es: 'No hay enlace de alojamiento disponible.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (opened || !context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Kon verblijflink niet openen.',
+            en: 'Could not open stay link.',
+            fr: 'Impossible d’ouvrir le lien du séjour.',
+            es: 'No se pudo abrir el enlace del alojamiento.',
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _onStayTaxiTap(BuildContext context, HotelStay stay) {
+    final destination = stay.toDiscoveryDestination();
+    debugPrint(
+      '[events.nearby_stay_handoff] stayId=${stay.id} '
+      'name="${destination.destinationName}" city="${destination.city}"',
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Taxi handoff voorbereid voor verblijf: ${stay.name}',
+            en: 'Taxi handoff prepared for stay: ${stay.name}',
+            fr: 'Transfert taxi prêt pour l’hébergement : ${stay.name}',
+            es: 'Transferencia de taxi preparada para alojamiento: ${stay.name}',
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
+    final nearbyStays = _nearbyStays();
     return Scaffold(
       backgroundColor: _bgBlack,
       body: SafeArea(
@@ -135,6 +320,10 @@ class EventDetailPage extends StatelessWidget {
                   _buildPrimaryContent(),
                   const SizedBox(height: 13),
                   _buildInfoPanel(),
+                  if (nearbyStays.isNotEmpty) ...[
+                    const SizedBox(height: 13),
+                    _buildNearbyStaysSection(context, nearbyStays),
+                  ],
                   const SizedBox(height: 15),
                   _buildCtaArea(context),
                 ],
@@ -419,6 +608,177 @@ class EventDetailPage extends StatelessWidget {
               es: 'Momento del transporte',
             ),
             _vervoersmoment,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNearbyStaysSection(
+    BuildContext context,
+    List<HotelStay> nearbyStays,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Verblijven in de buurt',
+              en: 'Nearby stays',
+              fr: 'Hebergements a proximite',
+              es: 'Alojamientos cerca',
+            ),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14.2,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (var i = 0; i < nearbyStays.length; i++) ...[
+            _buildNearbyStayCard(context, nearbyStays[i]),
+            if (i != nearbyStays.length - 1) const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNearbyStayCard(BuildContext context, HotelStay stay) {
+    final price = _stayPriceLabel(stay);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151515),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            stay.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _stayTypeLabel(stay.type),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _gold.withOpacity(0.94),
+              fontSize: 11.4,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${stay.city}, ${stay.region}, ${stay.country}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _softText,
+              fontSize: 11.6,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (stay.rating != null) ...[
+            const SizedBox(height: 3),
+            Text(
+              '★ ${stay.rating!.toStringAsFixed(1)}',
+              style: TextStyle(
+                color: _gold.withOpacity(0.92),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (price.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              price,
+              style: TextStyle(
+                color: _softText.withOpacity(0.9),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _openStayUrl(context, stay),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: Colors.white.withOpacity(0.93),
+                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    minimumSize: const Size.fromHeight(40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  icon: Icon(
+                    Icons.open_in_new_rounded,
+                    size: 16,
+                    color: _gold.withOpacity(0.92),
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Bekijk verblijf',
+                      en: 'View stay',
+                      fr: 'Voir le sejour',
+                      es: 'Ver alojamiento',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _onStayTaxiTap(context, stay),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: Colors.white.withOpacity(0.93),
+                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    minimumSize: const Size.fromHeight(40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  icon: Icon(
+                    Icons.local_taxi_rounded,
+                    size: 16,
+                    color: _gold.withOpacity(0.92),
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Taxi naar verblijf',
+                      en: 'Taxi to stay',
+                      fr: 'Taxi vers le sejour',
+                      es: 'Taxi al alojamiento',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
