@@ -181,7 +181,13 @@ class CustomerHomePage extends StatelessWidget {
               entryContext: 'hotel_stay',
             );
           },
-          onOpenAirportFlow: () => _openAirportFlow(context),
+          onOpenAirportFlow: (destination) => _openAirportFlow(
+            context,
+            initialPickupAddress: destination.prefillDestinationText,
+            initialPickupLabel: destination.destinationName,
+            initialPickupLat: destination.latitude,
+            initialPickupLng: destination.longitude,
+          ),
         ),
       ),
     );
@@ -192,7 +198,13 @@ class CustomerHomePage extends StatelessWidget {
     return (map[key] ?? '').trim();
   }
 
-  Future<void> _openAirportFlow(BuildContext context) async {
+  Future<void> _openAirportFlow(
+    BuildContext context, {
+    String? initialPickupAddress,
+    String? initialPickupLabel,
+    double? initialPickupLat,
+    double? initialPickupLng,
+  }) async {
     final selected = await Navigator.of(context).push<Map<String, String>>(
       MaterialPageRoute(
         builder: (_) => NearbyPartnersPage(
@@ -236,6 +248,10 @@ class CustomerHomePage extends StatelessWidget {
           selectedCompanyName: companyName,
           selectedCompanyCode: companyCode,
           selectedPartnerId: partnerId,
+          initialPickupAddress: initialPickupAddress,
+          initialPickupLabel: initialPickupLabel,
+          initialPickupLatitude: initialPickupLat,
+          initialPickupLongitude: initialPickupLng,
           allowPartnerChange: true,
           onChangePartnerRequested: (selectorContext) async {
             return await Navigator.of(

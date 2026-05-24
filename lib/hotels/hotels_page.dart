@@ -35,7 +35,8 @@ class HotelsPage extends StatefulWidget {
   /// Optional CTA callback for later taxi-prefill integration.
   final void Function(HotelStay stay)? onTaxiToStay;
   final void Function(DiscoveryDestination destination)? onTaxiToDestination;
-  final Future<void> Function()? onOpenAirportFlow;
+  final Future<void> Function(DiscoveryDestination destination)?
+  onOpenAirportFlow;
   final String? tenantId;
   final String? companyId;
 
@@ -574,7 +575,7 @@ class _HotelsPageState extends State<HotelsPage> {
           onToggleSaved: () => _toggleSaved(stay),
           onNearbyEventTaxiTap: _onNearbyEventTaxiTap,
           onAirportTransferTap: () {
-            _onAirportTransferTap();
+            _onAirportTransferTap(stay);
           },
           onTaxiTap: () => _onTaxiCtaTap(stay),
           onViewStayTap: () => _openStayLink(stay),
@@ -583,10 +584,14 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
-  Future<void> _onAirportTransferTap() async {
+  Future<void> _onAirportTransferTap(HotelStay stay) async {
     final callback = widget.onOpenAirportFlow;
     if (callback != null) {
-      await callback();
+      final destination = stay.toDiscoveryDestination(
+        tenantId: widget.tenantId,
+        companyId: widget.companyId,
+      );
+      await callback(destination);
       return;
     }
     if (!mounted) return;

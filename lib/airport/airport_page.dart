@@ -69,6 +69,10 @@ class AirportPage extends StatefulWidget {
     this.selectedCompanyCode,
     this.selectedCompanyName,
     this.selectedPartnerId,
+    this.initialPickupAddress,
+    this.initialPickupLabel,
+    this.initialPickupLatitude,
+    this.initialPickupLongitude,
     this.allowPartnerChange = false,
     this.onChangePartnerRequested,
     this.allowAdminScopeFallback = false,
@@ -80,6 +84,10 @@ class AirportPage extends StatefulWidget {
   final String? selectedCompanyCode;
   final String? selectedCompanyName;
   final String? selectedPartnerId;
+  final String? initialPickupAddress;
+  final String? initialPickupLabel;
+  final double? initialPickupLatitude;
+  final double? initialPickupLongitude;
   final bool allowPartnerChange;
   final AirportPartnerSelectionCallback? onChangePartnerRequested;
   final bool allowAdminScopeFallback;
@@ -848,6 +856,22 @@ class _AirportPageState extends State<AirportPage> {
       (airport) => airport.id != _selectedAirportId,
     )) {
       _selectedAirportId = _filteredAirports.first.id;
+    }
+    final pickupAddress = _safeText(widget.initialPickupAddress);
+    final pickupLabel = _safeText(widget.initialPickupLabel);
+    final effectivePickupText = pickupAddress.isNotEmpty
+        ? pickupAddress
+        : pickupLabel;
+    if (effectivePickupText.isNotEmpty) {
+      _selectedMode = _TransferMode.toAirport;
+      _pickupAddressController.text = effectivePickupText;
+      final prefillLatitude = widget.initialPickupLatitude;
+      final prefillLongitude = widget.initialPickupLongitude;
+      if (_hasValidCoordinates(prefillLatitude, prefillLongitude)) {
+        _pickupLatitude = prefillLatitude;
+        _pickupLongitude = prefillLongitude;
+      }
+      _pickupPostcode = _extractLikelyPostcode(effectivePickupText);
     }
     _pickupAddressController.addListener(_handleSummaryInputChanged);
     _destinationAddressController.addListener(_handleSummaryInputChanged);
