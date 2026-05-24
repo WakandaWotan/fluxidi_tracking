@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -516,9 +517,41 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  bool _hasValidCoordinates(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return false;
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    return true;
+  }
+
+  double _distanceKm({
+    required double fromLat,
+    required double fromLng,
+    required double toLat,
+    required double toLng,
+  }) {
+    const earthRadiusKm = 6371.0;
+    final dLat = _degToRad(toLat - fromLat);
+    final dLng = _degToRad(toLng - fromLng);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degToRad(fromLat)) *
+            math.cos(_degToRad(toLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  double _degToRad(double value) => value * (math.pi / 180.0);
+
   List<EventDetailData> _nearbyEventsForStay(HotelStay stay) {
     final stayCity = normalizeDiscoveryText(stay.city);
     final stayRegion = normalizeDiscoveryText(stay.region);
+    final stayCountry = normalizeDiscoveryText(stay.country);
+    final stayLat = stay.latitude ?? stay.lat;
+    final stayLng = stay.longitude ?? stay.lng;
+    final canDistanceRank = _hasValidCoordinates(stayLat, stayLng);
 
     final sameCity = <EventDetailData>[
       for (final event in kEventSeedData)
@@ -535,20 +568,63 @@ class _HotelsPageState extends State<HotelsPage> {
         if (regionCities.contains(normalizeDiscoveryText(event.city))) event,
     ];
 
-    final belgiumCities = _allStays
-        .where((item) => normalizeDiscoveryText(item.country) == 'belgium')
-        .map((item) => normalizeDiscoveryText(item.city))
-        .where((city) => city.isNotEmpty)
-        .toSet();
-    final belgiumFallback = <EventDetailData>[
+    final distanceRanked = <({EventDetailData event, double km})>[
       for (final event in kEventSeedData)
-        if (belgiumCities.contains(normalizeDiscoveryText(event.city))) event,
+        if (canDistanceRank && _hasValidCoordinates(event.lat, event.lng))
+          (
+            event: event,
+            km: _distanceKm(
+              fromLat: stayLat,
+              fromLng: stayLng,
+              toLat: event.lat,
+              toLng: event.lng,
+            ),
+          ),
+    ]..sort((a, b) => a.km.compareTo(b.km));
+    final within25Km = <EventDetailData>[
+      for (final item in distanceRanked)
+        if (item.km <= 25) item.event,
+    ];
+    final within50Km = <EventDetailData>[
+      for (final item in distanceRanked)
+        if (item.km > 25 && item.km <= 50) item.event,
+    ];
+
+    final countryRanked =
+        <({EventDetailData event, double? km})>[
+          for (final event in kEventSeedData)
+            if (normalizeDiscoveryText(event.countryCode ?? '') ==
+                    stayCountry ||
+                (stayCountry == 'belgium' &&
+                    normalizeDiscoveryText(event.address).contains('belg')))
+              (
+                event: event,
+                km:
+                    (canDistanceRank &&
+                        _hasValidCoordinates(event.lat, event.lng))
+                    ? _distanceKm(
+                        fromLat: stayLat,
+                        fromLng: stayLng,
+                        toLat: event.lat,
+                        toLng: event.lng,
+                      )
+                    : null,
+              ),
+        ]..sort((a, b) {
+          final left = a.km ?? double.infinity;
+          final right = b.km ?? double.infinity;
+          return left.compareTo(right);
+        });
+    final countryFallback = <EventDetailData>[
+      for (final item in countryRanked) item.event,
     ];
 
     final merged = <EventDetailData>[
       ...sameCity,
       ...sameRegion,
-      ...belgiumFallback,
+      ...within25Km,
+      ...within50Km,
+      ...countryFallback,
     ];
     return topUniqueById(items: merged, idOf: (event) => event.id, limit: 3);
   }
