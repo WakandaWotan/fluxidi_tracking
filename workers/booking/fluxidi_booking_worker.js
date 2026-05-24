@@ -23925,6 +23925,47 @@ async function handleBooking(payload, env, request) {
           await ensureBookingReferencesReserved();
           calendarPaymentHandled = true;
           const nowIso = new Date().toISOString();
+          const resolvedAssignedDriverId = safeStr(
+            resolvedAssignedDriver?.driver_id ??
+              resolvedAssignedDriver?.driverId ??
+              resolvedAssignedDriver?.id,
+            96,
+          ) || null;
+          const provisionalOperationalLegs = _buildOperationalLegsFoundation({
+            parentBookingId: canonicalBookingId,
+            service,
+            from,
+            to,
+            pickupIso: pickup_iso,
+            distanceKm: distance_km,
+            durationMin: duration_route_min,
+            returnEnabled: ret.enabled,
+            hasReturnSchedule,
+            waitMin: wait_min,
+            returnFrom: return_from,
+            returnTo: return_to,
+            returnPickupIso: return_pickup_iso,
+            returnDistanceKm: return_distance_km,
+            returnDurationMin: return_duration_min,
+            priceMainInclVat: mainPricing?.price_incl_vat,
+            priceMainExVat: mainPricing?.price_ex_vat,
+            priceMainVat: mainPricing?.price_vat,
+            priceReturnInclVat: returnPricing?.price_incl_vat,
+            priceReturnExVat: returnPricing?.price_ex_vat,
+            priceReturnVat: returnPricing?.price_vat,
+            fixedFareAppliedMain: bookingMainFixedFareApplied,
+            fixedFareAppliedReturn: bookingReturnUsesFixedFare,
+            fixedFareRuleIdMain: bookingMainFixedFareRuleId,
+            fixedFareRuleIdReturn: bookingReturnFixedFareRuleId,
+            pricingSourceMain: bookingMainPricingSource,
+            pricingSourceReturn: bookingReturnPricingSource,
+            assignedDriverId: resolvedAssignedDriverId,
+            assignedVehicleId: resolvedAssignedVehicleId || null,
+            parentStatus: "PENDING",
+            parentLifecycle: "pending",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
           const provisionalRecord = {
             id: canonicalBookingId,
             stage: "PENDING",
@@ -24002,6 +24043,8 @@ async function handleBooking(payload, env, request) {
             fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
             distance_km,
             duration_route_min,
+            operational_legs: provisionalOperationalLegs,
+            operationalLegs: provisionalOperationalLegs,
             booking_source: tenantContext.booking_source,
             entry_channel: tenantContext.entry_channel,
             source_context: tenantContext.source_context,
@@ -24100,6 +24143,8 @@ async function handleBooking(payload, env, request) {
               fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
               distance_km,
               duration_route_min,
+              operational_legs: provisionalOperationalLegs,
+              operationalLegs: provisionalOperationalLegs,
             },
             payload: {
               ...payload,
@@ -24838,6 +24883,47 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       }
       const pendingPaymentStatus = "pending";
       const nowIso = new Date().toISOString();
+      const resolvedAssignedDriverId = safeStr(
+        resolvedAssignedDriver?.driver_id ??
+          resolvedAssignedDriver?.driverId ??
+          resolvedAssignedDriver?.id,
+        96,
+      ) || null;
+      const provisionalOperationalLegs = _buildOperationalLegsFoundation({
+        parentBookingId: canonicalBookingId,
+        service,
+        from,
+        to,
+        pickupIso: pickup_iso,
+        distanceKm: distance_km,
+        durationMin: duration_route_min,
+        returnEnabled: ret.enabled,
+        hasReturnSchedule,
+        waitMin: wait_min,
+        returnFrom: return_from,
+        returnTo: return_to,
+        returnPickupIso: return_pickup_iso,
+        returnDistanceKm: return_distance_km,
+        returnDurationMin: return_duration_min,
+        priceMainInclVat: mainPricing?.price_incl_vat,
+        priceMainExVat: mainPricing?.price_ex_vat,
+        priceMainVat: mainPricing?.price_vat,
+        priceReturnInclVat: returnPricing?.price_incl_vat,
+        priceReturnExVat: returnPricing?.price_ex_vat,
+        priceReturnVat: returnPricing?.price_vat,
+        fixedFareAppliedMain: bookingMainFixedFareApplied,
+        fixedFareAppliedReturn: bookingReturnUsesFixedFare,
+        fixedFareRuleIdMain: bookingMainFixedFareRuleId,
+        fixedFareRuleIdReturn: bookingReturnFixedFareRuleId,
+        pricingSourceMain: bookingMainPricingSource,
+        pricingSourceReturn: bookingReturnPricingSource,
+        assignedDriverId: resolvedAssignedDriverId,
+        assignedVehicleId: resolvedAssignedVehicleId || null,
+        parentStatus: "PENDING",
+        parentLifecycle: "pending",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
       const provisionalRecord = {
         stage: "PENDING",
         status: "PENDING",
@@ -24870,6 +24956,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         publicReference: publicBookingReference,
         planning_reference: planningReference,
         planningReference: planningReference,
+        operational_legs: provisionalOperationalLegs,
+        operationalLegs: provisionalOperationalLegs,
         tenant_id: tenantContext.tenant_id,
         company_id: tenantContext.company_id,
         tenantId: tenantContext.tenant_id,
@@ -24971,6 +25059,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
           distance_km,
           duration_route_min,
+          operational_legs: provisionalOperationalLegs,
+          operationalLegs: provisionalOperationalLegs,
         },
         payload: {
           ...payload,
@@ -25129,11 +25219,56 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     // Build booking object used by email templates
     // bookingId already computed earlier (canonicalBookingId) + booking_uuid
     await ensureBookingReferencesReserved();
+    const bookingCreatedAt = new Date().toISOString();
+    const resolvedAssignedDriverId = safeStr(
+      resolvedAssignedDriver?.driver_id ??
+        resolvedAssignedDriver?.driverId ??
+        resolvedAssignedDriver?.id,
+      96,
+    ) || null;
+    const bookingOperationalLegs = _buildOperationalLegsFoundation({
+      parentBookingId: canonicalBookingId,
+      service,
+      from,
+      to,
+      pickupIso: pickup_iso,
+      distanceKm: distance_km,
+      durationMin: duration_route_min,
+      returnEnabled: ret.enabled,
+      hasReturnSchedule,
+      waitMin: wait_min,
+      returnFrom: return_from,
+      returnTo: return_to,
+      returnPickupIso: return_pickup_iso,
+      returnDistanceKm: return_distance_km,
+      returnDurationMin: return_duration_min,
+      priceMainInclVat: mainPricing?.price_incl_vat,
+      priceMainExVat: mainPricing?.price_ex_vat,
+      priceMainVat: mainPricing?.price_vat,
+      priceReturnInclVat: returnPricing?.price_incl_vat,
+      priceReturnExVat: returnPricing?.price_ex_vat,
+      priceReturnVat: returnPricing?.price_vat,
+      fixedFareAppliedMain: bookingMainFixedFareApplied,
+      fixedFareAppliedReturn: bookingReturnUsesFixedFare,
+      fixedFareRuleIdMain: bookingMainFixedFareRuleId,
+      fixedFareRuleIdReturn: bookingReturnFixedFareRuleId,
+      pricingSourceMain: bookingMainPricingSource,
+      pricingSourceReturn: bookingReturnPricingSource,
+      assignedDriverId: resolvedAssignedDriverId,
+      assignedVehicleId: resolvedAssignedVehicleId || null,
+      parentStatus: "PENDING",
+      parentLifecycle: "pending",
+      createdAt: bookingCreatedAt,
+      updatedAt: bookingCreatedAt,
+    });
+    console.log(
+      `[BOOKING][OPERATIONAL_LEGS] booking=${_bookingIntentMask(canonicalBookingId)} count=${bookingOperationalLegs.length} return_enabled=${ret.enabled === true} has_return_schedule=${hasReturnSchedule === true} wait_min=${Math.max(0, Number(wait_min) || 0)} service=${safeStr(service, 24) || "-"}`,
+    );
 
     const booking = {
       bookingId: canonicalBookingId,
       booking_uuid: booking_uuid,
-      createdAt: new Date().toISOString(),
+      createdAt: bookingCreatedAt,
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
       public_booking_reference: publicBookingReference,
@@ -25174,6 +25309,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       return_to,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
+      operational_legs: bookingOperationalLegs,
+      operationalLegs: bookingOperationalLegs,
 
       // business
       business_detected,
@@ -25255,6 +25392,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       tenant_resolved_at: tenantContext.tenant_resolved_at,
       assigned_vehicle_id: resolvedAssignedVehicleId,
       assigned_driver: resolvedAssignedDriver,
+      operational_legs: bookingOperationalLegs,
+      operationalLegs: bookingOperationalLegs,
       calendar_auth_source: calendarAuthSource,
       calendarAuthSource: calendarAuthSource,
       ...paymentFields,
@@ -25324,6 +25463,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         ),
         assigned_vehicle_id: resolvedAssignedVehicleId,
         assigned_driver: resolvedAssignedDriver,
+        operational_legs: Array.isArray(booking.operational_legs) ? booking.operational_legs : [],
+        operationalLegs: Array.isArray(booking.operational_legs) ? booking.operational_legs : [],
         calendar_event_id,
         calendarEventId: calendar_event_id || null,
         return_event_id: safeStr(calendar?.return_event_id || null),
@@ -26652,6 +26793,202 @@ function normalizeReturnEnabled(body, wait_min) {
   const forced = false;
   const enabled = explicit;
   return { explicit, forced, enabled };
+}
+
+function _operationalLegServiceValue(serviceRaw) {
+  const normalized = normalizeService(serviceRaw);
+  if (normalized === "passenger") return "taxi";
+  return normalized;
+}
+
+function _normalizedOperationalLegLifecycle(parentStatus, parentLifecycle) {
+  const statusUpper = _normLifecycleStatus(parentStatus || parentLifecycle || "PENDING");
+  if (statusUpper === "COMPLETED" || statusUpper === "CANCELLED" || statusUpper === "PENDING") {
+    return statusUpper;
+  }
+  return "PENDING";
+}
+
+function _shouldSplitOperationalReturnLeg({
+  service,
+  returnEnabled,
+  hasReturnSchedule,
+  waitMin,
+} = {}) {
+  if (!returnEnabled) return false;
+  if (service === "airport") return true;
+  const normalizedWaitMin = Math.max(0, Number(waitMin) || 0);
+  if (normalizedWaitMin > 0) return false;
+  return !!hasReturnSchedule;
+}
+
+function _buildOperationalLegRecord({
+  parentBookingId,
+  legKey,
+  legType,
+  service,
+  pickupIso,
+  from,
+  to,
+  distanceKm = null,
+  durationMin = null,
+  priceInclVat = null,
+  priceExVat = null,
+  priceVat = null,
+  fixedFareApplied = null,
+  fixedFareRuleId = null,
+  pricingSource = null,
+  assignedDriverId = null,
+  assignedVehicleId = null,
+  lifecycleStatus = "pending",
+  createdAt = "",
+  updatedAt = "",
+} = {}) {
+  const bookingId = safeStr(parentBookingId, 160);
+  const normalizedLegKey = safeStr(legKey, 24).toUpperCase() || "LEG";
+  const legId = bookingId ? `${bookingId}:${normalizedLegKey}` : "";
+  const safeLifecycle = safeStr(lifecycleStatus, 24).toLowerCase() || "pending";
+  const normalizedLegType = legType === "return" ? "return" : "outbound";
+  const normalizedService = _operationalLegServiceValue(service);
+  return {
+    leg_id: legId || null,
+    legId: legId || null,
+    parent_booking_id: bookingId || null,
+    parentBookingId: bookingId || null,
+    leg_type: normalizedLegType,
+    legType: normalizedLegType,
+    service: normalizedService,
+    pickup_iso: safeStr(pickupIso, 80) || null,
+    pickupIso: safeStr(pickupIso, 80) || null,
+    from: safeStr(from, 320) || "",
+    to: safeStr(to, 320) || "",
+    distance_km: Number.isFinite(Number(distanceKm)) ? Number(distanceKm) : null,
+    distanceKm: Number.isFinite(Number(distanceKm)) ? Number(distanceKm) : null,
+    duration_min: Number.isFinite(Number(durationMin)) ? Number(durationMin) : null,
+    durationMin: Number.isFinite(Number(durationMin)) ? Number(durationMin) : null,
+    price_incl_vat: Number.isFinite(Number(priceInclVat)) ? Number(priceInclVat) : null,
+    priceInclVat: Number.isFinite(Number(priceInclVat)) ? Number(priceInclVat) : null,
+    price_ex_vat: Number.isFinite(Number(priceExVat)) ? Number(priceExVat) : null,
+    priceExVat: Number.isFinite(Number(priceExVat)) ? Number(priceExVat) : null,
+    price_vat: Number.isFinite(Number(priceVat)) ? Number(priceVat) : null,
+    priceVat: Number.isFinite(Number(priceVat)) ? Number(priceVat) : null,
+    fixed_fare_applied:
+      typeof fixedFareApplied === "boolean" ? fixedFareApplied : null,
+    fixedFareApplied:
+      typeof fixedFareApplied === "boolean" ? fixedFareApplied : null,
+    fixed_fare_rule_id: safeStr(fixedFareRuleId, 120) || null,
+    fixedFareRuleId: safeStr(fixedFareRuleId, 120) || null,
+    pricing_source: safeStr(pricingSource, 80) || null,
+    pricingSource: safeStr(pricingSource, 80) || null,
+    assigned_driver_id: safeStr(assignedDriverId, 96) || null,
+    assignedDriverId: safeStr(assignedDriverId, 96) || null,
+    assigned_vehicle_id: safeStr(assignedVehicleId, 128) || null,
+    assignedVehicleId: safeStr(assignedVehicleId, 128) || null,
+    status: safeLifecycle,
+    lifecycle_status: safeLifecycle,
+    lifecycleStatus: safeLifecycle,
+    created_at: safeStr(createdAt, 80) || null,
+    createdAt: safeStr(createdAt, 80) || null,
+    updated_at: safeStr(updatedAt, 80) || null,
+    updatedAt: safeStr(updatedAt, 80) || null,
+  };
+}
+
+function _buildOperationalLegsFoundation({
+  parentBookingId,
+  service,
+  from,
+  to,
+  pickupIso,
+  distanceKm,
+  durationMin,
+  returnEnabled = false,
+  hasReturnSchedule = false,
+  waitMin = 0,
+  returnFrom = "",
+  returnTo = "",
+  returnPickupIso = "",
+  returnDistanceKm = null,
+  returnDurationMin = null,
+  priceMainInclVat = null,
+  priceMainExVat = null,
+  priceMainVat = null,
+  priceReturnInclVat = null,
+  priceReturnExVat = null,
+  priceReturnVat = null,
+  fixedFareAppliedMain = null,
+  fixedFareAppliedReturn = null,
+  fixedFareRuleIdMain = null,
+  fixedFareRuleIdReturn = null,
+  pricingSourceMain = null,
+  pricingSourceReturn = null,
+  assignedDriverId = null,
+  assignedVehicleId = null,
+  parentStatus = "PENDING",
+  parentLifecycle = "pending",
+  createdAt = "",
+  updatedAt = "",
+} = {}) {
+  const lifecycleUpper = _normalizedOperationalLegLifecycle(parentStatus, parentLifecycle);
+  const lifecycleLower = lifecycleUpper.toLowerCase();
+  const normalizedService = _operationalLegServiceValue(service);
+  const legs = [];
+  legs.push(
+    _buildOperationalLegRecord({
+      parentBookingId,
+      legKey: "OUTBOUND",
+      legType: "outbound",
+      service: normalizedService,
+      pickupIso,
+      from,
+      to,
+      distanceKm,
+      durationMin,
+      priceInclVat: priceMainInclVat,
+      priceExVat: priceMainExVat,
+      priceVat: priceMainVat,
+      fixedFareApplied: fixedFareAppliedMain,
+      fixedFareRuleId: fixedFareRuleIdMain,
+      pricingSource: pricingSourceMain,
+      assignedDriverId,
+      assignedVehicleId,
+      lifecycleStatus: lifecycleLower,
+      createdAt,
+      updatedAt,
+    }),
+  );
+  const splitReturn = _shouldSplitOperationalReturnLeg({
+    service: normalizedService,
+    returnEnabled,
+    hasReturnSchedule,
+    waitMin,
+  });
+  if (!splitReturn) return legs;
+  legs.push(
+    _buildOperationalLegRecord({
+      parentBookingId,
+      legKey: "RETURN",
+      legType: "return",
+      service: normalizedService,
+      pickupIso: returnPickupIso || "",
+      from: returnFrom || to || "",
+      to: returnTo || from || "",
+      distanceKm: returnDistanceKm,
+      durationMin: returnDurationMin,
+      priceInclVat: priceReturnInclVat,
+      priceExVat: priceReturnExVat,
+      priceVat: priceReturnVat,
+      fixedFareApplied: fixedFareAppliedReturn,
+      fixedFareRuleId: fixedFareRuleIdReturn,
+      pricingSource: pricingSourceReturn,
+      assignedDriverId,
+      assignedVehicleId,
+      lifecycleStatus: lifecycleLower,
+      createdAt,
+      updatedAt,
+    }),
+  );
+  return legs;
 }
 
 function humanServiceLabel(s) {
