@@ -181,6 +181,7 @@ class CustomerHomePage extends StatelessWidget {
               entryContext: 'hotel_stay',
             );
           },
+          onOpenAirportFlow: () => _openAirportFlow(context),
         ),
       ),
     );

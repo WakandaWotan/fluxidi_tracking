@@ -23,6 +23,7 @@ class HotelsPage extends StatefulWidget {
     this.stays,
     this.onTaxiToStay,
     this.onTaxiToDestination,
+    this.onOpenAirportFlow,
     this.tenantId,
     this.companyId,
     super.key,
@@ -34,6 +35,7 @@ class HotelsPage extends StatefulWidget {
   /// Optional CTA callback for later taxi-prefill integration.
   final void Function(HotelStay stay)? onTaxiToStay;
   final void Function(DiscoveryDestination destination)? onTaxiToDestination;
+  final Future<void> Function()? onOpenAirportFlow;
   final String? tenantId;
   final String? companyId;
 
@@ -333,6 +335,15 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String get _airportFlowFallbackLabel {
+    return _t(
+      nl: 'Luchthavenflow is hier nog niet gekoppeld.',
+      en: 'Airport flow is not connected here yet.',
+      fr: 'Le flux aeroport n est pas encore connecte ici.',
+      es: 'El flujo de aeropuerto aun no esta conectado aqui.',
+    );
+  }
+
   bool _isPremiumStay(HotelStay stay) {
     if ((stay.rating ?? 0) >= 4.7) return true;
     final joined = <String>[
@@ -562,11 +573,26 @@ class _HotelsPageState extends State<HotelsPage> {
           savedLabel: _savedStayLabel,
           onToggleSaved: () => _toggleSaved(stay),
           onNearbyEventTaxiTap: _onNearbyEventTaxiTap,
+          onAirportTransferTap: () {
+            _onAirportTransferTap();
+          },
           onTaxiTap: () => _onTaxiCtaTap(stay),
           onViewStayTap: () => _openStayLink(stay),
         ),
       ),
     );
+  }
+
+  Future<void> _onAirportTransferTap() async {
+    final callback = widget.onOpenAirportFlow;
+    if (callback != null) {
+      await callback();
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_airportFlowFallbackLabel)));
   }
 
   @override
@@ -1276,6 +1302,7 @@ class HotelStayDetailPage extends StatelessWidget {
     required this.savedLabel,
     required this.onToggleSaved,
     required this.onNearbyEventTaxiTap,
+    required this.onAirportTransferTap,
     required this.onTaxiTap,
     required this.onViewStayTap,
     super.key,
@@ -1288,6 +1315,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final String savedLabel;
   final VoidCallback onToggleSaved;
   final void Function(EventDetailData event) onNearbyEventTaxiTap;
+  final VoidCallback onAirportTransferTap;
   final VoidCallback onTaxiTap;
   final VoidCallback onViewStayTap;
 
@@ -1363,6 +1391,15 @@ class HotelStayDetailPage extends StatelessWidget {
       en: 'Taxi to this stay',
       fr: 'Taxi vers cet hébergement',
       es: 'Taxi a este alojamiento',
+    );
+  }
+
+  String get _airportTransferLabel {
+    return _t(
+      nl: 'Luchthaven transfer',
+      en: 'Airport transfer',
+      fr: 'Transfert aeroport',
+      es: 'Transfer al aeropuerto',
     );
   }
 
@@ -1851,6 +1888,31 @@ class HotelStayDetailPage extends StatelessWidget {
                       label: Text(
                         _taxiLabel,
                         style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onAirportTransferTap,
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: const Color(0xFF111111),
+                        foregroundColor: Colors.white.withOpacity(0.94),
+                        side: BorderSide(color: _gold.withOpacity(0.3)),
+                        minimumSize: const Size.fromHeight(44),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: Icon(
+                        Icons.flight_takeoff_rounded,
+                        size: 16,
+                        color: _gold.withOpacity(0.92),
+                      ),
+                      label: Text(
+                        _airportTransferLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
