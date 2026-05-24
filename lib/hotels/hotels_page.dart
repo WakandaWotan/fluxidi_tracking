@@ -508,7 +508,11 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
-  void _onNearbyEventTaxiTap(EventDetailData event) {
+  void _onNearbyEventTaxiTap(HotelStay stay, EventDetailData event) {
+    final origin = stay.toDiscoveryDestination(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+    );
     final providerValue = (event.provider ?? '').trim();
     final provider = providerValue.isNotEmpty ? providerValue : 'event';
     final providerId = (event.sourceEventId ?? '').trim().isNotEmpty
@@ -541,17 +545,16 @@ class _HotelsPageState extends State<HotelsPage> {
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
     );
-    final destinationCallback = widget.onTaxiToDestination;
-    if (destinationCallback != null) {
-      destinationCallback(destination);
-      return;
-    }
     Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (_) => CalculatorPage(
               bookingBaseUrl: appConfig.bookingBaseUrl,
               mapboxToken: kMapboxToken,
+              initialFromAddress: origin.prefillDestinationText,
+              initialFromLabel: origin.destinationName,
+              initialFromLat: origin.latitude,
+              initialFromLng: origin.longitude,
               initialToAddress: destination.prefillDestinationText,
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
@@ -578,7 +581,7 @@ class _HotelsPageState extends State<HotelsPage> {
           saveLabel: _saveStayLabel,
           savedLabel: _savedStayLabel,
           onToggleSaved: () => _toggleSaved(stay),
-          onNearbyEventTaxiTap: _onNearbyEventTaxiTap,
+          onNearbyEventTaxiTap: (event) => _onNearbyEventTaxiTap(stay, event),
           onAirportTransferTap: () {
             _onAirportTransferTap(stay);
           },

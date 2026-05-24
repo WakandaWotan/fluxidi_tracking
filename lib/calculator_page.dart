@@ -310,6 +310,10 @@ class CalculatorPage extends StatefulWidget {
     this.publicPartnerId,
     this.publicPartnerName,
     this.entryContext = BookingEntryContext.customer,
+    this.initialFromAddress,
+    this.initialFromLabel,
+    this.initialFromLat,
+    this.initialFromLng,
     this.initialToAddress,
     this.initialDestinationLabel,
     this.initialToLat,
@@ -325,6 +329,10 @@ class CalculatorPage extends StatefulWidget {
   final String? publicPartnerId;
   final String? publicPartnerName;
   final BookingEntryContext entryContext;
+  final String? initialFromAddress;
+  final String? initialFromLabel;
+  final double? initialFromLat;
+  final double? initialFromLng;
   final String? initialToAddress;
   final String? initialDestinationLabel;
   final double? initialToLat;
@@ -976,6 +984,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (initialServiceId.isNotEmpty &&
         _services.any((service) => service.id == initialServiceId)) {
       _service = initialServiceId;
+    }
+    final initialFromAddress = (widget.initialFromAddress ?? '').trim();
+    final initialFromLabel = (widget.initialFromLabel ?? '').trim();
+    if (initialFromAddress.isNotEmpty) {
+      _fromCtrl.text = initialFromAddress;
+    } else if (initialFromLabel.isNotEmpty) {
+      _fromCtrl.text = initialFromLabel;
+    }
+    if (_hasFiniteCoordPair(widget.initialFromLat, widget.initialFromLng)) {
+      _fromLat = widget.initialFromLat;
+      _fromLng = widget.initialFromLng;
     }
     final initialToAddress = (widget.initialToAddress ?? '').trim();
     final initialDestinationLabel = (widget.initialDestinationLabel ?? '')
