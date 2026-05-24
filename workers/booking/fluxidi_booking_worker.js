@@ -9735,8 +9735,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   const quoteExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(body, quoteScope);
   const quoteFixedFareEligible =
     _isAirportFixedFareEligiblePayload(body) &&
-    quoteExplicitScopeAllowed &&
-    quoteReturnRequested !== true;
+    quoteExplicitScopeAllowed;
   let fixedFareQuoteResult = {
     matched: false,
     pricing_source: "route_calc",
@@ -9749,17 +9748,18 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       pricingProfile,
       fallbackVatRate: vat_rate,
       returnRequested: quoteReturnRequested,
+      allowReturnRequested: true,
     });
   }
-  const quoteUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
-  const quotePricingSource = quoteUsesFixedFare ? "airport_fixed_fare" : "route_calc";
-  const quoteFixedFareApplied = quoteUsesFixedFare;
-  const quoteFixedFareRuleId = quoteUsesFixedFare
+  const quoteMainUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
+  const quoteMainPricingSource = quoteMainUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+  const quoteMainFixedFareApplied = quoteMainUsesFixedFare;
+  const quoteMainFixedFareRuleId = quoteMainUsesFixedFare
     ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
     : null;
 
   // Pricing: server truth
-  const mainPricing = quoteUsesFixedFare
+  const mainPricing = quoteMainUsesFixedFare
     ? fixedFareQuoteResult.pricing
     : calcPrice({
       distance_km,
@@ -9779,8 +9779,15 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
 
   // ✅ Optional return trip quote (client sends return_enabled + return_* fields)
   let returnQuote = null;
+  let quoteReturnUsesFixedFare = false;
+  let quoteReturnFixedFareRuleId = null;
+  let quoteReturnPricingSource = "route_calc";
+  let quoteReturnExplicitFixedFareMatched = false;
+  let quoteReturnReusedMainFixedFare = false;
+  let quoteReturnFallbackReason = "not_requested";
   try {
     if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
+      quoteReturnFallbackReason = "route_pricing_fallback";
       const rf = body.return_from || body.to;
       const rt = body.return_to || body.from;
       if (!rf || !rt) throw new Error("Missing return_from/return_to");
@@ -9796,7 +9803,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       const retDuration_min = Math.round(retRoute.duration / 60);
       const retWhen = normalizeWhen(body.return_date, body.return_time);
 
-      const retPricing = calcPrice({
+      let retPricing = calcPrice({
         distance_km: retDistance_km,
         duration_min: retDuration_min,
         tier,
@@ -9811,6 +9818,150 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         pricing_profile: pricingProfile,
         apply_return_fee: true,
       });
+      const outboundDirection = _fixedFareNormalizeText(
+        body?.airport_direction ?? body?.airportDirection,
+        24,
+      ).toLowerCase();
+      const returnDirection = outboundDirection === "to_airport" ? "from_airport" : "to_airport";
+      const returnFromLat = _fixedFareFiniteNumberOrNull(
+        body?.return_from_lat ??
+          body?.returnFromLat ??
+          body?.return_pickup_lat ??
+          body?.returnPickupLat,
+      );
+      const returnFromLng = _fixedFareFiniteNumberOrNull(
+        body?.return_from_lng ??
+          body?.returnFromLng ??
+          body?.return_pickup_lng ??
+          body?.returnPickupLng,
+      );
+      const returnToLat = _fixedFareFiniteNumberOrNull(
+        body?.return_to_lat ??
+          body?.returnToLat ??
+          body?.return_destination_lat ??
+          body?.returnDestinationLat,
+      );
+      const returnToLng = _fixedFareFiniteNumberOrNull(
+        body?.return_to_lng ??
+          body?.returnToLng ??
+          body?.return_destination_lng ??
+          body?.returnDestinationLng,
+      );
+      const returnPostcode = safeStr(
+        body?.return_postcode ??
+          body?.returnPostcode ??
+          body?.return_postal_code ??
+          body?.returnPostalCode,
+        24,
+      );
+      if (quoteFixedFareEligible) {
+        const returnFixedFarePayload = {
+          ...body,
+          from: rf,
+          to: rt,
+          airport_direction: returnDirection,
+          direction: returnDirection,
+          return_enabled: false,
+          return: false,
+          return_date: "",
+          return_time: "",
+          return_pickup_iso: "",
+          returnPickupIso: "",
+          return_from: "",
+          return_to: "",
+          returnFrom: "",
+          returnTo: "",
+          ...(returnDirection === "to_airport"
+            ? {
+                pickup_lat: returnFromLat,
+                pickup_lng: returnFromLng,
+                from_lat: returnFromLat,
+                from_lng: returnFromLng,
+                ...(returnPostcode
+                  ? {
+                      pickup_postcode: returnPostcode,
+                      pickupPostcode: returnPostcode,
+                      from_postcode: returnPostcode,
+                      fromPostcode: returnPostcode,
+                      postcode: returnPostcode,
+                    }
+                  : {}),
+              }
+            : {
+                destination_lat: returnToLat,
+                destination_lng: returnToLng,
+                to_lat: returnToLat,
+                to_lng: returnToLng,
+                ...(returnPostcode
+                  ? {
+                      destination_postcode: returnPostcode,
+                      destinationPostcode: returnPostcode,
+                      to_postcode: returnPostcode,
+                      toPostcode: returnPostcode,
+                      postcode: returnPostcode,
+                    }
+                  : {}),
+              }),
+        };
+        const returnFixedFareResult = await resolveAirportFixedFare(
+          env,
+          quoteScope,
+          returnFixedFarePayload,
+          {
+            pricingProfile,
+            fallbackVatRate: vat_rate,
+            returnRequested: false,
+            allowReturnRequested: true,
+          },
+        );
+        if (returnFixedFareResult.matched === true && returnFixedFareResult.pricing) {
+          retPricing = returnFixedFareResult.pricing;
+          quoteReturnUsesFixedFare = true;
+          quoteReturnExplicitFixedFareMatched = true;
+          quoteReturnFixedFareRuleId = returnFixedFareResult.fixed_fare_rule_id || null;
+          quoteReturnPricingSource = "airport_fixed_fare";
+          quoteReturnFallbackReason = "explicit_return_fixed_fare";
+        }
+        if (
+          !quoteReturnUsesFixedFare &&
+          quoteMainFixedFareApplied &&
+          fixedFareQuoteResult.pricing &&
+          _isAirportFixedFareEligiblePayload(body)
+        ) {
+          const outboundDirection = _fixedFareNormalizeText(
+            body?.airport_direction ?? body?.airportDirection,
+            24,
+          ).toLowerCase();
+          const expectedReturnDirection =
+            outboundDirection === "to_airport" ? "from_airport" : "to_airport";
+          const rawReturnDirection = _fixedFareNormalizeText(
+            body?.return_direction ?? body?.returnDirection,
+            24,
+          ).toLowerCase();
+          const reverseByAddress =
+            safeStr(rf, 300).trim().toLowerCase() ===
+              safeStr(body?.to, 300).trim().toLowerCase() &&
+            safeStr(rt, 300).trim().toLowerCase() ===
+              safeStr(body?.from, 300).trim().toLowerCase();
+          const reverseByDirection =
+            !rawReturnDirection || rawReturnDirection === expectedReturnDirection;
+          if (reverseByAddress && reverseByDirection) {
+            retPricing = fixedFareQuoteResult.pricing;
+            quoteReturnUsesFixedFare = true;
+            quoteReturnReusedMainFixedFare = true;
+            quoteReturnFixedFareRuleId = quoteMainFixedFareRuleId;
+            quoteReturnPricingSource = "airport_fixed_fare";
+            quoteReturnFallbackReason = "reused_main_fixed_fare_rule";
+          } else {
+            quoteReturnFallbackReason = reverseByAddress
+              ? "return_direction_not_reverse"
+              : "return_addresses_not_reverse";
+          }
+        }
+      }
+      console.log(
+        `[AIRPORT_FIXED_FARE][QUOTE][RETURN] main=${quoteMainFixedFareApplied ? "1" : "0"} explicit=${quoteReturnExplicitFixedFareMatched ? "1" : "0"} reused_main=${quoteReturnReusedMainFixedFare ? "1" : "0"} fallback=${quoteReturnFallbackReason}`,
+      );
 
       returnQuote = {
         distance_km: retDistance_km,
@@ -9818,12 +9969,18 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         price_ex_vat: retPricing.price_ex_vat,
         price_vat: retPricing.price_vat,
         price_incl_vat: retPricing.price_incl_vat,
-        note: retPricing.note
+        note: retPricing.note,
+        pricing_source: quoteReturnPricingSource,
+        fixed_fare_applied: quoteReturnUsesFixedFare,
+        fixed_fare_rule_id: quoteReturnFixedFareRuleId,
       };
     }
   } catch (e) {
     // If return quote fails, we keep main quote and simply omit returnQuote
     returnQuote = null;
+    console.log(
+      `[AIRPORT_FIXED_FARE][QUOTE][RETURN] main=${quoteMainFixedFareApplied ? "1" : "0"} explicit=${quoteReturnExplicitFixedFareMatched ? "1" : "0"} reused_main=${quoteReturnReusedMainFixedFare ? "1" : "0"} fallback=exception`,
+    );
   }
   function moneyNumber(value) {
     const n = Number(String(value ?? "0").replace(",", "."));
@@ -10142,6 +10299,22 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     `[QUOTE][AVAILABILITY][RESULT] tenant=${quoteScopeMask.tenant || "-"} company=${quoteScopeMask.company || "-"} checked=${availability.checked ? "true" : "false"} available=${availability.available === true ? "true" : availability.available === false ? "false" : "null"} reason=${safeStr(availability.reason, 64) || "availability_check_skipped"} origin_source=${safeStr(availability.origin_source, 64) || "-"} origin_has_location=${availability.origin_has_location === true ? "true" : availability.origin_has_location === false ? "false" : "null"} pickup_has_location=${availability.pickup_has_location === true ? "true" : availability.pickup_has_location === false ? "false" : "null"} available_seconds=${Number.isFinite(Number(availability.available_seconds)) ? Number(availability.available_seconds) : -1} required_seconds=${Number.isFinite(Number(availability.required_seconds)) ? Number(availability.required_seconds) : -1} origin_travel_seconds=${Number.isFinite(Number(availability.origin_travel_seconds)) ? Number(availability.origin_travel_seconds) : -1} required_buffer_seconds=${Number.isFinite(Number(availability.required_buffer_seconds)) ? Number(availability.required_buffer_seconds) : -1} route_failure_reason=${safeStr(availability.route_failure_reason, 64) || "-"} route_http_status=${Number.isFinite(Number(availability.route_http_status)) ? Number(availability.route_http_status) : -1} route_error_message=${safeStr(availability.route_error_message, 64) || "-"} route_error_code=${safeStr(availability.route_error_code, 64) || "-"} route_profile=${safeStr(availability.route_profile, 32) || "-"} route_origin_lat_ok=${availability.route_origin_lat_ok === true ? "true" : availability.route_origin_lat_ok === false ? "false" : "null"} route_origin_lng_ok=${availability.route_origin_lng_ok === true ? "true" : availability.route_origin_lng_ok === false ? "false" : "null"} route_origin_coords_usable=${availability.route_origin_coords_usable === true ? "true" : availability.route_origin_coords_usable === false ? "false" : "null"} route_origin_coordinate_source=${safeStr(availability.route_origin_coordinate_source, 48) || "-"} route_pickup_lat_ok=${availability.route_pickup_lat_ok === true ? "true" : availability.route_pickup_lat_ok === false ? "false" : "null"} route_pickup_lng_ok=${availability.route_pickup_lng_ok === true ? "true" : availability.route_pickup_lng_ok === false ? "false" : "null"} route_pickup_coords_usable=${availability.route_pickup_coords_usable === true ? "true" : availability.route_pickup_coords_usable === false ? "false" : "null"} route_pickup_coordinate_source=${safeStr(availability.route_pickup_coordinate_source, 48) || "-"} route_duration_seconds_raw=${Number.isFinite(Number(availability.route_duration_seconds_raw)) ? Number(availability.route_duration_seconds_raw) : -1} route_response_routes_count=${Number.isFinite(Number(availability.route_response_routes_count)) ? Number(availability.route_response_routes_count) : -1} route_response_has_duration=${availability.route_response_has_duration === true ? "true" : availability.route_response_has_duration === false ? "false" : "null"} route_retry_reason=${safeStr(availability.route_retry_reason, 64) || "-"} route_retry_used=${availability.route_retry_used === true ? "true" : availability.route_retry_used === false ? "false" : "null"} route_retry_success=${availability.route_retry_success === true ? "true" : availability.route_retry_success === false ? "false" : "null"} route_retry_http_status=${Number.isFinite(Number(availability.route_retry_http_status)) ? Number(availability.route_retry_http_status) : -1} route_retry_error_code=${safeStr(availability.route_retry_error_code, 64) || "-"} route_retry_error_message=${safeStr(availability.route_retry_error_message, 64) || "-"} route_retry_duration_seconds_raw=${Number.isFinite(Number(availability.route_retry_duration_seconds_raw)) ? Number(availability.route_retry_duration_seconds_raw) : -1} route_retry_attempts_count=${Number.isFinite(Number(availability.route_retry_attempts_count)) ? Number(availability.route_retry_attempts_count) : -1} route_retry_attempts_summary=${safeStr(availability.route_retry_attempts_summary, 96) || "-"} route_same_point_shortcut=${availability.route_same_point_shortcut === true ? "true" : availability.route_same_point_shortcut === false ? "false" : "null"} route_same_point_distance_meters=${Number.isFinite(Number(availability.route_same_point_distance_meters)) ? Number(availability.route_same_point_distance_meters) : -1} route_retry_radius_used=${safeStr(availability.route_retry_radius_used, 32) || "-"} route_retry_snap_penalty_seconds=${Number.isFinite(Number(availability.route_retry_snap_penalty_seconds)) ? Number(availability.route_retry_snap_penalty_seconds) : -1} route_origin_latlng_preview=${safeStr(availability.route_origin_latlng_preview, 32) || "-"} route_pickup_latlng_preview=${safeStr(availability.route_pickup_latlng_preview, 32) || "-"} route_origin_lnglat_preview=${safeStr(availability.route_origin_lnglat_preview, 32) || "-"} route_pickup_lnglat_preview=${safeStr(availability.route_pickup_lnglat_preview, 32) || "-"} route_origin_coords_belgium_like=${availability.route_origin_coords_belgium_like === true ? "true" : availability.route_origin_coords_belgium_like === false ? "false" : "null"} route_pickup_coords_belgium_like=${availability.route_pickup_coords_belgium_like === true ? "true" : availability.route_pickup_coords_belgium_like === false ? "false" : "null"} origin_candidate_count=${Number.isFinite(Number(availability.origin_candidate_count)) ? Number(availability.origin_candidate_count) : -1} origin_candidate_sources_tried=${safeStr(availability.origin_candidate_sources_tried, 96) || "-"} origin_candidate_resolution_summary=${safeStr(availability.origin_candidate_resolution_summary, 96) || "-"} origin_geocode_attempted=${availability.origin_geocode_attempted === true ? "true" : availability.origin_geocode_attempted === false ? "false" : "null"} origin_geocode_success=${availability.origin_geocode_success === true ? "true" : availability.origin_geocode_success === false ? "false" : "null"} origin_geocode_source=${safeStr(availability.origin_geocode_source, 48) || "-"} origin_geocode_error_code=${safeStr(availability.origin_geocode_error_code, 48) || "-"} origin_geocode_error_message=${safeStr(availability.origin_geocode_error_message, 64) || "-"} previous_reservation_id_preview=${safeStr(availability.previous_reservation_id_preview, 40) || "-"} previous_reservation_dropoff_has_coords=${availability.previous_reservation_dropoff_has_coords === true ? "true" : availability.previous_reservation_dropoff_has_coords === false ? "false" : "null"} previous_reservation_dropoff_has_address=${availability.previous_reservation_dropoff_has_address === true ? "true" : availability.previous_reservation_dropoff_has_address === false ? "false" : "null"} previous_reservation_dropoff_geocode_attempted=${availability.previous_reservation_dropoff_geocode_attempted === true ? "true" : availability.previous_reservation_dropoff_geocode_attempted === false ? "false" : "null"} previous_reservation_dropoff_geocode_success=${availability.previous_reservation_dropoff_geocode_success === true ? "true" : availability.previous_reservation_dropoff_geocode_success === false ? "false" : "null"} previous_reservation_dropoff_coordinate_source=${safeStr(availability.previous_reservation_dropoff_coordinate_source, 64) || "-"} previous_reservation_dropoff_resolution_summary=${safeStr(availability.previous_reservation_dropoff_resolution_summary, 96) || "-"} origin_preview=${safeStr(availability.origin_address_preview, 64) || "-"} pickup_preview=${safeStr(availability.pickup_address_preview, 64) || "-"}`,
   );
 
+  const quoteRoundtripEnabled = pricingProfile.return_enabled && body.return_enabled === true;
+  const quoteFixedFareApplied = quoteRoundtripEnabled
+    ? (quoteMainFixedFareApplied && quoteReturnUsesFixedFare)
+    : quoteMainFixedFareApplied;
+  const quotePricingSource = quoteRoundtripEnabled
+    ? (quoteMainFixedFareApplied && quoteReturnUsesFixedFare
+      ? "airport_fixed_fare"
+      : (quoteMainFixedFareApplied || quoteReturnUsesFixedFare
+        ? "mixed_airport_fixed_fare"
+        : "route_calc"))
+    : quoteMainPricingSource;
+  const quoteFixedFareRuleId = quoteRoundtripEnabled
+    ? (quoteMainFixedFareRuleId && quoteReturnFixedFareRuleId
+      ? `${quoteMainFixedFareRuleId} + ${quoteReturnFixedFareRuleId}`
+      : (quoteMainFixedFareRuleId || quoteReturnFixedFareRuleId || null))
+    : quoteMainFixedFareRuleId;
   return {
     status: 200,
     out: {
@@ -10174,11 +10347,23 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       price_ex_vat: mainPricing.price_ex_vat,
       price_vat: mainPricing.price_vat,
       price_incl_vat: mainPricing.price_incl_vat,
+      price_ex_vat_main: mainPricing.price_ex_vat,
+      price_vat_main: mainPricing.price_vat,
+      price_incl_vat_main: mainPricing.price_incl_vat,
+      price_ex_vat_return: returnQuote?.price_ex_vat ?? null,
+      price_vat_return: returnQuote?.price_vat ?? null,
+      price_incl_vat_return: returnQuote?.price_incl_vat ?? null,
       note: mainPricing.note,
       pricing_profile: pricingProfile,
       pricing_source: quotePricingSource,
       fixed_fare_applied: quoteFixedFareApplied,
       fixed_fare_rule_id: quoteFixedFareRuleId,
+      pricing_source_main: quoteMainPricingSource,
+      pricing_source_return: returnQuote?.pricing_source ?? "route_calc",
+      fixed_fare_applied_main: quoteMainFixedFareApplied,
+      fixed_fare_applied_return: quoteReturnUsesFixedFare,
+      fixed_fare_rule_id_main: quoteMainFixedFareRuleId,
+      fixed_fare_rule_id_return: quoteReturnFixedFareRuleId,
 
       // totals (main + optional return)
       total_price_ex_vat: round2(mainEx + retEx),
@@ -23130,8 +23315,7 @@ async function handleBooking(payload, env, request) {
     const bookingExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(payload, tenantContext);
     const bookingFixedFareEligible =
       _isAirportFixedFareEligiblePayload(payload) &&
-      bookingExplicitScopeAllowed &&
-      bookingReturnRequested !== true;
+      bookingExplicitScopeAllowed;
     let fixedFareBookingResult = {
       matched: false,
       pricing_source: "route_calc",
@@ -23144,12 +23328,13 @@ async function handleBooking(payload, env, request) {
         pricingProfile,
         fallbackVatRate: vat_rate,
         returnRequested: bookingReturnRequested,
+        allowReturnRequested: true,
       });
     }
-    const bookingUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
-    const bookingPricingSource = bookingUsesFixedFare ? "airport_fixed_fare" : "route_calc";
-    const bookingFixedFareApplied = bookingUsesFixedFare;
-    const bookingFixedFareRuleId = bookingUsesFixedFare
+    const bookingMainUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
+    const bookingMainPricingSource = bookingMainUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+    const bookingMainFixedFareApplied = bookingMainUsesFixedFare;
+    const bookingMainFixedFareRuleId = bookingMainUsesFixedFare
       ? (fixedFareBookingResult.fixed_fare_rule_id || null)
       : null;
 
@@ -23159,8 +23344,15 @@ async function handleBooking(payload, env, request) {
     let return_duration_min = 0;
     let returnPricing = null;
     let returnLegs = [];
+    let bookingReturnUsesFixedFare = false;
+    let bookingReturnFixedFareRuleId = null;
+    let bookingReturnPricingSource = "route_calc";
+    let bookingReturnExplicitFixedFareMatched = false;
+    let bookingReturnReusedMainFixedFare = false;
+    let bookingReturnFallbackReason = "not_requested";
 
     if (ret.enabled) {
+      bookingReturnFallbackReason = "route_pricing_fallback";
       return_from = safeStr(payload?.return_from || payload?.returnFrom) || to;
       return_to = safeStr(payload?.return_to || payload?.returnTo) || from;
       if (return_from && return_to) {
@@ -23188,11 +23380,157 @@ async function handleBooking(payload, env, request) {
           pricing_profile: pricingProfile,
           apply_return_fee: true,
         });
+        const outboundDirection = _fixedFareNormalizeText(
+          payload?.airport_direction ?? payload?.airportDirection,
+          24,
+        ).toLowerCase();
+        const returnDirection = outboundDirection === "to_airport" ? "from_airport" : "to_airport";
+        const returnFromLat = _fixedFareFiniteNumberOrNull(
+          payload?.return_from_lat ??
+            payload?.returnFromLat ??
+            payload?.return_pickup_lat ??
+            payload?.returnPickupLat,
+        );
+        const returnFromLng = _fixedFareFiniteNumberOrNull(
+          payload?.return_from_lng ??
+            payload?.returnFromLng ??
+            payload?.return_pickup_lng ??
+            payload?.returnPickupLng,
+        );
+        const returnToLat = _fixedFareFiniteNumberOrNull(
+          payload?.return_to_lat ??
+            payload?.returnToLat ??
+            payload?.return_destination_lat ??
+            payload?.returnDestinationLat,
+        );
+        const returnToLng = _fixedFareFiniteNumberOrNull(
+          payload?.return_to_lng ??
+            payload?.returnToLng ??
+            payload?.return_destination_lng ??
+            payload?.returnDestinationLng,
+        );
+        const returnPostcode = safeStr(
+          payload?.return_postcode ??
+            payload?.returnPostcode ??
+            payload?.return_postal_code ??
+            payload?.returnPostalCode,
+          24,
+        );
+        if (bookingFixedFareEligible) {
+          const returnFixedFarePayload = {
+            ...payload,
+            from: return_from,
+            to: return_to,
+            airport_direction: returnDirection,
+            direction: returnDirection,
+            return_enabled: false,
+            return: false,
+            return_date: "",
+            return_time: "",
+            return_pickup_iso: "",
+            returnPickupIso: "",
+            return_from: "",
+            return_to: "",
+            returnFrom: "",
+            returnTo: "",
+            ...(returnDirection === "to_airport"
+              ? {
+                  pickup_lat: returnFromLat,
+                  pickup_lng: returnFromLng,
+                  from_lat: returnFromLat,
+                  from_lng: returnFromLng,
+                  ...(returnPostcode
+                    ? {
+                        pickup_postcode: returnPostcode,
+                        pickupPostcode: returnPostcode,
+                        from_postcode: returnPostcode,
+                        fromPostcode: returnPostcode,
+                        postcode: returnPostcode,
+                      }
+                    : {}),
+                }
+              : {
+                  destination_lat: returnToLat,
+                  destination_lng: returnToLng,
+                  to_lat: returnToLat,
+                  to_lng: returnToLng,
+                  ...(returnPostcode
+                    ? {
+                        destination_postcode: returnPostcode,
+                        destinationPostcode: returnPostcode,
+                        to_postcode: returnPostcode,
+                        toPostcode: returnPostcode,
+                        postcode: returnPostcode,
+                      }
+                    : {}),
+                }),
+          };
+          const returnFixedFareResult = await resolveAirportFixedFare(
+            env,
+            tenantContext,
+            returnFixedFarePayload,
+            {
+              pricingProfile,
+              fallbackVatRate: vat_rate,
+              returnRequested: false,
+              allowReturnRequested: true,
+            },
+          );
+          if (returnFixedFareResult.matched === true && returnFixedFareResult.pricing) {
+            returnPricing = returnFixedFareResult.pricing;
+            bookingReturnUsesFixedFare = true;
+            bookingReturnExplicitFixedFareMatched = true;
+            bookingReturnFixedFareRuleId = returnFixedFareResult.fixed_fare_rule_id || null;
+            bookingReturnPricingSource = "airport_fixed_fare";
+            bookingReturnFallbackReason = "explicit_return_fixed_fare";
+          }
+          if (
+            !bookingReturnUsesFixedFare &&
+            bookingMainFixedFareApplied &&
+            fixedFareBookingResult.pricing &&
+            _isAirportFixedFareEligiblePayload(payload)
+          ) {
+            const outboundDirection = _fixedFareNormalizeText(
+              payload?.airport_direction ?? payload?.airportDirection,
+              24,
+            ).toLowerCase();
+            const expectedReturnDirection =
+              outboundDirection === "to_airport" ? "from_airport" : "to_airport";
+            const rawReturnDirection = _fixedFareNormalizeText(
+              payload?.return_direction ?? payload?.returnDirection,
+              24,
+            ).toLowerCase();
+            const reverseByAddress =
+              safeStr(return_from, 300).trim().toLowerCase() ===
+                safeStr(to, 300).trim().toLowerCase() &&
+              safeStr(return_to, 300).trim().toLowerCase() ===
+                safeStr(from, 300).trim().toLowerCase();
+            const reverseByDirection =
+              !rawReturnDirection || rawReturnDirection === expectedReturnDirection;
+            if (reverseByAddress && reverseByDirection) {
+              returnPricing = fixedFareBookingResult.pricing;
+              bookingReturnUsesFixedFare = true;
+              bookingReturnReusedMainFixedFare = true;
+              bookingReturnFixedFareRuleId = bookingMainFixedFareRuleId;
+              bookingReturnPricingSource = "airport_fixed_fare";
+              bookingReturnFallbackReason = "reused_main_fixed_fare_rule";
+            } else {
+              bookingReturnFallbackReason = reverseByAddress
+                ? "return_direction_not_reverse"
+                : "return_addresses_not_reverse";
+            }
+          }
+        }
       }
+    }
+    if (ret.enabled) {
+      console.log(
+        `[AIRPORT_FIXED_FARE][BOOK][RETURN] main=${bookingMainFixedFareApplied ? "1" : "0"} explicit=${bookingReturnExplicitFixedFareMatched ? "1" : "0"} reused_main=${bookingReturnReusedMainFixedFare ? "1" : "0"} fallback=${bookingReturnFallbackReason}`,
+      );
     }
 
     const when = normalizeWhen(date, time);
-    const mainPricing = bookingUsesFixedFare
+    const mainPricing = bookingMainUsesFixedFare
       ? fixedFareBookingResult.pricing
       : calcPrice({
         distance_km,
@@ -23230,6 +23568,21 @@ async function handleBooking(payload, env, request) {
 
       return { price_ex_vat: ex, price_vat: vat, price_incl_vat: incl };
     })();
+    const bookingPricingSource = ret.enabled
+      ? (bookingMainFixedFareApplied && bookingReturnUsesFixedFare
+        ? "airport_fixed_fare"
+        : (bookingMainFixedFareApplied || bookingReturnUsesFixedFare
+          ? "mixed_airport_fixed_fare"
+          : "route_calc"))
+      : bookingMainPricingSource;
+    const bookingFixedFareApplied = ret.enabled
+      ? (bookingMainFixedFareApplied && bookingReturnUsesFixedFare)
+      : bookingMainFixedFareApplied;
+    const bookingFixedFareRuleId = ret.enabled
+      ? (bookingMainFixedFareRuleId && bookingReturnFixedFareRuleId
+        ? `${bookingMainFixedFareRuleId} + ${bookingReturnFixedFareRuleId}`
+        : (bookingMainFixedFareRuleId || bookingReturnFixedFareRuleId || null))
+      : bookingMainFixedFareRuleId;
 
     // Calendar availability + creation (if configured)
     const calendarAuthConfig = await loadGoogleCalendarAuthConfig(env, tenantContext);
@@ -23639,8 +23992,14 @@ async function handleBooking(payload, env, request) {
             price_vat_return: returnPricing?.price_vat,
             price_incl_vat_return: returnPricing?.price_incl_vat,
             pricing_source: bookingPricingSource,
+            pricing_source_main: bookingMainPricingSource,
+            pricing_source_return: bookingReturnPricingSource,
             fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_applied_main: bookingMainFixedFareApplied,
+            fixed_fare_applied_return: bookingReturnUsesFixedFare,
             fixed_fare_rule_id: bookingFixedFareRuleId,
+            fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+            fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
             distance_km,
             duration_route_min,
             booking_source: tenantContext.booking_source,
@@ -23731,8 +24090,14 @@ async function handleBooking(payload, env, request) {
               price_vat_return: returnPricing?.price_vat,
               price_incl_vat_return: returnPricing?.price_incl_vat,
               pricing_source: bookingPricingSource,
+              pricing_source_main: bookingMainPricingSource,
+              pricing_source_return: bookingReturnPricingSource,
               fixed_fare_applied: bookingFixedFareApplied,
+              fixed_fare_applied_main: bookingMainFixedFareApplied,
+              fixed_fare_applied_return: bookingReturnUsesFixedFare,
               fixed_fare_rule_id: bookingFixedFareRuleId,
+              fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+              fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
               distance_km,
               duration_route_min,
             },
@@ -23765,8 +24130,14 @@ async function handleBooking(payload, env, request) {
                 price_vat: totalPricing?.price_vat,
                 price_incl_vat: totalPricing?.price_incl_vat,
                 pricing_source: bookingPricingSource,
+                pricing_source_main: bookingMainPricingSource,
+                pricing_source_return: bookingReturnPricingSource,
                 fixed_fare_applied: bookingFixedFareApplied,
+                fixed_fare_applied_main: bookingMainFixedFareApplied,
+                fixed_fare_applied_return: bookingReturnUsesFixedFare,
                 fixed_fare_rule_id: bookingFixedFareRuleId,
+                fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+                fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
               },
               pricing_main: mainPricing,
               pricing_return: returnPricing,
@@ -24590,8 +24961,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           price_vat_return: returnPricing?.price_vat,
           price_incl_vat_return: returnPricing?.price_incl_vat,
           pricing_source: bookingPricingSource,
+          pricing_source_main: bookingMainPricingSource,
+          pricing_source_return: bookingReturnPricingSource,
           fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_applied_main: bookingMainFixedFareApplied,
+          fixed_fare_applied_return: bookingReturnUsesFixedFare,
           fixed_fare_rule_id: bookingFixedFareRuleId,
+          fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+          fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
           distance_km,
           duration_route_min,
         },
@@ -24624,8 +25001,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             price_vat: totalPricing?.price_vat,
             price_incl_vat: totalPricing?.price_incl_vat,
             pricing_source: bookingPricingSource,
+            pricing_source_main: bookingMainPricingSource,
+            pricing_source_return: bookingReturnPricingSource,
             fixed_fare_applied: bookingFixedFareApplied,
+            fixed_fare_applied_main: bookingMainFixedFareApplied,
+            fixed_fare_applied_return: bookingReturnUsesFixedFare,
             fixed_fare_rule_id: bookingFixedFareRuleId,
+            fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+            fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
           },
           pricing_main: mainPricing,
           pricing_return: returnPricing,
@@ -24809,8 +25192,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       price_vat: totalPricing?.price_vat,
       price_incl_vat: totalPricing?.price_incl_vat,
       pricing_source: bookingPricingSource,
+      pricing_source_main: bookingMainPricingSource,
+      pricing_source_return: bookingReturnPricingSource,
       fixed_fare_applied: bookingFixedFareApplied,
+      fixed_fare_applied_main: bookingMainFixedFareApplied,
+      fixed_fare_applied_return: bookingReturnUsesFixedFare,
       fixed_fare_rule_id: bookingFixedFareRuleId,
+      fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+      fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
 
       // parts (handig voor UI/agenda)
       price_ex_vat_main: mainPricing?.price_ex_vat,
@@ -24922,6 +25311,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         pricing_source: booking.pricing_source || "route_calc",
         fixed_fare_applied: booking.fixed_fare_applied === true,
         fixed_fare_rule_id: booking.fixed_fare_rule_id || null,
+        pricing_source_main: booking.pricing_source_main || "route_calc",
+        pricing_source_return: booking.pricing_source_return || "route_calc",
+        fixed_fare_applied_main: booking.fixed_fare_applied_main === true,
+        fixed_fare_applied_return: booking.fixed_fare_applied_return === true,
+        fixed_fare_rule_id_main: booking.fixed_fare_rule_id_main || null,
+        fixed_fare_rule_id_return: booking.fixed_fare_rule_id_return || null,
         return_enabled: !!booking.return_enabled,
         returnPickupIso: booking.returnPickupIso || null,
         return_duration_min: Number(
@@ -24961,15 +25356,27 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         pricing: {
           ...totalPricing,
           pricing_source: bookingPricingSource,
+          pricing_source_main: bookingMainPricingSource,
+          pricing_source_return: bookingReturnPricingSource,
           fixed_fare_applied: bookingFixedFareApplied,
+          fixed_fare_applied_main: bookingMainFixedFareApplied,
+          fixed_fare_applied_return: bookingReturnUsesFixedFare,
           fixed_fare_rule_id: bookingFixedFareRuleId,
+          fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+          fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
         },
         pricing_main: mainPricing,
         pricing_return: returnPricing,
         pricing_profile: pricingProfile,
         pricing_source: bookingPricingSource,
+        pricing_source_main: bookingMainPricingSource,
+        pricing_source_return: bookingReturnPricingSource,
         fixed_fare_applied: bookingFixedFareApplied,
+        fixed_fare_applied_main: bookingMainFixedFareApplied,
+        fixed_fare_applied_return: bookingReturnUsesFixedFare,
         fixed_fare_rule_id: bookingFixedFareRuleId,
+        fixed_fare_rule_id_main: bookingMainFixedFareRuleId,
+        fixed_fare_rule_id_return: bookingReturnFixedFareRuleId,
         return: ret.enabled ? {
           enabled: true,
           from: return_from,
@@ -27502,7 +27909,8 @@ async function resolveAirportFixedFare(env, scope, payload, options = {}) {
   try {
     if (!_isAirportFixedFareEligiblePayload(payload)) return fallback;
     const returnRequested = options?.returnRequested === true || _fixedFareReturnRequested(payload);
-    if (returnRequested) return fallback;
+    const allowReturnRequested = options?.allowReturnRequested === true;
+    if (returnRequested && !allowReturnRequested) return fallback;
 
     const transfer =
       payload?.airport_transfer && typeof payload.airport_transfer === "object"

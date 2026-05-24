@@ -1435,10 +1435,10 @@ class _AirportPageState extends State<AirportPage> {
       ),
       icon: Icons.keyboard_return_rounded,
       subtitle: _t(
-        nl: 'Deze gegevens worden in de volgende fase gekoppeld aan prijs en boeking.',
-        en: 'These details will be connected to pricing and booking in the next phase.',
-        fr: 'Ces détails seront reliés au tarif et à la réservation lors de la prochaine phase.',
-        es: 'Estos datos se conectarán con el precio y la reserva en la siguiente fase.',
+        nl: 'Deze gegevens worden meegenomen in prijs en boeking.',
+        en: 'These details are included in pricing and booking.',
+        fr: 'Ces détails sont inclus dans le tarif et la réservation.',
+        es: 'Estos datos se incluyen en el precio y la reserva.',
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3252,10 +3252,10 @@ class _AirportPageState extends State<AirportPage> {
                   const SizedBox(height: 7),
                   Text(
                     _t(
-                      nl: 'Retour wordt in de volgende fase gekoppeld aan prijs en boeking.',
-                      en: 'Return leg will be connected to pricing and booking in the next phase.',
-                      fr: 'Le trajet retour sera relié au tarif et à la réservation dans la prochaine phase.',
-                      es: 'El trayecto de regreso se conectará al precio y la reserva en la siguiente fase.',
+                      nl: 'Retourrit wordt mee opgenomen in prijs en boeking.',
+                      en: 'Return leg is included in pricing and booking.',
+                      fr: 'Le trajet retour est inclus dans le tarif et la réservation.',
+                      es: 'El trayecto de regreso está incluido en el precio y la reserva.',
                     ),
                     style: TextStyle(
                       color: _soft.withOpacity(0.9),
@@ -3440,6 +3440,32 @@ class _AirportPageState extends State<AirportPage> {
         );
       }
     }
+    if (_roundtripEnabled) {
+      if (_returnAddressController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Vul eerst het retouradres in.',
+          en: 'Enter the return address first.',
+          fr: "Saisissez d'abord l'adresse de retour.",
+          es: 'Primero introduce la dirección de regreso.',
+        );
+      }
+      if (_returnDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies eerst de retourdatum en tijd.',
+          en: 'Select return date and time first.',
+          fr: "Choisissez d'abord la date et l'heure du retour.",
+          es: 'Primero selecciona la fecha y hora de regreso.',
+        );
+      }
+      if (_parseAirportDateTime(_returnDateTimeController.text) == null) {
+        return _t(
+          nl: 'Gebruik een geldige retourdatum en tijd.',
+          en: 'Use a valid return date and time.',
+          fr: "Utilisez une date et une heure de retour valides.",
+          es: 'Usa una fecha y hora de regreso válidas.',
+        );
+      }
+    }
     return null;
   }
 
@@ -3502,6 +3528,14 @@ class _AirportPageState extends State<AirportPage> {
     if (parsedDate == null) {
       return null;
     }
+    final isRoundtrip = _roundtripEnabled;
+    final returnAddress = _returnAddressController.text.trim();
+    final parsedReturnDate = isRoundtrip
+        ? _parseAirportDateTime(_returnDateTimeController.text)
+        : null;
+    if (isRoundtrip && (returnAddress.isEmpty || parsedReturnDate == null)) {
+      return null;
+    }
     String tenantId = _selectedTenantId;
     String companyId = _selectedCompanyId;
     if ((tenantId.isEmpty || companyId.isEmpty) &&
@@ -3551,6 +3585,20 @@ class _AirportPageState extends State<AirportPage> {
       selectedAirport.latitude,
       selectedAirport.longitude,
     );
+    final hasReturnCoordinates = _hasValidCoordinates(
+      _returnLatitude,
+      _returnLongitude,
+    );
+    final returnPostcode = (_returnPostcode ?? '').trim().isNotEmpty
+        ? _returnPostcode!.trim()
+        : _extractLikelyPostcode(returnAddress);
+    final returnDirection = isToAirport ? 'from_airport' : 'to_airport';
+    final returnFromText = isToAirport
+        ? '${selectedAirport.name}, ${selectedAirport.countryName}'
+        : returnAddress;
+    final returnToText = isToAirport
+        ? returnAddress
+        : '${selectedAirport.name}, ${selectedAirport.countryName}';
     debugPrint(
       '[AIRPORT_QUOTE] airport=${selectedAirport.id}/${selectedAirport.iata} '
       'direction=$direction '
@@ -3662,6 +3710,48 @@ class _AirportPageState extends State<AirportPage> {
         if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
         'meet_and_greet': _meetAndGreet,
         if (nameBoard.isNotEmpty) 'name_board': nameBoard,
+      },
+      if (isRoundtrip) ...{
+        'return_enabled': true,
+        'returnEnabled': true,
+        'return_direction': returnDirection,
+        'returnDirection': returnDirection,
+        'return_from': returnFromText,
+        'returnFrom': returnFromText,
+        'return_to': returnToText,
+        'returnTo': returnToText,
+        'return_date': _fmtDateYmd(parsedReturnDate!),
+        'returnDate': _fmtDateYmd(parsedReturnDate),
+        'return_time': _fmtTimeHm(parsedReturnDate),
+        'returnTime': _fmtTimeHm(parsedReturnDate),
+        'return_pickup_iso': _isoLikeLocal(parsedReturnDate),
+        'returnPickupIso': _isoLikeLocal(parsedReturnDate),
+        if (returnPostcode.isNotEmpty) ...{
+          'return_postcode': returnPostcode,
+          'returnPostcode': returnPostcode,
+          'return_postal_code': returnPostcode,
+          'returnPostalCode': returnPostcode,
+        },
+        if (hasReturnCoordinates && isToAirport) ...{
+          'return_to_lat': _returnLatitude,
+          'returnToLat': _returnLatitude,
+          'return_to_lng': _returnLongitude,
+          'returnToLng': _returnLongitude,
+          'return_destination_lat': _returnLatitude,
+          'returnDestinationLat': _returnLatitude,
+          'return_destination_lng': _returnLongitude,
+          'returnDestinationLng': _returnLongitude,
+        },
+        if (hasReturnCoordinates && !isToAirport) ...{
+          'return_from_lat': _returnLatitude,
+          'returnFromLat': _returnLatitude,
+          'return_from_lng': _returnLongitude,
+          'returnFromLng': _returnLongitude,
+          'return_pickup_lat': _returnLatitude,
+          'returnPickupLat': _returnLatitude,
+          'return_pickup_lng': _returnLongitude,
+          'returnPickupLng': _returnLongitude,
+        },
       },
     };
   }
@@ -3781,21 +3871,6 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Future<void> _prepareAirportBookingDetails() async {
-    if (_roundtripEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Retourritten worden in de volgende fase gekoppeld aan prijs en boeking. Schakel heen-en-terug uit om nu een enkele luchthavenrit voor te bereiden.',
-              en: 'Roundtrips will be connected to pricing and booking in the next phase. Turn off roundtrip to prepare a single airport ride now.',
-              fr: "Les aller-retour seront reliés au prix et à la réservation lors de la prochaine phase. Désactivez l'aller-retour pour préparer un trajet aéroport simple maintenant.",
-              es: 'Los viajes de ida y vuelta se conectarán con el precio y la reserva en la siguiente fase. Desactiva ida y vuelta para preparar ahora un traslado de aeropuerto sencillo.',
-            ),
-          ),
-        ),
-      );
-      return;
-    }
     final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
     if (!resolvedUserSide || !mounted) {
       return;
@@ -3869,6 +3944,10 @@ class _AirportPageState extends State<AirportPage> {
     if (asBool(quote['fixed_fare_applied'])) {
       return true;
     }
+    if (asBool(quote['fixed_fare_applied_main']) ||
+        asBool(quote['fixed_fare_applied_return'])) {
+      return true;
+    }
     if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
       return true;
     }
@@ -3902,18 +3981,50 @@ class _AirportPageState extends State<AirportPage> {
   Widget _buildAirportQuoteCard() {
     final quote = _airportQuote;
     final error = _airportQuoteError;
-    final roundtripPricingGuardActive = _roundtripEnabled && quote != null;
-    final totalIncl = _quoteNum(quote?['total_price_incl_vat']);
-    final mainIncl = _quoteNum(quote?['price_incl_vat']);
-    final displayPrice = totalIncl ?? mainIncl;
+    final isRoundtrip = _roundtripEnabled && quote != null;
+    final mainIncl =
+        _quoteNum(quote?['price_incl_vat_main']) ??
+        _quoteNum(quote?['price_incl_vat']);
+    final returnMap = quote?['return'];
+    final returnIncl =
+        _quoteNum(quote?['price_incl_vat_return']) ??
+        (returnMap is Map ? _quoteNum(returnMap['price_incl_vat']) : null);
+    final totalIncl =
+        _quoteNum(quote?['total_price_incl_vat']) ??
+        (mainIncl != null && returnIncl != null
+            ? mainIncl + returnIncl
+            : mainIncl);
+    final displayPrice = isRoundtrip ? totalIncl : (mainIncl ?? totalIncl);
     final distance = _quoteNum(quote?['distance_km']);
     final duration = _quoteNum(quote?['duration_min']);
     final hasFixedFare =
         quote != null &&
         _isFixedAirportFareQuote(Map<String, dynamic>.from(quote));
+    bool quoteBool(dynamic value) {
+      if (value is bool) return value;
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    final fixedMain =
+        quoteBool(quote?['fixed_fare_applied_main']) ||
+        quoteBool(quote?['fixed_fare_applied']);
+    final fixedReturn = quoteBool(quote?['fixed_fare_applied_return']);
     final fixedFareRuleId = quote == null
         ? null
         : _fixedFareRuleIdFromQuote(Map<String, dynamic>.from(quote));
+    final fixedFareRuleIdMainRaw = quote?['fixed_fare_rule_id_main'];
+    final fixedFareRuleIdMainText =
+        fixedFareRuleIdMainRaw?.toString().trim() ?? '';
+    final fixedFareRuleIdMain = fixedFareRuleIdMainText.isNotEmpty
+        ? fixedFareRuleIdMainText
+        : fixedFareRuleId;
+    final fixedFareRuleIdReturnRaw = quote?['fixed_fare_rule_id_return'];
+    final fixedFareRuleIdReturnText =
+        fixedFareRuleIdReturnRaw?.toString().trim() ?? '';
+    final fixedFareRuleIdReturn = fixedFareRuleIdReturnText.isNotEmpty
+        ? fixedFareRuleIdReturnText
+        : null;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
@@ -3931,17 +4042,17 @@ class _AirportPageState extends State<AirportPage> {
               Expanded(
                 child: Text(
                   _t(
-                    nl: roundtripPricingGuardActive
-                        ? 'Heenrit prijsindicatie'
+                    nl: isRoundtrip
+                        ? 'Heen-en-terug prijsindicatie'
                         : 'Prijsindicatie',
-                    en: roundtripPricingGuardActive
-                        ? 'Outbound fare estimate'
+                    en: isRoundtrip
+                        ? 'Roundtrip fare estimate'
                         : 'Price indication',
-                    fr: roundtripPricingGuardActive
-                        ? 'Estimation du trajet aller'
+                    fr: isRoundtrip
+                        ? 'Estimation aller-retour'
                         : 'Indication de prix',
-                    es: roundtripPricingGuardActive
-                        ? 'Estimación del trayecto de ida'
+                    es: isRoundtrip
+                        ? 'Estimación ida y vuelta'
                         : 'Indicación de precio',
                   ),
                   style: TextStyle(
@@ -3957,60 +4068,124 @@ class _AirportPageState extends State<AirportPage> {
           if (error != null)
             Text(error, style: const TextStyle(color: _soft, fontSize: 12))
           else if (quote != null) ...[
-            Row(
-              children: [
-                Text(
-                  _t(
-                    nl: roundtripPricingGuardActive
-                        ? 'Heenrit prijsindicatie'
-                        : 'Geschatte prijs',
-                    en: roundtripPricingGuardActive
-                        ? 'Outbound fare estimate'
-                        : 'Estimated price',
-                    fr: roundtripPricingGuardActive
-                        ? 'Estimation du trajet aller'
-                        : 'Prix estimé',
-                    es: roundtripPricingGuardActive
-                        ? 'Estimación del trayecto de ida'
-                        : 'Precio estimado',
+            if (isRoundtrip) ...[
+              Row(
+                children: [
+                  Text(
+                    _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida'),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  style: TextStyle(
-                    color: _soft.withOpacity(0.95),
-                    fontSize: 11.8,
-                    fontWeight: FontWeight.w700,
+                  const Spacer(),
+                  Text(
+                    mainIncl != null ? '€ ${mainIncl.toStringAsFixed(2)}' : '—',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                Text(
-                  displayPrice != null
-                      ? '€ ${displayPrice.toStringAsFixed(2)}'
-                      : '—',
-                  style: const TextStyle(
-                    color: _gold,
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Terugrit',
+                      en: 'Return',
+                      fr: 'Retour',
+                      es: 'Regreso',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                  const Spacer(),
+                  Text(
+                    returnIncl != null
+                        ? '€ ${returnIncl.toStringAsFixed(2)}'
+                        : '—',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: _gold.withOpacity(0.46)),
                 ),
-              ],
-            ),
-            if (roundtripPricingGuardActive) ...[
-              const SizedBox(height: 5),
-              Text(
-                _t(
-                  nl: 'Terugritprijs en totaal worden in de volgende fase berekend.',
-                  en: 'Return fare and total will be calculated in the next phase.',
-                  fr: 'Le prix du retour et le total seront calculés à la prochaine étape.',
-                  es: 'El precio de regreso y el total se calcularán en la siguiente fase.',
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _soft.withOpacity(0.9),
-                  fontSize: 10.9,
-                  height: 1.2,
+                child: Row(
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Totaal heen-en-terug',
+                        en: 'Roundtrip total',
+                        fr: 'Total aller-retour',
+                        es: 'Total ida y vuelta',
+                      ),
+                      style: const TextStyle(
+                        color: _gold,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      displayPrice != null
+                          ? '€ ${displayPrice.toStringAsFixed(2)}'
+                          : '—',
+                      style: const TextStyle(
+                        color: _gold,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ] else
+              Row(
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Geschatte prijs',
+                      en: 'Estimated price',
+                      fr: 'Prix estimé',
+                      es: 'Precio estimado',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    displayPrice != null
+                        ? '€ ${displayPrice.toStringAsFixed(2)}'
+                        : '—',
+                    style: const TextStyle(
+                      color: _gold,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
             const SizedBox(height: 6),
             if (hasFixedFare) ...[
               Container(
@@ -4032,17 +4207,17 @@ class _AirportPageState extends State<AirportPage> {
                     Expanded(
                       child: Text(
                         _t(
-                          nl: roundtripPricingGuardActive
-                              ? 'Vast tarief heenrit volgens bedrijfsregel'
+                          nl: isRoundtrip
+                              ? 'Vast tarief per rit volgens bedrijfsregel'
                               : 'Vast tarief volgens bedrijfsregel',
-                          en: roundtripPricingGuardActive
-                              ? 'Outbound fixed fare by company rule'
+                          en: isRoundtrip
+                              ? 'Fixed fare per leg by company rule'
                               : 'Fixed fare by company rule',
-                          fr: roundtripPricingGuardActive
-                              ? "Tarif fixe aller selon la règle d’entreprise"
+                          fr: isRoundtrip
+                              ? "Tarif fixe par trajet selon la règle d’entreprise"
                               : 'Tarif fixe selon la règle d’entreprise',
-                          es: roundtripPricingGuardActive
-                              ? 'Tarifa fija de ida según regla de empresa'
+                          es: isRoundtrip
+                              ? 'Tarifa fija por trayecto según regla de empresa'
                               : 'Tarifa fija según regla de empresa',
                         ),
                         maxLines: 1,
@@ -4060,17 +4235,25 @@ class _AirportPageState extends State<AirportPage> {
               const SizedBox(height: 4),
               Text(
                 _t(
-                  nl: roundtripPricingGuardActive
-                      ? 'Deze heenritprijs komt uit de ingestelde luchthavenregels van het bedrijf.'
+                  nl: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Heen- en terugrit volgen beide de ingestelde luchthavenregels van het bedrijf.'
+                            : 'Vaste tariefregels zijn toegepast waar beschikbaar; overige delen volgen routeberekening.')
                       : 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
-                  en: roundtripPricingGuardActive
-                      ? 'This outbound fare comes from the company’s configured airport rules.'
+                  en: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Both outbound and return legs follow the company’s configured airport rules.'
+                            : 'Fixed-fare rules are applied where available; remaining parts use route pricing.')
                       : 'This price comes from the company’s configured airport rules.',
-                  fr: roundtripPricingGuardActive
-                      ? "Ce prix aller provient des règles aéroport configurées par l’entreprise."
+                  fr: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? "L’aller et le retour suivent les règles aéroport configurées par l’entreprise."
+                            : "Les règles de tarif fixe sont appliquées quand possible; le reste suit le calcul d’itinéraire.")
                       : 'Ce prix provient des règles aéroport configurées par l’entreprise.',
-                  es: roundtripPricingGuardActive
-                      ? 'Este precio de ida proviene de las reglas de aeropuerto configuradas por la empresa.'
+                  es: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Tanto ida como regreso siguen las reglas de aeropuerto configuradas por la empresa.'
+                            : 'Las reglas de tarifa fija se aplican donde estén disponibles; el resto usa cálculo por ruta.')
                       : 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
                 ),
                 maxLines: 2,
@@ -4093,6 +4276,32 @@ class _AirportPageState extends State<AirportPage> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (isRoundtrip &&
+                    fixedFareRuleIdMain != null &&
+                    fixedFareRuleIdReturn != null &&
+                    fixedFareRuleIdMain != fixedFareRuleIdReturn) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_t(nl: "Heenrit", en: "Outbound", fr: "Aller", es: "Ida")}: $fixedFareRuleIdMain',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.88),
+                      fontSize: 10.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '${_t(nl: "Terugrit", en: "Return", fr: "Retour", es: "Regreso")}: $fixedFareRuleIdReturn',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.88),
+                      fontSize: 10.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ],
               const SizedBox(height: 6),
             ],

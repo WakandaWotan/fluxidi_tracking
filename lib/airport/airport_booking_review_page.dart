@@ -152,6 +152,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     if (asBool(quote['fixed_fare_applied'])) {
       return true;
     }
+    if (asBool(quote['fixed_fare_applied_main']) ||
+        asBool(quote['fixed_fare_applied_return'])) {
+      return true;
+    }
     if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
       return true;
     }
@@ -514,7 +518,25 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   Widget build(BuildContext context) {
     final payload = widget.payload;
     final quote = widget.quote;
-    final priceIncl = quote['total_price_incl_vat'] ?? quote['price_incl_vat'];
+    final returnMapRaw = quote['return'];
+    final returnMap = returnMapRaw is Map
+        ? Map<String, dynamic>.from(returnMapRaw)
+        : const <String, dynamic>{};
+    final isRoundtrip =
+        payload['return_enabled'] == true ||
+        payload['returnEnabled'] == true ||
+        quote['return_enabled'] == true ||
+        quote['returnEnabled'] == true ||
+        quote['price_incl_vat_return'] != null ||
+        returnMap.isNotEmpty;
+    final priceIncl =
+        quote['total_price_incl_vat'] ??
+        quote['price_incl_vat_total'] ??
+        quote['price_incl_vat'];
+    final priceInclMain =
+        quote['price_incl_vat_main'] ?? quote['price_incl_vat'];
+    final priceInclReturn =
+        quote['price_incl_vat_return'] ?? returnMap['price_incl_vat'];
     final priceEx =
         quote['total_price_ex_vat'] ??
         quote['price_ex_vat'] ??
@@ -528,6 +550,24 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final duration = _toNum(quote['duration_min']);
     final hasFixedFare = _isFixedAirportFareQuote(quote);
     final fixedFareRuleId = _fixedFareRuleIdFromQuote(quote);
+    bool quoteBool(dynamic value) {
+      if (value is bool) return value;
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    final fixedFareRuleIdMain = _fallback(
+      quote['fixed_fare_rule_id_main'],
+      empty: '',
+    );
+    final fixedFareRuleIdReturn = _fallback(
+      quote['fixed_fare_rule_id_return'],
+      empty: '',
+    );
+    final fixedFareMain =
+        quoteBool(quote['fixed_fare_applied_main']) ||
+        quoteBool(quote['fixed_fare_applied']);
+    final fixedFareReturn = quoteBool(quote['fixed_fare_applied_return']);
     final directionRaw = _fallback(payload['airport_direction'], empty: '');
     final directionLabel = directionRaw == 'from_airport'
         ? _t(
@@ -543,6 +583,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             es: 'Al aeropuerto',
           );
     final flightNumber = _fallback(payload['flight_number'], empty: '');
+    final returnFrom = _fallback(payload['return_from'], empty: '');
+    final returnTo = _fallback(payload['return_to'], empty: '');
+    final returnDate = _fallback(payload['return_date'], empty: '');
+    final returnTime = _fallback(payload['return_time'], empty: '');
+    final returnDistance = _toNum(
+      quote['return_distance_km'] ?? returnMap['distance_km'],
+    );
+    final returnDuration = _toNum(
+      quote['return_duration_min'] ?? returnMap['duration_min'],
+    );
     final nameBoard = _fallback(payload['name_board'], empty: '');
     final note = _fallback(payload['note'], empty: '');
     final selectedCompanyLabel = _firstNonEmptyText([
@@ -617,10 +667,18 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                   child: Text(
                     _t(
-                      nl: 'Enkele luchthavenrit',
-                      en: 'Single airport ride',
-                      fr: 'Trajet aéroport simple',
-                      es: 'Traslado de aeropuerto sencillo',
+                      nl: isRoundtrip
+                          ? 'Heen-en-terug luchthavenrit'
+                          : 'Enkele luchthavenrit',
+                      en: isRoundtrip
+                          ? 'Roundtrip airport ride'
+                          : 'Single airport ride',
+                      fr: isRoundtrip
+                          ? 'Trajet aéroport aller-retour'
+                          : 'Trajet aéroport simple',
+                      es: isRoundtrip
+                          ? 'Traslado de aeropuerto ida y vuelta'
+                          : 'Traslado de aeropuerto sencillo',
                     ),
                     style: TextStyle(
                       color: _gold.withOpacity(0.97),
@@ -659,22 +717,66 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   directionLabel,
                 ),
                 _summaryRow(
-                  _t(nl: 'Van', en: 'From', fr: 'De', es: 'Desde'),
+                  _t(
+                    nl: isRoundtrip ? 'Heenrit van' : 'Van',
+                    en: isRoundtrip ? 'Outbound from' : 'From',
+                    fr: isRoundtrip ? "Aller depuis" : 'De',
+                    es: isRoundtrip ? 'Ida desde' : 'Desde',
+                  ),
                   _fallback(payload['from']),
                 ),
                 _summaryRow(
-                  _t(nl: 'Naar', en: 'To', fr: 'Vers', es: 'Hasta'),
+                  _t(
+                    nl: isRoundtrip ? 'Heenrit naar' : 'Naar',
+                    en: isRoundtrip ? 'Outbound to' : 'To',
+                    fr: isRoundtrip ? "Aller vers" : 'Vers',
+                    es: isRoundtrip ? 'Ida hacia' : 'Hasta',
+                  ),
                   _fallback(payload['to']),
                 ),
                 _summaryRow(
                   _t(
-                    nl: 'Datum en tijd',
-                    en: 'Date and time',
-                    fr: 'Date et heure',
-                    es: 'Fecha y hora',
+                    nl: isRoundtrip ? 'Heenrit datum en tijd' : 'Datum en tijd',
+                    en: isRoundtrip
+                        ? 'Outbound date and time'
+                        : 'Date and time',
+                    fr: isRoundtrip
+                        ? "Date et heure de l'aller"
+                        : 'Date et heure',
+                    es: isRoundtrip ? 'Fecha y hora de ida' : 'Fecha y hora',
                   ),
                   '${_fallback(payload['date'])} ${_fallback(payload['time'])}',
                 ),
+                if (isRoundtrip) ...[
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit van',
+                      en: 'Return from',
+                      fr: 'Retour depuis',
+                      es: 'Regreso desde',
+                    ),
+                    returnFrom,
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit naar',
+                      en: 'Return to',
+                      fr: 'Retour vers',
+                      es: 'Regreso hacia',
+                    ),
+                    returnTo,
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit datum en tijd',
+                      en: 'Return date and time',
+                      fr: 'Date et heure du retour',
+                      es: 'Fecha y hora de regreso',
+                    ),
+                    '${returnDate.isEmpty ? '—' : returnDate} ${returnTime.isEmpty ? '' : returnTime}'
+                        .trim(),
+                  ),
+                ],
                 _summaryRow(
                   _t(
                     nl: 'Passagiers',
@@ -706,6 +808,30 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   _t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración'),
                   duration != null ? '${duration.toStringAsFixed(0)} min' : '—',
                 ),
+                if (isRoundtrip) ...[
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit afstand',
+                      en: 'Return distance',
+                      fr: 'Distance retour',
+                      es: 'Distancia de regreso',
+                    ),
+                    returnDistance != null
+                        ? '${returnDistance.toStringAsFixed(1)} km'
+                        : '—',
+                  ),
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit duur',
+                      en: 'Return duration',
+                      fr: 'Durée retour',
+                      es: 'Duración de regreso',
+                    ),
+                    returnDuration != null
+                        ? '${returnDuration.toStringAsFixed(0)} min'
+                        : '—',
+                  ),
+                ],
                 if (canShowVatBreakdown) ...[
                   _summaryRow(
                     _t(
@@ -723,13 +849,37 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                 ],
                 _summaryRow(
                   _t(
-                    nl: 'Prijs incl. btw',
-                    en: 'Price incl. VAT',
-                    fr: 'Prix TTC',
-                    es: 'Precio con IVA',
+                    nl: isRoundtrip
+                        ? 'Heenrit prijs incl. btw'
+                        : 'Prijs incl. btw',
+                    en: isRoundtrip
+                        ? 'Outbound price incl. VAT'
+                        : 'Price incl. VAT',
+                    fr: isRoundtrip ? "Prix aller TVAC" : 'Prix TTC',
+                    es: isRoundtrip ? 'Precio ida con IVA' : 'Precio con IVA',
                   ),
-                  _fmtMoney(priceIncl),
+                  _fmtMoney(priceInclMain),
                 ),
+                if (isRoundtrip)
+                  _summaryRow(
+                    _t(
+                      nl: 'Terugrit prijs incl. btw',
+                      en: 'Return price incl. VAT',
+                      fr: 'Prix retour TVAC',
+                      es: 'Precio regreso con IVA',
+                    ),
+                    _fmtMoney(priceInclReturn),
+                  ),
+                if (isRoundtrip)
+                  _summaryRow(
+                    _t(
+                      nl: 'Totaal heen-en-terug incl. btw',
+                      en: 'Roundtrip total incl. VAT',
+                      fr: 'Total aller-retour TVAC',
+                      es: 'Total ida y vuelta con IVA',
+                    ),
+                    _fmtMoney(priceIncl),
+                  ),
                 if (hasFixedFare) ...[
                   Padding(
                     padding: const EdgeInsets.only(bottom: 7),
@@ -755,10 +905,18 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                           Expanded(
                             child: Text(
                               _t(
-                                nl: 'Vast tarief volgens bedrijfsregel',
-                                en: 'Fixed fare by company rule',
-                                fr: 'Tarif fixe selon la règle d’entreprise',
-                                es: 'Tarifa fija según regla de empresa',
+                                nl: isRoundtrip
+                                    ? 'Vast tarief per rit volgens bedrijfsregel'
+                                    : 'Vast tarief volgens bedrijfsregel',
+                                en: isRoundtrip
+                                    ? 'Fixed fare per leg by company rule'
+                                    : 'Fixed fare by company rule',
+                                fr: isRoundtrip
+                                    ? "Tarif fixe par trajet selon la règle d’entreprise"
+                                    : 'Tarif fixe selon la règle d’entreprise',
+                                es: isRoundtrip
+                                    ? 'Tarifa fija por trayecto según regla de empresa'
+                                    : 'Tarifa fija según regla de empresa',
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -777,10 +935,26 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                     padding: const EdgeInsets.only(bottom: 7),
                     child: Text(
                       _t(
-                        nl: 'Deze prijs geldt voor deze enkele luchthavenrit en komt uit de ingestelde luchthavenregels van het bedrijf.',
-                        en: 'This price applies to this single airport ride and comes from the company’s configured airport rules.',
-                        fr: "Ce prix s'applique à ce trajet aéroport simple et provient des règles aéroport configurées par l'entreprise.",
-                        es: 'Este precio se aplica a este traslado de aeropuerto sencillo y proviene de las reglas de aeropuerto configuradas por la empresa.',
+                        nl: isRoundtrip
+                            ? (fixedFareMain && fixedFareReturn
+                                  ? 'Heen- en terugrit volgen beide de ingestelde luchthavenregels van het bedrijf.'
+                                  : 'Vaste tariefregels zijn toegepast waar beschikbaar; overige delen volgen routeberekening.')
+                            : 'Deze prijs geldt voor deze enkele luchthavenrit en komt uit de ingestelde luchthavenregels van het bedrijf.',
+                        en: isRoundtrip
+                            ? (fixedFareMain && fixedFareReturn
+                                  ? 'Both outbound and return legs follow the company’s configured airport rules.'
+                                  : 'Fixed-fare rules are applied where available; remaining parts use route pricing.')
+                            : 'This price applies to this single airport ride and comes from the company’s configured airport rules.',
+                        fr: isRoundtrip
+                            ? (fixedFareMain && fixedFareReturn
+                                  ? "L’aller et le retour suivent les règles aéroport configurées par l’entreprise."
+                                  : "Les règles de tarif fixe sont appliquées quand possible; le reste suit le calcul d’itinéraire.")
+                            : "Ce prix s'applique à ce trajet aéroport simple et provient des règles aéroport configurées par l'entreprise.",
+                        es: isRoundtrip
+                            ? (fixedFareMain && fixedFareReturn
+                                  ? 'Tanto ida como regreso siguen las reglas de aeropuerto configuradas por la empresa.'
+                                  : 'Las reglas de tarifa fija se aplican donde estén disponibles; el resto usa cálculo por ruta.')
+                            : 'Este precio se aplica a este traslado de aeropuerto sencillo y proviene de las reglas de aeropuerto configuradas por la empresa.',
                       ),
                       maxLines: 3,
                       overflow: TextOverflow.fade,
@@ -801,6 +975,29 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                       ),
                       fixedFareRuleId,
                     ),
+                  if (isRoundtrip &&
+                      fixedFareRuleIdMain.isNotEmpty &&
+                      fixedFareRuleIdReturn.isNotEmpty &&
+                      fixedFareRuleIdMain != fixedFareRuleIdReturn) ...[
+                    _summaryRow(
+                      _t(
+                        nl: 'Tariefregel heenrit',
+                        en: 'Fare rule outbound',
+                        fr: "Règle tarifaire aller",
+                        es: 'Regla tarifa ida',
+                      ),
+                      fixedFareRuleIdMain,
+                    ),
+                    _summaryRow(
+                      _t(
+                        nl: 'Tariefregel terugrit',
+                        en: 'Fare rule return',
+                        fr: 'Règle tarifaire retour',
+                        es: 'Regla tarifa regreso',
+                      ),
+                      fixedFareRuleIdReturn,
+                    ),
+                  ],
                 ],
                 if (flightNumber.isNotEmpty)
                   _summaryRow(

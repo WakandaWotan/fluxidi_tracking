@@ -629,6 +629,257 @@ class CustomerBookingView {
     ]);
   }
 
+  bool get returnEnabled => _firstPathBool(const <String>[
+    'return_enabled',
+    'returnEnabled',
+    'booking.return_enabled',
+    'booking.returnEnabled',
+    'record.return_enabled',
+    'record.returnEnabled',
+    'record.booking.return_enabled',
+    'record.booking.returnEnabled',
+    'record.quote.return.enabled',
+    'quote.return.enabled',
+    'payload.return_enabled',
+    'payload.returnEnabled',
+  ]);
+
+  String get returnFrom => _firstPathValue(const <String>[
+    'return_from',
+    'returnFrom',
+    'booking.return_from',
+    'booking.returnFrom',
+    'record.return_from',
+    'record.returnFrom',
+    'record.booking.return_from',
+    'record.booking.returnFrom',
+    'record.quote.return.from',
+    'quote.return.from',
+    'payload.return_from',
+    'payload.returnFrom',
+  ]);
+
+  String get returnTo => _firstPathValue(const <String>[
+    'return_to',
+    'returnTo',
+    'booking.return_to',
+    'booking.returnTo',
+    'record.return_to',
+    'record.returnTo',
+    'record.booking.return_to',
+    'record.booking.returnTo',
+    'record.quote.return.to',
+    'quote.return.to',
+    'payload.return_to',
+    'payload.returnTo',
+  ]);
+
+  String get returnPickupIso {
+    final pickupIso = _firstPathValue(const <String>[
+      'return_pickup_iso',
+      'returnPickupIso',
+      'booking.return_pickup_iso',
+      'booking.returnPickupIso',
+      'record.return_pickup_iso',
+      'record.returnPickupIso',
+      'record.booking.return_pickup_iso',
+      'record.booking.returnPickupIso',
+      'record.quote.return.pickup_iso',
+      'quote.return.pickup_iso',
+      'payload.return_pickup_iso',
+      'payload.returnPickupIso',
+    ]);
+    if (_isMeaningful(pickupIso)) return pickupIso;
+    final returnDate = _firstPathValue(const <String>[
+      'return_date',
+      'returnDate',
+      'booking.return_date',
+      'booking.returnDate',
+      'record.return_date',
+      'record.returnDate',
+      'record.booking.return_date',
+      'record.booking.returnDate',
+      'payload.return_date',
+      'payload.returnDate',
+    ]);
+    final returnTime = _firstPathValue(const <String>[
+      'return_time',
+      'returnTime',
+      'booking.return_time',
+      'booking.returnTime',
+      'record.return_time',
+      'record.returnTime',
+      'record.booking.return_time',
+      'record.booking.returnTime',
+      'payload.return_time',
+      'payload.returnTime',
+    ]);
+    final fallback = [
+      returnDate,
+      returnTime,
+    ].where((e) => _isMeaningful(e)).join(' ').trim();
+    return fallback;
+  }
+
+  double? get priceInclVatMain => _firstPathNum(const <String>[
+    'price_incl_vat_main',
+    'priceInclVatMain',
+    'booking.price_incl_vat_main',
+    'booking.priceInclVatMain',
+    'record.price_incl_vat_main',
+    'record.priceInclVatMain',
+    'record.booking.price_incl_vat_main',
+    'record.booking.priceInclVatMain',
+    'record.quote.price_incl_vat_main',
+    'record.quote.pricing_main.price_incl_vat',
+    'quote.price_incl_vat_main',
+    'quote.priceInclVatMain',
+    'quote.pricing_main.price_incl_vat',
+    'payload.price_incl_vat_main',
+    'payload.priceInclVatMain',
+  ]);
+
+  double? get priceInclVatReturn => _firstPathNum(const <String>[
+    'price_incl_vat_return',
+    'priceInclVatReturn',
+    'booking.price_incl_vat_return',
+    'booking.priceInclVatReturn',
+    'record.price_incl_vat_return',
+    'record.priceInclVatReturn',
+    'record.booking.price_incl_vat_return',
+    'record.booking.priceInclVatReturn',
+    'record.quote.price_incl_vat_return',
+    'record.quote.pricing_return.price_incl_vat',
+    'record.quote.return.price_incl_vat',
+    'quote.price_incl_vat_return',
+    'quote.priceInclVatReturn',
+    'quote.pricing_return.price_incl_vat',
+    'quote.return.price_incl_vat',
+    'payload.price_incl_vat_return',
+    'payload.priceInclVatReturn',
+  ]);
+
+  double? get priceInclVatTotal => _firstPathNum(const <String>[
+    'total_price_incl_vat',
+    'totalPriceInclVat',
+    'price_incl_vat',
+    'priceInclVat',
+    'booking.total_price_incl_vat',
+    'booking.totalPriceInclVat',
+    'booking.price_incl_vat',
+    'booking.priceInclVat',
+    'record.total_price_incl_vat',
+    'record.totalPriceInclVat',
+    'record.price_incl_vat',
+    'record.priceInclVat',
+    'record.booking.total_price_incl_vat',
+    'record.booking.totalPriceInclVat',
+    'record.booking.price_incl_vat',
+    'record.booking.priceInclVat',
+    'record.quote.total_price_incl_vat',
+    'record.quote.price_incl_vat',
+    'record.quote.pricing.price_incl_vat',
+    'quote.total_price_incl_vat',
+    'quote.price_incl_vat',
+    'quote.pricing.price_incl_vat',
+    'payload.total_price_incl_vat',
+    'payload.totalPriceInclVat',
+    'payload.price_incl_vat',
+    'payload.priceInclVat',
+  ]);
+
+  bool get fixedFareAppliedMain => _firstPathBool(const <String>[
+    'fixed_fare_applied_main',
+    'fixedFareAppliedMain',
+    'booking.fixed_fare_applied_main',
+    'booking.fixedFareAppliedMain',
+    'record.fixed_fare_applied_main',
+    'record.fixedFareAppliedMain',
+    'record.booking.fixed_fare_applied_main',
+    'record.booking.fixedFareAppliedMain',
+    'record.quote.fixed_fare_applied_main',
+    'quote.fixed_fare_applied_main',
+    'quote.fixedFareAppliedMain',
+  ]);
+
+  bool get fixedFareAppliedReturn => _firstPathBool(const <String>[
+    'fixed_fare_applied_return',
+    'fixedFareAppliedReturn',
+    'booking.fixed_fare_applied_return',
+    'booking.fixedFareAppliedReturn',
+    'record.fixed_fare_applied_return',
+    'record.fixedFareAppliedReturn',
+    'record.booking.fixed_fare_applied_return',
+    'record.booking.fixedFareAppliedReturn',
+    'record.quote.fixed_fare_applied_return',
+    'quote.fixed_fare_applied_return',
+    'quote.fixedFareAppliedReturn',
+  ]);
+
+  String get fixedFareRuleIdMain => _firstPathValue(const <String>[
+    'fixed_fare_rule_id_main',
+    'fixedFareRuleIdMain',
+    'booking.fixed_fare_rule_id_main',
+    'booking.fixedFareRuleIdMain',
+    'record.fixed_fare_rule_id_main',
+    'record.fixedFareRuleIdMain',
+    'record.booking.fixed_fare_rule_id_main',
+    'record.booking.fixedFareRuleIdMain',
+    'record.quote.fixed_fare_rule_id_main',
+    'quote.fixed_fare_rule_id_main',
+    'quote.fixedFareRuleIdMain',
+  ]);
+
+  String get fixedFareRuleIdReturn => _firstPathValue(const <String>[
+    'fixed_fare_rule_id_return',
+    'fixedFareRuleIdReturn',
+    'booking.fixed_fare_rule_id_return',
+    'booking.fixedFareRuleIdReturn',
+    'record.fixed_fare_rule_id_return',
+    'record.fixedFareRuleIdReturn',
+    'record.booking.fixed_fare_rule_id_return',
+    'record.booking.fixedFareRuleIdReturn',
+    'record.quote.fixed_fare_rule_id_return',
+    'quote.fixed_fare_rule_id_return',
+    'quote.fixedFareRuleIdReturn',
+  ]);
+
+  String get pricingSourceMain => _firstPathValue(const <String>[
+    'pricing_source_main',
+    'pricingSourceMain',
+    'booking.pricing_source_main',
+    'booking.pricingSourceMain',
+    'record.pricing_source_main',
+    'record.pricingSourceMain',
+    'record.booking.pricing_source_main',
+    'record.booking.pricingSourceMain',
+    'record.quote.pricing_source_main',
+    'quote.pricing_source_main',
+    'quote.pricingSourceMain',
+  ]);
+
+  String get pricingSourceReturn => _firstPathValue(const <String>[
+    'pricing_source_return',
+    'pricingSourceReturn',
+    'booking.pricing_source_return',
+    'booking.pricingSourceReturn',
+    'record.pricing_source_return',
+    'record.pricingSourceReturn',
+    'record.booking.pricing_source_return',
+    'record.booking.pricingSourceReturn',
+    'record.quote.pricing_source_return',
+    'quote.pricing_source_return',
+    'quote.pricingSourceReturn',
+  ]);
+
+  bool get isRoundtrip {
+    if (returnEnabled) return true;
+    if (_isMeaningful(returnFrom) || _isMeaningful(returnTo)) return true;
+    if (_isMeaningful(returnPickupIso)) return true;
+    if (priceInclVatReturn != null) return true;
+    return false;
+  }
+
   double? get distanceKm {
     return _firstPathNum(const <String>[
           'distance_km',

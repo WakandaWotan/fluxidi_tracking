@@ -1586,6 +1586,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         final v = _view;
         final paid = v.isPaid;
         final business = v.businessCustomer;
+        final isRoundtrip = v.isRoundtrip;
+        final showRoundtripPricing =
+            isRoundtrip &&
+            (v.priceInclVatMain != null ||
+                v.priceInclVatReturn != null ||
+                v.priceInclVatTotal != null);
         final invoiceEmail = v.invoiceEmail.trim().isEmpty
             ? _notFilled()
             : v.invoiceEmail.trim();
@@ -1944,6 +1950,34 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       ],
                     ),
                   ),
+                  if (isRoundtrip)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2410),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: kFluxidiYellow.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Heen-en-terug luchthavenrit',
+                          en: 'Roundtrip airport ride',
+                          fr: 'Trajet aeroport aller-retour',
+                          es: 'Traslado de aeropuerto ida y vuelta',
+                        ),
+                        style: TextStyle(
+                          color: kFluxidiYellow.withOpacity(0.98),
+                          fontSize: 11.2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
                   _section(
                     title: _t(
                       nl: 'Boeking',
@@ -2010,98 +2044,171 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       es: 'Ruta',
                     ),
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Column(
-                            children: [
-                              Icon(
-                                Icons.radio_button_checked,
-                                size: 12,
-                                color: kFluxidiYellow.withOpacity(0.95),
-                              ),
-                              Container(
-                                width: 2,
-                                height: 34,
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                color: kFluxidiYellow.withOpacity(0.34),
-                              ),
-                              const Icon(
-                                Icons.location_on,
-                                size: 14,
-                                color: Color(0xFF34D29A),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                      if (!isRoundtrip) ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Column(
                               children: [
-                                Text(
-                                  _t(
-                                    nl: 'Ophaaladres',
-                                    en: 'Pickup',
-                                    fr: 'Prise en charge',
-                                    es: 'Recogida',
-                                  ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 11.8,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                Icon(
+                                  Icons.radio_button_checked,
+                                  size: 12,
+                                  color: kFluxidiYellow.withOpacity(0.95),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  v.fromAddress.trim().isEmpty
-                                      ? _notFilled()
-                                      : v.fromAddress.trim(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12.8,
-                                    height: 1.26,
+                                Container(
+                                  width: 2,
+                                  height: 34,
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 4,
                                   ),
+                                  color: kFluxidiYellow.withOpacity(0.34),
                                 ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  _t(
-                                    nl: 'Bestemming',
-                                    en: 'Destination',
-                                    fr: 'Destination',
-                                    es: 'Destino',
-                                  ),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 11.8,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  v.toAddress.trim().isEmpty
-                                      ? _notFilled()
-                                      : v.toAddress.trim(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12.8,
-                                    height: 1.26,
-                                  ),
+                                const Icon(
+                                  Icons.location_on,
+                                  size: 14,
+                                  color: Color(0xFF34D29A),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _kv(
-                        _t(
-                          nl: 'Geplande ophaal',
-                          en: 'Scheduled pickup',
-                          fr: 'Prise en charge prevue',
-                          es: 'Recogida programada',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _t(
+                                      nl: 'Ophaaladres',
+                                      en: 'Pickup',
+                                      fr: 'Prise en charge',
+                                      es: 'Recogida',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 11.8,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    v.fromAddress.trim().isEmpty
+                                        ? _notFilled()
+                                        : v.fromAddress.trim(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.8,
+                                      height: 1.26,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    _t(
+                                      nl: 'Bestemming',
+                                      en: 'Destination',
+                                      fr: 'Destination',
+                                      es: 'Destino',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 11.8,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    v.toAddress.trim().isEmpty
+                                        ? _notFilled()
+                                        : v.toAddress.trim(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.8,
+                                      height: 1.26,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        _formatPickup(v.pickupIso),
-                      ),
+                        const SizedBox(height: 10),
+                        _kv(
+                          _t(
+                            nl: 'Geplande ophaal',
+                            en: 'Scheduled pickup',
+                            fr: 'Prise en charge prevue',
+                            es: 'Recogida programada',
+                          ),
+                          _formatPickup(v.pickupIso),
+                        ),
+                      ] else ...[
+                        _kv(
+                          _t(
+                            nl: 'Heenrit van',
+                            en: 'Outbound from',
+                            fr: 'Aller depuis',
+                            es: 'Ida desde',
+                          ),
+                          v.fromAddress.trim().isEmpty
+                              ? _notFilled()
+                              : v.fromAddress.trim(),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Heenrit naar',
+                            en: 'Outbound to',
+                            fr: 'Aller vers',
+                            es: 'Ida hacia',
+                          ),
+                          v.toAddress.trim().isEmpty
+                              ? _notFilled()
+                              : v.toAddress.trim(),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Heenrit datum en tijd',
+                            en: 'Outbound date and time',
+                            fr: "Date et heure de l'aller",
+                            es: 'Fecha y hora de ida',
+                          ),
+                          _formatPickup(v.pickupIso),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Terugrit van',
+                            en: 'Return from',
+                            fr: 'Retour depuis',
+                            es: 'Regreso desde',
+                          ),
+                          v.returnFrom.trim().isEmpty
+                              ? _notFilled()
+                              : v.returnFrom.trim(),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Terugrit naar',
+                            en: 'Return to',
+                            fr: 'Retour vers',
+                            es: 'Regreso hacia',
+                          ),
+                          v.returnTo.trim().isEmpty
+                              ? _notFilled()
+                              : v.returnTo.trim(),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Terugrit datum en tijd',
+                            en: 'Return date and time',
+                            fr: 'Date et heure du retour',
+                            es: 'Fecha y hora de regreso',
+                          ),
+                          _formatPickup(v.returnPickupIso),
+                          stacked: true,
+                        ),
+                      ],
                     ],
                   ),
                   _section(
@@ -2207,10 +2314,79 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       es: 'Precio',
                     ),
                     children: [
-                      _kv(
-                        _t(nl: 'Totaal', en: 'Total', fr: 'Total', es: 'Total'),
-                        _formatPrice(v.totalAmount, v.currency),
-                      ),
+                      if (!showRoundtripPricing) ...[
+                        _kv(
+                          _t(
+                            nl: 'Totaal',
+                            en: 'Total',
+                            fr: 'Total',
+                            es: 'Total',
+                          ),
+                          _formatPrice(v.totalAmount, v.currency),
+                        ),
+                      ] else ...[
+                        _kv(
+                          _t(
+                            nl: 'Heenrit prijs incl. btw',
+                            en: 'Outbound price incl. VAT',
+                            fr: "Prix aller TVAC",
+                            es: 'Precio ida con IVA',
+                          ),
+                          _formatPrice(v.priceInclVatMain, v.currency),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Terugrit prijs incl. btw',
+                            en: 'Return price incl. VAT',
+                            fr: 'Prix retour TVAC',
+                            es: 'Precio regreso con IVA',
+                          ),
+                          _formatPrice(v.priceInclVatReturn, v.currency),
+                          stacked: true,
+                        ),
+                        _kv(
+                          _t(
+                            nl: 'Totaal heen-en-terug incl. btw',
+                            en: 'Roundtrip total incl. VAT',
+                            fr: 'Total aller-retour TVAC',
+                            es: 'Total ida y vuelta con IVA',
+                          ),
+                          _formatPrice(
+                            v.priceInclVatTotal ?? v.totalAmount,
+                            v.currency,
+                          ),
+                          stacked: true,
+                        ),
+                        if (v.fixedFareAppliedMain && v.fixedFareAppliedReturn)
+                          Container(
+                            margin: const EdgeInsets.only(top: 2, bottom: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: kFluxidiYellow.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: kFluxidiYellow.withOpacity(0.45),
+                              ),
+                            ),
+                            child: Text(
+                              _t(
+                                nl: 'Vast tarief per rit volgens bedrijfsregels',
+                                en: 'Fixed fare per ride by company rules',
+                                fr: "Tarif fixe par trajet selon les regles de l'entreprise",
+                                es: 'Tarifa fija por trayecto según reglas de la empresa',
+                              ),
+                              style: TextStyle(
+                                color: kFluxidiYellow.withOpacity(0.98),
+                                fontSize: 11.2,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                      ],
                     ],
                   ),
                   if (showInvoiceSection)
