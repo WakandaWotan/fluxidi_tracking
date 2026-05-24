@@ -644,9 +644,42 @@ class _AirportPageState extends State<AirportPage> {
       ).showSnackBar(SnackBar(content: Text(_nearbyStaysMissingLabel)));
       return;
     }
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => HotelsPage(stays: stays)));
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HotelsPage(
+          stays: stays,
+          onTaxiToStay: (stay) {
+            final destinationAddress = stay.address.trim();
+            final destinationName = stay.name.trim();
+            final destinationText = destinationAddress.isNotEmpty
+                ? destinationAddress
+                : (destinationName.isNotEmpty
+                      ? destinationName
+                      : '${stay.city}, ${stay.country}');
+            final destinationLat = stay.latitude ?? stay.lat;
+            final destinationLng = stay.longitude ?? stay.lng;
+            final hasDestinationCoordinates = _hasValidCoordinates(
+              destinationLat,
+              destinationLng,
+            );
+            setState(() {
+              _selectedMode = _TransferMode.fromAirport;
+              _destinationAddressController.text = destinationText;
+              _destinationLatitude = hasDestinationCoordinates
+                  ? destinationLat
+                  : null;
+              _destinationLongitude = hasDestinationCoordinates
+                  ? destinationLng
+                  : null;
+              _destinationPostcode = _extractLikelyPostcode(destinationText);
+              _airportQuote = null;
+              _airportQuoteError = null;
+            });
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
   }
 
   List<String> get _availableCountryCodes {
