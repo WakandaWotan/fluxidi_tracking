@@ -1341,8 +1341,47 @@ class _AirportPageState extends State<AirportPage> {
         _returnLatitude = null;
         _returnLongitude = null;
         _returnPostcode = null;
+      } else {
+        _returnDateTimeController.clear();
+        _prefillRoundtripReturnAddressFromOutbound();
       }
     });
+  }
+
+  void _prefillRoundtripReturnAddressFromOutbound() {
+    if (!_roundtripEnabled) {
+      return;
+    }
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final sourceText = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final sourceLatitude = isToAirport ? _pickupLatitude : _destinationLatitude;
+    final sourceLongitude = isToAirport
+        ? _pickupLongitude
+        : _destinationLongitude;
+    final sourcePostcodeRaw = isToAirport
+        ? _pickupPostcode
+        : _destinationPostcode;
+    final sourcePostcode = (sourcePostcodeRaw ?? '').trim().isNotEmpty
+        ? sourcePostcodeRaw!.trim()
+        : _extractLikelyPostcode(sourceText);
+    if (sourceText.isEmpty) {
+      _returnAddressController.clear();
+      _returnLatitude = null;
+      _returnLongitude = null;
+      _returnPostcode = null;
+      return;
+    }
+    _returnAddressController.text = sourceText;
+    if (_hasValidCoordinates(sourceLatitude, sourceLongitude)) {
+      _returnLatitude = sourceLatitude;
+      _returnLongitude = sourceLongitude;
+    } else {
+      _returnLatitude = null;
+      _returnLongitude = null;
+    }
+    _returnPostcode = sourcePostcode.isEmpty ? null : sourcePostcode;
   }
 
   Widget _buildRoundtripToggleCard() {
@@ -1498,6 +1537,9 @@ class _AirportPageState extends State<AirportPage> {
             _clearAirportQuote();
             setState(() {
               _selectedMode = mode;
+              if (_roundtripEnabled) {
+                _prefillRoundtripReturnAddressFromOutbound();
+              }
             });
           },
           borderRadius: BorderRadius.circular(14),
@@ -2830,8 +2872,8 @@ class _AirportPageState extends State<AirportPage> {
         _t(
           nl: 'Nog niet ingevuld',
           en: 'Not filled in yet',
-          fr: 'Non renseigné',
-          es: 'No completado',
+          fr: 'Pas encore renseigné',
+          es: 'Aún no completado',
         );
     final text = controller.text.trim();
     return text.isEmpty ? effectiveFallback : text;
@@ -3128,6 +3170,101 @@ class _AirportPageState extends State<AirportPage> {
               ),
               value: '$_bags',
               maxLines: 1,
+            ),
+          ],
+          if (_roundtripEnabled) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF171717),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _gold.withOpacity(0.38)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.keyboard_return_rounded,
+                        color: _gold.withOpacity(0.96),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        _t(
+                          nl: 'Terugrit',
+                          en: 'Return leg',
+                          fr: 'Trajet retour',
+                          es: 'Trayecto de vuelta',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.6,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.swap_horiz_rounded,
+                    label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+                    value: isToAirport
+                        ? _t(
+                            nl: 'Van de luchthaven',
+                            en: 'From the airport',
+                            fr: "Depuis l'aéroport",
+                            es: 'Desde el aeropuerto',
+                          )
+                        : _t(
+                            nl: 'Naar de luchthaven',
+                            en: 'To the airport',
+                            fr: "Vers l'aéroport",
+                            es: 'Hacia el aeropuerto',
+                          ),
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.pin_drop_outlined,
+                    label: _t(
+                      nl: 'Retouradres',
+                      en: 'Return address',
+                      fr: 'Adresse de retour',
+                      es: 'Dirección de regreso',
+                    ),
+                    value: _valueOrFallback(_returnAddressController),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.schedule_rounded,
+                    label: _t(
+                      nl: 'Retourdatum en tijd',
+                      en: 'Return date and time',
+                      fr: 'Date et heure du retour',
+                      es: 'Fecha y hora de regreso',
+                    ),
+                    value: _valueOrFallback(_returnDateTimeController),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _t(
+                      nl: 'Retour wordt in de volgende fase gekoppeld aan prijs en boeking.',
+                      en: 'Return leg will be connected to pricing and booking in the next phase.',
+                      fr: 'Le trajet retour sera relié au tarif et à la réservation dans la prochaine phase.',
+                      es: 'El trayecto de regreso se conectará al precio y la reserva en la siguiente fase.',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.9),
+                      fontSize: 10.8,
+                      height: 1.22,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
           const SizedBox(height: 10),
