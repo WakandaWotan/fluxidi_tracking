@@ -517,118 +517,6 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
-  bool _hasValidCoordinates(double latitude, double longitude) {
-    if (!latitude.isFinite || !longitude.isFinite) return false;
-    if (latitude < -90 || latitude > 90) return false;
-    if (longitude < -180 || longitude > 180) return false;
-    return true;
-  }
-
-  double _distanceKm({
-    required double fromLat,
-    required double fromLng,
-    required double toLat,
-    required double toLng,
-  }) {
-    const earthRadiusKm = 6371.0;
-    final dLat = _degToRad(toLat - fromLat);
-    final dLng = _degToRad(toLng - fromLng);
-    final a =
-        math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_degToRad(fromLat)) *
-            math.cos(_degToRad(toLat)) *
-            math.sin(dLng / 2) *
-            math.sin(dLng / 2);
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return earthRadiusKm * c;
-  }
-
-  double _degToRad(double value) => value * (math.pi / 180.0);
-
-  List<EventDetailData> _nearbyEventsForStay(HotelStay stay) {
-    final stayCity = normalizeDiscoveryText(stay.city);
-    final stayRegion = normalizeDiscoveryText(stay.region);
-    final stayCountry = normalizeDiscoveryText(stay.country);
-    final stayLat = stay.latitude ?? stay.lat;
-    final stayLng = stay.longitude ?? stay.lng;
-    final canDistanceRank = _hasValidCoordinates(stayLat, stayLng);
-
-    final sameCity = <EventDetailData>[
-      for (final event in kEventSeedData)
-        if (normalizeDiscoveryText(event.city) == stayCity) event,
-    ];
-
-    final regionCities = _allStays
-        .where((item) => normalizeDiscoveryText(item.region) == stayRegion)
-        .map((item) => normalizeDiscoveryText(item.city))
-        .where((city) => city.isNotEmpty)
-        .toSet();
-    final sameRegion = <EventDetailData>[
-      for (final event in kEventSeedData)
-        if (regionCities.contains(normalizeDiscoveryText(event.city))) event,
-    ];
-
-    final distanceRanked = <({EventDetailData event, double km})>[
-      for (final event in kEventSeedData)
-        if (canDistanceRank && _hasValidCoordinates(event.lat, event.lng))
-          (
-            event: event,
-            km: _distanceKm(
-              fromLat: stayLat,
-              fromLng: stayLng,
-              toLat: event.lat,
-              toLng: event.lng,
-            ),
-          ),
-    ]..sort((a, b) => a.km.compareTo(b.km));
-    final within25Km = <EventDetailData>[
-      for (final item in distanceRanked)
-        if (item.km <= 25) item.event,
-    ];
-    final within50Km = <EventDetailData>[
-      for (final item in distanceRanked)
-        if (item.km > 25 && item.km <= 50) item.event,
-    ];
-
-    final countryRanked =
-        <({EventDetailData event, double? km})>[
-          for (final event in kEventSeedData)
-            if (normalizeDiscoveryText(event.countryCode ?? '') ==
-                    stayCountry ||
-                (stayCountry == 'belgium' &&
-                    normalizeDiscoveryText(event.address).contains('belg')))
-              (
-                event: event,
-                km:
-                    (canDistanceRank &&
-                        _hasValidCoordinates(event.lat, event.lng))
-                    ? _distanceKm(
-                        fromLat: stayLat,
-                        fromLng: stayLng,
-                        toLat: event.lat,
-                        toLng: event.lng,
-                      )
-                    : null,
-              ),
-        ]..sort((a, b) {
-          final left = a.km ?? double.infinity;
-          final right = b.km ?? double.infinity;
-          return left.compareTo(right);
-        });
-    final countryFallback = <EventDetailData>[
-      for (final item in countryRanked) item.event,
-    ];
-
-    final merged = <EventDetailData>[
-      ...sameCity,
-      ...sameRegion,
-      ...within25Km,
-      ...within50Km,
-      ...countryFallback,
-    ];
-    return topUniqueById(items: merged, idOf: (event) => event.id, limit: 3);
-  }
-
   void _onNearbyEventTaxiTap(EventDetailData event) {
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
@@ -639,12 +527,11 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   void _openStayDetail(HotelStay stay) {
-    final nearbyEvents = _nearbyEventsForStay(stay);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => HotelStayDetailPage(
           stay: stay,
-          nearbyEvents: nearbyEvents,
+          allStays: _allStays,
           isSaved: _isSaved(stay),
           saveLabel: _saveStayLabel,
           savedLabel: _savedStayLabel,
@@ -1374,10 +1261,12 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 }
 
+enum _HotelNearbyEventRadiusMode { auto, km15, km30, km50, wider }
+
 class HotelStayDetailPage extends StatelessWidget {
   const HotelStayDetailPage({
     required this.stay,
-    required this.nearbyEvents,
+    required this.allStays,
     required this.isSaved,
     required this.saveLabel,
     required this.savedLabel,
@@ -1390,7 +1279,7 @@ class HotelStayDetailPage extends StatelessWidget {
   });
 
   final HotelStay stay;
-  final List<EventDetailData> nearbyEvents;
+  final List<HotelStay> allStays;
   final bool isSaved;
   final String saveLabel;
   final String savedLabel;
@@ -1523,6 +1412,218 @@ class HotelStayDetailPage extends StatelessWidget {
     return '';
   }
 
+  bool _hasValidCoordinates(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return false;
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    return true;
+  }
+
+  double _degToRad(double value) => value * (math.pi / 180.0);
+
+  double _distanceKm({
+    required double fromLat,
+    required double fromLng,
+    required double toLat,
+    required double toLng,
+  }) {
+    const earthRadiusKm = 6371.0;
+    final dLat = _degToRad(toLat - fromLat);
+    final dLng = _degToRad(toLng - fromLng);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degToRad(fromLat)) *
+            math.cos(_degToRad(toLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  String _radiusModeLabel(_HotelNearbyEventRadiusMode mode) {
+    switch (mode) {
+      case _HotelNearbyEventRadiusMode.auto:
+        return _t(nl: 'Auto', en: 'Auto', fr: 'Auto', es: 'Auto');
+      case _HotelNearbyEventRadiusMode.km15:
+        return '15 km';
+      case _HotelNearbyEventRadiusMode.km30:
+        return '30 km';
+      case _HotelNearbyEventRadiusMode.km50:
+        return '50 km';
+      case _HotelNearbyEventRadiusMode.wider:
+        return _t(
+          nl: 'België / Breder',
+          en: 'Belgium / Wider',
+          fr: 'Belgique / Plus large',
+          es: 'Bélgica / Más amplio',
+        );
+    }
+  }
+
+  String get _widerModeWarningLabel {
+    return _t(
+      nl: 'Verder weg, taxikost kan hoger zijn.',
+      en: 'Farther away, taxi cost may be higher.',
+      fr: 'Plus éloigné, le coût du taxi peut être plus élevé.',
+      es: 'Más lejos, el costo del taxi puede ser más alto.',
+    );
+  }
+
+  String get _noNearbyEventsLabel {
+    return _t(
+      nl: 'Geen events binnen deze straal.',
+      en: 'No events within this radius.',
+      fr: 'Aucun événement dans ce rayon.',
+      es: 'No hay eventos dentro de este radio.',
+    );
+  }
+
+  List<EventDetailData> _nearbyEventsForRadiusMode(
+    _HotelNearbyEventRadiusMode mode,
+  ) {
+    final stayCity = normalizeDiscoveryText(stay.city);
+    final stayRegion = normalizeDiscoveryText(stay.region);
+    final stayCountry = normalizeDiscoveryText(stay.country);
+    final stayLat = stay.latitude ?? stay.lat;
+    final stayLng = stay.longitude ?? stay.lng;
+    final canDistanceRank = _hasValidCoordinates(stayLat, stayLng);
+
+    final sameCity = <EventDetailData>[
+      for (final event in kEventSeedData)
+        if (normalizeDiscoveryText(event.city) == stayCity) event,
+    ];
+
+    final regionCities = allStays
+        .where((item) => normalizeDiscoveryText(item.region) == stayRegion)
+        .map((item) => normalizeDiscoveryText(item.city))
+        .where((city) => city.isNotEmpty)
+        .toSet();
+    final sameRegion = <EventDetailData>[
+      for (final event in kEventSeedData)
+        if (regionCities.contains(normalizeDiscoveryText(event.city))) event,
+    ];
+
+    final distanceRanked = <({EventDetailData event, double km})>[
+      for (final event in kEventSeedData)
+        if (canDistanceRank && _hasValidCoordinates(event.lat, event.lng))
+          (
+            event: event,
+            km: _distanceKm(
+              fromLat: stayLat,
+              fromLng: stayLng,
+              toLat: event.lat,
+              toLng: event.lng,
+            ),
+          ),
+    ]..sort((a, b) => a.km.compareTo(b.km));
+    List<EventDetailData> withinKm(double maxKm) {
+      return <EventDetailData>[
+        for (final item in distanceRanked)
+          if (item.km <= maxKm) item.event,
+      ];
+    }
+
+    final countryRanked =
+        <({EventDetailData event, double? km})>[
+          for (final event in kEventSeedData)
+            if (normalizeDiscoveryText(event.countryCode ?? '') ==
+                    stayCountry ||
+                (stayCountry == 'belgium' &&
+                    normalizeDiscoveryText(event.address).contains('belg')))
+              (
+                event: event,
+                km:
+                    (canDistanceRank &&
+                        _hasValidCoordinates(event.lat, event.lng))
+                    ? _distanceKm(
+                        fromLat: stayLat,
+                        fromLng: stayLng,
+                        toLat: event.lat,
+                        toLng: event.lng,
+                      )
+                    : null,
+              ),
+        ]..sort((a, b) {
+          final left = a.km ?? double.infinity;
+          final right = b.km ?? double.infinity;
+          return left.compareTo(right);
+        });
+    final countryFallback = <EventDetailData>[
+      for (final item in countryRanked) item.event,
+    ];
+
+    switch (mode) {
+      case _HotelNearbyEventRadiusMode.auto:
+        final localOnly = <EventDetailData>[
+          ...sameCity,
+          ...sameRegion,
+          ...withinKm(25),
+          ...withinKm(50),
+        ];
+        final localResults = topUniqueById(
+          items: localOnly,
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+        if (localResults.isNotEmpty) return localResults;
+        return topUniqueById(
+          items: countryFallback,
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+      case _HotelNearbyEventRadiusMode.km15:
+        if (!canDistanceRank) {
+          return topUniqueById(
+            items: <EventDetailData>[...sameCity, ...sameRegion],
+            idOf: (event) => event.id,
+            limit: 3,
+          );
+        }
+        return topUniqueById(
+          items: withinKm(15),
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+      case _HotelNearbyEventRadiusMode.km30:
+        if (!canDistanceRank) {
+          return topUniqueById(
+            items: <EventDetailData>[...sameCity, ...sameRegion],
+            idOf: (event) => event.id,
+            limit: 3,
+          );
+        }
+        return topUniqueById(
+          items: withinKm(30),
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+      case _HotelNearbyEventRadiusMode.km50:
+        if (!canDistanceRank) {
+          return topUniqueById(
+            items: <EventDetailData>[...sameCity, ...sameRegion],
+            idOf: (event) => event.id,
+            limit: 3,
+          );
+        }
+        return topUniqueById(
+          items: withinKm(50),
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+      case _HotelNearbyEventRadiusMode.wider:
+        return topUniqueById(
+          items: <EventDetailData>[
+            ...sameCity,
+            ...sameRegion,
+            ...withinKm(50),
+            ...countryFallback,
+          ],
+          idOf: (event) => event.id,
+          limit: 3,
+        );
+    }
+  }
+
   List<String> _highlights() {
     final values = <String>[...stay.tags, ...stay.travelStyles];
     final seen = <String>{};
@@ -1650,6 +1751,9 @@ class HotelStayDetailPage extends StatelessWidget {
     final hasExternalLink = (stay.effectiveBookingUrl ?? '').trim().isNotEmpty;
     final displayPrice = _displayPriceHint();
     final highlights = _highlights();
+    final hasAnyNearbyEvents = _nearbyEventsForRadiusMode(
+      _HotelNearbyEventRadiusMode.wider,
+    ).isNotEmpty;
     return Scaffold(
       backgroundColor: _bgBlack,
       body: SafeArea(
@@ -1915,7 +2019,7 @@ class HotelStayDetailPage extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (nearbyEvents.isNotEmpty) ...[
+                  if (hasAnyNearbyEvents) ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
@@ -1937,11 +2041,16 @@ class HotelStayDetailPage extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          for (var i = 0; i < nearbyEvents.length; i++) ...[
-                            _buildNearbyEventCard(context, nearbyEvents[i]),
-                            if (i != nearbyEvents.length - 1)
-                              const SizedBox(height: 8),
-                          ],
+                          _HotelNearbyEventsSection(
+                            modeLabelBuilder: _radiusModeLabel,
+                            warningText: _widerModeWarningLabel,
+                            noEventsText: _noNearbyEventsLabel,
+                            eventsForMode: _nearbyEventsForRadiusMode,
+                            buildCard: (event) =>
+                                _buildNearbyEventCard(context, event),
+                            gold: _gold,
+                            softText: _softText,
+                          ),
                         ],
                       ),
                     ),
@@ -2030,6 +2139,109 @@ class HotelStayDetailPage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _HotelNearbyEventsSection extends StatefulWidget {
+  const _HotelNearbyEventsSection({
+    required this.modeLabelBuilder,
+    required this.warningText,
+    required this.noEventsText,
+    required this.eventsForMode,
+    required this.buildCard,
+    required this.gold,
+    required this.softText,
+  });
+
+  final String Function(_HotelNearbyEventRadiusMode mode) modeLabelBuilder;
+  final String warningText;
+  final String noEventsText;
+  final List<EventDetailData> Function(_HotelNearbyEventRadiusMode mode)
+  eventsForMode;
+  final Widget Function(EventDetailData event) buildCard;
+  final Color gold;
+  final Color softText;
+
+  @override
+  State<_HotelNearbyEventsSection> createState() =>
+      _HotelNearbyEventsSectionState();
+}
+
+class _HotelNearbyEventsSectionState extends State<_HotelNearbyEventsSection> {
+  _HotelNearbyEventRadiusMode _selectedMode = _HotelNearbyEventRadiusMode.auto;
+
+  @override
+  Widget build(BuildContext context) {
+    final events = widget.eventsForMode(_selectedMode);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 7,
+          runSpacing: 6,
+          children: _HotelNearbyEventRadiusMode.values.map((mode) {
+            final isSelected = _selectedMode == mode;
+            return ChoiceChip(
+              label: Text(widget.modeLabelBuilder(mode)),
+              selected: isSelected,
+              onSelected: (_) {
+                setState(() {
+                  _selectedMode = mode;
+                });
+              },
+              backgroundColor: const Color(0xFF151515),
+              selectedColor: widget.gold,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+                side: BorderSide(
+                  color: isSelected
+                      ? widget.gold
+                      : widget.gold.withOpacity(0.26),
+                ),
+              ),
+              labelStyle: TextStyle(
+                color: isSelected
+                    ? const Color(0xFF171717)
+                    : Colors.white.withOpacity(0.92),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+              visualDensity: const VisualDensity(
+                horizontal: -2.0,
+                vertical: -2.0,
+              ),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            );
+          }).toList(),
+        ),
+        if (_selectedMode == _HotelNearbyEventRadiusMode.wider) ...[
+          const SizedBox(height: 8),
+          Text(
+            widget.warningText,
+            style: TextStyle(
+              color: widget.softText.withOpacity(0.92),
+              fontSize: 11.3,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+        if (events.isEmpty)
+          Text(
+            widget.noEventsText,
+            style: TextStyle(
+              color: widget.softText.withOpacity(0.9),
+              fontSize: 12.2,
+              fontWeight: FontWeight.w600,
+            ),
+          )
+        else
+          for (var i = 0; i < events.length; i++) ...[
+            widget.buildCard(events[i]),
+            if (i != events.length - 1) const SizedBox(height: 8),
+          ],
+      ],
     );
   }
 }
