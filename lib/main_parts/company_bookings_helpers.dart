@@ -9,7 +9,13 @@ class _CompanyBookingsLoadException implements Exception {
 
 class _CompanyBookingOverviewItem {
   final String bookingId;
+  final String parentBookingId;
+  final String legId;
+  final String legType;
+  final bool isOperationalLeg;
+  final bool isRoundtripParent;
   final String referenceText;
+  final String parentReferenceText;
   final String pickupIso;
   final String fromAddress;
   final String toAddress;
@@ -19,12 +25,19 @@ class _CompanyBookingOverviewItem {
   final String statusText;
   final String paymentStatus;
   final num? amount;
+  final num? parentAmount;
   final String currency;
   final _CompanyBookingsFilter bucket;
 
   const _CompanyBookingOverviewItem({
     required this.bookingId,
+    required this.parentBookingId,
+    required this.legId,
+    required this.legType,
+    required this.isOperationalLeg,
+    required this.isRoundtripParent,
     required this.referenceText,
+    required this.parentReferenceText,
     required this.pickupIso,
     required this.fromAddress,
     required this.toAddress,
@@ -34,6 +47,7 @@ class _CompanyBookingOverviewItem {
     required this.statusText,
     required this.paymentStatus,
     required this.amount,
+    required this.parentAmount,
     required this.currency,
     required this.bucket,
   });
@@ -128,6 +142,57 @@ class _CompanyBookingOverviewItem {
       'record.booking.id',
       'booking.id',
     ]);
+    final parentBookingId = _firstText(raw, const <String>[
+      'parent_booking_id',
+      'parentBookingId',
+      'booking_id',
+      'bookingId',
+      'id',
+      'record.parent_booking_id',
+      'record.parentBookingId',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.parent_booking_id',
+      'record.booking.parentBookingId',
+    ]);
+    final legId = _firstText(raw, const <String>[
+      'leg_id',
+      'legId',
+      'record.leg_id',
+      'record.legId',
+      'booking.leg_id',
+      'booking.legId',
+    ]);
+    final legType = _firstText(raw, const <String>[
+      'leg_type',
+      'legType',
+      'record.leg_type',
+      'record.legType',
+      'booking.leg_type',
+      'booking.legType',
+    ]);
+    final isOperationalLegToken = _firstText(raw, const <String>[
+      'is_operational_leg',
+      'isOperationalLeg',
+      'record.is_operational_leg',
+      'record.isOperationalLeg',
+      'booking.is_operational_leg',
+      'booking.isOperationalLeg',
+    ]).toLowerCase();
+    final isOperationalLeg =
+        isOperationalLegToken == 'true' ||
+        isOperationalLegToken == '1' ||
+        legId.isNotEmpty;
+    final isRoundtripToken = _firstText(raw, const <String>[
+      'is_roundtrip_parent',
+      'isRoundtripParent',
+      'record.is_roundtrip_parent',
+      'record.isRoundtripParent',
+      'booking.is_roundtrip_parent',
+      'booking.isRoundtripParent',
+    ]).toLowerCase();
+    final isRoundtripParent =
+        isRoundtripToken == 'true' || isRoundtripToken == '1';
     final planningRef = _firstText(raw, const <String>[
       'planning_reference',
       'planningReference',
@@ -153,6 +218,38 @@ class _CompanyBookingOverviewItem {
     final referenceText = planningRef.isNotEmpty
         ? planningRef
         : (publicRef.isNotEmpty ? publicRef : bookingId);
+    final parentRef = _firstText(raw, const <String>[
+      'parent_booking_reference',
+      'parentBookingReference',
+      'linked_order_reference',
+      'linkedOrderReference',
+      'planning_reference',
+      'planningReference',
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'record.parent_booking_reference',
+      'record.parentBookingReference',
+      'record.linked_order_reference',
+      'record.linkedOrderReference',
+      'record.planning_reference',
+      'record.planningReference',
+      'record.public_booking_reference',
+      'record.publicBookingReference',
+      'record.booking_reference',
+      'record.bookingReference',
+      'booking.parent_booking_reference',
+      'booking.parentBookingReference',
+      'booking.linked_order_reference',
+      'booking.linkedOrderReference',
+      'booking.planning_reference',
+      'booking.planningReference',
+      'booking.public_booking_reference',
+      'booking.publicBookingReference',
+      'booking.booking_reference',
+      'booking.bookingReference',
+    ]);
     final pickupIso = _firstText(raw, const <String>[
       'pickup_iso',
       'pickupIso',
@@ -268,6 +365,8 @@ class _CompanyBookingOverviewItem {
       'record.quote.paymentStatus',
     ]);
     final amount = _firstNum(raw, const <String>[
+      'leg_price_incl_vat',
+      'legPriceInclVat',
       'price',
       'total_price',
       'total',
@@ -306,6 +405,20 @@ class _CompanyBookingOverviewItem {
       'record.booking.price',
       'record.booking.amount',
     ]);
+    final parentAmount = _firstNum(raw, const <String>[
+      'parent_total_price',
+      'parentTotalPrice',
+      'parent_price_incl_vat',
+      'parentPriceInclVat',
+      'booking.price_incl_vat',
+      'booking.total_price',
+      'record.booking.price_incl_vat',
+      'record.booking.total_price',
+      'price',
+      'total_price',
+      'total',
+      'amount',
+    ]);
     final currency = _firstText(raw, const <String>[
       'currency',
       'quote.currency',
@@ -318,7 +431,13 @@ class _CompanyBookingOverviewItem {
     ]);
     return _CompanyBookingOverviewItem(
       bookingId: bookingId,
+      parentBookingId: parentBookingId.isEmpty ? bookingId : parentBookingId,
+      legId: legId,
+      legType: legType,
+      isOperationalLeg: isOperationalLeg,
+      isRoundtripParent: isRoundtripParent,
       referenceText: referenceText.isEmpty ? bookingId : referenceText,
+      parentReferenceText: parentRef.isEmpty ? referenceText : parentRef,
       pickupIso: pickupIso,
       fromAddress: fromAddress.isEmpty ? '—' : fromAddress,
       toAddress: toAddress.isEmpty ? '—' : toAddress,
@@ -328,6 +447,7 @@ class _CompanyBookingOverviewItem {
       statusText: _normStatus(statusRaw),
       paymentStatus: _normStatus(paymentStatus),
       amount: amount,
+      parentAmount: parentAmount,
       currency: currency,
       bucket: _bucketFromStatus(
         statusRaw: statusRaw,

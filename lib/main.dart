@@ -8989,13 +8989,37 @@ class _CompanyBookingsOverviewPageState
     }
   }
 
-  String _moneyLabel(_CompanyBookingOverviewItem item) {
-    final amount = item.amount;
+  String _moneyLabelFromAmount(num? amount, String rawCurrency) {
     if (amount == null) return '';
-    final currency = item.currency.trim().toUpperCase();
+    final currency = rawCurrency.trim().toUpperCase();
     final symbol = currency.isEmpty || currency == 'EUR' ? '€' : '$currency ';
     final value = amount.toStringAsFixed(2).replaceAll('.', ',');
     return '$symbol$value';
+  }
+
+  String _moneyLabel(_CompanyBookingOverviewItem item) {
+    return _moneyLabelFromAmount(item.amount, item.currency);
+  }
+
+  String _companyLegLabel(_CompanyBookingOverviewItem item) {
+    final type = item.legType.trim().toLowerCase();
+    if (type == 'return') {
+      return _t(
+        nl: 'Terugrit',
+        en: 'Return leg',
+        fr: 'Trajet retour',
+        es: 'Tramo de vuelta',
+      );
+    }
+    if (type == 'outbound') {
+      return _t(
+        nl: 'Heenrit',
+        en: 'Outbound leg',
+        fr: 'Trajet aller',
+        es: 'Tramo de ida',
+      );
+    }
+    return _t(nl: 'Rit', en: 'Ride leg', fr: 'Trajet', es: 'Tramo');
   }
 
   Widget _buildCompanyBookingPremiumCard(_CompanyBookingOverviewItem item) {
@@ -9006,6 +9030,11 @@ class _CompanyBookingsOverviewPageState
         localizedPayment ==
         _t(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
     final amountText = _moneyLabel(item);
+    final parentAmountText = _moneyLabelFromAmount(
+      item.parentAmount,
+      item.currency,
+    );
+    final legLabel = _companyLegLabel(item);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -9031,6 +9060,29 @@ class _CompanyBookingsOverviewPageState
           children: [
             Row(
               children: [
+                if (item.isOperationalLeg && item.isRoundtripParent)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF52B6FF).withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: const Color(0xFF52B6FF).withOpacity(0.45),
+                      ),
+                    ),
+                    child: Text(
+                      legLabel,
+                      style: const TextStyle(
+                        color: Color(0xFF9DD8FF),
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -9062,6 +9114,29 @@ class _CompanyBookingsOverviewPageState
                   ),
               ],
             ),
+            if (item.isOperationalLeg && item.isRoundtripParent) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${_t(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${item.parentReferenceText.isEmpty ? item.referenceText : item.parentReferenceText}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.62),
+                  fontSize: 11.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (parentAmountText.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Text(
+                    '${_t(nl: 'Totaal parent', en: 'Parent total', fr: 'Total parent', es: 'Total padre')}: $parentAmountText',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.56),
+                      fontSize: 10.8,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+            ],
             const SizedBox(height: 10),
             Text(
               '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prévue', es: 'Recogida programada')}: ${_formatPickup(item.pickupIso)}',
@@ -16471,6 +16546,27 @@ class BookingItem {
     return '${bookingId.substring(0, 4)}…${bookingId.substring(bookingId.length - 4)}';
   }
 
+  String get legId {
+    final raw = (details['leg_id'] ?? details['legId'] ?? '').toString().trim();
+    return raw;
+  }
+
+  bool get isOperationalLeg {
+    final token =
+        (details['is_operational_leg'] ?? details['isOperationalLeg'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+    if (token == 'true' || token == '1') return true;
+    return legId.isNotEmpty;
+  }
+
+  String get rowKey {
+    final leg = legId;
+    if (isOperationalLeg && leg.isNotEmpty) return '$bookingId:$leg';
+    return bookingId;
+  }
+
   static String? _extractPlaceLabel(dynamic v) {
     if (v == null) return null;
     if (v is String) {
@@ -19361,7 +19457,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final parsedStatuses = items
           .map(
             (b) =>
-                '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
+                '${_safeRefPreview(b.rowKey)}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
           )
           .join(', ');
       final visibleStatuses = items
@@ -19369,7 +19465,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
           .map(
             (b) =>
-                '${b.shortId}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
+                '${_safeRefPreview(b.rowKey)}:${(_effectiveStatusFor(b) ?? 'null').toUpperCase()}',
           )
           .join(', ');
       final visibleCount = items
@@ -23849,11 +23945,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _nextRidePreviewCacheKey(BookingItem booking) {
-    final bookingId = booking.bookingId.trim();
+    final bookingRowKey = booking.rowKey.trim();
     final from = (booking.from ?? '').trim().toLowerCase();
     final to = (booking.to ?? '').trim().toLowerCase();
     final pickupIso = (booking.pickupIso ?? '').trim();
-    return '$bookingId|$from|$to|$pickupIso';
+    return '$bookingRowKey|$from|$to|$pickupIso';
   }
 
   Future<_RoutePreviewData?> _nextRidePreviewFuture(BookingItem booking) {
@@ -26487,6 +26583,66 @@ class _DriverHomePageState extends State<DriverHomePage>
         returnTrip == '1' ||
         returnTrip == 'yes' ||
         returnTrip == 'ja';
+    final legType = (detailText(['leg_type', 'legType']) ?? '')
+        .trim()
+        .toLowerCase();
+    final isOperationalLeg = nextRide.isOperationalLeg;
+    String subtypeLabel() {
+      if (isOperationalLeg) {
+        if (legType == 'return') {
+          return _tr(
+            nl: 'Terugrit',
+            en: 'Return ride',
+            fr: 'Trajet retour',
+            es: 'Viaje de vuelta',
+          );
+        }
+        return _tr(
+          nl: 'Heenrit',
+          en: 'Outbound ride',
+          fr: 'Trajet aller',
+          es: 'Viaje de ida',
+        );
+      }
+      return hasReturnTrip
+          ? _tr(nl: 'Retour', en: 'Return', fr: 'Retour', es: 'Regreso')
+          : _tr(nl: 'Enkel', en: 'One-way', fr: 'Aller simple', es: 'Solo ida');
+    }
+
+    String? serviceChipLabel() {
+      final raw =
+          (detailText([
+                    'service',
+                    'service_type',
+                    'serviceType',
+                    'booking_type',
+                    'bookingType',
+                  ]) ??
+                  '')
+              .trim()
+              .toLowerCase();
+      if (raw.isEmpty) return null;
+      if (raw.startsWith('airport') || raw.contains('luchthaven')) {
+        return _tr(
+          nl: 'Luchthavenvervoer',
+          en: 'Airport transfer',
+          fr: 'Transfert aeroport',
+          es: 'Traslado al aeropuerto',
+        );
+      }
+      return raw
+          .replaceAll('_', ' ')
+          .split(RegExp(r'\s+'))
+          .where((p) => p.isNotEmpty)
+          .map(
+            (p) => p.length == 1
+                ? p.toUpperCase()
+                : '${p[0].toUpperCase()}${p.substring(1)}',
+          )
+          .join(' ');
+    }
+
+    final serviceLabel = serviceChipLabel();
     final distanceKm = detailNum([
       'distance_km',
       'distanceKm',
@@ -26630,8 +26786,10 @@ class _DriverHomePageState extends State<DriverHomePage>
               ),
               metaChip(
                 icon: Icons.compare_arrows_rounded,
-                text: hasReturnTrip ? 'Retour' : 'Enkel',
+                text: subtypeLabel(),
               ),
+              if (serviceLabel != null)
+                metaChip(icon: Icons.local_taxi_rounded, text: serviceLabel),
               if (extraService != null)
                 metaChip(
                   icon: Icons.miscellaneous_services_rounded,
@@ -28272,10 +28430,76 @@ class _DriverHomePageState extends State<DriverHomePage>
     return (label: label, value: value);
   }
 
+  bool _bookingIsOperationalLeg(BookingItem b) {
+    return b.isOperationalLeg;
+  }
+
+  bool _bookingIsRoundtripParent(BookingItem b) {
+    final token =
+        (b.details['is_roundtrip_parent'] ??
+                b.details['isRoundtripParent'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
+    return token == 'true' || token == '1';
+  }
+
+  String _bookingLegType(BookingItem b) {
+    return (b.details['leg_type'] ?? b.details['legType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+  }
+
+  String _bookingLegLabel(BookingItem b) {
+    final legType = _bookingLegType(b);
+    if (legType == 'return') {
+      return _tr(
+        nl: 'Terugrit',
+        en: 'Return ride',
+        fr: 'Trajet retour',
+        es: 'Viaje de vuelta',
+      );
+    }
+    if (legType == 'outbound') {
+      return _tr(
+        nl: 'Heenrit',
+        en: 'Outbound ride',
+        fr: 'Trajet aller',
+        es: 'Viaje de ida',
+      );
+    }
+    return _tr(
+      nl: 'Geplande rit',
+      en: 'Planned ride',
+      fr: 'Course planifiée',
+      es: 'Viaje planificado',
+    );
+  }
+
   Widget _bookingCard(BookingItem b) {
     final dt = _formatPickup(b.pickupIso);
     final actionBusy = _bookingActionInFlight.contains(b.bookingId);
     final cardReference = _driverCardReferenceDisplay(b);
+    final isOperationalLeg = _bookingIsOperationalLeg(b);
+    final isRoundtripParent = _bookingIsRoundtripParent(b);
+    // H1-T-I.2a safety guard:
+    // Leg rows are display-ready, but status actions are still parent-level until H1-T-I.3.
+    // Disable parent-level COMPLETED/CANCELLED on roundtrip operational legs to prevent
+    // accidentally updating the full parent order from a single leg row.
+    final guardParentStatusActions = isOperationalLeg && isRoundtripParent;
+    final legLabel = _bookingLegLabel(b);
+    final legStatusDeferredText = _tr(
+      nl: 'Legstatus komt in volgende fase',
+      en: 'Leg status comes in next phase',
+      fr: 'Le statut du trajet arrive dans la phase suivante',
+      es: 'El estado del tramo llega en la siguiente fase',
+    );
+    final parentBookingId =
+        (b.details['parent_booking_id'] ?? b.details['parentBookingId'] ?? '')
+            .toString()
+            .trim();
     final customerName =
         _bookingScopeFirstText(_bookingScopeViewFor(b), const [
           ['customer_name'],
@@ -28427,6 +28651,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                   spacing: 6,
                   runSpacing: 6,
                   children: [
+                    if (isOperationalLeg && isRoundtripParent)
+                      _pill(
+                        text: legLabel,
+                        borderColor: const Color(0xFF52B6FF),
+                        textColor: const Color(0xFF9DD8FF),
+                        compact: true,
+                      ),
                     _pill(
                       text: statusText,
                       borderColor: const Color(0xFFB07A2A),
@@ -28476,7 +28707,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 if (cardReference.value.trim().isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
-                    referenceChipText,
+                    isOperationalLeg &&
+                            isRoundtripParent &&
+                            parentBookingId.isNotEmpty
+                        ? '$referenceChipText · ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
+                        : referenceChipText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -28515,7 +28750,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
-                        : () => _setBookingStatus(b, 'COMPLETED'),
+                        : (guardParentStatusActions
+                              ? null
+                              : () => _setBookingStatus(b, 'COMPLETED')),
                     icon: const Icon(Icons.check_circle_outline, size: 16),
                     label: Text(
                       kRideActionCompletedLabel,
@@ -28523,6 +28760,19 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ),
                 ),
+                if (guardParentStatusActions) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    legStatusDeferredText,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.58),
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -28533,7 +28783,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : () => _setBookingStatus(b, 'CANCELLED'),
+                              : (guardParentStatusActions
+                                    ? null
+                                    : () => _setBookingStatus(b, 'CANCELLED')),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(
                             kRideActionCancelledLabel,
@@ -28699,6 +28951,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                 spacing: 6,
                 runSpacing: 6,
                 children: [
+                  if (isOperationalLeg && isRoundtripParent)
+                    _pill(
+                      text: legLabel,
+                      borderColor: const Color(0xFF52B6FF),
+                      textColor: const Color(0xFF9DD8FF),
+                    ),
                   _pill(
                     text: statusText,
                     borderColor: const Color(0xFFB07A2A),
@@ -28714,7 +28972,11 @@ class _DriverHomePageState extends State<DriverHomePage>
               if (cardReference.value.trim().isNotEmpty) ...[
                 const SizedBox(height: 7),
                 Text(
-                  referenceChipText,
+                  isOperationalLeg &&
+                          isRoundtripParent &&
+                          parentBookingId.isNotEmpty
+                      ? '$referenceChipText · ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
+                      : referenceChipText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -28754,7 +29016,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
-                        : () => _setBookingStatus(b, 'COMPLETED'),
+                        : (guardParentStatusActions
+                              ? null
+                              : () => _setBookingStatus(b, 'COMPLETED')),
                     icon: const Icon(Icons.check_circle_outline, size: 16),
                     label: Text(
                       kRideActionCompletedLabel,
@@ -28762,6 +29026,19 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ),
                 ),
+                if (guardParentStatusActions) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    legStatusDeferredText,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.58),
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -28772,7 +29049,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : () => _setBookingStatus(b, 'CANCELLED'),
+                              : (guardParentStatusActions
+                                    ? null
+                                    : () => _setBookingStatus(b, 'CANCELLED')),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(
                             kRideActionCancelledLabel,
@@ -28824,7 +29103,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : () => _setBookingStatus(b, 'COMPLETED'),
+                              : (guardParentStatusActions
+                                    ? null
+                                    : () => _setBookingStatus(b, 'COMPLETED')),
                           icon: const Icon(
                             Icons.check_circle_outline,
                             size: 16,
@@ -28841,12 +29122,29 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : () => _setBookingStatus(b, 'CANCELLED'),
+                              : (guardParentStatusActions
+                                    ? null
+                                    : () => _setBookingStatus(b, 'CANCELLED')),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(kRideActionCancelledLabel),
                         ),
                       ),
                     ),
+                    if (guardParentStatusActions) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          legStatusDeferredText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.58),
+                            fontSize: 11.2,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 6),
                     SizedBox(
                       height: actionHeight,

@@ -29425,6 +29425,171 @@ function _flattenBookingForRidesList(bookingId, rec) {
   };
 }
 
+function _bookingOperationalLegsFromRecord(rec) {
+  if (!rec || typeof rec !== "object") return [];
+  const topLevel = Array.isArray(rec?.operational_legs)
+    ? rec.operational_legs
+    : (Array.isArray(rec?.operationalLegs) ? rec.operationalLegs : null);
+  const bookingLevel = Array.isArray(_pick(rec, ["booking", "operational_legs"], null))
+    ? _pick(rec, ["booking", "operational_legs"], null)
+    : (Array.isArray(_pick(rec, ["booking", "operationalLegs"], null))
+      ? _pick(rec, ["booking", "operationalLegs"], null)
+      : null);
+  const source = topLevel || bookingLevel || [];
+  return source
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!entry);
+}
+
+function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options = {}) {
+  const parentRow = _flattenBookingForRidesList(parentBookingId, rec);
+  const isRoundtripParent = options?.isRoundtripParent === true;
+  const legPickupIso = safeStr(leg?.pickup_iso ?? leg?.pickupIso, 80);
+  const legFrom = _pick(leg, ["from"], null);
+  const legTo = _pick(leg, ["to"], null);
+  const legPriceInclVat = leg?.price_incl_vat ?? leg?.priceInclVat;
+  const legPriceExVat = leg?.price_ex_vat ?? leg?.priceExVat;
+  const legPriceVat = leg?.price_vat ?? leg?.priceVat;
+  const parentBooking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const parentTotalInclVat =
+    parentBooking?.price_incl_vat ??
+    rec?.price_incl_vat ??
+    _pick(rec, ["quote", "pricing", "price_incl_vat"], null) ??
+    _pick(rec, ["quote", "pricing", "total_price"], null) ??
+    parentRow?.price ??
+    null;
+  const parentTotalExVat =
+    parentBooking?.price_ex_vat ??
+    rec?.price_ex_vat ??
+    _pick(rec, ["quote", "pricing", "price_ex_vat"], null) ??
+    null;
+  const parentTotalVat =
+    parentBooking?.price_vat ??
+    rec?.price_vat ??
+    _pick(rec, ["quote", "pricing", "price_vat"], null) ??
+    null;
+  const legStatusRaw = safeStr(
+    leg?.status ?? leg?.lifecycle_status ?? leg?.lifecycleStatus,
+    40,
+  );
+  const parentStatusUpper = _normLifecycleStatus(parentRow?.status || null);
+  const legStatusUpper = _normLifecycleStatus(legStatusRaw || parentStatusUpper || "PENDING");
+  const assignedDriverId = safeStr(
+    leg?.assigned_driver_id ??
+      leg?.assignedDriverId ??
+      parentRow?.assigned_driver_id ??
+      parentRow?.assignedDriverId,
+    96,
+  );
+  const assignedVehicleId = safeStr(
+    leg?.assigned_vehicle_id ??
+      leg?.assignedVehicleId ??
+      parentRow?.assigned_vehicle_id ??
+      parentRow?.assignedVehicleId,
+    128,
+  );
+  const legTypeRaw = safeStr(leg?.leg_type ?? leg?.legType, 24).toLowerCase();
+  const legType = legTypeRaw === "return" ? "return" : "outbound";
+  const legId = safeStr(leg?.leg_id ?? leg?.legId, 200);
+  const parentBookingReference = safeStr(
+    parentRow?.public_booking_reference ??
+      rec?.public_booking_reference ??
+      rec?.publicBookingReference ??
+      rec?.booking_reference ??
+      rec?.bookingReference ??
+      _pick(rec, ["booking", "public_booking_reference"], null) ??
+      _pick(rec, ["booking", "publicBookingReference"], null) ??
+      _pick(rec, ["booking", "booking_reference"], null) ??
+      _pick(rec, ["booking", "bookingReference"], null),
+    120,
+  );
+  const planningReference = safeStr(
+    parentRow?.planning_reference ??
+      rec?.planning_reference ??
+      rec?.planningReference ??
+      _pick(rec, ["booking", "planning_reference"], null) ??
+      _pick(rec, ["booking", "planningReference"], null),
+    120,
+  );
+  return {
+    ...parentRow,
+    booking_id: parentBookingId,
+    parent_booking_id: parentBookingId,
+    parentBookingId: parentBookingId,
+    leg_id: legId || null,
+    legId: legId || null,
+    leg_type: legType,
+    legType: legType,
+    is_operational_leg: true,
+    isOperationalLeg: true,
+    is_roundtrip_parent: isRoundtripParent,
+    isRoundtripParent: isRoundtripParent,
+    pickup_iso: legPickupIso || parentRow?.pickup_iso || null,
+    pickupIso: legPickupIso || parentRow?.pickup_iso || null,
+    from: legFrom ?? parentRow?.from ?? null,
+    to: legTo ?? parentRow?.to ?? null,
+    status: legStatusUpper,
+    lifecycle: legStatusUpper.toLowerCase(),
+    lifecycle_status: legStatusUpper.toLowerCase(),
+    lifecycleStatus: legStatusUpper.toLowerCase(),
+    parent_status: parentStatusUpper,
+    parentStatus: parentStatusUpper,
+    assigned_driver_id: assignedDriverId || null,
+    assignedDriverId: assignedDriverId || null,
+    assigned_vehicle_id: assignedVehicleId || null,
+    assignedVehicleId: assignedVehicleId || null,
+    service:
+      safeStr(leg?.service ?? _pick(rec, ["booking", "service"], null), 32) ||
+      null,
+    tier: safeStr(_pick(rec, ["booking", "tier"], null) ?? parentRow?.tier, 24) || null,
+    return_enabled: !!_pick(rec, ["booking", "return_enabled"], false),
+    returnEnabled: !!_pick(rec, ["booking", "return_enabled"], false),
+    price:
+      (legPriceInclVat != null ? legPriceInclVat : parentRow?.price) ?? null,
+    leg_price_incl_vat: legPriceInclVat ?? null,
+    legPriceInclVat: legPriceInclVat ?? null,
+    leg_price_ex_vat: legPriceExVat ?? null,
+    legPriceExVat: legPriceExVat ?? null,
+    leg_price_vat: legPriceVat ?? null,
+    legPriceVat: legPriceVat ?? null,
+    parent_price_incl_vat: parentTotalInclVat ?? null,
+    parentPriceInclVat: parentTotalInclVat ?? null,
+    parent_price_ex_vat: parentTotalExVat ?? null,
+    parentPriceExVat: parentTotalExVat ?? null,
+    parent_price_vat: parentTotalVat ?? null,
+    parentPriceVat: parentTotalVat ?? null,
+    parent_total_price: parentTotalInclVat ?? null,
+    parentTotalPrice: parentTotalInclVat ?? null,
+    public_booking_reference: parentBookingReference || null,
+    publicBookingReference: parentBookingReference || null,
+    booking_reference: parentBookingReference || null,
+    bookingReference: parentBookingReference || null,
+    parent_booking_reference: parentBookingReference || null,
+    parentBookingReference: parentBookingReference || null,
+    linked_order_reference: planningReference || parentBookingReference || null,
+    linkedOrderReference: planningReference || parentBookingReference || null,
+    planning_reference: planningReference || null,
+    planningReference: planningReference || null,
+  };
+}
+
+function _flattenBookingForRidesListWithOperationalLegs(bookingId, rec, options = {}) {
+  const operationalLegs = _bookingOperationalLegsFromRecord(rec);
+  if (!operationalLegs.length) {
+    return [_flattenBookingForRidesList(bookingId, rec)];
+  }
+  const isRoundtripParent = operationalLegs.length > 1;
+  return operationalLegs.map((leg) => _flattenOperationalLegForRidesList(
+    bookingId,
+    rec,
+    leg,
+    {
+      ...options,
+      isRoundtripParent,
+    },
+  ));
+}
+
 const VEHICLE_INVENTORY_KEY = "fleet:vehicles:v1";
 const PARTNER_DIRECTORY_KEY = "partners:directory:v1";
 const PARTNER_PROFILES_KEY = "partners:profiles:v1";
@@ -35144,19 +35309,21 @@ async function listBookingsAuthoritative(
       staleIds.add(bookingId);
       continue;
     }
-    const row = _flattenBookingForRidesList(bookingId, rec);
-    if (
-      !includeHistory &&
-      (row.status === "COMPLETED" || row.status === "CANCELLED")
-    ) continue;
-    if (!includeHistory) {
-      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-      // For "available rides", require a valid pickup datetime.
-      // Historical/debug records with missing/invalid pickup should stay out of operational list.
-      if (!Number.isFinite(pickupTs)) continue;
-      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+    const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
+    for (const row of rows) {
+      if (
+        !includeHistory &&
+        (row.status === "COMPLETED" || row.status === "CANCELLED")
+      ) continue;
+      if (!includeHistory) {
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+        // For "available rides", require a valid pickup datetime.
+        // Historical/debug records with missing/invalid pickup should stay out of operational list.
+        if (!Number.isFinite(pickupTs)) continue;
+        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+      }
+      out.push(row);
     }
-    out.push(row);
   }
 
   if (staleIds.size > 0) {
@@ -35285,11 +35452,33 @@ async function listDriverBookingsAuthoritative(
       }
       continue;
     }
-    const assignedDriverId = bookingAssignedDriverId(rec);
-    const assignedVehicleId = bookingAssignedVehicleId(rec);
-    const driverMatch = !!(sessionDriverId && assignedDriverId && sessionDriverId === assignedDriverId);
-    const vehicleMatch = !!(sessionVehicleId && assignedVehicleId && sessionVehicleId === assignedVehicleId);
-    if (!driverMatch && !vehicleMatch) {
+    const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
+    let matchedAny = false;
+    for (const row of rows) {
+      const rowDriverId = safeStr(
+        row?.assigned_driver_id ?? row?.assignedDriverId,
+        96,
+      );
+      const rowVehicleId = safeStr(
+        row?.assigned_vehicle_id ?? row?.assignedVehicleId,
+        128,
+      );
+      const driverMatch = !!(sessionDriverId && rowDriverId && sessionDriverId === rowDriverId);
+      const vehicleMatch = !!(sessionVehicleId && rowVehicleId && sessionVehicleId === rowVehicleId);
+      if (!driverMatch && !vehicleMatch) continue;
+      matchedAny = true;
+      if (
+        !includeHistory &&
+        (row.status === "COMPLETED" || row.status === "CANCELLED")
+      ) continue;
+      if (!includeHistory) {
+        const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
+        if (!Number.isFinite(pickupTs)) continue;
+        if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
+      }
+      out.push(row);
+    }
+    if (!matchedAny) {
       for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
         const stale = staleIdsByKey.get(indexKey) || new Set();
         stale.add(bookingId);
@@ -35297,17 +35486,6 @@ async function listDriverBookingsAuthoritative(
       }
       continue;
     }
-    const row = _flattenBookingForRidesList(bookingId, rec);
-    if (
-      !includeHistory &&
-      (row.status === "COMPLETED" || row.status === "CANCELLED")
-    ) continue;
-    if (!includeHistory) {
-      const pickupTs = row.pickup_iso ? Date.parse(row.pickup_iso) : Number.NaN;
-      if (!Number.isFinite(pickupTs)) continue;
-      if (Number.isFinite(pickupTs) && pickupTs < cutoffMs) continue;
-    }
-    out.push(row);
   }
 
   for (const source of readResults) {

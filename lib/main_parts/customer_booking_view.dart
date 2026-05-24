@@ -344,6 +344,77 @@ class CustomerBookingView {
     return false;
   }
 
+  bool _looksAirportText(String value) {
+    final s = value.trim().toLowerCase();
+    if (!_isMeaningful(s)) return false;
+    return s.contains('airport') ||
+        s.contains('luchthaven') ||
+        s.contains('zaventem') ||
+        s.contains('charleroi');
+  }
+
+  bool _hasAirportFieldHint() {
+    final token = _firstPathValue(const <String>[
+      'airport_iata',
+      'airportIata',
+      'airport_name',
+      'airportName',
+      'booking.airport_iata',
+      'booking.airportIata',
+      'booking.airport_name',
+      'booking.airportName',
+      'record.airport_iata',
+      'record.airportIata',
+      'record.airport_name',
+      'record.airportName',
+      'record.booking.airport_iata',
+      'record.booking.airportIata',
+      'record.booking.airport_name',
+      'record.booking.airportName',
+      'quote.airport_iata',
+      'quote.airportIata',
+      'quote.airport_name',
+      'quote.airportName',
+      'payload.airport_iata',
+      'payload.airportIata',
+      'payload.airport_name',
+      'payload.airportName',
+    ]);
+    return _isMeaningful(token);
+  }
+
+  String _serviceFallbackFromAirportHints() {
+    if (_hasAirportFieldHint()) return 'airport';
+    final routeTexts = <String>[
+      fromAddress,
+      toAddress,
+      returnFrom,
+      returnTo,
+      _firstPathValue(const <String>[
+        'from',
+        'to',
+        'booking.from',
+        'booking.to',
+        'record.booking.from',
+        'record.booking.to',
+        'quote.from',
+        'quote.to',
+        'payload.from',
+        'payload.to',
+      ]),
+      _firstPathValue(const <String>[
+        'quote.service',
+        'quote.service_type',
+        'quote.booking_type',
+        'record.quote.service',
+        'record.quote.service_type',
+        'record.quote.booking_type',
+      ]),
+    ];
+    if (routeTexts.any(_looksAirportText)) return 'airport';
+    return '';
+  }
+
   String _preferNonEmptyText(String authoritative, String localFallback) {
     if (_isMeaningful(authoritative)) return authoritative;
     if (_isMeaningful(localFallback)) return localFallback;
@@ -519,15 +590,26 @@ class CustomerBookingView {
   String get service => _firstNonEmpty([
     _firstPathValue(const <String>[
       'service',
+      'service_type',
+      'booking_type',
       'extra_service',
       'extra_service_key',
       'booking.service',
+      'booking.service_type',
+      'booking.booking_type',
       'booking.extra_service',
       'record.booking.service',
+      'record.booking.service_type',
+      'record.booking.booking_type',
       'record.booking.extra_service',
       'payload.service',
+      'payload.service_type',
+      'payload.booking_type',
       'quote.inputs.service',
+      'quote.inputs.service_type',
+      'quote.inputs.booking_type',
     ]),
+    _serviceFallbackFromAirportHints(),
   ]);
   String get tier => _firstNonEmpty([
     _firstPathValue(const <String>[

@@ -1425,6 +1425,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   String _serviceLabel(String raw) {
     final value = raw.trim().toLowerCase();
     if (value.isEmpty) return '-';
+    if (value == '-' || value == 'null' || value == 'undefined') return '-';
     if (value == 'passenger' || value == 'personenvervoer') {
       return _t(
         nl: 'Personenvervoer',
@@ -1442,6 +1443,18 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       );
     }
     if (value == 'airport' || value == 'luchthaven') {
+      return _t(
+        nl: 'Luchthavenvervoer',
+        en: 'Airport transfer',
+        fr: 'Transfert aeroport',
+        es: 'Traslado al aeropuerto',
+      );
+    }
+    if (value.startsWith('airport') ||
+        value.contains('luchthaven') ||
+        value == 'airport_transfer' ||
+        value == 'airport_transfer_roundtrip' ||
+        value == 'luchthavenvervoer') {
       return _t(
         nl: 'Luchthavenvervoer',
         en: 'Airport transfer',
