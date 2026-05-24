@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_seed_data.dart';
+import 'package:fluxidi_tracking/events/events_detail_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:path_provider/path_provider.dart';
@@ -1462,88 +1463,104 @@ class HotelStayDetailPage extends StatelessWidget {
     return '$_fromLabel $raw';
   }
 
-  Widget _buildNearbyEventCard(EventDetailData event) {
+  Widget _buildNearbyEventCard(BuildContext context, EventDetailData event) {
     final distance = _distanceLabel(event);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-      decoration: BoxDecoration(
-        color: const Color(0xFF151515),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withOpacity(0.22)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            event.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${event.category} • ${event.dateTimeLabel}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: _gold.withOpacity(0.95),
-              fontSize: 11.4,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            '${event.locationName}, ${event.city}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _softText,
-              fontSize: 11.6,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (distance.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              distance,
-              style: TextStyle(
-                color: _softText.withOpacity(0.9),
-                fontSize: 11.2,
-                fontWeight: FontWeight.w600,
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => EventDetailPage(
+                event: event,
+                onBookEvent: onNearbyEventTaxiTap,
               ),
             ),
-          ],
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => onNearbyEventTaxiTap(event),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: const Color(0xFF121212),
-                foregroundColor: Colors.white.withOpacity(0.93),
-                side: BorderSide(color: _gold.withOpacity(0.32)),
-                minimumSize: const Size.fromHeight(40),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFF151515),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _gold.withOpacity(0.22)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                event.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              icon: Icon(
-                Icons.local_taxi_rounded,
-                size: 16,
-                color: _gold.withOpacity(0.92),
+              const SizedBox(height: 4),
+              Text(
+                '${event.category} • ${event.dateTimeLabel}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _gold.withOpacity(0.95),
+                  fontSize: 11.4,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-              label: Text(
-                _eventTaxiLabel,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+              const SizedBox(height: 3),
+              Text(
+                '${event.locationName}, ${event.city}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: _softText,
+                  fontSize: 11.6,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
+              if (distance.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  distance,
+                  style: TextStyle(
+                    color: _softText.withOpacity(0.9),
+                    fontSize: 11.2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => onNearbyEventTaxiTap(event),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: Colors.white.withOpacity(0.93),
+                    side: BorderSide(color: _gold.withOpacity(0.32)),
+                    minimumSize: const Size.fromHeight(40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  icon: Icon(
+                    Icons.local_taxi_rounded,
+                    size: 16,
+                    color: _gold.withOpacity(0.92),
+                  ),
+                  label: Text(
+                    _eventTaxiLabel,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1842,7 +1859,7 @@ class HotelStayDetailPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 10),
                           for (var i = 0; i < nearbyEvents.length; i++) ...[
-                            _buildNearbyEventCard(nearbyEvents[i]),
+                            _buildNearbyEventCard(context, nearbyEvents[i]),
                             if (i != nearbyEvents.length - 1)
                               const SizedBox(height: 8),
                           ],
