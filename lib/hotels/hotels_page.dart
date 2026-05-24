@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/discovery/discovery_models.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_seed_data.dart';
 import 'package:fluxidi_tracking/events/events_detail_page.dart';
