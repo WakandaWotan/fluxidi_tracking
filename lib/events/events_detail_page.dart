@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
 import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
 import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
@@ -269,22 +270,52 @@ class EventDetailPage extends StatelessWidget {
 
   void _onStayTaxiTap(BuildContext context, HotelStay stay) {
     final destination = stay.toDiscoveryDestination();
+    final eventAddress = event.address.trim();
+    final eventLocation = event.locationName.trim();
+    final eventTitle = event.title.trim();
+    final originAddress = eventAddress.isNotEmpty
+        ? eventAddress
+        : (eventLocation.isNotEmpty ? eventLocation : eventTitle);
+    final originLabel = event.destinationLabel.trim().isNotEmpty
+        ? event.destinationLabel.trim()
+        : (eventTitle.isNotEmpty ? eventTitle : originAddress);
     debugPrint(
       '[events.nearby_stay_handoff] stayId=${stay.id} '
       'name="${destination.destinationName}" city="${destination.city}"',
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _t(
-            nl: 'Taxi handoff voorbereid voor verblijf: ${stay.name}',
-            en: 'Taxi handoff prepared for stay: ${stay.name}',
-            fr: 'Transfert taxi prêt pour l’hébergement : ${stay.name}',
-            es: 'Transferencia de taxi preparada para alojamiento: ${stay.name}',
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CalculatorPage(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              mapboxToken: kMapboxToken,
+              initialFromAddress: originAddress,
+              initialFromLabel: originLabel,
+              initialFromLat: event.lat,
+              initialFromLng: event.lng,
+              initialToAddress: destination.prefillDestinationText,
+              initialDestinationLabel: destination.destinationName,
+              initialToLat: destination.latitude,
+              initialToLng: destination.longitude,
+              initialServiceId: 'hotel',
+            ),
           ),
-        ),
-      ),
-    );
+        )
+        .catchError((_) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Kon taxi-navigatie niet openen.',
+                  en: 'Could not open taxi navigation.',
+                  fr: 'Impossible d’ouvrir la navigation taxi.',
+                  es: 'No se pudo abrir la navegación de taxi.',
+                ),
+              ),
+            ),
+          );
+        });
   }
 
   @override
