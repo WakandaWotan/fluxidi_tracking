@@ -74,20 +74,12 @@ class EventDetailPage extends StatelessWidget {
     }
   }
 
-  String get _vervoersmoment {
-    if (event.dateTimeLabel.toLowerCase().contains('vandaag')) {
-      return _t(
-        nl: 'Vandaag, operationele monitoring aanbevolen.',
-        en: 'Today, operational monitoring is recommended.',
-        fr: 'Aujourd hui, un suivi operationnel est recommande.',
-        es: 'Hoy se recomienda seguimiento operativo.',
-      );
-    }
+  String get _eventStartGuidance {
     return _t(
-      nl: '${event.dateTimeLabel}, capaciteit vooraf reserveren.',
-      en: '${event.dateTimeLabel}, reserve capacity in advance.',
-      fr: '${event.dateTimeLabel}, reserver la capacite a l avance.',
-      es: '${event.dateTimeLabel}, reservar capacidad con antelacion.',
+      nl: '${event.dateTimeLabel}. Plan je ophaaltijd op basis van je vertreklocatie en reistijd.',
+      en: '${event.dateTimeLabel}. Plan pickup time based on your departure location and travel time.',
+      fr: '${event.dateTimeLabel}. Planifiez l heure de prise en charge selon votre lieu de depart et le temps de trajet.',
+      es: '${event.dateTimeLabel}. Planifica la hora de recogida segun tu ubicacion de salida y el tiempo de viaje.',
     );
   }
 
@@ -697,12 +689,12 @@ class EventDetailPage extends StatelessWidget {
           const SizedBox(height: 10),
           _buildInfoRow(
             _t(
-              nl: 'Vervoersmoment',
-              en: 'Transport timing',
-              fr: 'Moment du transport',
-              es: 'Momento del transporte',
+              nl: 'Start evenement',
+              en: 'Event start',
+              fr: 'Debut de l evenement',
+              es: 'Inicio del evento',
             ),
-            _vervoersmoment,
+            _eventStartGuidance,
           ),
         ],
       ),
