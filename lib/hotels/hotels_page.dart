@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/discovery/discovery_models.dart';
+import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_seed_data.dart';
 import 'package:fluxidi_tracking/events/events_detail_page.dart';
@@ -191,35 +192,38 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   String _typeLabel(String typeKey) {
-    switch (typeKey) {
-      case _allKey:
-        return _t(
-          nl: 'Alle types',
-          en: 'All types',
-          fr: 'Tous les types',
-          es: 'Todos los tipos',
-        );
-      case HotelStayType.hotel:
-        return 'Hotel';
-      case HotelStayType.bedAndBreakfast:
-        return 'B&B';
-      case HotelStayType.aparthotel:
-        return _t(
-          nl: 'Aparthotel',
-          en: 'Aparthotel',
-          fr: 'Aparthotel',
-          es: 'Aparthotel',
-        );
-      case HotelStayType.guesthouse:
-        return _t(
-          nl: 'Guesthouse',
-          en: 'Guesthouse',
-          fr: 'Guesthouse',
-          es: 'Guesthouse',
-        );
-      default:
-        return typeKey;
+    if (typeKey == _allKey) {
+      return _t(
+        nl: 'Alle types',
+        en: 'All types',
+        fr: 'Tous les types',
+        es: 'Todos los tipos',
+      );
     }
+    if (typeKey == HotelStayType.aparthotel) {
+      return _t(
+        nl: 'Aparthotel',
+        en: 'Aparthotel',
+        fr: 'Aparthotel',
+        es: 'Aparthotel',
+      );
+    }
+    if (typeKey == HotelStayType.guesthouse) {
+      return _t(
+        nl: 'Guesthouse',
+        en: 'Guesthouse',
+        fr: 'Guesthouse',
+        es: 'Guesthouse',
+      );
+    }
+    if (typeKey == HotelStayType.hotel) return 'Hotel';
+    if (typeKey == HotelStayType.bedAndBreakfast) {
+      return discoveryStayTypeLabel(
+        HotelStayType.bedAndBreakfast,
+        (nl, en, fr, es) => _t(nl: nl, en: en, fr: fr, es: es),
+      );
+    }
+    return typeKey;
   }
 
   String get _recommendedLabel {
@@ -353,16 +357,7 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   String _displayPriceHint(HotelStay stay) {
-    final raw = (stay.priceHint ?? '').trim();
-    if (raw.isEmpty) return '';
-    final normalized = raw.toLowerCase();
-    if (normalized.startsWith('vanaf ') ||
-        normalized.startsWith('from ') ||
-        normalized.startsWith('desde ') ||
-        normalized.startsWith('à partir')) {
-      return raw;
-    }
-    return '$_fromLabel $raw';
+    return formatDiscoveryPriceHint(stay.priceHint, fromLabel: _fromLabel);
   }
 
   List<String> _semanticHighlights(HotelStay stay) {
@@ -1323,28 +1318,30 @@ class HotelStayDetailPage extends StatelessWidget {
   }
 
   String _typeLabel(String typeKey) {
-    switch (typeKey) {
-      case HotelStayType.hotel:
-        return 'Hotel';
-      case HotelStayType.bedAndBreakfast:
-        return 'B&B';
-      case HotelStayType.aparthotel:
-        return _t(
-          nl: 'Aparthotel',
-          en: 'Aparthotel',
-          fr: 'Aparthotel',
-          es: 'Aparthotel',
-        );
-      case HotelStayType.guesthouse:
-        return _t(
-          nl: 'Guesthouse',
-          en: 'Guesthouse',
-          fr: 'Guesthouse',
-          es: 'Guesthouse',
-        );
-      default:
-        return typeKey;
+    if (typeKey == HotelStayType.aparthotel) {
+      return _t(
+        nl: 'Aparthotel',
+        en: 'Aparthotel',
+        fr: 'Aparthotel',
+        es: 'Aparthotel',
+      );
     }
+    if (typeKey == HotelStayType.guesthouse) {
+      return _t(
+        nl: 'Guesthouse',
+        en: 'Guesthouse',
+        fr: 'Guesthouse',
+        es: 'Guesthouse',
+      );
+    }
+    if (typeKey == HotelStayType.hotel) return 'Hotel';
+    if (typeKey == HotelStayType.bedAndBreakfast) {
+      return discoveryStayTypeLabel(
+        HotelStayType.bedAndBreakfast,
+        (nl, en, fr, es) => _t(nl: nl, en: en, fr: fr, es: es),
+      );
+    }
+    return typeKey;
   }
 
   String get _fromLabel {
@@ -1424,16 +1421,7 @@ class HotelStayDetailPage extends StatelessWidget {
   }
 
   String _displayPriceHint() {
-    final raw = (stay.priceHint ?? '').trim();
-    if (raw.isEmpty) return '';
-    final normalized = raw.toLowerCase();
-    if (normalized.startsWith('vanaf ') ||
-        normalized.startsWith('from ') ||
-        normalized.startsWith('desde ') ||
-        normalized.startsWith('à partir')) {
-      return raw;
-    }
-    return '$_fromLabel $raw';
+    return formatDiscoveryPriceHint(stay.priceHint, fromLabel: _fromLabel);
   }
 
   Widget _buildNearbyEventCard(BuildContext context, EventDetailData event) {

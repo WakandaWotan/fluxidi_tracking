@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
+import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
 import 'package:fluxidi_tracking/discovery/discovery_nearby.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
@@ -164,45 +165,36 @@ class EventDetailPage extends StatelessWidget {
   }
 
   String _stayTypeLabel(String typeKey) {
-    switch (typeKey) {
-      case HotelStayType.hotel:
-        return 'Hotel';
-      case HotelStayType.bedAndBreakfast:
-        return 'B&B';
-      case HotelStayType.aparthotel:
-        return _t(
-          nl: 'Aparthotel',
-          en: 'Aparthotel',
-          fr: 'Aparthotel',
-          es: 'Aparthotel',
-        );
-      case HotelStayType.guesthouse:
-        return _t(
-          nl: 'Guesthouse',
-          en: 'Guesthouse',
-          fr: 'Guesthouse',
-          es: 'Guesthouse',
-        );
-      default:
-        return typeKey;
+    if (typeKey == HotelStayType.aparthotel) {
+      return _t(
+        nl: 'Aparthotel',
+        en: 'Aparthotel',
+        fr: 'Aparthotel',
+        es: 'Aparthotel',
+      );
     }
+    if (typeKey == HotelStayType.guesthouse) {
+      return _t(
+        nl: 'Guesthouse',
+        en: 'Guesthouse',
+        fr: 'Guesthouse',
+        es: 'Guesthouse',
+      );
+    }
+    if (typeKey == HotelStayType.hotel) return 'Hotel';
+    if (typeKey == HotelStayType.bedAndBreakfast) {
+      return discoveryStayTypeLabel(
+        HotelStayType.bedAndBreakfast,
+        (nl, en, fr, es) => _t(nl: nl, en: en, fr: fr, es: es),
+      );
+    }
+    return typeKey;
   }
 
   String _stayPriceLabel(HotelStay stay) {
-    final raw = (stay.priceHint ?? '').trim();
-    if (raw.isEmpty) return '';
-    final normalized = raw.toLowerCase();
-    if (normalized.startsWith('vanaf ') ||
-        normalized.startsWith('from ') ||
-        normalized.startsWith('desde ') ||
-        normalized.startsWith('à partir')) {
-      return raw;
-    }
-    return _t(
-      nl: 'Vanaf $raw',
-      en: 'From $raw',
-      fr: 'À partir de $raw',
-      es: 'Desde $raw',
+    return formatDiscoveryPriceHint(
+      stay.priceHint,
+      fromLabel: _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde'),
     );
   }
 
