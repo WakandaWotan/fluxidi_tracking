@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/events/event_models.dart';
+import 'package:fluxidi_tracking/events/event_seed_data.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:path_provider/path_provider.dart';
@@ -517,15 +519,80 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
+  String _eventTaxiPreparedMessage(String eventTitle) {
+    return _t(
+      nl: 'Taxi handoff voorbereid voor event: $eventTitle',
+      en: 'Taxi handoff prepared for event: $eventTitle',
+      fr: 'Transfert taxi prêt pour l’événement : $eventTitle',
+      es: 'Transferencia de taxi preparada para evento: $eventTitle',
+    );
+  }
+
+  List<EventDetailData> _nearbyEventsForStay(HotelStay stay) {
+    final stayCity = _normalizeGeo(stay.city);
+    final stayRegion = _normalizeGeo(stay.region);
+
+    final sameCity = <EventDetailData>[
+      for (final event in kEventSeedData)
+        if (_normalizeGeo(event.city) == stayCity) event,
+    ];
+
+    final regionCities = _allStays
+        .where((item) => _normalizeGeo(item.region) == stayRegion)
+        .map((item) => _normalizeGeo(item.city))
+        .where((city) => city.isNotEmpty)
+        .toSet();
+    final sameRegion = <EventDetailData>[
+      for (final event in kEventSeedData)
+        if (regionCities.contains(_normalizeGeo(event.city))) event,
+    ];
+
+    final belgiumCities = _allStays
+        .where((item) => _normalizeGeo(item.country) == 'belgium')
+        .map((item) => _normalizeGeo(item.city))
+        .where((city) => city.isNotEmpty)
+        .toSet();
+    final belgiumFallback = <EventDetailData>[
+      for (final event in kEventSeedData)
+        if (belgiumCities.contains(_normalizeGeo(event.city))) event,
+    ];
+
+    final merged = <EventDetailData>[
+      ...sameCity,
+      ...sameRegion,
+      ...belgiumFallback,
+    ];
+    final deduped = <EventDetailData>[];
+    final seenIds = <String>{};
+    for (final event in merged) {
+      if (!seenIds.add(event.id)) continue;
+      deduped.add(event);
+      if (deduped.length >= 3) break;
+    }
+    return deduped;
+  }
+
+  void _onNearbyEventTaxiTap(EventDetailData event) {
+    debugPrint(
+      '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_eventTaxiPreparedMessage(event.title))),
+    );
+  }
+
   void _openStayDetail(HotelStay stay) {
+    final nearbyEvents = _nearbyEventsForStay(stay);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => HotelStayDetailPage(
           stay: stay,
+          nearbyEvents: nearbyEvents,
           isSaved: _isSaved(stay),
           saveLabel: _saveStayLabel,
           savedLabel: _savedStayLabel,
           onToggleSaved: () => _toggleSaved(stay),
+          onNearbyEventTaxiTap: _onNearbyEventTaxiTap,
           onTaxiTap: () => _onTaxiCtaTap(stay),
           onViewStayTap: () => _openStayLink(stay),
         ),
@@ -1234,20 +1301,24 @@ class _HotelsPageState extends State<HotelsPage> {
 class HotelStayDetailPage extends StatelessWidget {
   const HotelStayDetailPage({
     required this.stay,
+    required this.nearbyEvents,
     required this.isSaved,
     required this.saveLabel,
     required this.savedLabel,
     required this.onToggleSaved,
+    required this.onNearbyEventTaxiTap,
     required this.onTaxiTap,
     required this.onViewStayTap,
     super.key,
   });
 
   final HotelStay stay;
+  final List<EventDetailData> nearbyEvents;
   final bool isSaved;
   final String saveLabel;
   final String savedLabel;
   final VoidCallback onToggleSaved;
+  final void Function(EventDetailData event) onNearbyEventTaxiTap;
   final VoidCallback onTaxiTap;
   final VoidCallback onViewStayTap;
 
@@ -1337,6 +1408,32 @@ class HotelStayDetailPage extends StatelessWidget {
     return _t(nl: 'Bron', en: 'Source', fr: 'Source', es: 'Fuente');
   }
 
+  String get _nearbyEventsLabel {
+    return _t(
+      nl: 'Evenementen in de buurt',
+      en: 'Nearby events',
+      fr: 'Événements à proximité',
+      es: 'Eventos cercanos',
+    );
+  }
+
+  String get _eventTaxiLabel {
+    return _t(
+      nl: 'Taxi naar dit event',
+      en: 'Taxi to this event',
+      fr: 'Taxi vers cet événement',
+      es: 'Taxi a este evento',
+    );
+  }
+
+  String _distanceLabel(EventDetailData event) {
+    if (event.isDistanceLabelTrusted) {
+      final trusted = (event.distanceLabel ?? '').trim();
+      if (trusted.isNotEmpty) return trusted;
+    }
+    return '';
+  }
+
   List<String> _highlights() {
     final values = <String>[...stay.tags, ...stay.travelStyles];
     final seen = <String>{};
@@ -1363,6 +1460,92 @@ class HotelStayDetailPage extends StatelessWidget {
       return raw;
     }
     return '$_fromLabel $raw';
+  }
+
+  Widget _buildNearbyEventCard(EventDetailData event) {
+    final distance = _distanceLabel(event);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151515),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            event.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${event.category} • ${event.dateTimeLabel}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _gold.withOpacity(0.95),
+              fontSize: 11.4,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${event.locationName}, ${event.city}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _softText,
+              fontSize: 11.6,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (distance.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              distance,
+              style: TextStyle(
+                color: _softText.withOpacity(0.9),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => onNearbyEventTaxiTap(event),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFF121212),
+                foregroundColor: Colors.white.withOpacity(0.93),
+                side: BorderSide(color: _gold.withOpacity(0.32)),
+                minimumSize: const Size.fromHeight(40),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: Icon(
+                Icons.local_taxi_rounded,
+                size: 16,
+                color: _gold.withOpacity(0.92),
+              ),
+              label: Text(
+                _eventTaxiLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1636,6 +1819,37 @@ class HotelStayDetailPage extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (nearbyEvents.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                      decoration: BoxDecoration(
+                        color: _panelBlack,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _gold.withOpacity(0.22)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _nearbyEventsLabel,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          for (var i = 0; i < nearbyEvents.length; i++) ...[
+                            _buildNearbyEventCard(nearbyEvents[i]),
+                            if (i != nearbyEvents.length - 1)
+                              const SizedBox(height: 8),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
