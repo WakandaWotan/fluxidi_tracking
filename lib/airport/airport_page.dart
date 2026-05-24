@@ -502,6 +502,7 @@ class _AirportPageState extends State<AirportPage> {
   int _passengers = 1;
   int _bags = 0;
   bool _meetAndGreet = false;
+  bool _roundtripEnabled = false;
   bool _isResolvingPickupLocation = false;
   bool _isResolvingDestinationLocation = false;
   bool _isRequestingQuote = false;
@@ -517,8 +518,11 @@ class _AirportPageState extends State<AirportPage> {
   double? _pickupLongitude;
   double? _destinationLatitude;
   double? _destinationLongitude;
+  double? _returnLatitude;
+  double? _returnLongitude;
   String? _pickupPostcode;
   String? _destinationPostcode;
+  String? _returnPostcode;
   Map<String, dynamic>? _airportQuote;
   String? _airportQuoteError;
 
@@ -923,6 +927,10 @@ class _AirportPageState extends State<AirportPage> {
       TextEditingController();
   final TextEditingController _landingDateTimeController =
       TextEditingController();
+  final TextEditingController _returnDateTimeController =
+      TextEditingController();
+  final TextEditingController _returnAddressController =
+      TextEditingController();
   final TextEditingController _flightNumberController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _nameBoardController = TextEditingController();
@@ -959,6 +967,8 @@ class _AirportPageState extends State<AirportPage> {
     _destinationAddressController.dispose();
     _pickupDateTimeController.dispose();
     _landingDateTimeController.dispose();
+    _returnDateTimeController.dispose();
+    _returnAddressController.dispose();
     _flightNumberController.dispose();
     _noteController.dispose();
     _nameBoardController.dispose();
@@ -1008,6 +1018,12 @@ class _AirportPageState extends State<AirportPage> {
                   _buildHero(compact: compactHero),
                   const SizedBox(height: 10),
                   _buildDirectionActions(),
+                  const SizedBox(height: 10),
+                  _buildRoundtripToggleCard(),
+                  if (_roundtripEnabled) ...[
+                    const SizedBox(height: 10),
+                    _buildReturnLegSection(),
+                  ],
                   const SizedBox(height: 10),
                   _buildIntakePanel(),
                   const SizedBox(height: 10),
@@ -1312,6 +1328,140 @@ class _AirportPageState extends State<AirportPage> {
           ],
         );
       },
+    );
+  }
+
+  void _setRoundtripEnabled(bool enabled) {
+    _clearAirportQuote();
+    setState(() {
+      _roundtripEnabled = enabled;
+      if (!enabled) {
+        _returnDateTimeController.clear();
+        _returnAddressController.clear();
+        _returnLatitude = null;
+        _returnLongitude = null;
+        _returnPostcode = null;
+      }
+    });
+  }
+
+  Widget _buildRoundtripToggleCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.22)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.sync_alt_rounded,
+            color: _gold.withOpacity(0.96),
+            size: 17,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Heen-en-terug',
+                en: 'Roundtrip',
+                fr: 'Aller-retour',
+                es: 'Ida y vuelta',
+              ),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Switch.adaptive(
+            value: _roundtripEnabled,
+            activeColor: _gold,
+            onChanged: _setRoundtripEnabled,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReturnLegSection() {
+    return _sectionCard(
+      title: _t(
+        nl: 'Terugrit',
+        en: 'Return leg',
+        fr: 'Trajet retour',
+        es: 'Trayecto de vuelta',
+      ),
+      icon: Icons.keyboard_return_rounded,
+      subtitle: _t(
+        nl: 'Deze gegevens worden in de volgende fase gekoppeld aan prijs en boeking.',
+        en: 'These details will be connected to pricing and booking in the next phase.',
+        fr: 'Ces détails seront reliés au tarif et à la réservation lors de la prochaine phase.',
+        es: 'Estos datos se conectarán con el precio y la reserva en la siguiente fase.',
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTextField(
+            label: _t(
+              nl: 'Retouradres',
+              en: 'Return address',
+              fr: 'Adresse de retour',
+              es: 'Dirección de regreso',
+            ),
+            controller: _returnAddressController,
+            hint: _t(
+              nl: 'Straat, nummer, postcode, stad',
+              en: 'Street, number, postal code, city',
+              fr: 'Rue, numéro, code postal, ville',
+              es: 'Calle, número, código postal, ciudad',
+            ),
+            icon: Icons.pin_drop_outlined,
+            onChanged: (value) {
+              setState(() {
+                _returnLatitude = null;
+                _returnLongitude = null;
+                _returnPostcode = _extractLikelyPostcode(value);
+              });
+            },
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourdatum en tijd',
+              en: 'Return date and time',
+              fr: 'Date et heure du retour',
+              es: 'Fecha y hora de regreso',
+            ),
+            controller: _returnDateTimeController,
+            hint: _t(
+              nl: 'Bijv. 24/06/2026 21:15',
+              en: 'E.g. 24/06/2026 21:15',
+              fr: 'Ex. 24/06/2026 21:15',
+              es: 'Ej. 24/06/2026 21:15',
+            ),
+            icon: Icons.schedule_rounded,
+            readOnly: true,
+            onTap: () => _pickAirportDateTime(_returnDateTimeController),
+            suffixIcon: IconButton(
+              onPressed: () => _pickAirportDateTime(_returnDateTimeController),
+              tooltip: _t(
+                nl: 'Datum en tijd kiezen',
+                en: 'Choose date and time',
+                fr: "Choisir la date et l'heure",
+                es: 'Elegir fecha y hora',
+              ),
+              icon: Icon(
+                Icons.calendar_month_rounded,
+                color: _gold.withOpacity(0.92),
+                size: 18,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
