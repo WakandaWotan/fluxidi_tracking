@@ -562,7 +562,7 @@ class _HotelsPageState extends State<HotelsPage> {
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
               initialDestinationLabel: destination.destinationName,
-              initialServiceId: 'passenger',
+              initialServiceId: 'event',
             ),
           ),
         )
