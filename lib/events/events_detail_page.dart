@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
@@ -117,50 +119,79 @@ class EventDetailPage extends StatelessWidget {
     return distance.isNotEmpty ? distance : null;
   }
 
-  String _normalizedEventCountry() {
-    final fromCode = (event.countryCode ?? '').trim().toUpperCase();
-    if (fromCode == 'BE') return 'belgium';
-    if (fromCode == 'NL') return 'netherlands';
-    if (fromCode == 'FR') return 'france';
-    if (fromCode == 'DE') return 'germany';
-    if (fromCode == 'GB' || fromCode == 'UK') return 'united kingdom';
-    if (fromCode == 'ES') return 'spain';
-    final fromMarket = (event.marketCode ?? '').trim().toLowerCase();
-    if (fromMarket == 'be') return 'belgium';
-    if (fromMarket == 'nl') return 'netherlands';
-    if (fromMarket == 'fr') return 'france';
-    if (fromMarket == 'de') return 'germany';
-    if (fromMarket == 'uk' || fromMarket == 'gb') return 'united kingdom';
-    if (fromMarket == 'es') return 'spain';
-    final address = normalizeDiscoveryText(event.address);
-    if (address.contains('belgie') || address.contains('belgium')) {
-      return 'belgium';
-    }
-    return '';
+  bool _hasValidCoordinates(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return false;
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    return true;
+  }
+
+  double _degToRad(double value) => value * (math.pi / 180.0);
+
+  double _distanceKm({
+    required double fromLat,
+    required double fromLng,
+    required double toLat,
+    required double toLng,
+  }) {
+    const earthRadiusKm = 6371.0;
+    final dLat = _degToRad(toLat - fromLat);
+    final dLng = _degToRad(toLng - fromLng);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degToRad(fromLat)) *
+            math.cos(_degToRad(toLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
   }
 
   List<HotelStay> _nearbyStays() {
     final eventCity = normalizeDiscoveryText(event.city);
-    final eventCountry = _normalizedEventCountry();
+    final eventLat = event.lat;
+    final eventLng = event.lng;
+    final canDistanceRank = _hasValidCoordinates(eventLat, eventLng);
 
     final sameCity = <HotelStay>[
       for (final stay in kBelgiumHotelSeedData)
         if (normalizeDiscoveryText(stay.city) == eventCity) stay,
     ];
-    final sameCountry = eventCountry.isEmpty
-        ? const <HotelStay>[]
-        : <HotelStay>[
-            for (final stay in kBelgiumHotelSeedData)
-              if (normalizeDiscoveryText(stay.country) == eventCountry) stay,
-          ];
-    final belgiumFallback = eventCountry == 'belgium'
-        ? <HotelStay>[
-            for (final stay in kBelgiumHotelSeedData)
-              if (normalizeDiscoveryText(stay.country) == 'belgium') stay,
-          ]
-        : const <HotelStay>[];
 
-    final merged = <HotelStay>[...sameCity, ...sameCountry, ...belgiumFallback];
+    if (!canDistanceRank) {
+      return topUniqueById(items: sameCity, idOf: (stay) => stay.id, limit: 3);
+    }
+
+    final distanceRanked = <({HotelStay stay, double km})>[
+      for (final stay in kBelgiumHotelSeedData)
+        if (_hasValidCoordinates(
+          stay.latitude ?? stay.lat,
+          stay.longitude ?? stay.lng,
+        ))
+          (
+            stay: stay,
+            km: _distanceKm(
+              fromLat: eventLat,
+              fromLng: eventLng,
+              toLat: stay.latitude ?? stay.lat,
+              toLng: stay.longitude ?? stay.lng,
+            ),
+          ),
+    ]..sort((a, b) => a.km.compareTo(b.km));
+
+    List<HotelStay> withinBand(double minKmExclusive, double maxKmInclusive) {
+      return <HotelStay>[
+        for (final item in distanceRanked)
+          if (item.km > minKmExclusive && item.km <= maxKmInclusive) item.stay,
+      ];
+    }
+
+    final merged = <HotelStay>[
+      ...sameCity,
+      ...withinBand(-1, 15),
+      ...withinBand(15, 30),
+      ...withinBand(30, 50),
+    ];
     return topUniqueById(items: merged, idOf: (stay) => stay.id, limit: 3);
   }
 
