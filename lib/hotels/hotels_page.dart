@@ -459,6 +459,66 @@ class _HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String _formatRoutePrefillAddress({
+    required String rawAddress,
+    required String label,
+    required String city,
+    required String region,
+    required String country,
+  }) {
+    final raw = rawAddress.trim();
+    final safeLabel = label.trim();
+    final safeCity = city.trim();
+    final safeRegion = region.trim();
+    final safeCountry = country.trim();
+    final normalizedRaw = normalizeDiscoveryText(raw);
+    final normalizedCity = normalizeDiscoveryText(safeCity);
+    final normalizedRegion = normalizeDiscoveryText(safeRegion);
+    final normalizedCountry = normalizeDiscoveryText(safeCountry);
+
+    bool containsNormalized(String value) {
+      final normalized = normalizeDiscoveryText(value);
+      return normalized.isNotEmpty && normalizedRaw.contains(normalized);
+    }
+
+    if (raw.isEmpty) {
+      if (safeLabel.isNotEmpty) return safeLabel;
+      final locality = <String>[
+        if (safeCity.isNotEmpty) safeCity,
+        if (safeRegion.isNotEmpty &&
+            normalizeDiscoveryText(safeRegion) !=
+                normalizeDiscoveryText(safeCity))
+          safeRegion,
+        if (safeCountry.isNotEmpty) safeCountry,
+      ];
+      return locality.join(', ');
+    }
+
+    if ((normalizedCity.isNotEmpty && containsNormalized(safeCity)) ||
+        (normalizedCountry.isNotEmpty && containsNormalized(safeCountry))) {
+      return raw;
+    }
+
+    final segments = <String>[raw];
+    void addIfUseful(String segment) {
+      final trimmed = segment.trim();
+      if (trimmed.isEmpty) return;
+      final normalized = normalizeDiscoveryText(trimmed);
+      if (normalized.isEmpty) return;
+      if (segments.any(
+        (item) => normalizeDiscoveryText(item).contains(normalized),
+      )) {
+        return;
+      }
+      segments.add(trimmed);
+    }
+
+    addIfUseful(safeCity);
+    addIfUseful(safeRegion);
+    addIfUseful(safeCountry);
+    return segments.join(', ');
+  }
+
   void _onTaxiCtaTap(HotelStay stay) {
     final destination = stay.toDiscoveryDestination(
       tenantId: widget.tenantId,
@@ -484,7 +544,13 @@ class _HotelsPageState extends State<HotelsPage> {
       return;
     }
 
-    final destinationText = destination.prefillDestinationText;
+    final destinationText = _formatRoutePrefillAddress(
+      rawAddress: destination.prefillDestinationText,
+      label: destination.destinationName,
+      city: destination.city,
+      region: destination.region,
+      country: destination.country,
+    );
     final nav = Navigator.of(context);
     nav
         .push(
@@ -542,6 +608,20 @@ class _HotelsPageState extends State<HotelsPage> {
       tenantId: widget.tenantId,
       companyId: widget.companyId,
     );
+    final originAddress = _formatRoutePrefillAddress(
+      rawAddress: origin.prefillDestinationText,
+      label: origin.destinationName,
+      city: origin.city,
+      region: origin.region,
+      country: origin.country,
+    );
+    final formattedDestinationAddress = _formatRoutePrefillAddress(
+      rawAddress: destination.prefillDestinationText,
+      label: destination.destinationName,
+      city: destination.city,
+      region: destination.region,
+      country: destination.country,
+    );
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
     );
@@ -551,11 +631,11 @@ class _HotelsPageState extends State<HotelsPage> {
             builder: (_) => CalculatorPage(
               bookingBaseUrl: appConfig.bookingBaseUrl,
               mapboxToken: kMapboxToken,
-              initialFromAddress: origin.prefillDestinationText,
+              initialFromAddress: originAddress,
               initialFromLabel: origin.destinationName,
               initialFromLat: origin.latitude,
               initialFromLng: origin.longitude,
-              initialToAddress: destination.prefillDestinationText,
+              initialToAddress: formattedDestinationAddress,
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
               initialDestinationLabel: destination.destinationName,

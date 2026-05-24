@@ -230,6 +230,65 @@ class EventDetailPage extends StatelessWidget {
     );
   }
 
+  String _formatRoutePrefillAddress({
+    required String rawAddress,
+    required String label,
+    required String city,
+    required String region,
+    required String country,
+  }) {
+    final raw = rawAddress.trim();
+    final safeLabel = label.trim();
+    final safeCity = city.trim();
+    final safeRegion = region.trim();
+    final safeCountry = country.trim();
+    final normalizedRaw = normalizeDiscoveryText(raw);
+    final normalizedCity = normalizeDiscoveryText(safeCity);
+    final normalizedCountry = normalizeDiscoveryText(safeCountry);
+
+    bool containsNormalized(String value) {
+      final normalized = normalizeDiscoveryText(value);
+      return normalized.isNotEmpty && normalizedRaw.contains(normalized);
+    }
+
+    if (raw.isEmpty) {
+      if (safeLabel.isNotEmpty) return safeLabel;
+      final locality = <String>[
+        if (safeCity.isNotEmpty) safeCity,
+        if (safeRegion.isNotEmpty &&
+            normalizeDiscoveryText(safeRegion) !=
+                normalizeDiscoveryText(safeCity))
+          safeRegion,
+        if (safeCountry.isNotEmpty) safeCountry,
+      ];
+      return locality.join(', ');
+    }
+
+    if ((normalizedCity.isNotEmpty && containsNormalized(safeCity)) ||
+        (normalizedCountry.isNotEmpty && containsNormalized(safeCountry))) {
+      return raw;
+    }
+
+    final segments = <String>[raw];
+    void addIfUseful(String segment) {
+      final trimmed = segment.trim();
+      if (trimmed.isEmpty) return;
+      final normalized = normalizeDiscoveryText(trimmed);
+      if (normalized.isEmpty) return;
+      if (segments.any(
+        (item) => normalizeDiscoveryText(item).contains(normalized),
+      )) {
+        return;
+      }
+      segments.add(trimmed);
+    }
+
+    addIfUseful(safeCity);
+    addIfUseful(safeRegion);
+    addIfUseful(safeCountry);
+    return segments.join(', ');
+  }
+
   Future<void> _openStayUrl(BuildContext context, HotelStay stay) async {
     final url = (stay.effectiveBookingUrl ?? '').trim();
     final uri = Uri.tryParse(url);
@@ -279,6 +338,20 @@ class EventDetailPage extends StatelessWidget {
     final originLabel = event.destinationLabel.trim().isNotEmpty
         ? event.destinationLabel.trim()
         : (eventTitle.isNotEmpty ? eventTitle : originAddress);
+    final formattedOriginAddress = _formatRoutePrefillAddress(
+      rawAddress: originAddress,
+      label: originLabel,
+      city: event.city,
+      region: '',
+      country: (event.countryCode ?? '').trim(),
+    );
+    final formattedDestinationAddress = _formatRoutePrefillAddress(
+      rawAddress: destination.prefillDestinationText,
+      label: destination.destinationName,
+      city: destination.city,
+      region: destination.region,
+      country: destination.country,
+    );
     debugPrint(
       '[events.nearby_stay_handoff] stayId=${stay.id} '
       'name="${destination.destinationName}" city="${destination.city}"',
@@ -289,11 +362,11 @@ class EventDetailPage extends StatelessWidget {
             builder: (_) => CalculatorPage(
               bookingBaseUrl: appConfig.bookingBaseUrl,
               mapboxToken: kMapboxToken,
-              initialFromAddress: originAddress,
+              initialFromAddress: formattedOriginAddress,
               initialFromLabel: originLabel,
               initialFromLat: event.lat,
               initialFromLng: event.lng,
-              initialToAddress: destination.prefillDestinationText,
+              initialToAddress: formattedDestinationAddress,
               initialDestinationLabel: destination.destinationName,
               initialToLat: destination.latitude,
               initialToLng: destination.longitude,
