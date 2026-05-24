@@ -508,22 +508,64 @@ class _HotelsPageState extends State<HotelsPage> {
         });
   }
 
-  String _eventTaxiPreparedMessage(String eventTitle) {
-    return _t(
-      nl: 'Taxi handoff voorbereid voor event: $eventTitle',
-      en: 'Taxi handoff prepared for event: $eventTitle',
-      fr: 'Transfert taxi prêt pour l’événement : $eventTitle',
-      es: 'Transferencia de taxi preparada para evento: $eventTitle',
-    );
-  }
-
   void _onNearbyEventTaxiTap(EventDetailData event) {
+    final providerValue = (event.provider ?? '').trim();
+    final provider = providerValue.isNotEmpty ? providerValue : 'event';
+    final providerId = (event.sourceEventId ?? '').trim().isNotEmpty
+        ? event.sourceEventId!.trim()
+        : event.id;
+    final title = event.title.trim();
+    final locationName = event.locationName.trim();
+    final destinationName = title.isNotEmpty
+        ? title
+        : (locationName.isNotEmpty ? locationName : providerId);
+    final address = event.address.trim();
+    final destinationAddress = address.isNotEmpty
+        ? address
+        : (locationName.isNotEmpty ? locationName : destinationName);
+    final countryCode = (event.countryCode ?? '').trim();
+    final destination = DiscoveryDestination(
+      discoveryType: 'event',
+      destinationName: destinationName,
+      destinationAddress: destinationAddress,
+      latitude: event.lat,
+      longitude: event.lng,
+      city: event.city,
+      region: '',
+      country: countryCode,
+      provider: provider,
+      providerId: providerId,
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+    );
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_eventTaxiPreparedMessage(event.title))),
-    );
+    final destinationCallback = widget.onTaxiToDestination;
+    if (destinationCallback != null) {
+      destinationCallback(destination);
+      return;
+    }
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => CalculatorPage(
+              bookingBaseUrl: appConfig.bookingBaseUrl,
+              mapboxToken: kMapboxToken,
+              initialToAddress: destination.prefillDestinationText,
+              initialToLat: destination.latitude,
+              initialToLng: destination.longitude,
+              initialDestinationLabel: destination.destinationName,
+              initialServiceId: 'event',
+            ),
+          ),
+        )
+        .catchError((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(_taxiNavigationFallbackLabel)));
+        });
   }
 
   void _openStayDetail(HotelStay stay) {
@@ -1460,15 +1502,6 @@ class HotelStayDetailPage extends StatelessWidget {
     }
   }
 
-  String get _widerModeWarningLabel {
-    return _t(
-      nl: 'Verder weg, taxikost kan hoger zijn.',
-      en: 'Farther away, taxi cost may be higher.',
-      fr: 'Plus éloigné, le coût du taxi peut être plus élevé.',
-      es: 'Más lejos, el costo del taxi puede ser más alto.',
-    );
-  }
-
   String get _noNearbyEventsLabel {
     return _t(
       nl: 'Geen events binnen deze straal.',
@@ -2043,7 +2076,6 @@ class HotelStayDetailPage extends StatelessWidget {
                           const SizedBox(height: 10),
                           _HotelNearbyEventsSection(
                             modeLabelBuilder: _radiusModeLabel,
-                            warningText: _widerModeWarningLabel,
                             noEventsText: _noNearbyEventsLabel,
                             eventsForMode: _nearbyEventsForRadiusMode,
                             buildCard: (event) =>
@@ -2146,7 +2178,6 @@ class HotelStayDetailPage extends StatelessWidget {
 class _HotelNearbyEventsSection extends StatefulWidget {
   const _HotelNearbyEventsSection({
     required this.modeLabelBuilder,
-    required this.warningText,
     required this.noEventsText,
     required this.eventsForMode,
     required this.buildCard,
@@ -2155,7 +2186,6 @@ class _HotelNearbyEventsSection extends StatefulWidget {
   });
 
   final String Function(_HotelNearbyEventRadiusMode mode) modeLabelBuilder;
-  final String warningText;
   final String noEventsText;
   final List<EventDetailData> Function(_HotelNearbyEventRadiusMode mode)
   eventsForMode;
@@ -2215,17 +2245,6 @@ class _HotelNearbyEventsSectionState extends State<_HotelNearbyEventsSection> {
             );
           }).toList(),
         ),
-        if (_selectedMode == _HotelNearbyEventRadiusMode.wider) ...[
-          const SizedBox(height: 8),
-          Text(
-            widget.warningText,
-            style: TextStyle(
-              color: widget.softText.withOpacity(0.92),
-              fontSize: 11.3,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
         const SizedBox(height: 10),
         if (events.isEmpty)
           Text(
