@@ -1585,6 +1585,466 @@ const String kStopDirectTripPath = '/trip/stop';
 const String kTripsHistoryPath = '/trips/history';
 const String kTripsArchivePath = '/trips/archive';
 
+Map<String, String> _trackingOverlayHeaders() {
+  final headers = <String, String>{};
+  final token = kAdminToken.trim();
+  if (token.isNotEmpty) {
+    headers['x-admin-token'] = token;
+  }
+  return headers;
+}
+
+bool _isPaidTrackingPaymentToken(String? raw) {
+  final token = (raw ?? '').trim().toLowerCase().replaceAll('-', '_');
+  return token == 'paid' ||
+      token == 'settled' ||
+      token == 'confirmed' ||
+      token == 'completed' ||
+      token == 'succeeded' ||
+      token == 'success';
+}
+
+String _normalizeCustomerPaymentDisplayToken(String? raw) {
+  return (raw ?? '')
+      .trim()
+      .toLowerCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_');
+}
+
+bool _isPaidCustomerPaymentDisplayToken(String token) {
+  return token == 'paid' ||
+      token == 'confirmed' ||
+      token == 'success' ||
+      token == 'completed' ||
+      token == 'settled' ||
+      token == 'succeeded' ||
+      token == 'captured';
+}
+
+bool _isPartialCustomerPaymentDisplayToken(String token) {
+  return token == 'partially_paid' ||
+      token == 'partial_paid' ||
+      token == 'partial';
+}
+
+String _classifyCustomerPaymentDisplayToken({
+  required Set<String> aliases,
+  required String fallbackToken,
+  _TrackingPaymentOverlayMatcher? matcher,
+}) {
+  final normalizedFallback = _normalizeCustomerPaymentDisplayToken(
+    fallbackToken,
+  );
+  if (matcher != null) {
+    final aggregate = matcher.aggregateOperationalLegsForParentAliases(aliases);
+    if (aggregate.totalLegs >= 2) {
+      if (aggregate.paidLegs == aggregate.totalLegs) return 'paid';
+      if (aggregate.paidLegs > 0) return 'partially_paid';
+    } else if (matcher.hasAnyPaidForAliases(aliases)) {
+      return 'paid';
+    }
+  }
+  if (_isPaidCustomerPaymentDisplayToken(normalizedFallback)) return 'paid';
+  if (_isPartialCustomerPaymentDisplayToken(normalizedFallback)) {
+    return 'partially_paid';
+  }
+  return normalizedFallback;
+}
+
+String _trackingOverlayCompositeKey(String left, String right) {
+  final a = left.trim().toLowerCase();
+  final b = right.trim().toLowerCase();
+  if (a.isEmpty || b.isEmpty) return '';
+  return '$a::$b';
+}
+
+class _TrackingTripPaymentEntry {
+  const _TrackingTripPaymentEntry({
+    required this.tripId,
+    required this.bookingId,
+    required this.parentBookingId,
+    required this.legId,
+    required this.legType,
+    required this.rowKey,
+    required this.paymentStatus,
+    required this.isPaid,
+    required this.isOperationalLeg,
+    required this.aliases,
+  });
+
+  final String tripId;
+  final String bookingId;
+  final String parentBookingId;
+  final String legId;
+  final String legType;
+  final String rowKey;
+  final String paymentStatus;
+  final bool isPaid;
+  final bool isOperationalLeg;
+  final Set<String> aliases;
+
+  static String _text(dynamic value) {
+    final s = (value ?? '').toString().trim();
+    if (s.isEmpty || s.toLowerCase() == 'null') return '';
+    return s;
+  }
+
+  static Map<String, dynamic> _asMap(dynamic value) {
+    return value is Map
+        ? Map<String, dynamic>.from(value)
+        : <String, dynamic>{};
+  }
+
+  factory _TrackingTripPaymentEntry.fromJson(Map<String, dynamic> raw) {
+    final detail = _asMap(raw['booking_details']);
+    final booking = _asMap(raw['booking']);
+    final paymentStatus = _text(
+      raw['payment_status'] ??
+          raw['paymentStatus'] ??
+          detail['payment_status'] ??
+          detail['paymentStatus'] ??
+          booking['payment_status'] ??
+          booking['paymentStatus'],
+    );
+    final bookingId = _text(
+      raw['booking_id'] ??
+          raw['bookingId'] ??
+          detail['booking_id'] ??
+          detail['bookingId'] ??
+          booking['booking_id'] ??
+          booking['bookingId'],
+    );
+    final parentBookingId = _text(
+      raw['parent_booking_id'] ??
+          raw['parentBookingId'] ??
+          detail['parent_booking_id'] ??
+          detail['parentBookingId'],
+    );
+    final legId = _text(
+      raw['leg_id'] ?? raw['legId'] ?? detail['leg_id'] ?? detail['legId'],
+    );
+    final legType = _text(
+      raw['leg_type'] ??
+          raw['legType'] ??
+          detail['leg_type'] ??
+          detail['legType'],
+    ).toLowerCase();
+    final rowKey = _text(
+      raw['row_key'] ?? raw['rowKey'] ?? detail['row_key'] ?? detail['rowKey'],
+    );
+    final operationalToken = _text(
+      raw['is_operational_leg'] ??
+          raw['isOperationalLeg'] ??
+          detail['is_operational_leg'] ??
+          detail['isOperationalLeg'],
+    ).toLowerCase();
+    final isOperationalLeg =
+        operationalToken == 'true' ||
+        operationalToken == '1' ||
+        legId.isNotEmpty ||
+        rowKey.isNotEmpty;
+    final aliases = <String>{};
+    void addAlias(dynamic value) {
+      final token = _text(value).toLowerCase();
+      if (token.isEmpty) return;
+      aliases.add(token);
+    }
+
+    addAlias(raw['trip_id'] ?? raw['tripId']);
+    addAlias(raw['booking_id'] ?? raw['bookingId']);
+    addAlias(raw['public_booking_id'] ?? raw['publicBookingId']);
+    addAlias(raw['public_booking_reference'] ?? raw['publicBookingReference']);
+    addAlias(raw['booking_reference'] ?? raw['bookingReference']);
+    addAlias(raw['public_reference'] ?? raw['publicReference']);
+    addAlias(raw['planning_reference'] ?? raw['planningReference']);
+    addAlias(raw['payment_booking_id'] ?? raw['paymentBookingId']);
+    addAlias(raw['parent_booking_id'] ?? raw['parentBookingId']);
+    addAlias(raw['original_booking_id'] ?? raw['originalBookingId']);
+    addAlias(detail['booking_id'] ?? detail['bookingId']);
+    addAlias(detail['public_booking_id'] ?? detail['publicBookingId']);
+    addAlias(
+      detail['public_booking_reference'] ?? detail['publicBookingReference'],
+    );
+    addAlias(detail['booking_reference'] ?? detail['bookingReference']);
+    addAlias(detail['public_reference'] ?? detail['publicReference']);
+    addAlias(detail['planning_reference'] ?? detail['planningReference']);
+    addAlias(detail['payment_booking_id'] ?? detail['paymentBookingId']);
+    addAlias(detail['parent_booking_id'] ?? detail['parentBookingId']);
+    addAlias(detail['original_booking_id'] ?? detail['originalBookingId']);
+    addAlias(booking['booking_id'] ?? booking['bookingId']);
+    addAlias(booking['public_booking_id'] ?? booking['publicBookingId']);
+    addAlias(
+      booking['public_booking_reference'] ?? booking['publicBookingReference'],
+    );
+    addAlias(booking['booking_reference'] ?? booking['bookingReference']);
+    addAlias(booking['public_reference'] ?? booking['publicReference']);
+    addAlias(booking['planning_reference'] ?? booking['planningReference']);
+    addAlias(booking['payment_booking_id'] ?? booking['paymentBookingId']);
+    addAlias(booking['parent_booking_id'] ?? booking['parentBookingId']);
+    addAlias(booking['original_booking_id'] ?? booking['originalBookingId']);
+
+    return _TrackingTripPaymentEntry(
+      tripId: _text(raw['trip_id'] ?? raw['tripId']),
+      bookingId: bookingId,
+      parentBookingId: parentBookingId,
+      legId: legId,
+      legType: legType,
+      rowKey: rowKey,
+      paymentStatus: paymentStatus,
+      isPaid: _isPaidTrackingPaymentToken(paymentStatus),
+      isOperationalLeg: isOperationalLeg,
+      aliases: aliases,
+    );
+  }
+}
+
+class _TrackingPaymentOverlayMatcher {
+  _TrackingPaymentOverlayMatcher(List<_TrackingTripPaymentEntry> trips)
+    : _allTrips = trips {
+    for (final entry in trips) {
+      for (final alias in entry.aliases) {
+        final normalizedAlias = _normalizeAlias(alias);
+        if (normalizedAlias.isEmpty) continue;
+        _entriesByAlias
+            .putIfAbsent(normalizedAlias, () => <_TrackingTripPaymentEntry>[])
+            .add(entry);
+      }
+      if (!entry.isOperationalLeg) continue;
+      if (entry.legId.isNotEmpty) {
+        _byLegId
+            .putIfAbsent(entry.legId, () => <_TrackingTripPaymentEntry>[])
+            .add(entry);
+      }
+      if (entry.bookingId.isNotEmpty && entry.legType.isNotEmpty) {
+        final key = _trackingOverlayCompositeKey(
+          entry.bookingId,
+          entry.legType,
+        );
+        if (key.isNotEmpty) {
+          _byBookingLegType
+              .putIfAbsent(key, () => <_TrackingTripPaymentEntry>[])
+              .add(entry);
+        }
+      }
+      if (entry.parentBookingId.isNotEmpty && entry.legType.isNotEmpty) {
+        final key = _trackingOverlayCompositeKey(
+          entry.parentBookingId,
+          entry.legType,
+        );
+        if (key.isNotEmpty) {
+          _byParentLegType
+              .putIfAbsent(key, () => <_TrackingTripPaymentEntry>[])
+              .add(entry);
+        }
+      }
+      final parentKey = entry.parentBookingId.isNotEmpty
+          ? entry.parentBookingId
+          : entry.bookingId;
+      final parentAlias = _normalizeAlias(parentKey);
+      if (parentAlias.isNotEmpty) {
+        _operationalByParent
+            .putIfAbsent(parentAlias, () => <_TrackingTripPaymentEntry>[])
+            .add(entry);
+      }
+    }
+  }
+
+  final List<_TrackingTripPaymentEntry> _allTrips;
+  final Map<String, List<_TrackingTripPaymentEntry>> _byLegId =
+      <String, List<_TrackingTripPaymentEntry>>{};
+  final Map<String, List<_TrackingTripPaymentEntry>> _byBookingLegType =
+      <String, List<_TrackingTripPaymentEntry>>{};
+  final Map<String, List<_TrackingTripPaymentEntry>> _byParentLegType =
+      <String, List<_TrackingTripPaymentEntry>>{};
+  final Map<String, List<_TrackingTripPaymentEntry>> _operationalByParent =
+      <String, List<_TrackingTripPaymentEntry>>{};
+  final Map<String, List<_TrackingTripPaymentEntry>> _entriesByAlias =
+      <String, List<_TrackingTripPaymentEntry>>{};
+
+  int get totalTrips => _allTrips.length;
+
+  String _normalizeAlias(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  ({int totalLegs, int paidLegs}) _aggregateFromEntries(
+    Iterable<_TrackingTripPaymentEntry> entries,
+  ) {
+    final paidByLeg = <String, bool>{};
+    for (final entry in entries) {
+      final legKey = entry.legId.isNotEmpty
+          ? 'leg:${entry.legId}'
+          : (entry.rowKey.isNotEmpty
+                ? 'row:${entry.rowKey}'
+                : (entry.legType.isNotEmpty
+                      ? 'type:${entry.legType}'
+                      : (entry.tripId.isNotEmpty
+                            ? 'trip:${entry.tripId}'
+                            : '')));
+      if (legKey.isEmpty) continue;
+      paidByLeg[legKey] = (paidByLeg[legKey] ?? false) || entry.isPaid;
+    }
+    final total = paidByLeg.length;
+    final paid = paidByLeg.values.where((value) => value).length;
+    return (totalLegs: total, paidLegs: paid);
+  }
+
+  List<_TrackingTripPaymentEntry> matchOperationalLeg({
+    required String bookingId,
+    required String parentBookingId,
+    required String legId,
+    required String legType,
+  }) {
+    final out = <_TrackingTripPaymentEntry>[];
+    final seen = <String>{};
+    void add(Iterable<_TrackingTripPaymentEntry>? entries) {
+      if (entries == null) return;
+      for (final entry in entries) {
+        final id = entry.tripId.isNotEmpty
+            ? entry.tripId
+            : '${entry.bookingId}|${entry.parentBookingId}|${entry.legId}|${entry.legType}|${entry.rowKey}';
+        if (!seen.add(id)) continue;
+        out.add(entry);
+      }
+    }
+
+    if (legId.trim().isNotEmpty) {
+      add(_byLegId[legId.trim()]);
+    }
+    if (bookingId.trim().isNotEmpty && legType.trim().isNotEmpty) {
+      add(
+        _byBookingLegType[_trackingOverlayCompositeKey(
+          bookingId.trim(),
+          legType.trim(),
+        )],
+      );
+    }
+    if (parentBookingId.trim().isNotEmpty && legType.trim().isNotEmpty) {
+      add(
+        _byParentLegType[_trackingOverlayCompositeKey(
+          parentBookingId.trim(),
+          legType.trim(),
+        )],
+      );
+    }
+    return out;
+  }
+
+  ({int totalLegs, int paidLegs}) aggregateOperationalLegsForParent(
+    String parentBookingId,
+  ) {
+    final key = _normalizeAlias(parentBookingId);
+    if (key.isEmpty) return (totalLegs: 0, paidLegs: 0);
+    final entries =
+        _operationalByParent[key] ?? const <_TrackingTripPaymentEntry>[];
+    return _aggregateFromEntries(entries);
+  }
+
+  ({int totalLegs, int paidLegs}) aggregateOperationalLegsForParentAliases(
+    Set<String> aliases,
+  ) {
+    if (aliases.isEmpty) return (totalLegs: 0, paidLegs: 0);
+    final seenTripKeys = <String>{};
+    final merged = <_TrackingTripPaymentEntry>[];
+    for (final alias in aliases) {
+      final key = _normalizeAlias(alias);
+      if (key.isEmpty) continue;
+      final entries = _operationalByParent[key];
+      if (entries == null || entries.isEmpty) continue;
+      for (final entry in entries) {
+        final identity = entry.tripId.isNotEmpty
+            ? entry.tripId
+            : '${entry.bookingId}|${entry.parentBookingId}|${entry.legId}|${entry.legType}|${entry.rowKey}';
+        if (!seenTripKeys.add(identity)) continue;
+        merged.add(entry);
+      }
+    }
+    return _aggregateFromEntries(merged);
+  }
+
+  bool hasAnyPaidForAliases(Set<String> aliases) {
+    if (aliases.isEmpty) return false;
+    final seenTripKeys = <String>{};
+    for (final alias in aliases) {
+      final key = _normalizeAlias(alias);
+      if (key.isEmpty) continue;
+      final entries = _entriesByAlias[key];
+      if (entries == null || entries.isEmpty) continue;
+      for (final entry in entries) {
+        final identity = entry.tripId.isNotEmpty
+            ? entry.tripId
+            : '${entry.bookingId}|${entry.parentBookingId}|${entry.legId}|${entry.legType}|${entry.rowKey}|${entry.paymentStatus}';
+        if (!seenTripKeys.add(identity)) continue;
+        if (entry.isPaid) return true;
+      }
+    }
+    return false;
+  }
+}
+
+Future<List<_TrackingTripPaymentEntry>> _fetchTrackingOverlayTrips({
+  required Map<String, String> scopeQuery,
+  required String diagTag,
+  int limit = 200,
+}) async {
+  final scoped = <String, String>{...scopeQuery};
+  final tenantId = (scoped['tenant_id'] ?? scoped['tenantId'] ?? '')
+      .toString()
+      .trim();
+  final companyId = (scoped['company_id'] ?? scoped['companyId'] ?? '')
+      .toString()
+      .trim();
+  if (tenantId.isEmpty || companyId.isEmpty) {
+    debugPrint(
+      '[$diagTag][PAYMENT_OVERLAY][WARN] status=skip reason=missing_scope',
+    );
+    return const <_TrackingTripPaymentEntry>[];
+  }
+  scoped['tenant_id'] = tenantId;
+  scoped['company_id'] = companyId;
+  scoped['tenantId'] = tenantId;
+  scoped['companyId'] = companyId;
+  scoped['limit'] = '${limit.clamp(1, 500)}';
+
+  final uri = Uri.parse(
+    '$kWorkerBaseUrl$kTripsHistoryPath',
+  ).replace(queryParameters: scoped);
+  try {
+    final res = await http
+        .get(uri, headers: _trackingOverlayHeaders())
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) {
+      debugPrint(
+        '[$diagTag][PAYMENT_OVERLAY][WARN] status=${res.statusCode} reason=http_error',
+      );
+      return const <_TrackingTripPaymentEntry>[];
+    }
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
+      debugPrint(
+        '[$diagTag][PAYMENT_OVERLAY][WARN] status=invalid_payload reason=not_ok',
+      );
+      return const <_TrackingTripPaymentEntry>[];
+    }
+    final rawTrips = decoded['trips'] is List
+        ? (decoded['trips'] as List)
+        : const <dynamic>[];
+    return rawTrips
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              _TrackingTripPaymentEntry.fromJson(entry.cast<String, dynamic>()),
+        )
+        .toList(growable: false);
+  } catch (err) {
+    debugPrint(
+      '[$diagTag][PAYMENT_OVERLAY][WARN] status=exception reason=$err',
+    );
+    return const <_TrackingTripPaymentEntry>[];
+  }
+}
+
 /// Optional: Worker route endpoint (recommended, avoids exposing Mapbox token)
 /// Implement later in Worker: POST { from, to } -> { coords:[[lon,lat],...], distance_m, duration_s }
 const String kWorkerRoutePath = '/track/route';
@@ -8796,16 +9256,49 @@ class _CompanyBookingsOverviewPageState
             : 'bookings_not_ok';
         throw _CompanyBookingsLoadException(apiError);
       }
+      final scopeQuery = _activeBookingScopeQuery();
+      final overlayTrips = await _fetchTrackingOverlayTrips(
+        scopeQuery: scopeQuery,
+        diagTag: 'COMPANY_BOOKINGS',
+        limit: 200,
+      );
+      final overlayMatcher = _TrackingPaymentOverlayMatcher(overlayTrips);
       final rawItems = (decoded['items'] is List)
           ? (decoded['items'] as List)
           : const <dynamic>[];
-      final parsed = rawItems
+      var overlayMatched = 0;
+      var overlayPaid = 0;
+      final mappedItems = rawItems
           .whereType<Map>()
-          .map(
-            (entry) => _CompanyBookingOverviewItem.fromMap(
-              entry.cast<String, dynamic>(),
-            ),
-          )
+          .map((entry) => entry.cast<String, dynamic>())
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList(growable: false);
+      for (final entry in mappedItems) {
+        final probe = _CompanyBookingOverviewItem.fromMap(entry);
+        if (!probe.isOperationalLeg) continue;
+        final matches = overlayMatcher.matchOperationalLeg(
+          bookingId: probe.bookingId,
+          parentBookingId: probe.parentBookingId,
+          legId: probe.legId,
+          legType: probe.legType,
+        );
+        if (matches.isEmpty) continue;
+        overlayMatched += 1;
+        final anyPaid = matches.any((trip) => trip.isPaid);
+        if (anyPaid) {
+          overlayPaid += 1;
+          entry['payment_status'] = 'paid';
+          entry['paymentStatus'] = 'paid';
+        } else {
+          entry['payment_status'] = 'unpaid';
+          entry['paymentStatus'] = 'unpaid';
+        }
+      }
+      debugPrint(
+        '[COMPANY_BOOKINGS][PAYMENT_OVERLAY] totalTrips=${overlayMatcher.totalTrips} matched=$overlayMatched paid=$overlayPaid',
+      );
+      final parsed = mappedItems
+          .map((entry) => _CompanyBookingOverviewItem.fromMap(entry))
           .where((entry) => entry.bookingId.trim().isNotEmpty)
           .toList(growable: false);
       if (!mounted) return;
@@ -16162,6 +16655,8 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'booking_id',
     'bookingId',
     'id',
+    'public_booking_id',
+    'publicBookingId',
     'public_booking_reference',
     'publicBookingReference',
     'booking_reference',
@@ -16172,9 +16667,17 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'planningReference',
     'receipt_reference',
     'receiptReference',
+    'payment_booking_id',
+    'paymentBookingId',
+    'parent_booking_id',
+    'parentBookingId',
+    'original_booking_id',
+    'originalBookingId',
     'booking.booking_id',
     'booking.bookingId',
     'booking.id',
+    'booking.public_booking_id',
+    'booking.publicBookingId',
     'booking.public_booking_reference',
     'booking.publicBookingReference',
     'booking.booking_reference',
@@ -16185,9 +16688,41 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'booking.planningReference',
     'booking.receipt_reference',
     'booking.receiptReference',
+    'booking.payment_booking_id',
+    'booking.paymentBookingId',
+    'booking.parent_booking_id',
+    'booking.parentBookingId',
+    'booking.original_booking_id',
+    'booking.originalBookingId',
+    'booking_details.booking_id',
+    'booking_details.bookingId',
+    'booking_details.public_booking_id',
+    'booking_details.publicBookingId',
+    'booking_details.public_booking_reference',
+    'booking_details.publicBookingReference',
+    'booking_details.booking_reference',
+    'booking_details.bookingReference',
+    'booking_details.public_reference',
+    'booking_details.publicReference',
+    'booking_details.planning_reference',
+    'booking_details.planningReference',
+    'booking_details.receipt_reference',
+    'booking_details.receiptReference',
+    'booking_details.payment_booking_id',
+    'booking_details.paymentBookingId',
+    'booking_details.parent_booking_id',
+    'booking_details.parentBookingId',
+    'booking_details.original_booking_id',
+    'booking_details.originalBookingId',
     'record.booking_id',
     'record.bookingId',
     'record.id',
+    'record.public_booking_id',
+    'record.publicBookingId',
+    'record.parent_booking_id',
+    'record.parentBookingId',
+    'record.original_booking_id',
+    'record.originalBookingId',
     'record.booking.booking_id',
     'record.booking.bookingId',
     'record.booking.id',
@@ -16201,9 +16736,35 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'record.references.planningReference',
     'record.references.receipt_reference',
     'record.references.receiptReference',
+    'record.booking_details.booking_id',
+    'record.booking_details.bookingId',
+    'record.booking_details.public_booking_id',
+    'record.booking_details.publicBookingId',
+    'record.booking_details.public_booking_reference',
+    'record.booking_details.publicBookingReference',
+    'record.booking_details.booking_reference',
+    'record.booking_details.bookingReference',
+    'record.booking_details.public_reference',
+    'record.booking_details.publicReference',
+    'record.booking_details.planning_reference',
+    'record.booking_details.planningReference',
+    'record.booking_details.receipt_reference',
+    'record.booking_details.receiptReference',
+    'record.booking_details.payment_booking_id',
+    'record.booking_details.paymentBookingId',
+    'record.booking_details.parent_booking_id',
+    'record.booking_details.parentBookingId',
+    'record.booking_details.original_booking_id',
+    'record.booking_details.originalBookingId',
     'payload.booking_id',
     'payload.bookingId',
     'payload.id',
+    'payload.public_booking_id',
+    'payload.publicBookingId',
+    'payload.parent_booking_id',
+    'payload.parentBookingId',
+    'payload.original_booking_id',
+    'payload.originalBookingId',
     'payload.booking.booking_id',
     'payload.booking.bookingId',
     'payload.booking.id',
@@ -16217,6 +16778,26 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'payload.references.planningReference',
     'payload.references.receipt_reference',
     'payload.references.receiptReference',
+    'payload.booking_details.booking_id',
+    'payload.booking_details.bookingId',
+    'payload.booking_details.public_booking_id',
+    'payload.booking_details.publicBookingId',
+    'payload.booking_details.public_booking_reference',
+    'payload.booking_details.publicBookingReference',
+    'payload.booking_details.booking_reference',
+    'payload.booking_details.bookingReference',
+    'payload.booking_details.public_reference',
+    'payload.booking_details.publicReference',
+    'payload.booking_details.planning_reference',
+    'payload.booking_details.planningReference',
+    'payload.booking_details.receipt_reference',
+    'payload.booking_details.receiptReference',
+    'payload.booking_details.payment_booking_id',
+    'payload.booking_details.paymentBookingId',
+    'payload.booking_details.parent_booking_id',
+    'payload.booking_details.parentBookingId',
+    'payload.booking_details.original_booking_id',
+    'payload.booking_details.originalBookingId',
     'references.public_booking_reference',
     'references.publicBookingReference',
     'references.booking_reference',
@@ -16227,6 +16808,12 @@ Set<String> _customerBookingAliasesFromSource(Map<String, dynamic> source) {
     'references.planningReference',
     'references.receipt_reference',
     'references.receiptReference',
+    'references.payment_booking_id',
+    'references.paymentBookingId',
+    'references.parent_booking_id',
+    'references.parentBookingId',
+    'references.original_booking_id',
+    'references.originalBookingId',
   ];
   final aliases = <String>{};
   void addAlias(dynamic value) {
@@ -16249,6 +16836,8 @@ Set<String> _customerBookingDeleteAliases({
   String? planningReference,
   String? receiptReference,
   String? paymentBookingId,
+  String? parentBookingId,
+  String? originalBookingId,
   Map<String, dynamic>? source,
 }) {
   final aliases = <String>{};
@@ -16265,6 +16854,8 @@ Set<String> _customerBookingDeleteAliases({
   addAlias(planningReference);
   addAlias(receiptReference);
   addAlias(paymentBookingId);
+  addAlias(parentBookingId);
+  addAlias(originalBookingId);
   if (source != null && source.isNotEmpty) {
     aliases.addAll(_customerBookingAliasesFromSource(source));
   }
@@ -16280,6 +16871,7 @@ Set<String> _customerBookingAliasesFromStored(StoredCustomerBooking booking) {
     planningReference: booking.planningReference,
     receiptReference: booking.receiptReference,
     paymentBookingId: booking.paymentBookingId,
+    source: booking.quote,
   );
 }
 
@@ -20125,6 +20717,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
       _markBookingsUiDirty();
       _toast('✅ $status: ${b.shortId}');
+      final normalizedStatus = status.trim().toUpperCase();
+      if (normalizedStatus == 'COMPLETED') {
+        await _recordOperationalLegPlannedStopBestEffort(b);
+      }
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'LEG_STATUS_AFTER_WRITE',
@@ -20144,6 +20740,219 @@ class _DriverHomePageState extends State<DriverHomePage>
         setState(() => _bookingActionInFlight.remove(actionKey));
         _markBookingsUiDirty();
       }
+    }
+  }
+
+  String? _sanitizeOperationalTripIdentityToken(String? raw) {
+    final value = raw?.trim().toLowerCase();
+    if (value == null || value.isEmpty) return null;
+    final sanitized = value
+        .replaceAll(RegExp(r'[^a-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (sanitized.isEmpty) return null;
+    return sanitized.length > 96 ? sanitized.substring(0, 96) : sanitized;
+  }
+
+  String _operationalLegTypeToken(BookingItem b) {
+    final explicit = _bookingScopeFirstText(_bookingScopeViewFor(b), const [
+      ['leg_type'],
+      ['legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+    ]);
+    final normalized = (explicit ?? '').trim().toLowerCase();
+    if (normalized == 'return') return 'return';
+    return 'outbound';
+  }
+
+  num? _operationalLegDetailNum(
+    Map<String, dynamic> details,
+    List<List<String>> paths,
+  ) {
+    for (final path in paths) {
+      dynamic cursor = details;
+      for (final key in path) {
+        if (cursor is Map && cursor.containsKey(key)) {
+          cursor = cursor[key];
+        } else {
+          cursor = null;
+          break;
+        }
+      }
+      if (cursor is num) return cursor;
+      if (cursor is String) {
+        final parsed = num.tryParse(cursor.replaceAll(',', '.').trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _recordOperationalLegPlannedStopBestEffort(
+    BookingItem booking,
+  ) async {
+    if (!mounted) return;
+    if (!booking.isOperationalLeg) return;
+    final bookingId = booking.bookingId.trim();
+    final legId = booking.legId.trim();
+    if (bookingId.isEmpty || legId.isEmpty) return;
+
+    try {
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      final bookingScope = _bookingScopeViewFor(booking);
+      final legType = _operationalLegTypeToken(booking);
+      final parentBookingId =
+          (_bookingScopeFirstText(bookingScope, const [
+                    ['parent_booking_id'],
+                    ['parentBookingId'],
+                    ['booking', 'parent_booking_id'],
+                    ['booking', 'parentBookingId'],
+                  ]) ??
+                  bookingId)
+              .trim();
+      final rowKey = booking.rowKey.trim();
+      final tripSuffix =
+          _sanitizeOperationalTripIdentityToken(legId) ??
+          _sanitizeOperationalTripIdentityToken(rowKey);
+      final deterministicTripId = tripSuffix == null || tripSuffix.isEmpty
+          ? 'planned_$bookingId'
+          : 'planned_${bookingId}_$tripSuffix';
+      final actorVehicleId = _bookingScopeFirstText(bookingScope, const [
+        ['assigned_vehicle_id'],
+        ['assignedVehicleId'],
+        ['vehicle_id'],
+        ['vehicleId'],
+        ['booking', 'assigned_vehicle_id'],
+        ['booking', 'assignedVehicleId'],
+        ['booking', 'vehicle_id'],
+        ['booking', 'vehicleId'],
+      ]);
+      final segmentAmount = _operationalLegDetailNum(booking.details, const [
+        ['leg_price_incl_vat'],
+        ['legPriceInclVat'],
+        ['segment_price_eur'],
+        ['booking', 'leg_price_incl_vat'],
+        ['booking', 'legPriceInclVat'],
+      ]);
+      final parentAmount = _operationalLegDetailNum(booking.details, const [
+        ['parent_total_price'],
+        ['parentTotalPrice'],
+        ['parent_price_incl_vat'],
+        ['parentPriceInclVat'],
+        ['booking_total_eur'],
+        ['booking', 'price_incl_vat'],
+      ]);
+      final pickupLat = _operationalLegDetailNum(booking.details, const [
+        ['pickup_lat'],
+        ['pickupLat'],
+        ['from_lat'],
+        ['fromLat'],
+        ['origin', 'lat'],
+        ['pickup', 'lat'],
+      ]);
+      final pickupLon = _operationalLegDetailNum(booking.details, const [
+        ['pickup_lon'],
+        ['pickupLon'],
+        ['pickup_lng'],
+        ['pickupLng'],
+        ['from_lon'],
+        ['fromLon'],
+        ['from_lng'],
+        ['fromLng'],
+        ['origin', 'lon'],
+        ['origin', 'lng'],
+        ['pickup', 'lon'],
+        ['pickup', 'lng'],
+      ]);
+      final dropoffLat = _operationalLegDetailNum(booking.details, const [
+        ['dropoff_lat'],
+        ['dropoffLat'],
+        ['to_lat'],
+        ['toLat'],
+        ['destination', 'lat'],
+        ['dropoff', 'lat'],
+      ]);
+      final dropoffLon = _operationalLegDetailNum(booking.details, const [
+        ['dropoff_lon'],
+        ['dropoffLon'],
+        ['dropoff_lng'],
+        ['dropoffLng'],
+        ['to_lon'],
+        ['toLon'],
+        ['to_lng'],
+        ['toLng'],
+        ['destination', 'lon'],
+        ['destination', 'lng'],
+        ['dropoff', 'lon'],
+        ['dropoff', 'lng'],
+      ]);
+      final payload = <String, dynamic>{
+        'trip_id': deterministicTripId,
+        'booking_id': bookingId,
+        'parent_booking_id': parentBookingId,
+        'leg_id': legId,
+        'leg_type': legType,
+        'row_key': rowKey,
+        ..._activeBookingScopeQuery(),
+        'driver_id': kDriverId,
+        'vehicle_id': _directRideVehicleId(),
+        'origin': <String, dynamic>{
+          'label': (booking.from ?? _receiptText('currentLocation')).toString(),
+          if (pickupLat != null) 'lat': pickupLat.toDouble(),
+          if (pickupLon != null) 'lon': pickupLon.toDouble(),
+        },
+        'destination': <String, dynamic>{
+          'label': (booking.to ?? booking.from ?? booking.shortId).toString(),
+          if (dropoffLat != null) 'lat': dropoffLat.toDouble(),
+          if (dropoffLon != null) 'lon': dropoffLon.toDouble(),
+        },
+        'booking_details': <String, dynamic>{
+          ..._plannedBookingDetailsPayload(booking),
+          'leg_id': legId,
+          'legId': legId,
+          'leg_type': legType,
+          'legType': legType,
+          'row_key': rowKey,
+          'rowKey': rowKey,
+          'parent_booking_id': parentBookingId,
+          'parentBookingId': parentBookingId,
+          'is_operational_leg': true,
+          'isOperationalLeg': true,
+          if (segmentAmount != null) 'segment_price_eur': segmentAmount,
+          if (segmentAmount != null) 'leg_price_incl_vat': segmentAmount,
+          if (segmentAmount != null) 'legPriceInclVat': segmentAmount,
+          if (parentAmount != null) 'booking_total_eur': parentAmount,
+        },
+        'status': 'stopped',
+        'started_at': nowIso,
+        'stopped_at': nowIso,
+        'km_total': 0,
+        'wait_seconds_total': 0,
+        if (segmentAmount != null) 'total_eur': segmentAmount.toDouble(),
+        'currency': booking.currency ?? kDefaultCurrency,
+        ..._driverMutationActorFields(actorVehicleId: actorVehicleId),
+      };
+      debugPrint(
+        '[RIDES][LEG_STATUS][PLANNED_STOP][REQ] trip=$deterministicTripId booking=$bookingId leg=$legId type=$legType',
+      );
+      final res = await http
+          .post(
+            _withActiveBookingScope(kWorkerBaseUrl, kRecordPlannedTripStopPath),
+            headers: _headers(admin: true),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      debugPrint(
+        '[RIDES][LEG_STATUS][PLANNED_STOP][RES] code=${res.statusCode} trip=$deterministicTripId booking=$bookingId leg=$legId',
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+    } catch (err) {
+      debugPrint(
+        '[RIDES][LEG_STATUS][PLANNED_STOP][WARN] booking=${booking.bookingId} leg=${booking.legId} err=$err',
+      );
     }
   }
 
@@ -21236,16 +22045,82 @@ class _DriverHomePageState extends State<DriverHomePage>
         text(inputs['to']) ??
         text(bookingMap['to']) ??
         text(tracking['dropoff']);
-    final service =
-        text(bookingMap['service']) ??
-        text(inputs['service']) ??
-        text(
-          pick([
-            ['service'],
-          ]),
-        );
-    final tier =
-        text(booking.tier) ?? text(bookingMap['tier']) ?? text(inputs['tier']);
+    String? normalizeServiceToken(String? raw) {
+      final token = raw?.trim();
+      if (token == null || token.isEmpty) return null;
+      final normalized = token
+          .toLowerCase()
+          .replaceAll('-', '_')
+          .replaceAll(' ', '_');
+      if (normalized == 'airport' ||
+          normalized == 'airport_transfer' ||
+          normalized == 'luchthaven') {
+        return 'airport';
+      }
+      if (normalized == 'business' || normalized == 'zakelijk') {
+        return 'business';
+      }
+      if (normalized == 'passenger' ||
+          normalized == 'passenger_transport' ||
+          normalized == 'personenvervoer') {
+        return 'passenger';
+      }
+      return normalized;
+    }
+
+    String? normalizeTierToken(String? raw) {
+      final token = raw?.trim();
+      if (token == null || token.isEmpty) return null;
+      final normalized = token
+          .toLowerCase()
+          .replaceAll('-', '_')
+          .replaceAll(' ', '_');
+      if (normalized == 'comfort' ||
+          normalized == 'private' ||
+          normalized == 'premium') {
+        return normalized;
+      }
+      return normalized;
+    }
+
+    final service = normalizeServiceToken(
+      text(
+        bookingMap['service_type'] ??
+            bookingMap['serviceType'] ??
+            bookingMap['service'] ??
+            detailMap['service_type'] ??
+            detailMap['serviceType'] ??
+            detailMap['service'] ??
+            payload['service_type'] ??
+            payload['serviceType'] ??
+            payload['service'] ??
+            inputs['service_type'] ??
+            inputs['serviceType'] ??
+            inputs['service'] ??
+            pick([
+              ['service_type'],
+              ['serviceType'],
+              ['service'],
+            ]),
+      ),
+    );
+    final tier = normalizeTierToken(
+      text(
+        booking.tier ??
+            bookingMap['tier'] ??
+            bookingMap['vehicle_tier'] ??
+            bookingMap['vehicleTier'] ??
+            detailMap['tier'] ??
+            detailMap['vehicle_tier'] ??
+            detailMap['vehicleTier'] ??
+            payload['tier'] ??
+            payload['vehicle_tier'] ??
+            payload['vehicleTier'] ??
+            inputs['tier'] ??
+            inputs['vehicle_tier'] ??
+            inputs['vehicleTier'],
+      ),
+    );
     final scheduledPickup =
         text(booking.pickupIso) ??
         text(bookingMap['pickupStartIso']) ??
@@ -21434,8 +22309,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (customerCountry != null) 'customer_country': customerCountry,
       if (phoneCountryCode != null) 'phone_country_code': phoneCountryCode,
       if (dialCode != null) 'dial_code': dialCode,
-      if (service != null) 'service_type': service,
-      if (tier != null) 'tier': tier,
+      if (service != null) ...{
+        'service_type': service,
+        'serviceType': service,
+        'service': service,
+      },
+      if (tier != null) ...{
+        'tier': tier,
+        'vehicle_tier': tier,
+        'vehicleTier': tier,
+      },
       if (number(booking.pax ?? bookingMap['pax'] ?? inputs['pax']) != null)
         'passengers': number(booking.pax ?? bookingMap['pax'] ?? inputs['pax']),
       if (number(booking.bags ?? bookingMap['bags'] ?? inputs['bags']) != null)
@@ -32185,8 +33068,63 @@ class _ReceiptPdfActionRunner {
     return double.tryParse(text.replaceAll(',', '.'));
   }
 
+  static bool _isPositiveAmount(double? value) =>
+      value != null && value.isFinite && value > 0;
+
+  static bool _isPlannedOperationalLegItem(_TripHistoryItem item) {
+    if (item.kind.toLowerCase().trim() != 'planned') return false;
+    final tripId = item.tripId.trim().toLowerCase();
+    if (!tripId.startsWith('planned_')) return false;
+    final legId = _firstPathText(item, const [
+      ['leg_id'],
+      ['legId'],
+      ['booking_details', 'leg_id'],
+      ['booking_details', 'legId'],
+      ['booking', 'leg_id'],
+      ['booking', 'legId'],
+    ]);
+    final legType = _firstPathText(item, const [
+      ['leg_type'],
+      ['legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+    ]);
+    final rowKey = _firstPathText(item, const [
+      ['row_key'],
+      ['rowKey'],
+      ['booking_details', 'row_key'],
+      ['booking_details', 'rowKey'],
+      ['booking', 'row_key'],
+      ['booking', 'rowKey'],
+    ]);
+    return (legId?.trim().isNotEmpty ?? false) ||
+        (legType?.trim().isNotEmpty ?? false) ||
+        (rowKey?.trim().isNotEmpty ?? false);
+  }
+
+  static double? _effectiveOperationalLegAmount(_TripHistoryItem item) {
+    if (!_isPlannedOperationalLegItem(item)) return null;
+    final candidates = <double?>[
+      item.totalEur,
+      _detailDouble(item, 'segment_price_eur'),
+      _firstPathDouble(item, 'segment_price_eur'),
+      _detailDouble(item, 'leg_price_incl_vat'),
+      _detailDouble(item, 'legPriceInclVat'),
+      _firstPathDouble(item, 'leg_price_incl_vat'),
+      _firstPathDouble(item, 'legPriceInclVat'),
+    ];
+    for (final candidate in candidates) {
+      if (_isPositiveAmount(candidate)) return candidate;
+    }
+    return null;
+  }
+
   static double? _receiptTotalAmount(_TripHistoryItem item) {
     if (item.kind.toLowerCase().trim() == 'planned') {
+      final legAmount = _effectiveOperationalLegAmount(item);
+      if (_isPositiveAmount(legAmount)) return legAmount;
       return _detailDouble(item, 'booking_total_eur') ?? item.totalEur;
     }
     return item.totalEur;
@@ -33321,8 +34259,27 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return double.tryParse((value ?? '').toString().replaceAll(',', '.'));
   }
 
+  bool _isPositiveAmount(double? value) =>
+      value != null && value.isFinite && value > 0;
+
+  double? _effectiveOperationalLegAmount() {
+    if (!_isPlannedOperationalLegPaymentItem()) return null;
+    final candidates = <double?>[
+      item.totalEur,
+      _detailDouble('segment_price_eur'),
+      _detailDouble('leg_price_incl_vat'),
+      _detailDouble('legPriceInclVat'),
+    ];
+    for (final candidate in candidates) {
+      if (_isPositiveAmount(candidate)) return candidate;
+    }
+    return null;
+  }
+
   double? _receiptTotalAmount() {
     if (_isPlannedReceipt) {
+      final legAmount = _effectiveOperationalLegAmount();
+      if (_isPositiveAmount(legAmount)) return legAmount;
       return _detailDouble('booking_total_eur') ?? item.totalEur;
     }
     return item.totalEur;
@@ -33973,10 +34930,29 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   List<Widget> _plannedPriceRows() {
     final package = _detailDouble('booking_total_eur');
+    final legAmount = _effectiveOperationalLegAmount();
     final segment = _detailDouble('segment_price_eur');
     final outbound = _detailDouble('outbound_price_eur');
     final ret = _detailDouble('return_price_eur');
     final rows = <Widget>[];
+
+    if (_isPlannedOperationalLegPaymentItem() && _isPositiveAmount(legAmount)) {
+      rows.add(_receiptRow(_receiptText('fixedPrice'), _moneyText(legAmount)));
+      if (_isPositiveAmount(package) && !_sameMoney(package, legAmount)) {
+        rows.add(
+          _receiptRow(
+            _tr(
+              nl: 'Totaal boeking',
+              en: 'Booking total',
+              fr: 'Total réservation',
+              es: 'Total reserva',
+            ),
+            _moneyText(package),
+          ),
+        );
+      }
+      return rows;
+    }
 
     if (_hasReturnBookingInfo && (outbound != null || ret != null)) {
       if (package != null &&
@@ -35128,9 +36104,21 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (!_guardDriverReceiptOperation(action: 'persist_payment_$method'))
       return;
     final bookingId = (item.bookingId ?? '').trim();
+    final tripId = item.tripId.trim();
     final normalizedMethod = method.toLowerCase().trim();
-    if (bookingId.isEmpty) {
-      final tripId = item.tripId.trim();
+    final hasLegId = (_operationalLegIdForReceipt() ?? '').trim().isNotEmpty;
+    final hasLegType = (_operationalLegTypeTokenForReceipt() ?? '')
+        .trim()
+        .isNotEmpty;
+    final hasRowKey = (_operationalLegRowKeyForReceipt() ?? '')
+        .trim()
+        .isNotEmpty;
+    final useLegTripPaymentPath = _isPlannedOperationalLegPaymentItem();
+    final useTripPaymentPath = bookingId.isEmpty || useLegTripPaymentPath;
+    debugPrint(
+      '[RECEIPT_PAYMENT][LEG_GUARD_DECISION] tripId=$tripId bookingId=$bookingId isPlannedReceipt=$_isPlannedReceipt hasLegId=$hasLegId hasLegType=$hasLegType hasRowKey=$hasRowKey useLegTripPaymentPath=$useLegTripPaymentPath',
+    );
+    if (useTripPaymentPath) {
       if (tripId.isEmpty) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -35140,8 +36128,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
       final amount = _receiptTotalAmount();
       final paidAtIso = DateTime.now().toUtc().toIso8601String();
+      final legId = (_operationalLegIdForReceipt() ?? '').trim();
+      final legType = (_operationalLegTypeTokenForReceipt() ?? '').trim();
+      final parentBookingId = (_operationalLegParentBookingIdForReceipt() ?? '')
+          .trim();
+      final rowKey = (_operationalLegRowKeyForReceipt() ?? '').trim();
       final payload = <String, dynamic>{
         'trip_id': tripId,
+        if (bookingId.isNotEmpty) 'booking_id': bookingId,
+        if (parentBookingId.isNotEmpty) 'parent_booking_id': parentBookingId,
+        if (legId.isNotEmpty) 'leg_id': legId,
+        if (legType.isNotEmpty) 'leg_type': legType,
+        if (rowKey.isNotEmpty) 'row_key': rowKey,
         ..._activeBookingScopeQuery(),
         'payment_status': 'paid',
         'payment_method': normalizedMethod,
@@ -35162,13 +36160,25 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
       try {
         final uri = _withActiveBookingScope(kWorkerBaseUrl, '/trip/payment');
+        if (useLegTripPaymentPath) {
+          debugPrint(
+            '[RECEIPT_PAYMENT][LEG_TRIP_PAYMENT] tripId=$tripId bookingId=$bookingId legId=$legId legType=$legType parentBookingId=$parentBookingId method=$normalizedMethod',
+          );
+        }
         final res = await http
             .post(uri, headers: headers, body: jsonEncode(payload))
             .timeout(const Duration(seconds: 12));
+        final resBody = utf8.decode(res.bodyBytes);
+        final bodyPreview = resBody.length > 240
+            ? '${resBody.substring(0, 240)}...'
+            : resBody;
+        debugPrint(
+          '[RECEIPT_PAYMENT][LEG_TRIP_PAYMENT][RES] code=${res.statusCode} bodyPreview=$bodyPreview',
+        );
         if (res.statusCode < 200 || res.statusCode >= 300) {
           throw Exception('HTTP ${res.statusCode}');
         }
-        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        final decoded = jsonDecode(resBody);
         final root = decoded is Map
             ? Map<String, dynamic>.from(decoded)
             : <String, dynamic>{};
@@ -35242,6 +36252,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
 
     try {
+      debugPrint(
+        '[RECEIPT_PAYMENT][PARENT_BOOKING_PAYMENT] bookingId=$bookingId method=$normalizedMethod',
+      );
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(bookingId)}/payment',
@@ -35400,6 +36413,95 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return null;
   }
 
+  String? _operationalLegTypeTokenForReceipt() {
+    final raw = _firstDetailPathText(const [
+      ['leg_type'],
+      ['legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+      ['record', 'leg_type'],
+      ['record', 'legType'],
+      ['record', 'booking', 'leg_type'],
+      ['record', 'booking', 'legType'],
+    ])?.toLowerCase().trim();
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.contains('return') || raw.contains('terug')) return 'return';
+    if (raw.contains('outbound') || raw.contains('heen')) return 'outbound';
+    return raw;
+  }
+
+  String? _operationalLegLabelForReceipt() {
+    final token = _operationalLegTypeTokenForReceipt();
+    if (token == null || token.isEmpty) return null;
+    if (token == 'return') {
+      return _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Vuelta');
+    }
+    if (token == 'outbound') {
+      return _tr(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+    }
+    return _plannedSubtype();
+  }
+
+  String? _operationalLegIdForReceipt() {
+    return _firstDetailPathText(const [
+      ['leg_id'],
+      ['legId'],
+      ['booking', 'leg_id'],
+      ['booking', 'legId'],
+      ['booking_details', 'leg_id'],
+      ['booking_details', 'legId'],
+      ['record', 'leg_id'],
+      ['record', 'legId'],
+      ['record', 'booking', 'leg_id'],
+      ['record', 'booking', 'legId'],
+    ]);
+  }
+
+  String? _operationalLegRowKeyForReceipt() {
+    return _firstDetailPathText(const [
+      ['row_key'],
+      ['rowKey'],
+      ['booking', 'row_key'],
+      ['booking', 'rowKey'],
+      ['booking_details', 'row_key'],
+      ['booking_details', 'rowKey'],
+      ['record', 'row_key'],
+      ['record', 'rowKey'],
+      ['record', 'booking', 'row_key'],
+      ['record', 'booking', 'rowKey'],
+    ]);
+  }
+
+  String? _operationalLegParentBookingIdForReceipt() {
+    return _firstDetailPathText(const [
+          ['parent_booking_id'],
+          ['parentBookingId'],
+          ['booking', 'parent_booking_id'],
+          ['booking', 'parentBookingId'],
+          ['booking_details', 'parent_booking_id'],
+          ['booking_details', 'parentBookingId'],
+          ['record', 'parent_booking_id'],
+          ['record', 'parentBookingId'],
+          ['record', 'booking', 'parent_booking_id'],
+          ['record', 'booking', 'parentBookingId'],
+        ]) ??
+        (item.bookingId ?? '').trim();
+  }
+
+  bool _isPlannedOperationalLegPaymentItem() {
+    if (!_isPlannedReceipt) return false;
+    final tripId = item.tripId.trim();
+    if (tripId.isEmpty || !tripId.toLowerCase().startsWith('planned_')) {
+      return false;
+    }
+    final legId = (_operationalLegIdForReceipt() ?? '').trim();
+    final legType = (_operationalLegTypeTokenForReceipt() ?? '').trim();
+    final rowKey = (_operationalLegRowKeyForReceipt() ?? '').trim();
+    return legId.isNotEmpty || legType.isNotEmpty || rowKey.isNotEmpty;
+  }
+
   String? _routeSegmentsText() {
     final raw = item.bookingDetails['route_segments'];
     if (raw is! List || raw.isEmpty) return null;
@@ -35553,6 +36655,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   Widget build(BuildContext context) {
     final route = _resolvedRouteForPdf();
     final businessFields = _resolvedReceiptBusinessFields();
+    final legLabel = _operationalLegLabelForReceipt();
+    final subtypeLabel = legLabel ?? _plannedSubtype();
     final receiptRefDisplay = _businessReferenceDisplayForItem(
       item,
       source: 'receipt_screen_row',
@@ -35634,10 +36738,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                   const SizedBox(height: 18),
                   _receiptRow(receiptRefDisplay.label, receiptRefDisplay.value),
                   _receiptRow(_receiptText('type'), item.kindLabel),
-                  _optionalReceiptRow(
-                    _receiptText('subtype'),
-                    _plannedSubtype(),
-                  ),
+                  _optionalReceiptRow(_receiptText('subtype'), subtypeLabel),
                   _receiptRow(
                     _receiptText('startTime'),
                     _formatDate(item.startedAt),

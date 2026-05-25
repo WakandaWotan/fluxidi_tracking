@@ -13,6 +13,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   String? _error;
   DateTime? _lastUpdated;
   List<StoredCustomerBooking> _bookings = const <StoredCustomerBooking>[];
+  Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
 
   String _t({
     required String nl,
@@ -38,8 +39,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           .where((item) => _isActiveCustomerLifecycleStatus(item.status))
           .toList(growable: false);
       if (!mounted) return;
+      final overlay = await _buildPaymentOverlayForBookings(
+        visible,
+        source: 'load_local',
+      );
+      if (!mounted) return;
       setState(() {
         _bookings = visible;
+        _paymentOverlayByBookingId = overlay;
         _loading = false;
         _lastUpdated = DateTime.now();
       });
@@ -113,8 +120,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           .where((item) => _isActiveCustomerLifecycleStatus(item.status))
           .toList(growable: false);
       if (!mounted) return;
+      final overlay = await _buildPaymentOverlayForBookings(
+        visible,
+        source: 'refresh_authoritative',
+      );
+      if (!mounted) return;
       setState(() {
         _bookings = visible;
+        _paymentOverlayByBookingId = overlay;
         _refreshing = false;
         _lastUpdated = DateTime.now();
       });
@@ -122,6 +135,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       if (!mounted) return;
       setState(() {
         _refreshing = false;
+        _paymentOverlayByBookingId = const <String, String>{};
         _error = _t(
           nl: 'Vernieuwen mislukt.',
           en: 'Refresh failed.',
@@ -131,6 +145,152 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       });
       debugPrint('[CUSTOMER_BOOKINGS][REFRESH_ERROR] $err');
     }
+  }
+
+  String _displayPaymentStatusToken(StoredCustomerBooking booking) {
+    final bookingId = booking.canonicalBookingId.trim();
+    if (bookingId.isNotEmpty &&
+        _paymentOverlayByBookingId.containsKey(bookingId)) {
+      return _classifyCustomerPaymentDisplayToken(
+        aliases: _overlayAliasesForBooking(booking),
+        fallbackToken: _paymentOverlayByBookingId[bookingId]!,
+      );
+    }
+    return _classifyCustomerPaymentDisplayToken(
+      aliases: _overlayAliasesForBooking(booking),
+      fallbackToken: booking.paymentStatus,
+    );
+  }
+
+  bool _displayPaymentKnownPaid(StoredCustomerBooking booking) {
+    final token = _displayPaymentStatusToken(booking);
+    return _isPaidCustomerPaymentDisplayToken(token);
+  }
+
+  Set<String> _overlayAliasesForBooking(StoredCustomerBooking booking) {
+    final aliases = <String>{..._customerBookingAliasesFromStored(booking)};
+    void addAlias(String value) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty) return;
+      aliases.add(normalized);
+    }
+
+    addAlias(booking.canonicalBookingId);
+    addAlias(booking.bookingId);
+    addAlias(booking.publicBookingId);
+    addAlias(booking.bookingReference);
+    addAlias(booking.publicReference);
+    addAlias(booking.planningReference);
+    addAlias(booking.paymentBookingId);
+    addAlias((booking.quote['parent_booking_id'] ?? '').toString());
+    addAlias((booking.quote['parentBookingId'] ?? '').toString());
+    addAlias((booking.quote['original_booking_id'] ?? '').toString());
+    addAlias((booking.quote['originalBookingId'] ?? '').toString());
+    return aliases;
+  }
+
+  Future<Map<String, String>> _buildPaymentOverlayForBookings(
+    List<StoredCustomerBooking> bookings, {
+    required String source,
+  }) async {
+    if (bookings.isEmpty) return const <String, String>{};
+    String tenantId = '';
+    String companyId = '';
+    var scopeSource = 'missing';
+
+    for (final booking in bookings) {
+      final bookingTenant = booking.tenantId.trim();
+      final bookingCompany = booking.companyId.trim();
+      if (bookingTenant.isEmpty || bookingCompany.isEmpty) continue;
+      tenantId = bookingTenant;
+      companyId = bookingCompany;
+      scopeSource = 'booking_list_scope';
+      break;
+    }
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      final customerSession = await CustomerSessionStore.instance
+          .loadValidSession();
+      final sessionTenant = (customerSession?.defaultTenantId ?? '').trim();
+      final sessionCompany = (customerSession?.defaultCompanyId ?? '').trim();
+      if (sessionTenant.isNotEmpty && sessionCompany.isNotEmpty) {
+        tenantId = sessionTenant;
+        companyId = sessionCompany;
+        scopeSource = 'customer_session_scope';
+      }
+    }
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      final strictScope = _strictActiveLocalScopeIds();
+      if (strictScope != null) {
+        tenantId = strictScope.tenantId.trim();
+        companyId = strictScope.companyId.trim();
+        scopeSource = 'strict_scope';
+      }
+    }
+
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][PAYMENT_OVERLAY][SCOPE] source=$scopeSource tenant=${_maskLocalScopeId(tenantId)} company=${_maskLocalScopeId(companyId)}',
+    );
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][PAYMENT_OVERLAY][WARN] status=skip reason=missing_scope source=$source',
+      );
+      return const <String, String>{};
+    }
+    final scopeQuery = <String, String>{
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+    };
+    final trips = await _fetchTrackingOverlayTrips(
+      scopeQuery: scopeQuery,
+      diagTag: 'CUSTOMER_BOOKINGS',
+      limit: 200,
+    );
+    final matcher = _TrackingPaymentOverlayMatcher(trips);
+    final overlay = <String, String>{};
+    var matchedParents = 0;
+    var partial = 0;
+    var paid = 0;
+    for (final booking in bookings) {
+      final bookingId = booking.canonicalBookingId.trim();
+      if (bookingId.isEmpty) continue;
+      final aliases = _overlayAliasesForBooking(booking);
+      final aggregate = matcher.aggregateOperationalLegsForParentAliases(
+        aliases,
+      );
+      final token = _classifyCustomerPaymentDisplayToken(
+        aliases: aliases,
+        fallbackToken: booking.paymentStatus,
+        matcher: matcher,
+      );
+      final shouldLogKeys =
+          aggregate.totalLegs >= 2 || aggregate.totalLegs == 0;
+      if (shouldLogKeys) {
+        final aliasPreview = aliases.toList(growable: false)..sort();
+        final keys = aliasPreview.take(6).join(',');
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][PAYMENT_OVERLAY][KEYS] booking=${_safeRefPreview(bookingId)} keys=$keys matched=${aggregate.totalLegs}',
+        );
+      }
+      if (aggregate.totalLegs >= 2) {
+        matchedParents += 1;
+      }
+      if (token == 'paid') {
+        overlay[bookingId] = token;
+        paid += 1;
+      } else if (token == 'partially_paid') {
+        overlay[bookingId] = token;
+        partial += 1;
+      }
+    }
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][PAYMENT_OVERLAY] bookings=${bookings.length} matchedParents=$matchedParents partial=$partial paid=$paid',
+    );
+    return overlay;
   }
 
   String _formatPickup(String iso) {
@@ -190,23 +350,31 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   }
 
   String _paymentLabel(StoredCustomerBooking booking) {
-    final p = booking.paymentStatus.toLowerCase().trim();
-    if (p == 'paid' || p == 'confirmed' || p == 'success' || p == 'completed') {
+    final p = _displayPaymentStatusToken(booking);
+    if (_isPaidCustomerPaymentDisplayToken(p)) {
       return _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado');
+    }
+    if (_isPartialCustomerPaymentDisplayToken(p)) {
+      return _t(
+        nl: 'Deels betaald',
+        en: 'Partially paid',
+        fr: 'Partiellement payé',
+        es: 'Parcialmente pagado',
+      );
     }
     if (p == 'unpaid' || p == 'pending' || p == 'pay_in_car') {
       return _t(
         nl: 'Te betalen in de wagen',
-        en: 'To pay in the vehicle',
-        fr: 'A payer dans le vehicule',
-        es: 'A pagar en el vehiculo',
+        en: 'Pay in the car',
+        fr: 'À payer dans le véhicule',
+        es: 'Pagar en el vehículo',
       );
     }
     return _t(
       nl: 'Te betalen in de wagen',
-      en: 'To pay in the vehicle',
-      fr: 'A payer dans le vehicule',
-      es: 'A pagar en el vehiculo',
+      en: 'Pay in the car',
+      fr: 'À payer dans le véhicule',
+      es: 'Pagar en el vehículo',
     );
   }
 
@@ -235,11 +403,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
 
   Widget _premiumBookingCard(StoredCustomerBooking booking) {
     final statusColor = _statusColor(booking);
-    final paymentKnownPaid =
-        booking.paymentStatus.toLowerCase().trim() == 'paid' ||
-        booking.paymentStatus.toLowerCase().trim() == 'confirmed' ||
-        booking.paymentStatus.toLowerCase().trim() == 'success' ||
-        booking.paymentStatus.toLowerCase().trim() == 'completed';
+    final paymentKnownPaid = _displayPaymentKnownPaid(booking);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),

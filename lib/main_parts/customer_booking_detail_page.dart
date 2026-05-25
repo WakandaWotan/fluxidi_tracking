@@ -22,6 +22,11 @@ class CustomerBookingDetailPage extends StatefulWidget {
 
 class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   late CustomerBookingView _view = widget.initialView;
+  late String _derivedPaymentDisplayToken =
+      _classifyCustomerPaymentDisplayToken(
+        aliases: _paymentAliasesForView(widget.initialView),
+        fallbackToken: widget.initialView.rawPaymentStatus,
+      );
   bool _refreshing = false;
   bool _cancelling = false;
   bool _ratingSubmitting = false;
@@ -41,6 +46,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   void initState() {
     super.initState();
     unawaited(_refreshRatingSessionState());
+    unawaited(_refreshDerivedPaymentClassification(view: _view));
     unawaited(_refresh());
   }
 
@@ -179,9 +185,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               source: 'customer_detail_refresh',
             ),
           );
+          final derivedPaymentToken = await _derivePaymentDisplayToken(
+            view: view,
+            preferredScopeQuery: refreshScope,
+          );
           if (!mounted) return;
           setState(() {
             _view = view;
+            _derivedPaymentDisplayToken = derivedPaymentToken;
             _usingLocalCache = false;
             _refreshing = false;
           });
@@ -215,6 +226,179 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         );
       });
     }
+  }
+
+  static Set<String> _paymentAliasesForView(CustomerBookingView view) {
+    final paymentBookingId =
+        _customerBookingAliasFirstNonEmpty(view.source, const <String>[
+          'payment_booking_id',
+          'paymentBookingId',
+          'record.payment_booking_id',
+          'record.paymentBookingId',
+          'record.booking.payment_booking_id',
+          'record.booking.paymentBookingId',
+          'booking.payment_booking_id',
+          'booking.paymentBookingId',
+          'payload.payment_booking_id',
+          'payload.paymentBookingId',
+          'payload.booking.payment_booking_id',
+          'payload.booking.paymentBookingId',
+        ]);
+    final bookingReference =
+        _customerBookingAliasFirstNonEmpty(view.source, const <String>[
+          'booking_reference',
+          'bookingReference',
+          'record.booking_reference',
+          'record.bookingReference',
+          'record.booking.booking_reference',
+          'record.booking.bookingReference',
+          'booking.booking_reference',
+          'booking.bookingReference',
+          'payload.booking_reference',
+          'payload.bookingReference',
+          'payload.booking.booking_reference',
+          'payload.booking.bookingReference',
+        ]);
+    final publicReference =
+        _customerBookingAliasFirstNonEmpty(view.source, const <String>[
+          'public_reference',
+          'publicReference',
+          'record.public_reference',
+          'record.publicReference',
+          'record.booking.public_reference',
+          'record.booking.publicReference',
+          'booking.public_reference',
+          'booking.publicReference',
+          'payload.public_reference',
+          'payload.publicReference',
+          'payload.booking.public_reference',
+          'payload.booking.publicReference',
+        ]);
+    final parentBookingId =
+        _customerBookingAliasFirstNonEmpty(view.source, const <String>[
+          'parent_booking_id',
+          'parentBookingId',
+          'record.parent_booking_id',
+          'record.parentBookingId',
+          'record.booking.parent_booking_id',
+          'record.booking.parentBookingId',
+          'booking.parent_booking_id',
+          'booking.parentBookingId',
+          'payload.parent_booking_id',
+          'payload.parentBookingId',
+          'payload.booking.parent_booking_id',
+          'payload.booking.parentBookingId',
+        ]);
+    final originalBookingId =
+        _customerBookingAliasFirstNonEmpty(view.source, const <String>[
+          'original_booking_id',
+          'originalBookingId',
+          'record.original_booking_id',
+          'record.originalBookingId',
+          'record.booking.original_booking_id',
+          'record.booking.originalBookingId',
+          'booking.original_booking_id',
+          'booking.originalBookingId',
+          'payload.original_booking_id',
+          'payload.originalBookingId',
+          'payload.booking.original_booking_id',
+          'payload.booking.originalBookingId',
+        ]);
+    return _customerBookingDeleteAliases(
+      bookingId: view.internalBookingId,
+      publicBookingReference: view.publicBookingReference,
+      bookingReference: bookingReference,
+      publicReference: publicReference,
+      planningReference: view.planningReference,
+      receiptReference: view.receiptReference,
+      paymentBookingId: paymentBookingId,
+      parentBookingId: parentBookingId,
+      originalBookingId: originalBookingId,
+      source: view.source,
+    );
+  }
+
+  static dynamic _customerBookingAliasValueAtPath(
+    Map<String, dynamic> source,
+    String path,
+  ) {
+    dynamic current = source;
+    for (final segment in path.split('.')) {
+      if (current is Map && current.containsKey(segment)) {
+        current = current[segment];
+      } else {
+        return null;
+      }
+    }
+    return current;
+  }
+
+  static String _customerBookingAliasFirstNonEmpty(
+    Map<String, dynamic> source,
+    List<String> paths,
+  ) {
+    for (final path in paths) {
+      final raw = _customerBookingAliasValueAtPath(source, path);
+      final text = raw?.toString().trim() ?? '';
+      if (text.isNotEmpty &&
+          text.toLowerCase() != 'null' &&
+          text.toLowerCase() != 'undefined') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  Future<String> _derivePaymentDisplayToken({
+    required CustomerBookingView view,
+    Map<String, String>? preferredScopeQuery,
+  }) async {
+    final aliases = _paymentAliasesForView(view);
+    final fallbackToken = view.rawPaymentStatus;
+    final scopeQuery = preferredScopeQuery ?? _selectedCancelScopeQuery();
+    if (scopeQuery == null || scopeQuery.isEmpty) {
+      return _classifyCustomerPaymentDisplayToken(
+        aliases: aliases,
+        fallbackToken: fallbackToken,
+      );
+    }
+    try {
+      final trips = await _fetchTrackingOverlayTrips(
+        scopeQuery: scopeQuery,
+        diagTag: 'CUSTOMER_PAYMENT',
+        limit: 200,
+      );
+      final matcher = _TrackingPaymentOverlayMatcher(trips);
+      final token = _classifyCustomerPaymentDisplayToken(
+        aliases: aliases,
+        fallbackToken: fallbackToken,
+        matcher: matcher,
+      );
+      debugPrint(
+        '[CUSTOMER_PAYMENT][DETAIL_CLASSIFY] booking=${_safeRefPreview(view.internalBookingId)} token=$token aliases=${aliases.length}',
+      );
+      return token;
+    } catch (err) {
+      debugPrint('[CUSTOMER_PAYMENT][DETAIL_CLASSIFY] fallback error=$err');
+      return _classifyCustomerPaymentDisplayToken(
+        aliases: aliases,
+        fallbackToken: fallbackToken,
+      );
+    }
+  }
+
+  Future<void> _refreshDerivedPaymentClassification({
+    required CustomerBookingView view,
+    Map<String, String>? preferredScopeQuery,
+  }) async {
+    final token = await _derivePaymentDisplayToken(
+      view: view,
+      preferredScopeQuery: preferredScopeQuery,
+    );
+    if (!mounted) return;
+    setState(() {
+      _derivedPaymentDisplayToken = token;
+    });
   }
 
   String _formatPickup(String iso) {
@@ -1597,7 +1781,51 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) {
         final v = _view;
-        final paid = v.isPaid;
+        final paymentToken = _classifyCustomerPaymentDisplayToken(
+          aliases: _paymentAliasesForView(v),
+          fallbackToken: _derivedPaymentDisplayToken.isNotEmpty
+              ? _derivedPaymentDisplayToken
+              : v.rawPaymentStatus,
+        );
+        final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
+        final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
+          paymentToken,
+        );
+        final paymentStatusLabel = paid
+            ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
+            : (partiallyPaid
+                  ? _t(
+                      nl: 'Deels betaald',
+                      en: 'Partially paid',
+                      fr: 'Partiellement paye',
+                      es: 'Parcialmente pagado',
+                    )
+                  : _t(
+                      nl: 'Te betalen in de wagen',
+                      en: 'To pay in the vehicle',
+                      fr: 'A payer dans le vehicule',
+                      es: 'A pagar en el vehiculo',
+                    ));
+        final paymentStatusDescription = paid
+            ? _t(
+                nl: 'Je betaling is bevestigd.',
+                en: 'Your payment has been confirmed.',
+                fr: 'Votre paiement est confirme.',
+                es: 'Tu pago esta confirmado.',
+              )
+            : (partiallyPaid
+                  ? _t(
+                      nl: 'Een deel is betaald, resterend bedrag staat nog open.',
+                      en: 'Part of this booking is paid, remaining amount is still open.',
+                      fr: 'Une partie est payee, le montant restant est encore ouvert.',
+                      es: 'Una parte esta pagada, el monto restante sigue abierto.',
+                    )
+                  : _t(
+                      nl: 'Voldoe het bedrag bij de chauffeur.',
+                      en: 'Pay the driver during your ride.',
+                      fr: 'Reglez le chauffeur pendant la course.',
+                      es: 'Paga al conductor durante el viaje.',
+                    ));
         final business = v.businessCustomer;
         final isRoundtrip = v.isRoundtrip;
         final showRoundtripPricing =
@@ -1605,6 +1833,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             (v.priceInclVatMain != null ||
                 v.priceInclVatReturn != null ||
                 v.priceInclVatTotal != null);
+        final serviceText = _serviceLabel(v.service);
+        final tierText = _tierLabel(v.tier);
+        final hasServiceText =
+            serviceText.trim().isNotEmpty && serviceText != '-';
+        final hasTierText = tierText.trim().isNotEmpty && tierText != '-';
         final invoiceEmail = v.invoiceEmail.trim().isEmpty
             ? _notFilled()
             : v.invoiceEmail.trim();
@@ -1879,13 +2112,20 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         end: Alignment.bottomRight,
                         colors: paid
                             ? const [Color(0xFF103325), Color(0xFF0A1E16)]
-                            : const [Color(0xFF2A2410), Color(0xFF161109)],
+                            : (partiallyPaid
+                                  ? const [Color(0xFF3A2A12), Color(0xFF1E1409)]
+                                  : const [
+                                      Color(0xFF2A2410),
+                                      Color(0xFF161109),
+                                    ]),
                       ),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: paid
                             ? const Color(0xFF34D29A)
-                            : const Color(0xFFE5B641),
+                            : (partiallyPaid
+                                  ? const Color(0xFFFFC857)
+                                  : const Color(0xFFE5B641)),
                         width: 1.2,
                       ),
                     ),
@@ -1897,7 +2137,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               : Icons.payments_outlined,
                           color: paid
                               ? const Color(0xFF34D29A)
-                              : const Color(0xFFE5B641),
+                              : (partiallyPaid
+                                    ? const Color(0xFFFFC857)
+                                    : const Color(0xFFE5B641)),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -1919,19 +2161,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                paid
-                                    ? _t(
-                                        nl: 'Betaald',
-                                        en: 'Paid',
-                                        fr: 'Paye',
-                                        es: 'Pagado',
-                                      )
-                                    : _t(
-                                        nl: 'Te betalen in de wagen',
-                                        en: 'To pay in the vehicle',
-                                        fr: 'A payer dans le vehicule',
-                                        es: 'A pagar en el vehiculo',
-                                      ),
+                                paymentStatusLabel,
                                 style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w800,
@@ -1940,19 +2170,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                paid
-                                    ? _t(
-                                        nl: 'Je betaling is bevestigd.',
-                                        en: 'Your payment has been confirmed.',
-                                        fr: 'Votre paiement est confirme.',
-                                        es: 'Tu pago esta confirmado.',
-                                      )
-                                    : _t(
-                                        nl: 'Voldoe het bedrag bij de chauffeur.',
-                                        en: 'Pay the driver during your ride.',
-                                        fr: 'Reglez le chauffeur pendant la course.',
-                                        es: 'Paga al conductor durante el viaje.',
-                                      ),
+                                paymentStatusDescription,
                                 style: TextStyle(
                                   color: Colors.white.withOpacity(0.85),
                                 ),
@@ -2033,19 +2251,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           fr: 'Statut de paiement',
                           es: 'Estado de pago',
                         ),
-                        paid
-                            ? _t(
-                                nl: 'Betaald',
-                                en: 'Paid',
-                                fr: 'Paye',
-                                es: 'Pagado',
-                              )
-                            : _t(
-                                nl: 'Te betalen in de wagen',
-                                en: 'To pay in the vehicle',
-                                fr: 'A payer dans le vehicule',
-                                es: 'A pagar en el vehiculo',
-                              ),
+                        paymentStatusLabel,
                       ),
                     ],
                   ),
@@ -2265,24 +2471,26 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       es: 'Detalles del viaje',
                     ),
                     children: [
-                      _kv(
-                        _t(
-                          nl: 'Service',
-                          en: 'Service',
-                          fr: 'Service',
-                          es: 'Servicio',
+                      if (hasServiceText)
+                        _kv(
+                          _t(
+                            nl: 'Service',
+                            en: 'Service',
+                            fr: 'Service',
+                            es: 'Servicio',
+                          ),
+                          serviceText,
                         ),
-                        _serviceLabel(v.service),
-                      ),
-                      _kv(
-                        _t(
-                          nl: 'Tier',
-                          en: 'Tier',
-                          fr: 'Categorie',
-                          es: 'Categoria',
+                      if (hasTierText)
+                        _kv(
+                          _t(
+                            nl: 'Tier',
+                            en: 'Tier',
+                            fr: 'Categorie',
+                            es: 'Categoria',
+                          ),
+                          tierText,
                         ),
-                        _tierLabel(v.tier),
-                      ),
                       _kv(
                         _t(
                           nl: 'Passagiers',

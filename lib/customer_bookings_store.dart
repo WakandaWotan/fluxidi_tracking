@@ -542,12 +542,49 @@ class StoredCustomerBooking {
       'data': data,
     };
     final activeScope = _activeLocalScope();
-    final resolvedBookingId = _firstNonEmpty([
-      bookingId,
+    final authoritativeInternalBookingId = _firstNonEmpty([
       response['booking_id'],
+      response['bookingId'],
       rec['booking_id'],
+      rec['bookingId'],
       booking['booking_id'],
+      booking['bookingId'],
     ]);
+    final authoritativePublicBookingId = _firstNonEmpty([
+      response['public_booking_reference'],
+      response['publicBookingReference'],
+      response['booking_reference'],
+      response['bookingReference'],
+      response['public_reference'],
+      response['publicReference'],
+      response['public_booking_id'],
+      response['publicBookingId'],
+      rec['public_booking_reference'],
+      rec['publicBookingReference'],
+      rec['booking_reference'],
+      rec['bookingReference'],
+      rec['public_reference'],
+      rec['publicReference'],
+      booking['public_booking_reference'],
+      booking['publicBookingReference'],
+      booking['booking_reference'],
+      booking['bookingReference'],
+      booking['public_reference'],
+      booking['publicReference'],
+      booking['public_booking_id'],
+      booking['publicBookingId'],
+    ]);
+    final resolvedBookingId = _firstNonEmpty([
+      authoritativeInternalBookingId,
+      bookingId,
+      fallback?.bookingId,
+    ]);
+    if (authoritativeInternalBookingId.isNotEmpty &&
+        authoritativePublicBookingId.isNotEmpty) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][ID_RESOLVE] input=$bookingId internal=$authoritativeInternalBookingId public=$authoritativePublicBookingId final=$resolvedBookingId',
+      );
+    }
     return StoredCustomerBooking(
       bookingId: resolvedBookingId,
       tenantId: _firstNonEmpty([

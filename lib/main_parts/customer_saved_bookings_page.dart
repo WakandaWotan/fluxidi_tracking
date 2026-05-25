@@ -12,6 +12,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   bool _loading = true;
   String? _error;
   List<CustomerSavedBooking> _bookings = const <CustomerSavedBooking>[];
+  Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
 
   String _t({
     required String nl,
@@ -40,14 +41,21 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           .where((item) => _isActiveCustomerLifecycleStatus(item.bookingStatus))
           .toList(growable: false);
       if (!mounted) return;
+      final overlay = await _buildPaymentOverlayForBookings(
+        visible,
+        source: 'load_local',
+      );
+      if (!mounted) return;
       setState(() {
         _bookings = visible;
+        _paymentOverlayByBookingId = overlay;
         _loading = false;
       });
     } catch (err) {
       if (!mounted) return;
       setState(() {
         _loading = false;
+        _paymentOverlayByBookingId = const <String, String>{};
         _error = _t(
           nl: 'Laden mislukt.',
           en: 'Loading failed.',
@@ -119,17 +127,211 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     return '$symbol${amount.toStringAsFixed(2).replaceAll('.', ',')}';
   }
 
+  String _displayPaymentStatusToken(CustomerSavedBooking booking) {
+    final bookingId = booking.bookingId.trim();
+    if (bookingId.isNotEmpty &&
+        _paymentOverlayByBookingId.containsKey(bookingId)) {
+      return _classifyCustomerPaymentDisplayToken(
+        aliases: _overlayAliasesForSavedBooking(booking),
+        fallbackToken: _paymentOverlayByBookingId[bookingId]!,
+      );
+    }
+    return _classifyCustomerPaymentDisplayToken(
+      aliases: _overlayAliasesForSavedBooking(booking),
+      fallbackToken: booking.paymentStatus,
+    );
+  }
+
+  bool _displayPaymentKnownPaid(CustomerSavedBooking booking) {
+    final token = _displayPaymentStatusToken(booking);
+    return _isPaidCustomerPaymentDisplayToken(token);
+  }
+
+  Set<String> _overlayAliasesForSavedBooking(CustomerSavedBooking booking) {
+    final aliases = <String>{};
+    void addAlias(String value) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty) return;
+      aliases.add(normalized);
+    }
+
+    for (final alias in _aliasesForSavedBooking(booking)) {
+      addAlias(alias);
+    }
+    addAlias(booking.bookingId);
+    addAlias(booking.publicReference);
+    addAlias((booking.rawSnapshot['parent_booking_id'] ?? '').toString());
+    addAlias((booking.rawSnapshot['parentBookingId'] ?? '').toString());
+    addAlias((booking.rawSnapshot['original_booking_id'] ?? '').toString());
+    addAlias((booking.rawSnapshot['originalBookingId'] ?? '').toString());
+    addAlias((booking.rawSnapshot['booking_id'] ?? '').toString());
+    addAlias((booking.rawSnapshot['bookingId'] ?? '').toString());
+    addAlias((booking.rawSnapshot['public_booking_id'] ?? '').toString());
+    addAlias((booking.rawSnapshot['publicBookingId'] ?? '').toString());
+    addAlias(
+      (booking.rawSnapshot['public_booking_reference'] ?? '').toString(),
+    );
+    addAlias((booking.rawSnapshot['publicBookingReference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['booking_reference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['bookingReference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['public_reference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['publicReference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['planning_reference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['planningReference'] ?? '').toString());
+    addAlias((booking.rawSnapshot['payment_booking_id'] ?? '').toString());
+    addAlias((booking.rawSnapshot['paymentBookingId'] ?? '').toString());
+    return aliases;
+  }
+
+  Future<Map<String, String>> _buildPaymentOverlayForBookings(
+    List<CustomerSavedBooking> bookings, {
+    required String source,
+  }) async {
+    if (bookings.isEmpty) return const <String, String>{};
+
+    String tenantId = '';
+    String companyId = '';
+    var scopeSource = 'missing';
+
+    for (final booking in bookings) {
+      final bookingTenant = booking.tenantId.trim();
+      final bookingCompany = booking.companyId.trim();
+      if (bookingTenant.isNotEmpty && bookingCompany.isNotEmpty) {
+        tenantId = bookingTenant;
+        companyId = bookingCompany;
+        scopeSource = 'booking_list_scope';
+        break;
+      }
+      final rawTenant =
+          (booking.rawSnapshot['tenant_id'] ??
+                  booking.rawSnapshot['tenantId'] ??
+                  '')
+              .toString()
+              .trim();
+      final rawCompany =
+          (booking.rawSnapshot['company_id'] ??
+                  booking.rawSnapshot['companyId'] ??
+                  '')
+              .toString()
+              .trim();
+      if (rawTenant.isNotEmpty && rawCompany.isNotEmpty) {
+        tenantId = rawTenant;
+        companyId = rawCompany;
+        scopeSource = 'raw_booking_scope';
+        break;
+      }
+    }
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      final customerSession = await CustomerSessionStore.instance
+          .loadValidSession();
+      final sessionTenant = (customerSession?.defaultTenantId ?? '').trim();
+      final sessionCompany = (customerSession?.defaultCompanyId ?? '').trim();
+      if (sessionTenant.isNotEmpty && sessionCompany.isNotEmpty) {
+        tenantId = sessionTenant;
+        companyId = sessionCompany;
+        scopeSource = 'customer_session_scope';
+      }
+    }
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      final strictScope = _strictActiveLocalScopeIds();
+      if (strictScope != null) {
+        tenantId = strictScope.tenantId.trim();
+        companyId = strictScope.companyId.trim();
+        scopeSource = 'strict_scope';
+      }
+    }
+
+    debugPrint(
+      '[CUSTOMER_SAVED_BOOKINGS][PAYMENT_OVERLAY][SCOPE] source=$scopeSource tenant=${_maskLocalScopeId(tenantId)} company=${_maskLocalScopeId(companyId)}',
+    );
+
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      debugPrint(
+        '[CUSTOMER_SAVED_BOOKINGS][PAYMENT_OVERLAY][WARN] status=skip reason=missing_scope source=$source',
+      );
+      return const <String, String>{};
+    }
+
+    final scopeQuery = <String, String>{
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+    };
+    final trips = await _fetchTrackingOverlayTrips(
+      scopeQuery: scopeQuery,
+      diagTag: 'CUSTOMER_SAVED_BOOKINGS',
+      limit: 200,
+    );
+    final matcher = _TrackingPaymentOverlayMatcher(trips);
+    final overlay = <String, String>{};
+    var matchedParents = 0;
+    var partial = 0;
+    var paid = 0;
+
+    for (final booking in bookings) {
+      final bookingId = booking.bookingId.trim();
+      if (bookingId.isEmpty) continue;
+      final aliases = _overlayAliasesForSavedBooking(booking);
+      final aggregate = matcher.aggregateOperationalLegsForParentAliases(
+        aliases,
+      );
+      final token = _classifyCustomerPaymentDisplayToken(
+        aliases: aliases,
+        fallbackToken: booking.paymentStatus,
+        matcher: matcher,
+      );
+      final shouldLogKeys =
+          aggregate.totalLegs >= 2 || aggregate.totalLegs == 0;
+      if (shouldLogKeys) {
+        final aliasPreview = aliases.toList(growable: false)..sort();
+        final keys = aliasPreview.take(6).join(',');
+        final ref = booking.publicReference.trim().isNotEmpty
+            ? booking.publicReference.trim()
+            : bookingId;
+        debugPrint(
+          '[CUSTOMER_SAVED_BOOKINGS][PAYMENT_OVERLAY][KEYS] ref=${_safeRefPreview(ref)} keys=$keys matched=${aggregate.totalLegs}',
+        );
+      }
+      if (aggregate.totalLegs >= 2) {
+        matchedParents += 1;
+      }
+      if (token == 'paid') {
+        overlay[bookingId] = token;
+        paid += 1;
+      } else if (token == 'partially_paid') {
+        overlay[bookingId] = token;
+        partial += 1;
+      }
+    }
+
+    debugPrint(
+      '[CUSTOMER_SAVED_BOOKINGS][PAYMENT_OVERLAY] bookings=${bookings.length} matchedParents=$matchedParents partial=$partial paid=$paid',
+    );
+    return overlay;
+  }
+
   String _paymentLabel(CustomerSavedBooking booking) {
-    final p = booking.paymentStatus.toLowerCase().trim();
-    if (p == 'paid' || p == 'confirmed' || p == 'completed' || p == 'success') {
+    final p = _displayPaymentStatusToken(booking);
+    if (_isPaidCustomerPaymentDisplayToken(p)) {
       return _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado');
+    }
+    if (_isPartialCustomerPaymentDisplayToken(p)) {
+      return _t(
+        nl: 'Deels betaald',
+        en: 'Partially paid',
+        fr: 'Partiellement payé',
+        es: 'Parcialmente pagado',
+      );
     }
     if (p == 'pending' || p == 'unpaid' || p == 'pay_in_car') {
       return _t(
         nl: 'Te betalen in de wagen',
-        en: 'To pay in the vehicle',
-        fr: 'A payer dans le vehicule',
-        es: 'A pagar en el vehiculo',
+        en: 'Pay in the car',
+        fr: 'À payer dans le véhicule',
+        es: 'Pagar en el vehículo',
       );
     }
     return p.isEmpty
@@ -193,11 +395,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
 
   Widget _savedPremiumBookingCard(CustomerSavedBooking booking) {
     final statusColor = _savedStatusColor(booking);
-    final paid =
-        booking.paymentStatus.toLowerCase().trim() == 'paid' ||
-        booking.paymentStatus.toLowerCase().trim() == 'confirmed' ||
-        booking.paymentStatus.toLowerCase().trim() == 'completed' ||
-        booking.paymentStatus.toLowerCase().trim() == 'success';
+    final paid = _displayPaymentKnownPaid(booking);
     final reference = booking.publicReference.trim().isNotEmpty
         ? booking.publicReference.trim()
         : booking.bookingId.trim();
