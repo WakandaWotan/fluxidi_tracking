@@ -663,7 +663,9 @@ Future<void> main() async {
   await _refreshCachedCustomerProfile();
   await CompanySessionStore.instance.bootstrap();
   var hasBootstrapToken = false;
-  if (CompanySessionStore.instance.hasValidCompanyContext) {
+  var hasLocalCompanyContext =
+      CompanySessionStore.instance.hasValidCompanyContext;
+  if (hasLocalCompanyContext) {
     hasBootstrapToken = await _hasUsableCompanyBootstrapToken(
       reason: 'startup_restore',
       logDegraded: true,
@@ -676,14 +678,20 @@ Future<void> main() async {
       unawaited(
         _triggerCompanyInventoryBackfillRestore(reason: 'company_home_restore'),
       );
+    } else {
+      debugPrint(
+        '[COMPANY_BOOTSTRAP][SKIP_REMOTE_NO_TOKEN] reason=startup_restore',
+      );
     }
   }
-  if (CompanySessionStore.instance.hasValidCompanyContext &&
-      hasBootstrapToken) {
+  hasLocalCompanyContext = CompanySessionStore.instance.hasValidCompanyContext;
+  if (hasLocalCompanyContext) {
     setAppRole(AppRole.companyAdmin);
     _startInCompanyAdminHome = true;
     _startInDriverHome = false;
-    debugPrint('[COMPANY_PAIRING][AUTO_ROUTE] target=business_home');
+    debugPrint(
+      '[COMPANY_PAIRING][AUTO_ROUTE] target=business_home has_token=$hasBootstrapToken',
+    );
   } else {
     debugPrint(
       '[COMPANY_PAIRING][AUTO_ROUTE_SKIP] reason=no_valid_company_context',
@@ -4825,26 +4833,6 @@ class RoleEntryPage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(
-                        dialogContext,
-                      ).pop(_companyPairingOnboardingIntent),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(
-                          color: kFluxidiYellow.withOpacity(0.5),
-                        ),
-                      ),
-                      child: Text(
-                        _t(
-                          nl: 'Ik wil mijn bedrijfsgegevens invullen',
-                          en: 'I want to enter my company details',
-                          fr: 'Je veux saisir les données de mon entreprise',
-                          es: 'Quiero introducir los datos de mi empresa',
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -5205,7 +5193,30 @@ class RoleEntryPage extends StatelessWidget {
         builder: (_) => CompanyOnboardingPage(
           initialCompanyId: initialCompanyId,
           lockCompanyId: lockCompanyId,
-          onCompleted: (ctx) {
+          onCompleted: (ctx) async {
+            await CompanySessionStore.instance.bootstrap();
+            final hasContext =
+                CompanySessionStore.instance.hasValidCompanyContext;
+            if (!ctx.mounted) return;
+            if (!hasContext) {
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _t(
+                      nl: 'Bedrijfstoegang vereist eerst activatie of herstel.',
+                      en: 'Business access requires activation or recovery first.',
+                      fr: "L'accès entreprise nécessite d'abord une activation ou récupération.",
+                      es: 'El acceso de empresa requiere primero activación o recuperación.',
+                    ),
+                  ),
+                ),
+              );
+              Navigator.of(ctx).pushAndRemoveUntil(
+                MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
+                (route) => false,
+              );
+              return;
+            }
             setAppRole(AppRole.companyAdmin);
             Navigator.of(ctx).pushReplacement(
               MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
@@ -5240,14 +5251,32 @@ class RoleEntryPage extends StatelessWidget {
         );
         return;
       }
+      debugPrint('[COMPANY_BOOTSTRAP][SKIP_REMOTE_NO_TOKEN] reason=role_entry');
+      if (!context.mounted) return;
+      setAppRole(AppRole.companyAdmin);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const BusinessHomePage()),
+      );
+      return;
     }
     if (!context.mounted) return;
     while (true) {
       final activationCode = await _promptCompanyActivationCode(context);
       if (!context.mounted || activationCode == null) return;
       if (activationCode == _companyPairingOnboardingIntent) {
-        _openBusinessOnboarding(context);
-        return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Gebruik activatiecode of herstel om als bedrijf in te loggen.',
+                en: 'Use activation code or recovery to sign in as business owner.',
+                fr: "Utilisez le code d'activation ou la récupération pour vous connecter en tant qu'entreprise.",
+                es: 'Usa el código de activación o recuperación para iniciar sesión como empresa.',
+              ),
+            ),
+          ),
+        );
+        continue;
       }
       if (activationCode == _companyRecoveryIntent) {
         await _runCompanyRecoveryFlow(context);
@@ -6106,11 +6135,38 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   String _kpiCurrency = 'EUR';
   bool _kpiRefreshInFlight = false;
   bool _routeObserverSubscribed = false;
+  bool _businessAccessGuardTriggered = false;
+
+  void _guardBusinessAccessOrRedirect({required String reason}) {
+    if (_businessAccessGuardTriggered || !mounted) return;
+    if (CompanySessionStore.instance.hasValidCompanyContext) return;
+    _businessAccessGuardTriggered = true;
+    debugPrint('[COMPANY_PAIRING][BUSINESS_GUARD_REDIRECT] reason=$reason');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Bedrijfstoegang vereist eerst activatie of herstel.',
+            en: 'Business access requires activation or recovery first.',
+            fr: "L'accès entreprise nécessite d'abord une activation ou récupération.",
+            es: 'El acceso de empresa requiere primero activación o recuperación.',
+          ),
+        ),
+      ),
+    );
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
+      (route) => false,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _guardBusinessAccessOrRedirect(reason: 'business_home_init');
+    });
     unawaited(_refreshDashboardKpis(reason: 'init'));
   }
 
@@ -6138,12 +6194,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _guardBusinessAccessOrRedirect(reason: 'business_home_resume');
       unawaited(_refreshDashboardKpis(reason: 'app_resume'));
     }
   }
 
   @override
   void didPopNext() {
+    _guardBusinessAccessOrRedirect(reason: 'business_home_route_return');
     unawaited(_refreshDashboardKpis(reason: 'route_return'));
   }
 

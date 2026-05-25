@@ -402,18 +402,36 @@ class CompanySessionStore {
 
   CompanyProfile? _profileMemory;
   ActiveCompanySession? _sessionMemory;
-  bool _sessionInvalidForSecurity = false;
 
   bool _isSessionStillValid(ActiveCompanySession session) {
-    final linkMethod = (session.linkMethod ?? '').trim().toLowerCase();
     final token = (session.companySessionToken ?? '').trim();
-    final usesTokenSession =
-        linkMethod == 'public_company_pairing' || token.isNotEmpty;
-    if (!usesTokenSession) return true;
-    if (token.isEmpty) return false;
+    if (token.isEmpty) return true;
     final expires = session.sessionExpiresAtUtc;
     if (expires == null) return true;
     return DateTime.now().toUtc().isBefore(expires);
+  }
+
+  bool _isExpiredTokenBackedSession(ActiveCompanySession session) {
+    final token = (session.companySessionToken ?? '').trim();
+    if (token.isEmpty) return false;
+    final expires = session.sessionExpiresAtUtc;
+    if (expires == null) return false;
+    return !DateTime.now().toUtc().isBefore(expires);
+  }
+
+  ActiveCompanySession _restoreExpiredTokenSessionToLocalContext(
+    ActiveCompanySession session,
+  ) {
+    return ActiveCompanySession(
+      companyId: session.companyId,
+      role: session.role,
+      createdAt: session.createdAt,
+      lastUsedAt: session.lastUsedAt,
+      companySessionToken: null,
+      companySessionExpiresAtUtc: null,
+      companyCode: session.companyCode,
+      linkMethod: session.linkMethod,
+    );
   }
 
   String _safeScopeSegment(String value) {
@@ -716,11 +734,19 @@ class CompanySessionStore {
       if (scopedFile != null) {
         final scoped = await _readSessionFromFile(scopedFile);
         if (scoped != null) {
-          if (!_isSessionStillValid(scoped)) {
-            _sessionInvalidForSecurity = true;
+          if (_isExpiredTokenBackedSession(scoped)) {
+            final restored = _restoreExpiredTokenSessionToLocalContext(scoped);
             try {
-              if (await scopedFile.exists()) await scopedFile.delete();
+              await scopedFile.writeAsString(jsonEncode(restored.toJson()));
             } catch (_) {}
+            _sessionMemory = restored;
+            activeCompanySessionNotifier.value = restored;
+            debugPrint(
+              '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId}',
+            );
+            return restored;
+          }
+          if (!_isSessionStillValid(scoped)) {
             return null;
           }
           _sessionMemory = scoped;
@@ -731,11 +757,23 @@ class CompanySessionStore {
       final legacyFile = await _legacySessionFile();
       final legacy = await _readSessionFromFile(legacyFile);
       if (legacy == null) return null;
-      if (!_isSessionStillValid(legacy)) {
-        _sessionInvalidForSecurity = true;
+      if (_isExpiredTokenBackedSession(legacy)) {
+        final restored = _restoreExpiredTokenSessionToLocalContext(legacy);
         try {
-          if (await legacyFile.exists()) await legacyFile.delete();
+          final scopedTarget = await _sessionFileForScope(
+            tenantId: restored.companyId,
+            companyId: restored.companyId,
+          );
+          await scopedTarget.writeAsString(jsonEncode(restored.toJson()));
         } catch (_) {}
+        _sessionMemory = restored;
+        activeCompanySessionNotifier.value = restored;
+        debugPrint(
+          '[COMPANY_PAIRING][TOKEN_EXPIRED_LOCAL_CONTEXT_RESTORED] company=${restored.companyId}',
+        );
+        return restored;
+      }
+      if (!_isSessionStillValid(legacy)) {
         return null;
       }
 
@@ -775,7 +813,6 @@ class CompanySessionStore {
     debugPrint('[COMPANY_PAIRING][BOOTSTRAP] started=true');
     _profileMemory = null;
     _sessionMemory = null;
-    _sessionInvalidForSecurity = false;
     CompanyProfile? p = await loadProfile();
     ActiveCompanySession? s = await loadSession();
 
@@ -786,13 +823,6 @@ class CompanySessionStore {
     }
     companyProfileNotifier.value = p;
     if (s == null || s.companyId != p.companyId) {
-      if (_sessionInvalidForSecurity) {
-        activeCompanySessionNotifier.value = null;
-        debugPrint(
-          '[COMPANY_PAIRING][SESSION_EXPIRED] company=${p.companyId} source=token_session',
-        );
-        return;
-      }
       await _writeSessionForProfile(p);
       debugPrint(
         '[COMPANY_PAIRING][SESSION_RESTORED] company=${p.companyId} source=profile_only',
