@@ -1091,6 +1091,38 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
   const paymentAmount = Number.isFinite(Number(paymentAmountRaw))
     ? Number(paymentAmountRaw)
     : null;
+  const legId =
+    safeStr(
+      trip?.leg_id ??
+        trip?.legId ??
+        stopPayload?.leg_id ??
+        stopPayload?.legId,
+      128,
+    ) ?? undefined;
+  const legType =
+    safeStr(
+      trip?.leg_type ??
+        trip?.legType ??
+        stopPayload?.leg_type ??
+        stopPayload?.legType,
+      64,
+    ) ?? undefined;
+  const parentBookingId =
+    safeStr(
+      trip?.parent_booking_id ??
+        trip?.parentBookingId ??
+        stopPayload?.parent_booking_id ??
+        stopPayload?.parentBookingId,
+      128,
+    ) ?? undefined;
+  const rowKey =
+    safeStr(
+      trip?.row_key ??
+        trip?.rowKey ??
+        stopPayload?.row_key ??
+        stopPayload?.rowKey,
+      196,
+    ) ?? undefined;
   const fareCurrency =
     (safeStr(totals?.currency, 8) ??
       safeStr(trip?.currency, 8) ??
@@ -1103,6 +1135,10 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
     company_id: companyId,
     booking_id: safeStr(trip?.booking_id ?? trip?.bookingId, 128) ?? undefined,
     trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    ...(legId ? { leg_id: legId } : {}),
+    ...(legType ? { leg_type: legType } : {}),
+    ...(parentBookingId ? { parent_booking_id: parentBookingId } : {}),
+    ...(rowKey ? { row_key: rowKey } : {}),
     session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
     receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
     ride_type: "direct",
@@ -1191,6 +1227,38 @@ function buildPlannedTripStopComplianceEvent(trip, stopPayload, canonicalScope =
   const paymentAmount = Number.isFinite(Number(paymentAmountRaw))
     ? Number(paymentAmountRaw)
     : null;
+  const legId =
+    safeStr(
+      trip?.leg_id ??
+        trip?.legId ??
+        stopPayload?.leg_id ??
+        stopPayload?.legId,
+      128,
+    ) ?? undefined;
+  const legType =
+    safeStr(
+      trip?.leg_type ??
+        trip?.legType ??
+        stopPayload?.leg_type ??
+        stopPayload?.legType,
+      64,
+    ) ?? undefined;
+  const parentBookingId =
+    safeStr(
+      trip?.parent_booking_id ??
+        trip?.parentBookingId ??
+        stopPayload?.parent_booking_id ??
+        stopPayload?.parentBookingId,
+      128,
+    ) ?? undefined;
+  const rowKey =
+    safeStr(
+      trip?.row_key ??
+        trip?.rowKey ??
+        stopPayload?.row_key ??
+        stopPayload?.rowKey,
+      196,
+    ) ?? undefined;
 
   const pickup = trip?.origin && typeof trip.origin === "object"
     ? {
@@ -1213,6 +1281,10 @@ function buildPlannedTripStopComplianceEvent(trip, stopPayload, canonicalScope =
     company_id: companyId,
     booking_id: safeStr(trip?.booking_id ?? trip?.bookingId ?? stopPayload?.booking_id, 128) ?? undefined,
     trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    leg_id: legId,
+    leg_type: legType,
+    parent_booking_id: parentBookingId,
+    row_key: rowKey,
     session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
     receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
     ride_type: "planned",
@@ -1331,6 +1403,41 @@ function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult, can
     : null;
   const fareTotalRaw = trip?.total_eur ?? trip?.totalEur ?? paymentPayloadOrResult?.total;
   const fareTotal = Number.isFinite(Number(fareTotalRaw)) ? Number(fareTotalRaw) : null;
+  const legId =
+    safeStr(
+      trip?.leg_id ??
+        trip?.legId ??
+        paymentPayloadOrResult?.leg_id ??
+        paymentPayloadOrResult?.legId,
+      128,
+    ) ?? undefined;
+  const legType =
+    safeStr(
+      trip?.leg_type ??
+        trip?.legType ??
+        paymentPayloadOrResult?.leg_type ??
+        paymentPayloadOrResult?.legType,
+      64,
+    ) ?? undefined;
+  const parentBookingId =
+    safeStr(
+      trip?.parent_booking_id ??
+        trip?.parentBookingId ??
+        paymentPayloadOrResult?.parent_booking_id ??
+        paymentPayloadOrResult?.parentBookingId,
+      128,
+    ) ?? undefined;
+  const rowKey =
+    safeStr(
+      trip?.row_key ??
+        trip?.rowKey ??
+        paymentPayloadOrResult?.row_key ??
+        paymentPayloadOrResult?.rowKey,
+      196,
+    ) ?? undefined;
+  const rideType = (safeStr(trip?.trip_id ?? trip?.tripId, 160) ?? "").toLowerCase().startsWith("planned_")
+    ? "planned"
+    : "direct";
 
   return {
     event_type: "payment_update",
@@ -1338,9 +1445,13 @@ function buildTripPaymentUpdateComplianceEvent(trip, paymentPayloadOrResult, can
     company_id: companyId,
     booking_id: safeStr(trip?.booking_id ?? trip?.bookingId, 128) ?? undefined,
     trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    leg_id: legId,
+    leg_type: legType,
+    parent_booking_id: parentBookingId,
+    row_key: rowKey,
     session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
     receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
-    ride_type: "direct",
+    ride_type: rideType,
     lifecycle_status: "payment_updated",
     timestamps: {
       event_at_utc: paidAt,
@@ -1622,7 +1733,11 @@ function normalizeBookingDetails(value) {
     "dial_code",
     "dialCode",
     "service_type",
+    "serviceType",
+    "service",
     "tier",
+    "vehicle_tier",
+    "vehicleTier",
     "passengers",
     "luggage_count",
     "booked_wait_minutes",
@@ -1639,6 +1754,8 @@ function normalizeBookingDetails(value) {
     "isOperationalLeg",
     "booking_total_eur",
     "segment_price_eur",
+    "leg_price_incl_vat",
+    "legPriceInclVat",
     "outbound_price_eur",
     "return_price_eur",
     "payment_status",
@@ -1948,13 +2065,45 @@ function _tripKpiHasVisiblePaymentArtifact(trip, bookingMap = null) {
 
 function _tripKpiClassifyUnpaidCompleted(trip, bookingMap = null) {
   if (!trip || typeof trip !== "object") return "unpaid_completed_tracking_only";
-  const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
-  if (!bookingId || !bookingMap || typeof bookingMap !== "object") {
-    return "unpaid_completed_tracking_only";
-  }
   const tripStatus = normalizeDashboardTripLifecycleStatus(
     trip?.status ?? trip?.lifecycle_status,
   );
+  const paymentStatus = normalizeCompliancePaymentStatus(
+    trip?.payment_status ?? trip?.paymentStatus,
+  );
+  const amountCents = _tripKpiVisibleAmountCentsFromTrip(trip) ?? 0;
+  const tripIdToken = (safeStr(trip?.trip_id ?? trip?.tripId, 160) ?? "").toLowerCase();
+  const hasLegIdentity =
+    !!safeStr(
+      trip?.leg_id ??
+        trip?.legId ??
+        trip?.booking_details?.leg_id ??
+        trip?.booking_details?.legId,
+      160,
+    ) ||
+    !!safeStr(
+      trip?.leg_type ??
+        trip?.legType ??
+        trip?.booking_details?.leg_type ??
+        trip?.booking_details?.legType,
+      64,
+    ) ||
+    trip?.booking_details?.is_operational_leg === true ||
+    trip?.booking_details?.isOperationalLeg === true;
+  const isPlannedOperationalLeg =
+    tripIdToken.startsWith("planned_") && hasLegIdentity;
+  const isCompletedUnpaidOperationalLegActionable =
+    isPlannedOperationalLeg &&
+    tripStatus === "completed" &&
+    paymentStatus !== "paid" &&
+    amountCents > 0;
+  const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 160);
+  if (!bookingId || !bookingMap || typeof bookingMap !== "object") {
+    if (isCompletedUnpaidOperationalLegActionable) {
+      return "unpaid_completed_actionable";
+    }
+    return "unpaid_completed_tracking_only";
+  }
   const bookingStatus = _tripKpiNormalizeToken(
     trip?.booking_details?.booking_status ??
       bookingMap?.booking_status ??
@@ -3560,6 +3709,25 @@ async function handleTripPayment(req, url, env, origin, ctx) {
     body["paid_by_driver_id"] ?? body["paidByDriverId"],
     96,
   );
+  const leg_id = safeStr(
+    body["leg_id"] ?? body["legId"] ?? trip?.leg_id ?? trip?.legId,
+    160,
+  );
+  const leg_type = safeStr(
+    body["leg_type"] ?? body["legType"] ?? trip?.leg_type ?? trip?.legType,
+    64,
+  );
+  const parent_booking_id = safeStr(
+    body["parent_booking_id"] ??
+      body["parentBookingId"] ??
+      trip?.parent_booking_id ??
+      trip?.parentBookingId,
+    160,
+  );
+  const row_key = safeStr(
+    body["row_key"] ?? body["rowKey"] ?? trip?.row_key ?? trip?.rowKey,
+    240,
+  );
 
   trip.payment_status = payment_status;
   trip.paymentStatus = payment_status;
@@ -3580,6 +3748,56 @@ async function handleTripPayment(req, url, env, origin, ctx) {
     trip.paid_by_driver_id = paid_by_driver_id;
     trip.paidByDriverId = paid_by_driver_id;
   }
+  if (leg_id) {
+    trip.leg_id = leg_id;
+    trip.legId = leg_id;
+  }
+  if (leg_type) {
+    trip.leg_type = leg_type;
+    trip.legType = leg_type;
+  }
+  if (parent_booking_id) {
+    trip.parent_booking_id = parent_booking_id;
+    trip.parentBookingId = parent_booking_id;
+  }
+  if (row_key) {
+    trip.row_key = row_key;
+    trip.rowKey = row_key;
+  }
+  if (leg_id || leg_type || row_key) {
+    trip.is_operational_leg = true;
+    trip.isOperationalLeg = true;
+  }
+  const nextBookingDetails =
+    trip?.booking_details &&
+    typeof trip.booking_details === "object" &&
+    !Array.isArray(trip.booking_details)
+      ? { ...trip.booking_details }
+      : {};
+  if (leg_id) {
+    nextBookingDetails.leg_id = leg_id;
+    nextBookingDetails.legId = leg_id;
+  }
+  if (leg_type) {
+    nextBookingDetails.leg_type = leg_type;
+    nextBookingDetails.legType = leg_type;
+  }
+  if (parent_booking_id) {
+    nextBookingDetails.parent_booking_id = parent_booking_id;
+    nextBookingDetails.parentBookingId = parent_booking_id;
+  }
+  if (row_key) {
+    nextBookingDetails.row_key = row_key;
+    nextBookingDetails.rowKey = row_key;
+  }
+  if (leg_id || leg_type || row_key) {
+    nextBookingDetails.is_operational_leg = true;
+    nextBookingDetails.isOperationalLeg = true;
+  }
+  const normalizedBookingDetails = normalizeBookingDetails(nextBookingDetails);
+  if (normalizedBookingDetails) {
+    trip.booking_details = normalizedBookingDetails;
+  }
 
   const timeline = Array.isArray(trip.timeline) ? trip.timeline : [];
   timeline.push({
@@ -3595,6 +3813,14 @@ async function handleTripPayment(req, url, env, origin, ctx) {
   });
   trip.timeline = timeline;
   applyCanonicalScopeToRecord(trip, scope);
+  const tripIdPreview = _tripKpiMask(trip_id) || "-";
+  const bookingIdPreview = _tripKpiMask(safeStr(trip?.booking_id ?? trip?.bookingId, 96)) || "-";
+  const legIdPreview = _tripKpiMask(leg_id) || "-";
+  console.log(
+    `[TRIP_PAYMENT][UPDATE] trip=${tripIdPreview} booking=${bookingIdPreview} leg=${legIdPreview} type=${leg_type || "-"} status=${payment_status} method=${payment_method || "-"} amount=${
+      amount !== null ? amount : "-"
+    }`,
+  );
 
   await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
   await materializeTripDashboardKpisBestEffort(
