@@ -18780,8 +18780,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         s == 'DECLINED';
   }
 
+  String _bookingActionKeyForUi(BookingItem b) {
+    if (b.isOperationalLeg && b.legId.trim().isNotEmpty) {
+      return b.rowKey;
+    }
+    return b.bookingId;
+  }
+
   String? _effectiveStatusFor(BookingItem b) {
-    return _bookingStatusOverrides[b.bookingId] ?? b.status;
+    return _bookingStatusOverrides[b.rowKey] ??
+        _bookingStatusOverrides[b.bookingId] ??
+        b.status;
   }
 
   Map<String, dynamic> _bookingScopeViewFor(BookingItem b) {
@@ -19430,7 +19439,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           (decoded['bookings'] as List<dynamic>? ??
           decoded['items'] as List<dynamic>? ??
           const []);
-      final prevStatusById = <String, String?>{
+      final prevStatusByRowKey = <String, String?>{
+        for (final b in _bookings) b.rowKey: _effectiveStatusFor(b),
+      };
+      final prevStatusByBookingId = <String, String?>{
         for (final b in _bookings) b.bookingId: _effectiveStatusFor(b),
       };
       final items = raw.whereType<Map<String, dynamic>>().map((j) {
@@ -19438,7 +19450,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         final apiStatus = parsed.status?.trim();
         final mergedStatus = (apiStatus != null && apiStatus.isNotEmpty)
             ? apiStatus
-            : (prevStatusById[parsed.bookingId] ??
+            : (prevStatusByRowKey[parsed.rowKey] ??
+                  prevStatusByBookingId[parsed.bookingId] ??
+                  _bookingStatusOverrides[parsed.rowKey] ??
                   _bookingStatusOverrides[parsed.bookingId]);
         return mergedStatus == null
             ? parsed
@@ -19450,7 +19464,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       for (final b in items) {
         final apiStatus = b.status?.trim();
         if (apiStatus != null && apiStatus.isNotEmpty) {
-          _bookingStatusOverrides[b.bookingId] = apiStatus;
+          _bookingStatusOverrides[b.rowKey] = apiStatus;
+          if (!(b.isOperationalLeg && b.legId.trim().isNotEmpty)) {
+            _bookingStatusOverrides[b.bookingId] = apiStatus;
+          }
         }
       }
 
@@ -19865,7 +19882,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     final bookingId = b.bookingId;
-    setState(() => _bookingActionInFlight.add(bookingId));
+    final actionKey = _bookingActionKeyForUi(b);
+    setState(() => _bookingActionInFlight.add(actionKey));
     _markBookingsUiDirty();
     try {
       final uri = _withActiveBookingScope(
@@ -20013,7 +20031,117 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     } finally {
       if (mounted) {
-        setState(() => _bookingActionInFlight.remove(bookingId));
+        setState(() => _bookingActionInFlight.remove(actionKey));
+        _markBookingsUiDirty();
+      }
+    }
+  }
+
+  Future<void> _setOperationalLegStatus(BookingItem b, String status) async {
+    if (!mounted) return;
+    if (!_canOperateBookingWithGuard(
+      _bookingScopeViewFor(b),
+      action: 'leg_status_$status',
+    )) {
+      return;
+    }
+    final bookingId = b.bookingId.trim();
+    final legId = b.legId.trim();
+    if (bookingId.isEmpty || legId.isEmpty) {
+      _toast(
+        _tr(
+          nl: 'Legstatus bijwerken mislukt. Vernieuw en probeer opnieuw.',
+          en: 'Leg status update failed. Refresh and try again.',
+          fr: 'La mise a jour du statut du trajet a echoue. Actualisez puis reessayez.',
+          es: 'No se pudo actualizar el estado del tramo. Actualiza e intentalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    final actionKey = _bookingActionKeyForUi(b);
+    setState(() => _bookingActionInFlight.add(actionKey));
+    _markBookingsUiDirty();
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(bookingId)}/legs/${Uri.encodeComponent(legId)}/status',
+      );
+      final actorRole = appRoleNotifier.value == AppRole.driver
+          ? 'driver'
+          : 'admin';
+      final payload = <String, dynamic>{
+        'booking_id': bookingId,
+        'leg_id': legId,
+        'status': status,
+        'actor_role': actorRole,
+        'actorRole': actorRole,
+        ..._activeBookingScopeQuery(),
+        ..._driverMutationActorFields(
+          actorVehicleId: _bookingScopeFirstText(
+            _bookingScopeViewFor(b),
+            const [
+              ['assigned_vehicle_id'],
+              ['assignedVehicleId'],
+              ['vehicle_id'],
+              ['vehicleId'],
+              ['booking', 'assigned_vehicle_id'],
+              ['booking', 'assignedVehicleId'],
+              ['booking', 'vehicle_id'],
+              ['booking', 'vehicleId'],
+            ],
+          ),
+        ),
+      };
+      debugPrint(
+        '[RIDES][LEG_STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
+      );
+      final res = await http
+          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 12));
+      debugPrint(
+        '[RIDES][LEG_STATUS][RES] code=${res.statusCode} body=${res.body}',
+      );
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null;
+      }
+      final ok = decoded is Map ? decoded['ok'] == true : false;
+      if (res.statusCode != 200 || !ok) {
+        throw Exception('HTTP ${res.statusCode}: leg_status_update_failed');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _bookingStatusOverrides[b.rowKey] = status;
+        final idx = _bookings.indexWhere((x) => x.rowKey == b.rowKey);
+        if (idx >= 0) {
+          _bookings[idx] = _bookings[idx].copyWith(status: status);
+        }
+        if (_activeBooking?.rowKey == b.rowKey) {
+          _activeBooking = _activeBooking!.copyWith(status: status);
+        }
+      });
+      _markBookingsUiDirty();
+      _toast('✅ $status: ${b.shortId}');
+      await _debugFetchBookingSnapshot(
+        bookingId: bookingId,
+        contextLabel: 'LEG_STATUS_AFTER_WRITE',
+      );
+      await _refreshBookings(force: true, trigger: 'leg_status_change');
+    } catch (e) {
+      _toast(
+        _tr(
+          nl: 'Legstatus bijwerken mislukt. Vernieuw en probeer opnieuw.',
+          en: 'Leg status update failed. Refresh and try again.',
+          fr: 'La mise a jour du statut du trajet a echoue. Actualisez puis reessayez.',
+          es: 'No se pudo actualizar el estado del tramo. Actualiza e intentalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _bookingActionInFlight.remove(actionKey));
         _markBookingsUiDirty();
       }
     }
@@ -20028,7 +20156,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     final bookingId = b.bookingId;
-    setState(() => _bookingActionInFlight.add(bookingId));
+    final actionKey = _bookingActionKeyForUi(b);
+    setState(() => _bookingActionInFlight.add(actionKey));
     _markBookingsUiDirty();
     try {
       final uri = _withActiveBookingScope(
@@ -20097,7 +20226,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _toast('❌ Delete failed: $e');
     } finally {
       if (mounted) {
-        setState(() => _bookingActionInFlight.remove(bookingId));
+        setState(() => _bookingActionInFlight.remove(actionKey));
         _markBookingsUiDirty();
       }
     }
@@ -28480,22 +28609,13 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _bookingCard(BookingItem b) {
     final dt = _formatPickup(b.pickupIso);
-    final actionBusy = _bookingActionInFlight.contains(b.bookingId);
+    final actionBusy = _bookingActionInFlight.contains(
+      _bookingActionKeyForUi(b),
+    );
     final cardReference = _driverCardReferenceDisplay(b);
     final isOperationalLeg = _bookingIsOperationalLeg(b);
     final isRoundtripParent = _bookingIsRoundtripParent(b);
-    // H1-T-I.2a safety guard:
-    // Leg rows are display-ready, but status actions are still parent-level until H1-T-I.3.
-    // Disable parent-level COMPLETED/CANCELLED on roundtrip operational legs to prevent
-    // accidentally updating the full parent order from a single leg row.
-    final guardParentStatusActions = isOperationalLeg && isRoundtripParent;
     final legLabel = _bookingLegLabel(b);
-    final legStatusDeferredText = _tr(
-      nl: 'Legstatus komt in volgende fase',
-      en: 'Leg status comes in next phase',
-      fr: 'Le statut du trajet arrive dans la phase suivante',
-      es: 'El estado del tramo llega en la siguiente fase',
-    );
     final parentBookingId =
         (b.details['parent_booking_id'] ?? b.details['parentBookingId'] ?? '')
             .toString()
@@ -28750,9 +28870,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
-                        : (guardParentStatusActions
-                              ? null
-                              : () => _setBookingStatus(b, 'COMPLETED')),
+                        : () =>
+                              (b.isOperationalLeg && b.legId.trim().isNotEmpty)
+                              ? _setOperationalLegStatus(b, 'COMPLETED')
+                              : _setBookingStatus(b, 'COMPLETED'),
                     icon: const Icon(Icons.check_circle_outline, size: 16),
                     label: Text(
                       kRideActionCompletedLabel,
@@ -28760,19 +28881,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ),
                 ),
-                if (guardParentStatusActions) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    legStatusDeferredText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.58),
-                      fontSize: 11.2,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -28783,9 +28891,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : (guardParentStatusActions
-                                    ? null
-                                    : () => _setBookingStatus(b, 'CANCELLED')),
+                              : () =>
+                                    (b.isOperationalLeg &&
+                                        b.legId.trim().isNotEmpty)
+                                    ? _setOperationalLegStatus(b, 'CANCELLED')
+                                    : _setBookingStatus(b, 'CANCELLED'),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(
                             kRideActionCancelledLabel,
@@ -29016,9 +29126,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                     style: _ghostButtonStyle(),
                     onPressed: actionBusy
                         ? null
-                        : (guardParentStatusActions
-                              ? null
-                              : () => _setBookingStatus(b, 'COMPLETED')),
+                        : () =>
+                              (b.isOperationalLeg && b.legId.trim().isNotEmpty)
+                              ? _setOperationalLegStatus(b, 'COMPLETED')
+                              : _setBookingStatus(b, 'COMPLETED'),
                     icon: const Icon(Icons.check_circle_outline, size: 16),
                     label: Text(
                       kRideActionCompletedLabel,
@@ -29026,19 +29137,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ),
                 ),
-                if (guardParentStatusActions) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    legStatusDeferredText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.58),
-                      fontSize: 11.2,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -29049,9 +29147,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : (guardParentStatusActions
-                                    ? null
-                                    : () => _setBookingStatus(b, 'CANCELLED')),
+                              : () =>
+                                    (b.isOperationalLeg &&
+                                        b.legId.trim().isNotEmpty)
+                                    ? _setOperationalLegStatus(b, 'CANCELLED')
+                                    : _setBookingStatus(b, 'CANCELLED'),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(
                             kRideActionCancelledLabel,
@@ -29103,9 +29203,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : (guardParentStatusActions
-                                    ? null
-                                    : () => _setBookingStatus(b, 'COMPLETED')),
+                              : () =>
+                                    (b.isOperationalLeg &&
+                                        b.legId.trim().isNotEmpty)
+                                    ? _setOperationalLegStatus(b, 'COMPLETED')
+                                    : _setBookingStatus(b, 'COMPLETED'),
                           icon: const Icon(
                             Icons.check_circle_outline,
                             size: 16,
@@ -29122,29 +29224,16 @@ class _DriverHomePageState extends State<DriverHomePage>
                           style: _ghostButtonStyle(),
                           onPressed: actionBusy
                               ? null
-                              : (guardParentStatusActions
-                                    ? null
-                                    : () => _setBookingStatus(b, 'CANCELLED')),
+                              : () =>
+                                    (b.isOperationalLeg &&
+                                        b.legId.trim().isNotEmpty)
+                                    ? _setOperationalLegStatus(b, 'CANCELLED')
+                                    : _setBookingStatus(b, 'CANCELLED'),
                           icon: const Icon(Icons.cancel_outlined, size: 16),
                           label: Text(kRideActionCancelledLabel),
                         ),
                       ),
                     ),
-                    if (guardParentStatusActions) ...[
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          legStatusDeferredText,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.58),
-                            fontSize: 11.2,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
                     const SizedBox(width: 6),
                     SizedBox(
                       height: actionHeight,
