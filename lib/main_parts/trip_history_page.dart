@@ -374,9 +374,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       );
       return;
     }
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => _RideReceiptPage(item: enrichedItem)),
     );
+    if (!mounted) return;
+    _refresh();
   }
 
   Future<void> _archiveTrip(_TripHistoryItem item) async {
@@ -473,11 +475,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     final detail = item.bookingDetails;
     final raw = item.rawSource;
     final candidates = <String?>[
-      from(detail['payment_status']),
-      from(detail['paymentStatus']),
       from(raw['payment_status']),
       from(raw['paymentStatus']),
       from(raw['payment'] is Map ? (raw['payment'] as Map)['status'] : null),
+      from(detail['payment_status']),
+      from(detail['paymentStatus']),
       from(
         detail['payment'] is Map ? (detail['payment'] as Map)['status'] : null,
       ),
@@ -611,6 +613,49 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       return _tr(nl: 'Onbetaald', en: 'Unpaid', fr: 'Impayé', es: 'No pagado');
     }
     return '';
+  }
+
+  String? _historyLegTypeToken(_TripHistoryItem item) {
+    String? pick(List<List<String>> paths) {
+      for (final path in paths) {
+        dynamic current = item.bookingDetails;
+        for (final key in path) {
+          if (current is Map && current.containsKey(key)) {
+            current = current[key];
+          } else {
+            current = null;
+            break;
+          }
+        }
+        final text = current?.toString().trim();
+        if (text != null && text.isNotEmpty) return text;
+      }
+      return null;
+    }
+
+    final raw = pick(const [
+      ['leg_type'],
+      ['legType'],
+      ['details', 'leg_type'],
+      ['details', 'legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+    ])?.toLowerCase();
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.contains('return') || raw.contains('terug')) return 'return';
+    if (raw.contains('outbound') || raw.contains('heen')) return 'outbound';
+    return null;
+  }
+
+  String? _historyLegBadgeText(_TripHistoryItem item) {
+    final token = _historyLegTypeToken(item);
+    if (token == null) return null;
+    if (token == 'return') {
+      return _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Vuelta');
+    }
+    return _tr(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
   }
 
   bool _looksLikeRawCoordinatePair(String? value) {
@@ -767,6 +812,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                   : _formatEur(item.totalEur!);
               final statusColor = _statusChipColor(item);
               final paymentChip = _paymentChipText(item);
+              final legBadgeText = _historyLegBadgeText(item);
               final originText = _displayHistoryOrigin(item.origin);
               final kindOrCustomer = (item.customerName ?? '').trim().isNotEmpty
                   ? item.customerName!.trim()
@@ -957,6 +1003,32 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           color: kFluxidiYellow.withOpacity(
                                             0.95,
                                           ),
+                                          fontSize: 10.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  if (legBadgeText != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1F2937),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: kFluxidiYellow.withOpacity(
+                                            0.35,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        legBadgeText,
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.94),
                                           fontSize: 10.8,
                                           fontWeight: FontWeight.w700,
                                         ),
