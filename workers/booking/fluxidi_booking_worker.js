@@ -22890,6 +22890,16 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
       booking?.invoice_requested ??
       booking?.invoiceRequested,
   );
+  const isExplicitOnlineCheckoutMode = (value) => {
+    const raw = safeStr(value, 40).toLowerCase();
+    return (
+      raw === "mollie" ||
+      raw === "online" ||
+      raw === "online_payment" ||
+      raw === "online-payments" ||
+      raw === "online_payments"
+    );
+  };
   const requiresPayment = boolish(
     rec?.requiresPayment ??
       rec?.requires_payment ??
@@ -22897,7 +22907,7 @@ function buildIdempotentBookingHitResponse(canonicalBookingId, rec) {
       booking?.requiresPayment ??
       booking?.requires_payment ??
       booking?.payment_required,
-  ) || businessDetected || invoiceRequested || paymentMode === "mollie";
+  ) || isExplicitOnlineCheckoutMode(paymentMode);
   const normalizedPaymentStatus = paymentStatus.toLowerCase();
   const paymentSettled = [
     "paid",
@@ -23170,15 +23180,36 @@ async function handleBooking(payload, env, request) {
       }
     }
 
-    // Business rule: if VAT is provided => upfront payment required (Mollie test/live).
-    // Private customers can book without immediate payment.
-    const requiresPayment = business_detected;
-    const paymentFields = paymentFieldsFromPayload(payload);
-    const molliePaidConfirmed = payload.__mollie_paid === true && paymentFields.payment_status === "paid";
-    const shouldReserveNow = !(business_detected && !molliePaidConfirmed);
-
-    // Invoices are mandatory for business bookings; optional for private (if you ever enable it later).
+    // Invoices are mandatory for business bookings; optional for private.
     const invoice_requested = business_detected ? true : !!biz.invoice_requested;
+    // Online checkout is required only when explicitly requested.
+    const requestedPaymentMode = safeStr(
+      payload?.payment_mode ?? payload?.paymentMode,
+      40,
+    ).toLowerCase();
+    const requestedPaymentProvider = safeStr(
+      payload?.payment_provider ?? payload?.paymentProvider,
+      40,
+    ).toLowerCase();
+    const explicitOnlineCheckoutRequested =
+      requestedPaymentMode === "mollie" ||
+      requestedPaymentMode === "online" ||
+      requestedPaymentMode === "online_payment" ||
+      requestedPaymentMode === "online-payments" ||
+      requestedPaymentMode === "online_payments" ||
+      requestedPaymentProvider === "mollie";
+    const requiresPayment = explicitOnlineCheckoutRequested;
+    const paymentFields = paymentFieldsFromPayload(payload);
+    let bookingPaymentFields = paymentFields;
+    if (business_detected && invoice_requested && !requiresPayment) {
+      bookingPaymentFields = normalizedPaymentFields({
+        status: "unpaid",
+        provider: "manual",
+      });
+    }
+    const molliePaidConfirmed =
+      payload.__mollie_paid === true && paymentFields.payment_status === "paid";
+    const shouldReserveNow = !(requiresPayment && !molliePaidConfirmed);
 
     // If no payment is required, we mark as "paid" so the flow skips Mollie and confirms immediately.
     if (!requiresPayment) payload.__mollie_paid = true;
@@ -24001,7 +24032,7 @@ async function handleBooking(payload, env, request) {
         // Business bookings must be paid before creating the authoritative
         // calendar event. Availability has been checked above; creation happens
         // only when Mollie has actually reported "paid".
-        if (business_detected && !molliePaidConfirmed) {
+        if (requiresPayment && !molliePaidConfirmed) {
           await ensureBookingReferencesReserved();
           calendarPaymentHandled = true;
           const nowIso = new Date().toISOString();
@@ -24927,7 +24958,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       }
     }
 
-    if ((!calendarConfigured || calendarSyncSuppressed) && business_detected && !molliePaidConfirmed && !calendarPaymentHandled) {
+    if ((!calendarConfigured || calendarSyncSuppressed) && requiresPayment && !molliePaidConfirmed && !calendarPaymentHandled) {
       await ensureBookingReferencesReserved();
       const pay = await mollieCreatePayment(
         {
@@ -25429,7 +25460,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       note: mainPricing?.note || "",
       calendar_auth_source: calendarAuthSource,
       calendarAuthSource: calendarAuthSource,
-      ...paymentFields,
+      ...bookingPaymentFields,
       ...(calendarSyncStatus
         ? {
             calendar_sync_status: calendarSyncStatus,
@@ -25476,7 +25507,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       operationalLegs: bookingOperationalLegs,
       calendar_auth_source: calendarAuthSource,
       calendarAuthSource: calendarAuthSource,
-      ...paymentFields,
+      ...bookingPaymentFields,
       ...(calendarSyncStatus
         ? {
             calendar_sync_status: calendarSyncStatus,
@@ -25554,7 +25585,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         returnHtmlLink: safeStr(calendar?.return_htmlLink || null),
         calendar_auth_source: calendarAuthSource,
         calendarAuthSource: calendarAuthSource,
-        ...paymentFields,
+        ...bookingPaymentFields,
         ...(calendarSyncStatus
           ? {
               calendar_sync_status: calendarSyncStatus,
