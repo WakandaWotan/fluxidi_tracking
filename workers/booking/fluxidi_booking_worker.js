@@ -29474,6 +29474,9 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
   );
   const parentStatusUpper = _normLifecycleStatus(parentRow?.status || null);
   const legStatusUpper = _normLifecycleStatus(legStatusRaw || parentStatusUpper || "PENDING");
+  const projectedStatusUpper = isTerminalLifecycleStatus(parentStatusUpper)
+    ? parentStatusUpper
+    : legStatusUpper;
   const assignedDriverId = safeStr(
     leg?.assigned_driver_id ??
       leg?.assignedDriverId ??
@@ -29528,10 +29531,10 @@ function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, options =
     pickupIso: legPickupIso || parentRow?.pickup_iso || null,
     from: legFrom ?? parentRow?.from ?? null,
     to: legTo ?? parentRow?.to ?? null,
-    status: legStatusUpper,
-    lifecycle: legStatusUpper.toLowerCase(),
-    lifecycle_status: legStatusUpper.toLowerCase(),
-    lifecycleStatus: legStatusUpper.toLowerCase(),
+    status: projectedStatusUpper,
+    lifecycle: projectedStatusUpper.toLowerCase(),
+    lifecycle_status: projectedStatusUpper.toLowerCase(),
+    lifecycleStatus: projectedStatusUpper.toLowerCase(),
     parent_status: parentStatusUpper,
     parentStatus: parentStatusUpper,
     assigned_driver_id: assignedDriverId || null,
@@ -36830,6 +36833,72 @@ async function updateBookingStatusAuthoritative(
     if (rec.booking && typeof rec.booking === "object") {
       rec.booking.completed_at = rec.booking.completed_at || rec.completed_at;
       rec.booking.completedAt = rec.booking.completedAt || rec.completed_at;
+    }
+  }
+  if (isTerminalLifecycleStatus(normalized)) {
+    const normalizedLower = normalized.toLowerCase();
+    const cascadedLegIdentity = new Set();
+    let cascadedLegCount = 0;
+    const cascadeOperationalLegArray = (rawLegs, pathLabel) => {
+      if (!Array.isArray(rawLegs) || !rawLegs.length) return rawLegs;
+      return rawLegs.map((entry, index) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const legIdentity =
+          safeStr(entry?.leg_id ?? entry?.legId, 200) || `${pathLabel}:${index}`;
+        if (!cascadedLegIdentity.has(legIdentity)) {
+          cascadedLegIdentity.add(legIdentity);
+          cascadedLegCount += 1;
+        }
+        const next = {
+          ...entry,
+          status: normalized,
+          lifecycle_status: normalizedLower,
+          lifecycleStatus: normalizedLower,
+        };
+        if (
+          Object.prototype.hasOwnProperty.call(entry, "updated_at") ||
+          Object.prototype.hasOwnProperty.call(entry, "updatedAt")
+        ) {
+          if (Object.prototype.hasOwnProperty.call(entry, "updated_at")) {
+            next.updated_at = nowIso;
+          }
+          if (Object.prototype.hasOwnProperty.call(entry, "updatedAt")) {
+            next.updatedAt = nowIso;
+          }
+        }
+        return next;
+      });
+    };
+    if (Array.isArray(rec?.operational_legs)) {
+      rec.operational_legs = cascadeOperationalLegArray(
+        rec.operational_legs,
+        "rec.operational_legs",
+      );
+    }
+    if (Array.isArray(rec?.operationalLegs)) {
+      rec.operationalLegs = cascadeOperationalLegArray(
+        rec.operationalLegs,
+        "rec.operationalLegs",
+      );
+    }
+    if (rec.booking && typeof rec.booking === "object") {
+      if (Array.isArray(rec.booking.operational_legs)) {
+        rec.booking.operational_legs = cascadeOperationalLegArray(
+          rec.booking.operational_legs,
+          "rec.booking.operational_legs",
+        );
+      }
+      if (Array.isArray(rec.booking.operationalLegs)) {
+        rec.booking.operationalLegs = cascadeOperationalLegArray(
+          rec.booking.operationalLegs,
+          "rec.booking.operationalLegs",
+        );
+      }
+    }
+    if (cascadedLegCount > 0) {
+      console.log(
+        `[BOOKING][OPERATIONAL_LEGS][CASCADE_STATUS] booking=${_bookingIntentMask(bookingId)} status=${normalized} count=${cascadedLegCount}`,
+      );
     }
   }
   if (normalized === "COMPLETED" || normalized === "CANCELLED") {
