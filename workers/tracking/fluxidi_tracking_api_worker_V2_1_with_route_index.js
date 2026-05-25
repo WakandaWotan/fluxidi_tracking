@@ -96,6 +96,18 @@ function safeStr(v, maxLen = 2000) {
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
+function sanitizeTripIdentityToken(value, maxLen = 96) {
+  const raw = safeStr(value, maxLen * 4);
+  if (!raw) return null;
+  const sanitized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!sanitized) return null;
+  return sanitized.length > maxLen ? sanitized.slice(0, maxLen) : sanitized;
+}
+
 function resolveTrackingActorFromRequest(request, url, body = null) {
   const search = url?.searchParams;
   const actor_role = (
@@ -1615,10 +1627,26 @@ function normalizeBookingDetails(value) {
     "luggage_count",
     "booked_wait_minutes",
     "booking_status",
+    "leg_id",
+    "legId",
+    "leg_type",
+    "legType",
+    "row_key",
+    "rowKey",
+    "parent_booking_id",
+    "parentBookingId",
+    "is_operational_leg",
+    "isOperationalLeg",
     "booking_total_eur",
     "segment_price_eur",
     "outbound_price_eur",
     "return_price_eur",
+    "payment_status",
+    "paymentStatus",
+    "payment_method",
+    "paymentMethod",
+    "payment_source",
+    "paymentSource",
     "return_scheduled_pickup_at",
     "return_route",
     "route_segments",
@@ -3041,15 +3069,78 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const vehicle_id = safeStr(body["vehicle_id"], 96) ?? null;
   const originData = normalizeDestination(body["origin"]);
   const destination = normalizeDestination(body["destination"]);
-  const booking_details = normalizeBookingDetails(body["booking_details"]);
+  let booking_details = normalizeBookingDetails(body["booking_details"]);
+  const leg_id = safeStr(
+    body["leg_id"] ??
+      body["legId"] ??
+      booking_details?.leg_id ??
+      booking_details?.legId,
+    160,
+  ) ?? null;
+  const leg_type = safeStr(
+    body["leg_type"] ??
+      body["legType"] ??
+      booking_details?.leg_type ??
+      booking_details?.legType,
+    32,
+  ) ?? null;
+  const row_key = safeStr(
+    body["row_key"] ??
+      body["rowKey"] ??
+      booking_details?.row_key ??
+      booking_details?.rowKey,
+    240,
+  ) ?? null;
+  const parent_booking_id = safeStr(
+    body["parent_booking_id"] ??
+      body["parentBookingId"] ??
+      booking_details?.parent_booking_id ??
+      booking_details?.parentBookingId,
+    96,
+  ) ?? booking_id;
+  const is_operational_leg = !!(leg_id || row_key);
+  if (is_operational_leg || parent_booking_id !== booking_id || leg_type) {
+    const detailsNext =
+      booking_details && typeof booking_details === "object"
+        ? { ...booking_details }
+        : {};
+    if (leg_id) {
+      detailsNext.leg_id = leg_id;
+      detailsNext.legId = leg_id;
+    }
+    if (leg_type) {
+      detailsNext.leg_type = leg_type;
+      detailsNext.legType = leg_type;
+    }
+    if (row_key) {
+      detailsNext.row_key = row_key;
+      detailsNext.rowKey = row_key;
+    }
+    if (parent_booking_id) {
+      detailsNext.parent_booking_id = parent_booking_id;
+      detailsNext.parentBookingId = parent_booking_id;
+    }
+    detailsNext.is_operational_leg = is_operational_leg;
+    detailsNext.isOperationalLeg = is_operational_leg;
+    booking_details = detailsNext;
+  }
   const startedAt = safeStr(body["started_at"] ?? body["client_started_at"], 64) ?? null;
   const stoppedAt = safeStr(body["stopped_at"] ?? body["client_stopped_at"], 64) ?? nowIso();
   const km_total = safeNum(body["km_total"], 0, 100000);
   const wait_seconds_total = safeNum(body["wait_seconds_total"] ?? 0, 0, 60 * 60 * 24 * 7) ?? 0;
   const total_eur = safeNum(body["total_eur"], 0, 1000000);
   const currency = safeStr(body["currency"] ?? "EUR", 8) ?? "EUR";
-  const trip_id = `planned_${booking_id}`;
+  const tripSuffix =
+    sanitizeTripIdentityToken(leg_id, 96) ??
+    sanitizeTripIdentityToken(row_key, 96);
+  const trip_id = tripSuffix
+    ? `planned_${booking_id}_${tripSuffix}`
+    : `planned_${booking_id}`;
   const owner_company_id = company_id;
+
+  console.log(
+    `[TRACKING][PLANNED_STOP][LEG_IDENTITY] booking=${booking_id} trip=${trip_id} leg=${leg_id || row_key || "-"} type=${leg_type || "-"}`,
+  );
 
   const existingTripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
   const existingTrip = existingTripResolved.trip;
@@ -3101,6 +3192,16 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     trip_id,
     kind: "planned",
     booking_id,
+    leg_id,
+    legId: leg_id,
+    leg_type,
+    legType: leg_type,
+    row_key,
+    rowKey: row_key,
+    parent_booking_id,
+    parentBookingId: parent_booking_id,
+    is_operational_leg,
+    isOperationalLeg: is_operational_leg,
     tenant_id,
     driver_id,
     vehicle_id,
