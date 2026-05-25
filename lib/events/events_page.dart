@@ -1391,21 +1391,21 @@ class _EventsPageState extends State<EventsPage> {
       case 'all':
         return 'assets/events/categories/event_category_all.webp';
       case EventCategoryKey.music:
-        return 'assets/events/categories/event_category_music.webp';
+        return 'assets/events/categories/music.webp';
       case EventCategoryKey.sport:
-        return 'assets/events/categories/event_category_sport.webp';
+        return 'assets/events/categories/sports.webp';
       case EventCategoryKey.theater:
-        return 'assets/events/categories/event_category_theater.webp';
+        return 'assets/events/categories/theatre.webp';
       case EventCategoryKey.comedy:
-        return 'assets/events/categories/event_category_comedy.webp';
+        return 'assets/events/categories/comedy.webp';
       case EventCategoryKey.family:
-        return 'assets/events/categories/event_category_family.webp';
+        return 'assets/events/categories/family.webp';
       case EventCategoryKey.food:
-        return 'assets/events/categories/event_category_food.webp';
+        return 'assets/events/categories/food.webp';
       case EventCategoryKey.business:
-        return 'assets/events/categories/event_category_business.webp';
+        return 'assets/events/categories/business.webp';
       case EventCategoryKey.culture:
-        return 'assets/events/categories/event_category_culture.webp';
+        return 'assets/events/categories/culture.webp';
       case EventCategoryKey.other:
         return 'assets/events/categories/event_category_other.webp';
       default:
