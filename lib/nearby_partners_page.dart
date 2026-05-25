@@ -127,6 +127,25 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       if (profile.isEmpty) return null;
       final coverage = _safeMap(profile['coverage']);
       final media = _safeMap(profile['media']);
+      final city = _mapTextAny(coverage, const [
+        'city',
+        'municipality',
+        'locality',
+        'place',
+      ]);
+      final postcode = _mapTextAny(coverage, const [
+        'postcode',
+        'postal_code',
+        'postalCode',
+        'zip',
+        'zip_code',
+        'zipCode',
+      ]);
+      final countryCode = _mapTextAny(coverage, const [
+        'country_code',
+        'countryCode',
+        'country',
+      ]);
       return <String, dynamic>{
         'partner_id':
             _mapTextAny(profile, const [
@@ -153,6 +172,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           'region_label',
           'regionLabel',
         ]),
+        'city': city,
+        'postcode': postcode,
+        'country_code': countryCode,
         'services': profile['services'],
         'capabilities': profile['capabilities'],
         'booking_capabilities': profile['booking_capabilities'],
@@ -456,6 +478,109 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       if (text.isNotEmpty) return text;
     }
     return '';
+  }
+
+  String _sanitizePartnerSubtitleText(String input) {
+    var text = input;
+    text = text.replaceAll('â€¢', '·');
+    text = text.replaceAll('Â·', '·');
+    text = text.replaceAll('Â ', ' ');
+    text = text.replaceAll('Â', '');
+    text = text.replaceAll(RegExp(r'\s*[•·]\s*'), ' · ');
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    text = text.replaceAll(RegExp(r'(?:\s*·\s*){2,}'), ' · ');
+    text = text.replaceAll(RegExp(r'^(?:·\s*)+|(?:\s*·)+$'), '').trim();
+    return text;
+  }
+
+  List<String> _locationSubtitleParts(String input) {
+    final normalized = _sanitizePartnerSubtitleText(input);
+    if (normalized.isEmpty) return const <String>[];
+    return normalized
+        .split(RegExp(r'\s*·\s*'))
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String _fallbackPostalFromLocationParts(List<String> parts) {
+    for (final part in parts) {
+      if (RegExp(r'\d').hasMatch(part)) return part;
+    }
+    return '';
+  }
+
+  String _favoritePartnerSubtitle(Map<String, dynamic> partner) {
+    final city = _sanitizePartnerSubtitleText(
+      _mapTextAny(partner, const ['city', 'municipality', 'locality', 'place']),
+    );
+    var postcode = _sanitizePartnerSubtitleText(
+      _mapTextAny(partner, const [
+        'postcode',
+        'postal_code',
+        'postalCode',
+        'zip',
+        'zip_code',
+        'zipCode',
+      ]),
+    );
+    if (postcode.isEmpty) {
+      final supportedPostcodes = _mapTextListAny(partner, const [
+        'supported_postcodes',
+        'supportedPostcodes',
+      ]);
+      if (supportedPostcodes.isNotEmpty) {
+        postcode = _sanitizePartnerSubtitleText(supportedPostcodes.first);
+      }
+    }
+    var country = _sanitizePartnerSubtitleText(
+      _mapTextAny(partner, const ['country_code', 'countryCode', 'country']),
+    );
+    if (country.length == 2) country = country.toUpperCase();
+    final fallbackParts = _locationSubtitleParts(
+      _mapTextAny(partner, const [
+        'region_label',
+        'regionLabel',
+        'subtitle',
+        'location',
+        'location_label',
+        'locationLabel',
+      ]),
+    );
+    final fallback = fallbackParts.join(' · ');
+
+    if (city.isNotEmpty && postcode.isNotEmpty && country.isNotEmpty) {
+      return '$city · $postcode · $country';
+    }
+
+    if (fallbackParts.isNotEmpty) {
+      final fallbackCity = fallbackParts.isNotEmpty ? fallbackParts.first : '';
+      final fallbackCountry = fallbackParts.length >= 3
+          ? fallbackParts.last
+          : '';
+      final fallbackPostcode = _fallbackPostalFromLocationParts(fallbackParts);
+      final mergedParts = <String>[
+        city.isNotEmpty ? city : fallbackCity,
+        postcode.isNotEmpty ? postcode : fallbackPostcode,
+        country.isNotEmpty ? country : fallbackCountry,
+      ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+      if (mergedParts.length == 3) {
+        return mergedParts.join(' · ');
+      }
+      // Prefer a richer sanitized fallback over partial structured output.
+      if (fallbackParts.length >= 2) return fallback;
+      if (mergedParts.isNotEmpty) return mergedParts.join(' · ');
+    }
+
+    final structuredParts = <String>[
+      city,
+      postcode,
+      country,
+    ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+    if (structuredParts.isNotEmpty) {
+      return structuredParts.join(' · ');
+    }
+    return fallback;
   }
 
   bool _looksTruthy(dynamic value) {
@@ -961,7 +1086,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     final logoCandidate = _mapTextAny(p, const ['logo_url', 'logoUrl']);
     final logoUrl = _isPublicHttpsUrl(logoCandidate) ? logoCandidate : '';
-    final regionLabel = _mapTextAny(p, const ['region_label', 'regionLabel']);
+    final subtitle = _favoritePartnerSubtitle(p);
     return SizedBox(
       width: width,
       child: _premiumCard(
@@ -1000,10 +1125,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           fontSize: 13.8,
                         ),
                       ),
-                      if (regionLabel.isNotEmpty) ...[
+                      if (subtitle.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
-                          regionLabel,
+                          subtitle,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.64),
                             fontSize: 11.2,

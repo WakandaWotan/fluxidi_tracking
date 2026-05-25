@@ -316,6 +316,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     return '';
   }
 
+  String _sanitizeLocationDisplayText(String input) {
+    var text = input;
+    text = text.replaceAll('â€¢', '·');
+    text = text.replaceAll('Â·', '·');
+    text = text.replaceAll('Â ', ' ');
+    text = text.replaceAll('Â', '');
+    text = text.replaceAll(RegExp(r'\s*[•·]\s*'), ' · ');
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    text = text.replaceAll(RegExp(r'(?:\s*·\s*){2,}'), ' · ');
+    text = text.replaceAll(RegExp(r'^(?:·\s*)+|(?:\s*·)+$'), '').trim();
+    return text;
+  }
+
   String _profileHttpsUrl(dynamic source, List<String> keys) {
     final text = _profileTextAny(source, keys);
     if (text.toLowerCase().startsWith('https://')) return text;
@@ -1026,10 +1039,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       _profileTextAny(p, const ['about_long', 'aboutLong']),
     );
     final coverage = _profileMap(p['coverage']);
-    final regionLabel = _profileTextAny(coverage, const [
-      'region_label',
-      'regionLabel',
-    ]);
+    final regionLabel = _sanitizeLocationDisplayText(
+      _profileTextAny(coverage, const ['region_label', 'regionLabel']),
+    );
     final postcodes = _profileTextListAny(coverage, const ['postcodes']);
     final contact = _profileMap(p['public_contact']);
     final website = _profileTextAny(contact, const ['website']);
