@@ -18975,6 +18975,9 @@ GET /oauth/callback
             throw loadErr;
           }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          if (actorRole && !new Set(["driver", "admin", "system"]).has(actorRole)) {
+            return json({ ok: false, error: "invalid_actor_role" }, 400);
+          }
           const adminAuthorized = hasValidAdminToken(request, url, env);
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           if (!adminAuthorized) {
@@ -19026,6 +19029,83 @@ GET /oauth/callback
               ? 400
               : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400)),
           );
+        }
+
+        if (
+          pathParts.length === 5 &&
+          pathParts[2] === "legs" &&
+          pathParts[4] === "status" &&
+          request.method === "POST"
+        ) {
+          const legId = decodeURIComponent(pathParts[3] || "").trim();
+          if (!legId) {
+            return json({ ok: false, error: "leg_id is required" }, 400);
+          }
+          const body = await safeJson(request);
+          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+          if (!scopedRoute.ok) return scopedRoute.response;
+          const tenantScope = scopedRoute.scope;
+          let rec = null;
+          try {
+            const loaded = await loadBookingRecord(env, bookingId);
+            rec = loaded?.rec || null;
+          } catch (loadErr) {
+            if (String(loadErr?.message || "") === "Booking not found") {
+              return json({ ok: false, error: "booking_not_found" }, 404);
+            }
+            throw loadErr;
+          }
+          const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
+          const adminAuthorized = hasValidAdminToken(request, url, env);
+          const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
+          if (!adminAuthorized) {
+            if (actorRole === "driver") {
+              const ownershipBlock = await enforceDriverOwnershipForMutation({
+                request,
+                url,
+                body,
+                rec,
+                tenantScope,
+                env,
+              });
+              if (ownershipBlock) {
+                return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+              }
+            } else {
+              return json({ ok: false, error: "Unauthorized" }, 401);
+            }
+          }
+          const ownershipBlock = await enforceDriverOwnershipForMutation({
+            request,
+            url,
+            body,
+            rec,
+            tenantScope,
+            env,
+          });
+          if (ownershipBlock) {
+            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+          }
+          const out = await updateBookingOperationalLegStatusAuthoritative(
+            bookingId,
+            legId,
+            body?.status,
+            env,
+            tenantScope,
+            {
+              actor_role: statusActorRole,
+              source_endpoint: "/bookings/:bookingId/legs/:legId/status",
+            },
+          );
+          let statusCode = out?.ok ? 200 : 400;
+          if (out?.error === "missing_tenant_scope") statusCode = 400;
+          else if (out?.error === "forbidden") statusCode = 403;
+          else if (
+            out?.error === "booking_not_found" ||
+            out?.error === "operational_leg_not_found" ||
+            out?.error === "operational_legs_not_found"
+          ) statusCode = 404;
+          return json(out, statusCode);
         }
 
         if (
@@ -36970,6 +37050,295 @@ async function updateBookingStatusAuthoritative(
     });
   }
   return { ok: true, booking_id: bookingId, status: normalized };
+}
+
+async function updateBookingOperationalLegStatusAuthoritative(
+  bookingId,
+  legId,
+  status,
+  env,
+  tenantScope = null,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) {
+    return missingTenantScopeError();
+  }
+  const safeBookingId = safeStr(bookingId, 160);
+  const safeLegId = safeStr(legId, 200);
+  if (!safeBookingId) return { ok: false, error: "booking_id is required" };
+  if (!safeLegId) return { ok: false, error: "leg_id is required" };
+
+  const normalizedLegStatus = _normLifecycleStatus(status);
+  if (!["COMPLETED", "CANCELLED", "PENDING"].includes(normalizedLegStatus)) {
+    return { ok: false, error: "Invalid status" };
+  }
+  const normalizedLegLifecycle = normalizedLegStatus.toLowerCase();
+  const nowIso = new Date().toISOString();
+
+  const { key, rec } = await loadBookingRecord(env, safeBookingId);
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+
+  const containers = [];
+  if (Array.isArray(rec?.operational_legs)) containers.push({ owner: rec, key: "operational_legs" });
+  if (Array.isArray(rec?.operationalLegs)) containers.push({ owner: rec, key: "operationalLegs" });
+  if (rec?.booking && typeof rec.booking === "object") {
+    if (Array.isArray(rec.booking.operational_legs)) {
+      containers.push({ owner: rec.booking, key: "operational_legs" });
+    }
+    if (Array.isArray(rec.booking.operationalLegs)) {
+      containers.push({ owner: rec.booking, key: "operationalLegs" });
+    }
+  }
+  if (!containers.length) {
+    return { ok: false, error: "operational_legs_not_found" };
+  }
+
+  let matchedAnyLeg = false;
+  let selectedLegStatus = normalizedLegStatus;
+  const mutateLegEntry = (entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const currentLegId = safeStr(entry?.leg_id ?? entry?.legId, 200);
+    if (!currentLegId || currentLegId !== safeLegId) return entry;
+    matchedAnyLeg = true;
+    const next = {
+      ...entry,
+      status: normalizedLegStatus,
+      lifecycle_status: normalizedLegLifecycle,
+      lifecycleStatus: normalizedLegLifecycle,
+      updated_at: nowIso,
+      updatedAt: nowIso,
+    };
+    if (normalizedLegStatus === "COMPLETED") {
+      if (
+        Object.prototype.hasOwnProperty.call(entry, "completed_at") ||
+        Object.prototype.hasOwnProperty.call(entry, "completedAt")
+      ) {
+        next.completed_at = safeStr(entry?.completed_at, 80) || nowIso;
+        next.completedAt = safeStr(entry?.completedAt, 80) || next.completed_at;
+      }
+    } else if (normalizedLegStatus === "CANCELLED") {
+      if (
+        Object.prototype.hasOwnProperty.call(entry, "cancelled_at") ||
+        Object.prototype.hasOwnProperty.call(entry, "cancelledAt")
+      ) {
+        next.cancelled_at = safeStr(entry?.cancelled_at, 80) || nowIso;
+        next.cancelledAt = safeStr(entry?.cancelledAt, 80) || next.cancelled_at;
+      }
+    }
+    selectedLegStatus = _normLifecycleStatus(next?.status ?? normalizedLegStatus);
+    return next;
+  };
+
+  for (const container of containers) {
+    const source = Array.isArray(container?.owner?.[container.key]) ? container.owner[container.key] : [];
+    container.owner[container.key] = source.map((entry) => mutateLegEntry(entry));
+  }
+  if (!matchedAnyLeg) {
+    return { ok: false, error: "operational_leg_not_found" };
+  }
+
+  const allLegs = _bookingOperationalLegsFromRecord(rec)
+    .map((entry) => (entry && typeof entry === "object" ? entry : null))
+    .filter((entry) => !!entry);
+  if (!allLegs.length) {
+    return { ok: false, error: "operational_legs_not_found" };
+  }
+
+  const operationalLegsCount = allLegs.length;
+  let completedLegsCount = 0;
+  let cancelledLegsCount = 0;
+  for (const legEntry of allLegs) {
+    const legStatus = _normLifecycleStatus(
+      legEntry?.status ??
+      legEntry?.lifecycle_status ??
+      legEntry?.lifecycleStatus ??
+      "PENDING",
+    );
+    if (legStatus === "COMPLETED") {
+      completedLegsCount += 1;
+    } else if (legStatus === "CANCELLED") {
+      cancelledLegsCount += 1;
+    }
+  }
+  const pendingLegsCount = Math.max(
+    0,
+    operationalLegsCount - completedLegsCount - cancelledLegsCount,
+  );
+
+  let derivedParentStatus = "PENDING";
+  let progressState = "pending";
+  if (operationalLegsCount > 0 && completedLegsCount === operationalLegsCount) {
+    derivedParentStatus = "COMPLETED";
+    progressState = "completed";
+  } else if (operationalLegsCount > 0 && cancelledLegsCount === operationalLegsCount) {
+    derivedParentStatus = "CANCELLED";
+    progressState = "cancelled";
+  } else if (completedLegsCount > 0 && pendingLegsCount > 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "partially_completed";
+  } else if (cancelledLegsCount > 0 && pendingLegsCount > 0 && completedLegsCount === 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "partially_cancelled";
+  } else if (completedLegsCount > 0 && cancelledLegsCount > 0 && pendingLegsCount === 0) {
+    derivedParentStatus = "PENDING";
+    progressState = "mixed_terminal";
+  }
+
+  const previousParentStatus = _normLifecycleStatus(
+    rec?.status ??
+    rec?.stage ??
+    rec?.booking?.status ??
+    rec?.booking?.stage,
+  );
+  const derivedParentLifecycle = derivedParentStatus.toLowerCase();
+  rec.status = derivedParentStatus;
+  rec.stage = derivedParentStatus;
+  rec.lifecycle_status = derivedParentLifecycle;
+  rec.lifecycleStatus = derivedParentLifecycle;
+  rec.booking_status = derivedParentLifecycle;
+  rec.bookingStatus = derivedParentLifecycle;
+  rec.progress_state = progressState;
+  rec.progressState = progressState;
+  rec.completed_legs_count = completedLegsCount;
+  rec.completedLegsCount = completedLegsCount;
+  rec.cancelled_legs_count = cancelledLegsCount;
+  rec.cancelledLegsCount = cancelledLegsCount;
+  rec.pending_legs_count = pendingLegsCount;
+  rec.pendingLegsCount = pendingLegsCount;
+  rec.operational_legs_count = operationalLegsCount;
+  rec.operationalLegsCount = operationalLegsCount;
+  rec.updatedAt = nowIso;
+  rec.updated_at = nowIso;
+  if (derivedParentStatus === "COMPLETED") {
+    rec.completed_at = rec.completed_at || nowIso;
+    rec.completedAt = rec.completedAt || rec.completed_at;
+  } else if (derivedParentStatus === "CANCELLED") {
+    rec.cancelled_at = rec.cancelled_at || nowIso;
+    rec.cancelledAt = rec.cancelledAt || rec.cancelled_at;
+    rec.canceled_at = rec.canceled_at || rec.cancelled_at;
+    rec.canceledAt = rec.canceledAt || rec.cancelled_at;
+  }
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.status = derivedParentStatus;
+    rec.booking.stage = derivedParentStatus;
+    rec.booking.lifecycle_status = derivedParentLifecycle;
+    rec.booking.lifecycleStatus = derivedParentLifecycle;
+    rec.booking.booking_status = derivedParentLifecycle;
+    rec.booking.bookingStatus = derivedParentLifecycle;
+    rec.booking.progress_state = progressState;
+    rec.booking.progressState = progressState;
+    rec.booking.completed_legs_count = completedLegsCount;
+    rec.booking.completedLegsCount = completedLegsCount;
+    rec.booking.cancelled_legs_count = cancelledLegsCount;
+    rec.booking.cancelledLegsCount = cancelledLegsCount;
+    rec.booking.pending_legs_count = pendingLegsCount;
+    rec.booking.pendingLegsCount = pendingLegsCount;
+    rec.booking.operational_legs_count = operationalLegsCount;
+    rec.booking.operationalLegsCount = operationalLegsCount;
+    rec.booking.updatedAt = nowIso;
+    rec.booking.updated_at = nowIso;
+    if (derivedParentStatus === "COMPLETED") {
+      rec.booking.completed_at = rec.booking.completed_at || rec.completed_at || nowIso;
+      rec.booking.completedAt = rec.booking.completedAt || rec.booking.completed_at;
+    } else if (derivedParentStatus === "CANCELLED") {
+      rec.booking.cancelled_at = rec.booking.cancelled_at || rec.cancelled_at || nowIso;
+      rec.booking.cancelledAt = rec.booking.cancelledAt || rec.booking.cancelled_at;
+      rec.booking.canceled_at = rec.booking.canceled_at || rec.booking.cancelled_at;
+      rec.booking.canceledAt = rec.booking.canceledAt || rec.booking.cancelled_at;
+    }
+  }
+
+  if (derivedParentStatus === "COMPLETED" || derivedParentStatus === "CANCELLED") {
+    try {
+      await cleanupBookingCalendarEvents(env, rec, tenantScope);
+    } catch (calendarErr) {
+      console.log(
+        `[CALENDAR][CLEANUP][LEG_STATUS_UPDATE][ERROR] booking=${_bookingIntentMask(safeBookingId)} reason=${safeStr(calendarErr?.message || calendarErr, 120) || "unknown"}`,
+      );
+    }
+  }
+
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  if (isTerminalLifecycleStatus(derivedParentStatus)) {
+    await removeBookingDemandIndexBestEffort(
+      env,
+      safeBookingId,
+      normalizeFleetTenantScope(tenantScope),
+    );
+  } else {
+    await upsertBookingDemandIndexBestEffort(
+      env,
+      safeBookingId,
+      rec,
+      normalizeFleetTenantScope(tenantScope),
+    );
+  }
+  await upsertDriverVehicleBookingIndexesBestEffort(
+    env,
+    safeBookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  await upsertCompanyBookingsListIndexBestEffort(
+    env,
+    safeBookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    safeBookingId,
+    rec,
+    normalizeFleetTenantScope(tenantScope),
+  );
+
+  if (isTerminalLifecycleStatus(derivedParentStatus)) {
+    await releaseAllocatorReservationForBooking({
+      env,
+      bookingId: safeBookingId,
+      rec,
+      logTag: "RELEASE_ON_LEG_TERMINAL_PARENT",
+    });
+  }
+
+  try {
+    if (previousParentStatus !== derivedParentStatus) {
+      const complianceEvent = buildBookingStatusUpdateComplianceEvent(rec, safeBookingId, {
+        newStatus: derivedParentStatus,
+        previousStatus: previousParentStatus,
+        actorRole: options?.actor_role,
+        sourceEndpoint:
+          options?.source_endpoint || "/bookings/:bookingId/legs/:legId/status",
+      });
+      if (complianceEvent) {
+        emitComplianceEventBestEffort(env, complianceEvent, {
+          timeoutMs: 1500,
+          logLabel: "booking_leg_status_parent_derivation",
+        }).catch(() => {});
+      }
+    }
+  } catch (_) {
+    console.log("[COMPLIANCE_EMIT][booking_leg_status_parent_derivation] failed error=internal_error");
+  }
+
+  console.log(
+    `[BOOKING][OPERATIONAL_LEGS][LEG_STATUS] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} status=${selectedLegStatus} parent=${derivedParentStatus} progress=${progressState}`,
+  );
+
+  return {
+    ok: true,
+    booking_id: safeBookingId,
+    leg_id: safeLegId,
+    leg_status: selectedLegStatus,
+    parent_status: derivedParentStatus,
+    progress_state: progressState,
+    completed_legs_count: completedLegsCount,
+    cancelled_legs_count: cancelledLegsCount,
+    pending_legs_count: pendingLegsCount,
+    operational_legs_count: operationalLegsCount,
+  };
 }
 
 async function updateBookingPaymentAuthoritative(
