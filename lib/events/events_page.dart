@@ -1389,7 +1389,7 @@ class _EventsPageState extends State<EventsPage> {
   String _categoryTileAssetPath(String categoryKey) {
     switch (categoryKey) {
       case 'all':
-        return 'assets/events/categories/event_category_all.webp';
+        return 'assets/events/categories/all.webp';
       case EventCategoryKey.music:
         return 'assets/events/categories/music.webp';
       case EventCategoryKey.sport:
@@ -1409,7 +1409,7 @@ class _EventsPageState extends State<EventsPage> {
       case EventCategoryKey.other:
         return 'assets/events/categories/event_category_other.webp';
       default:
-        return 'assets/events/categories/event_category_all.webp';
+        return 'assets/events/categories/all.webp';
     }
   }
 
@@ -1553,6 +1553,7 @@ class _EventsPageState extends State<EventsPage> {
                     ),
                     itemBuilder: (context, index) => _buildCategoryTile(
                       _categoryFilterKeys[index],
+                      isTabletLayout: isTabletLayout,
                       iconSize: categoryIconSize,
                       labelFontSize: categoryLabelFontSize,
                       labelMaxLines: categoryLabelMaxLines,
@@ -1918,6 +1919,7 @@ class _EventsPageState extends State<EventsPage> {
 
   Widget _buildCategoryTile(
     String categoryKey, {
+    required bool isTabletLayout,
     required double iconSize,
     required double labelFontSize,
     required int labelMaxLines,
@@ -2007,10 +2009,35 @@ class _EventsPageState extends State<EventsPage> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: <Color>[
-                      Colors.black.withOpacity(0.14),
-                      Colors.black.withOpacity(0.44),
-                      Colors.black.withOpacity(0.78),
+                      Colors.black.withOpacity(isTabletLayout ? 0.04 : 0.025),
+                      Colors.black.withOpacity(isTabletLayout ? 0.14 : 0.11),
                     ],
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: FractionallySizedBox(
+                    heightFactor: isTabletLayout ? 0.58 : 0.54,
+                    widthFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: <Color>[
+                            Colors.black.withOpacity(0.0),
+                            Colors.black.withOpacity(
+                              isTabletLayout ? 0.34 : 0.40,
+                            ),
+                            Colors.black.withOpacity(
+                              isTabletLayout ? 0.76 : 0.80,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
