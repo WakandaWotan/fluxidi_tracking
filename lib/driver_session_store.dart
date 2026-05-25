@@ -53,6 +53,9 @@ class ActiveDriverSession {
   bool get isPublicDriverLoginSession =>
       (linkMethod ?? '').trim().toLowerCase() == 'public_driver_login';
 
+  bool get isCompanyAdminDriverViewSession =>
+      (linkMethod ?? '').trim().toLowerCase() == 'company_admin_driver_view';
+
   DateTime? get expiresAtUtc {
     final raw = (expiresAt ?? '').trim();
     if (raw.isEmpty) return null;
@@ -502,6 +505,7 @@ class DriverSessionStore {
   Future<void> saveFromDriverProfile(
     DriverProfile driver, {
     ActiveDriverSession? previous,
+    String? linkMethodOverride,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
     final activeScope = _activeScope();
@@ -524,6 +528,9 @@ class DriverSessionStore {
       companyId: activeScope?.companyId,
       driverSessionToken: preservedToken.token,
       driverSessionExpiresAtUtc: preservedToken.tokenExpiryUtc,
+      linkMethod: (linkMethodOverride ?? '').trim().isEmpty
+          ? null
+          : linkMethodOverride!.trim(),
     );
     try {
       final file = await _file();

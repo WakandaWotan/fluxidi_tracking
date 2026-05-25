@@ -306,6 +306,221 @@ String _shortErrorForDiag(Object error) {
   return text.length <= 180 ? text : '${text.substring(0, 180)}…';
 }
 
+String _lastBridgeBootstrapCompanyId = '';
+DateTime? _lastBridgeBootstrapAtUtc;
+
+void _markBridgeBootstrapHydrated(String companyId) {
+  final normalized = companyId.trim();
+  if (normalized.isEmpty) return;
+  _lastBridgeBootstrapCompanyId = normalized;
+  _lastBridgeBootstrapAtUtc = DateTime.now().toUtc();
+}
+
+bool _isBridgeBootstrapFreshForCompany(String companyId) {
+  final normalized = companyId.trim();
+  final stamp = _lastBridgeBootstrapAtUtc;
+  if (normalized.isEmpty || stamp == null) return false;
+  if (_lastBridgeBootstrapCompanyId != normalized) return false;
+  final age = DateTime.now().toUtc().difference(stamp);
+  return age <= const Duration(minutes: 10);
+}
+
+const String kCompanyAdminDriverViewLinkMethod = 'company_admin_driver_view';
+
+typedef _BridgeTranslator =
+    String Function({
+      required String nl,
+      required String en,
+      required String fr,
+      required String es,
+    });
+
+String _normalizeBridgeTextGlobal(String raw) {
+  return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
+
+String _maskBridgeDriverIdGlobal(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return '—';
+  if (text.length <= 4) return '…${text.substring(text.length - 1)}';
+  return '${text.substring(0, 2)}…${text.substring(text.length - 2)}';
+}
+
+bool _isCompanyAdminDriverViewSession(ActiveDriverSession? session) {
+  return session?.isCompanyAdminDriverViewSession == true;
+}
+
+bool _isSeededOrPlaceholderBridgeDriver(DriverProfile driver) {
+  final id = _normalizeBridgeTextGlobal(driver.id);
+  final isDefaultId = id == 'drv_1';
+  final employee = _normalizeBridgeTextGlobal(driver.employeeNumber);
+  final isDefaultEmployee = employee == 'drv-001';
+  final name = _normalizeBridgeTextGlobal(driver.fullName);
+  final isDefaultName =
+      name == 'standaard chauffeur' ||
+      name == 'default driver' ||
+      name == 'standard driver';
+  if (isDefaultId || isDefaultName) return true;
+  return isDefaultEmployee && (isDefaultId || isDefaultName);
+}
+
+List<DriverProfile> _resolveSelectableDriverBridgeCandidatesGlobal({
+  bool logCandidates = true,
+}) {
+  final activeCompanyId = _firstBootstrapText(<dynamic>[
+    companyProfileNotifier.value?.companyId,
+    activeCompanySessionNotifier.value?.companyId,
+  ]);
+  if (activeCompanyId.isEmpty) return const <DriverProfile>[];
+  final activeCompanyPresent = activeCompanyId.isNotEmpty;
+  final hasValidCompanyContext =
+      CompanySessionStore.instance.hasValidCompanyContext;
+  final hasFreshBootstrapForScope =
+      hasValidCompanyContext &&
+      _isBridgeBootstrapFreshForCompany(activeCompanyId);
+  final selected = <DriverProfile>[];
+  for (final driver in driversNotifier.value) {
+    final driverId = driver.id.trim();
+    final companyId = (driver.companyId ?? '').trim();
+    final companyIdPresent = companyId.isNotEmpty;
+    final employeePresent = driver.employeeNumber.trim().isNotEmpty;
+    final placeholder = _isSeededOrPlaceholderBridgeDriver(driver);
+    final active = driver.isActive;
+    final idPresent = driverId.isNotEmpty;
+    var scoped = false;
+    var reason = 'selectable';
+
+    if (!active) {
+      reason = 'inactive';
+    } else if (placeholder) {
+      reason = 'placeholder';
+    } else if (!idPresent) {
+      reason = 'missing_id';
+    } else if (!employeePresent) {
+      // Required because DriverSessionStore validation expects employeeNumber.
+      reason = 'missing_employee_number';
+    } else if (companyIdPresent && companyId != activeCompanyId) {
+      reason = 'company_mismatch';
+    } else if (companyIdPresent && companyId == activeCompanyId) {
+      scoped = true;
+    } else if (hasFreshBootstrapForScope) {
+      scoped = true;
+      reason = 'scoped_from_bootstrap_context';
+    } else {
+      reason = 'missing_company_scope';
+    }
+
+    final isSelected =
+        active && !placeholder && idPresent && employeePresent && scoped;
+    if (isSelected) {
+      selected.add(driver);
+    }
+    if (logCandidates) {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][CANDIDATE] driver=${_maskBridgeDriverIdGlobal(driverId)} active=$active scoped=$scoped companyIdPresent=$companyIdPresent activeCompanyPresent=$activeCompanyPresent employeePresent=$employeePresent placeholder=$placeholder selected=$isSelected reason=${isSelected ? "selectable" : reason}',
+      );
+    }
+  }
+  return selected;
+}
+
+Future<DriverProfile?> _showDriverOwnerBridgePickerSheet(
+  BuildContext context, {
+  required List<DriverProfile> selectableDrivers,
+  required _BridgeTranslator tr,
+}) {
+  return showModalBottomSheet<DriverProfile>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (sheetContext) {
+      return SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF121A2E),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE5B641), width: 1.15),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFE5B641).withOpacity(0.12),
+                blurRadius: 14,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        tr(
+                          nl: 'Kies chauffeurweergave',
+                          en: 'Choose driver view',
+                          fr: 'Choisir la vue chauffeur',
+                          es: 'Elegir vista de conductor',
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close, color: Color(0xFFE5B641)),
+                      splashRadius: 18,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Color(0x22E5B641)),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: selectableDrivers.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, color: Color(0x16E5B641)),
+                  itemBuilder: (itemContext, index) {
+                    final driver = selectableDrivers[index];
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(
+                        Icons.person_outline_rounded,
+                        color: Color(0xFFE5B641),
+                      ),
+                      title: Text(
+                        driver.fullName.trim().isEmpty
+                            ? driver.employeeNumber.trim()
+                            : driver.fullName.trim(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        driver.employeeNumber.trim(),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.75),
+                          fontSize: 12,
+                        ),
+                      ),
+                      onTap: () => Navigator.of(sheetContext).pop(driver),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
 String _firstBootstrapText(List<dynamic> values) {
   for (final value in values) {
     final text = (value ?? '').toString().trim();
@@ -553,6 +768,12 @@ Future<bool> _hydrateCompanyBootstrapFromActiveSession({
     }
     await _applyCompanyProfileFromBootstrapPayload(bootstrap);
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    final hydratedCompanyId = _firstBootstrapText(<dynamic>[
+      companyProfileNotifier.value?.companyId,
+      activeCompanySessionNotifier.value?.companyId,
+      scopeCompany,
+    ]);
+    _markBridgeBootstrapHydrated(hydratedCompanyId);
     debugPrint('[COMPANY_BOOTSTRAP][OK] source=$reason');
     return true;
   } catch (error) {
@@ -698,10 +919,15 @@ Future<void> main() async {
     );
   }
   await DriverSessionStore.instance.bootstrap(driversNotifier.value);
-  if (!_startInCompanyAdminHome && activeDriverSessionNotifier.value != null) {
-    setAppRole(AppRole.driver);
-    _startInDriverHome = true;
-    debugPrint('[DRIVER_PAIRING][AUTO_ROUTE] target=driver_home');
+  final startupDriverSession = activeDriverSessionNotifier.value;
+  if (!_startInCompanyAdminHome && startupDriverSession != null) {
+    if (_isCompanyAdminDriverViewSession(startupDriverSession)) {
+      debugPrint('[DRIVER_ADMIN_VIEW][IGNORE_FOR_NORMAL_LOGIN]');
+    } else {
+      setAppRole(AppRole.driver);
+      _startInDriverHome = true;
+      debugPrint('[DRIVER_PAIRING][AUTO_ROUTE] target=driver_home');
+    }
   }
   await DriverDocumentsStore.instance.load();
   // Mapbox REST token is optional in this build.
@@ -5353,12 +5579,17 @@ class RoleEntryPage extends StatelessWidget {
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     await DriverDocumentsStore.instance.load();
     if (!context.mounted) return;
-    if (activeDriverSessionNotifier.value != null) {
+    final activeSession = activeDriverSessionNotifier.value;
+    if (activeSession != null &&
+        !_isCompanyAdminDriverViewSession(activeSession)) {
       setAppRole(AppRole.driver);
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const DriverHomePage()),
       );
     } else {
+      if (_isCompanyAdminDriverViewSession(activeSession)) {
+        debugPrint('[DRIVER_ADMIN_VIEW][IGNORE_FOR_NORMAL_LOGIN]');
+      }
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()),
       );
@@ -6438,6 +6669,107 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     }
   }
 
+  String _normalizeBridgeText(String raw) {
+    return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String _normalizeBridgePhone(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final hasPlus = trimmed.startsWith('+');
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return '';
+    return hasPlus ? '+$digits' : digits;
+  }
+
+  String _maskBridgeDriverId(String raw) {
+    return _maskBridgeDriverIdGlobal(raw);
+  }
+
+  bool _isSeededOrPlaceholderDriver(DriverProfile driver) {
+    return _isSeededOrPlaceholderBridgeDriver(driver);
+  }
+
+  ({DriverProfile? driver, String reason}) _resolveOwnerDriverBridgeMatch() {
+    final profile = companyProfileNotifier.value;
+    if (profile == null) {
+      return (driver: null, reason: 'no_safe_match');
+    }
+
+    final activeCompanyId = profile.companyId.trim();
+    if (activeCompanyId.isEmpty) {
+      return (driver: null, reason: 'no_safe_match');
+    }
+
+    final strictCandidates = driversNotifier.value
+        .where((driver) {
+          if (!driver.isActive) return false;
+          final scopedCompanyId = (driver.companyId ?? '').trim();
+          if (scopedCompanyId.isEmpty || scopedCompanyId != activeCompanyId) {
+            return false;
+          }
+          if (_isSeededOrPlaceholderDriver(driver)) return false;
+          if (driver.id.trim().isEmpty) return false;
+          if (driver.employeeNumber.trim().isEmpty) return false;
+          return true;
+        })
+        .toList(growable: false);
+
+    final ownerName = _normalizeBridgeText(profile.ownerName);
+    final ownerPhone = _normalizeBridgePhone(profile.phone);
+    final ownerEmailToken = _normalizeBridgeText(
+      profile.email.trim().isNotEmpty ? profile.email : profile.companyEmail,
+    );
+    final ownerEmails = <String>{
+      if (ownerEmailToken.isNotEmpty) ownerEmailToken,
+    };
+
+    final matches = strictCandidates
+        .where((driver) {
+          final driverName = _normalizeBridgeText(driver.fullName);
+          final driverPhone = _normalizeBridgePhone(driver.phone);
+          final phoneMatch =
+              ownerPhone.isNotEmpty &&
+              driverPhone.isNotEmpty &&
+              ownerPhone == driverPhone;
+          // DriverProfile currently has no persisted email field.
+          const driverEmail = '';
+          final emailMatch =
+              ownerEmails.isNotEmpty &&
+              driverEmail.isNotEmpty &&
+              ownerEmails.contains(driverEmail);
+          final nameMatch =
+              ownerName.isNotEmpty &&
+              driverName.isNotEmpty &&
+              ownerName == driverName;
+          return phoneMatch || emailMatch || nameMatch;
+        })
+        .toList(growable: false);
+
+    if (matches.length > 1) {
+      return (driver: null, reason: 'multiple_matches');
+    }
+    if (matches.length == 1) {
+      return (driver: matches.first, reason: 'owner_match');
+    }
+    return (driver: null, reason: 'no_safe_match');
+  }
+
+  List<DriverProfile> _resolveSelectableDriverBridgeCandidates() {
+    return _resolveSelectableDriverBridgeCandidatesGlobal(logCandidates: true);
+  }
+
+  Future<DriverProfile?> _showDriverOwnerBridgePicker(
+    BuildContext context, {
+    required List<DriverProfile> selectableDrivers,
+  }) {
+    return _showDriverOwnerBridgePickerSheet(
+      context,
+      selectableDrivers: selectableDrivers,
+      tr: _tr,
+    );
+  }
+
   Future<void> _openDriverCockpitView(BuildContext context) async {
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     await DriverDocumentsStore.instance.load();
@@ -6449,6 +6781,77 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
       return;
     }
+    if (!CompanySessionStore.instance.hasValidCompanyContext) {
+      debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_company_context');
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
+      return;
+    }
+    final ownerBridge = _resolveOwnerDriverBridgeMatch();
+    final matchedDriver = ownerBridge.driver;
+    if (matchedDriver != null) {
+      await DriverSessionStore.instance.saveFromDriverProfile(
+        matchedDriver,
+        linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
+      );
+      await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+      if (!context.mounted) return;
+      if (activeDriverSessionNotifier.value != null) {
+        debugPrint(
+          '[DRIVER_OWNER_BRIDGE][OPEN] driver=${_maskBridgeDriverId(matchedDriver.id)} reason=owner_match',
+        );
+        setAppRole(AppRole.driver);
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+        return;
+      }
+      debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_safe_match');
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
+      return;
+    }
+    final selectableDrivers = _resolveSelectableDriverBridgeCandidates();
+    if (selectableDrivers.isEmpty) {
+      debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_selectable_driver');
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
+      return;
+    }
+    DriverProfile? selectedDriver;
+    if (selectableDrivers.length == 1) {
+      selectedDriver = selectableDrivers.first;
+    } else {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][PICKER_OPEN] count=${selectableDrivers.length}',
+      );
+      selectedDriver = await _showDriverOwnerBridgePicker(
+        context,
+        selectableDrivers: selectableDrivers,
+      );
+      if (!context.mounted) return;
+    }
+    if (selectedDriver == null) return;
+    debugPrint(
+      '[DRIVER_OWNER_BRIDGE][SELECTED] driver=${_maskBridgeDriverId(selectedDriver.id)}',
+    );
+    await DriverSessionStore.instance.saveFromDriverProfile(
+      selectedDriver,
+      linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
+    );
+    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    if (!context.mounted) return;
+    if (activeDriverSessionNotifier.value != null) {
+      setAppRole(AppRole.driver);
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const DriverHomePage()));
+      return;
+    }
+    debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_safe_match');
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()));
@@ -26844,6 +27247,77 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  bool _hasCompanyAdminDriverBridgeContext() {
+    return CompanySessionStore.instance.hasValidCompanyContext &&
+        _isCompanyAdminDriverViewSession(activeDriverSessionNotifier.value);
+  }
+
+  void _goBackToBusinessPageFromDashboard() {
+    setAppRole(AppRole.companyAdmin);
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _changeDriverViewFromDashboard() async {
+    if (!_hasCompanyAdminDriverBridgeContext()) return;
+    final selectableDrivers = _resolveSelectableDriverBridgeCandidatesGlobal(
+      logCandidates: true,
+    );
+    if (selectableDrivers.isEmpty) {
+      debugPrint('[DRIVER_OWNER_BRIDGE][SKIP] reason=no_selectable_driver');
+      _toast(
+        _tr(
+          nl: 'Geen beschikbare chauffeursweergave gevonden.',
+          en: 'No selectable driver view found.',
+          fr: 'Aucune vue chauffeur disponible.',
+          es: 'No se encontró vista de conductor seleccionable.',
+        ),
+      );
+      return;
+    }
+    DriverProfile? selectedDriver;
+    if (selectableDrivers.length == 1) {
+      selectedDriver = selectableDrivers.first;
+    } else {
+      debugPrint(
+        '[DRIVER_OWNER_BRIDGE][PICKER_OPEN] count=${selectableDrivers.length}',
+      );
+      selectedDriver = await _showDriverOwnerBridgePickerSheet(
+        context,
+        selectableDrivers: selectableDrivers,
+        tr: _tr,
+      );
+      if (!mounted) return;
+    }
+    if (selectedDriver == null) return;
+    debugPrint(
+      '[DRIVER_OWNER_BRIDGE][SELECTED] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
+    );
+    await DriverSessionStore.instance.saveFromDriverProfile(
+      selectedDriver,
+      linkMethodOverride: kCompanyAdminDriverViewLinkMethod,
+    );
+    await DriverSessionStore.instance.bootstrap(driversNotifier.value);
+    if (!mounted) return;
+    if (activeDriverSessionNotifier.value != null) {
+      setAppRole(AppRole.driver);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const DriverHomePage()),
+      );
+      return;
+    }
+    _toast(
+      _tr(
+        nl: 'Chauffeurweergave kon niet worden geladen.',
+        en: 'Could not load driver view.',
+        fr: 'Impossible de charger la vue chauffeur.',
+        es: 'No se pudo cargar la vista de conductor.',
+      ),
+    );
+  }
+
   String _dashboardAvatarLabel() {
     final raw = _dashboardDriverName().trim();
     if (raw.isEmpty) return 'D';
@@ -27119,6 +27593,50 @@ class _DriverHomePageState extends State<DriverHomePage>
                     unawaited(_handleDriverStatusAction());
                   },
                 ),
+                if (_hasCompanyAdminDriverBridgeContext())
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.business_center_outlined,
+                      color: Color(0xFFFFD36A),
+                    ),
+                    title: Text(
+                      _tr(
+                        nl: 'Terug naar bedrijfspagina',
+                        en: 'Back to business page',
+                        fr: "Retour a la page entreprise",
+                        es: 'Volver a pagina de empresa',
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _goBackToBusinessPageFromDashboard();
+                    },
+                  ),
+                if (_hasCompanyAdminDriverBridgeContext())
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      Icons.switch_account_outlined,
+                      color: Color(0xFFFFD36A),
+                    ),
+                    title: Text(
+                      _tr(
+                        nl: 'Chauffeur wijzigen',
+                        en: 'Change driver view',
+                        fr: 'Changer de vue chauffeur',
+                        es: 'Cambiar vista de conductor',
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      unawaited(_changeDriverViewFromDashboard());
+                    },
+                  ),
                 ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
