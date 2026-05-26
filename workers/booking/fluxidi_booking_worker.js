@@ -22169,13 +22169,280 @@ function _driverEnRouteResolveBookingIdentity(rec, fallbackBookingId = "") {
   ) || "";
 }
 
-function _driverEnRouteAssignmentFromBooking(rec) {
-  const assignedDriverId = safeStr(bookingAssignedDriverId(rec), 96) || null;
-  const assignedVehicleId = safeStr(bookingAssignedVehicleId(rec), 128) || null;
+function _driverEnRouteAssignmentToken(value, maxLen = 128) {
+  const text = safeStr(value).trim();
+  if (!text) return "";
+  const compact = text.toLowerCase().replace(/\s+/g, "");
+  if (
+    compact === "unknown" ||
+    compact === "none" ||
+    compact === "null" ||
+    compact === "undefined" ||
+    compact === "n/a" ||
+    compact === "na" ||
+    compact === "-" ||
+    compact === "—" ||
+    compact === "false"
+  ) {
+    return "";
+  }
+  return text.length > maxLen ? text.slice(0, maxLen) : text;
+}
+
+function _driverEnRouteAssignmentPreview(value, kind = "id") {
+  const token = _driverEnRouteAssignmentToken(value, 128);
+  if (!token) return null;
+  const prefix = kind === "driver" ? "drv" : (kind === "vehicle" ? "vh" : "id");
+  if (token.length <= 7) return `${prefix}_${token}`;
+  return `${prefix}_${token.slice(0, 3)}...${token.slice(-4)}`;
+}
+
+function _driverEnRouteBookingAssignmentSignals(rec) {
+  const driverCandidates = [];
+  const vehicleCandidates = [];
+  const sourceSet = new Set();
+
+  const readPathRaw = (root, path = []) => {
+    let cursor = root;
+    for (const key of path) {
+      if (!cursor || typeof cursor !== "object" || !(key in cursor)) return null;
+      cursor = cursor[key];
+    }
+    return cursor;
+  };
+
+  const pushCandidate = (kind, rawValue, source, maxLen = 128) => {
+    const token = _driverEnRouteAssignmentToken(rawValue, maxLen);
+    if (!token) return;
+    const target = kind === "driver" ? driverCandidates : vehicleCandidates;
+    if (!target.some((entry) => entry.value === token)) {
+      target.push({ value: token, source });
+    }
+    if (source) sourceSet.add(source);
+  };
+
+  const collectFromPaths = (kind, paths, maxLen = 128) => {
+    for (const item of paths) {
+      const path = Array.isArray(item?.path) ? item.path : [];
+      const source = safeStr(item?.source, 120) || path.join(".");
+      const rawValue = readPathRaw(rec, path);
+      if (
+        rawValue == null ||
+        (typeof rawValue === "object" && !Array.isArray(rawValue))
+      ) {
+        continue;
+      }
+      pushCandidate(kind, rawValue, source, maxLen);
+    }
+  };
+
+  const collectFromNestedIdentityObject = (kind, objectPaths = []) => {
+    const nestedIdentityPaths = [
+      ["driver_id"],
+      ["driverId"],
+      ["vehicle_id"],
+      ["vehicleId"],
+      ["id"],
+      ["value"],
+    ];
+    for (const item of objectPaths) {
+      const path = Array.isArray(item?.path) ? item.path : [];
+      const sourceBase = safeStr(item?.source, 120) || path.join(".");
+      const objectValue = readPathRaw(rec, path);
+      if (!objectValue || typeof objectValue !== "object" || Array.isArray(objectValue)) continue;
+      for (const identityPath of nestedIdentityPaths) {
+        const nestedRaw = readPathRaw(objectValue, identityPath);
+        if (nestedRaw == null || typeof nestedRaw === "object") continue;
+        pushCandidate(
+          kind,
+          nestedRaw,
+          `${sourceBase}.${identityPath.join(".")}`,
+          kind === "driver" ? 96 : 128,
+        );
+      }
+    }
+  };
+
+  collectFromPaths("driver", [
+    { path: ["assigned_driver_id"], source: "assigned_driver_id" },
+    { path: ["assignedDriverId"], source: "assignedDriverId" },
+    { path: ["driver_id"], source: "driver_id" },
+    { path: ["driverId"], source: "driverId" },
+    { path: ["booking", "assigned_driver_id"], source: "booking.assigned_driver_id" },
+    { path: ["booking", "assignedDriverId"], source: "booking.assignedDriverId" },
+    { path: ["booking", "driver_id"], source: "booking.driver_id" },
+    { path: ["booking", "driverId"], source: "booking.driverId" },
+    { path: ["record", "booking", "assigned_driver_id"], source: "record.booking.assigned_driver_id" },
+    { path: ["record", "booking", "assignedDriverId"], source: "record.booking.assignedDriverId" },
+    { path: ["record", "booking", "driver_id"], source: "record.booking.driver_id" },
+    { path: ["record", "booking", "driverId"], source: "record.booking.driverId" },
+    { path: ["payload", "assigned_driver_id"], source: "payload.assigned_driver_id" },
+    { path: ["payload", "assignedDriverId"], source: "payload.assignedDriverId" },
+    { path: ["payload", "driver_id"], source: "payload.driver_id" },
+    { path: ["payload", "driverId"], source: "payload.driverId" },
+    { path: ["quote", "assigned_driver_id"], source: "quote.assigned_driver_id" },
+    { path: ["quote", "assignedDriverId"], source: "quote.assignedDriverId" },
+    { path: ["quote", "driver_id"], source: "quote.driver_id" },
+    { path: ["quote", "driverId"], source: "quote.driverId" },
+    { path: ["booking_details", "assigned_driver_id"], source: "booking_details.assigned_driver_id" },
+    { path: ["booking_details", "assignedDriverId"], source: "booking_details.assignedDriverId" },
+    { path: ["booking_details", "driver_id"], source: "booking_details.driver_id" },
+    { path: ["booking_details", "driverId"], source: "booking_details.driverId" },
+    { path: ["booking", "booking_details", "assigned_driver_id"], source: "booking.booking_details.assigned_driver_id" },
+    { path: ["booking", "booking_details", "assignedDriverId"], source: "booking.booking_details.assignedDriverId" },
+    { path: ["booking", "booking_details", "driver_id"], source: "booking.booking_details.driver_id" },
+    { path: ["booking", "booking_details", "driverId"], source: "booking.booking_details.driverId" },
+    { path: ["parent_booking", "assigned_driver_id"], source: "parent_booking.assigned_driver_id" },
+    { path: ["parent_booking", "assignedDriverId"], source: "parent_booking.assignedDriverId" },
+    { path: ["parentBooking", "assigned_driver_id"], source: "parentBooking.assigned_driver_id" },
+    { path: ["parentBooking", "assignedDriverId"], source: "parentBooking.assignedDriverId" },
+    { path: ["root_booking", "assigned_driver_id"], source: "root_booking.assigned_driver_id" },
+    { path: ["root_booking", "assignedDriverId"], source: "root_booking.assignedDriverId" },
+    { path: ["rootBooking", "assigned_driver_id"], source: "rootBooking.assigned_driver_id" },
+    { path: ["rootBooking", "assignedDriverId"], source: "rootBooking.assignedDriverId" },
+  ], 96);
+
+  collectFromPaths("vehicle", [
+    { path: ["assigned_vehicle_id"], source: "assigned_vehicle_id" },
+    { path: ["assignedVehicleId"], source: "assignedVehicleId" },
+    { path: ["vehicle_id"], source: "vehicle_id" },
+    { path: ["vehicleId"], source: "vehicleId" },
+    { path: ["booking", "assigned_vehicle_id"], source: "booking.assigned_vehicle_id" },
+    { path: ["booking", "assignedVehicleId"], source: "booking.assignedVehicleId" },
+    { path: ["booking", "vehicle_id"], source: "booking.vehicle_id" },
+    { path: ["booking", "vehicleId"], source: "booking.vehicleId" },
+    { path: ["record", "booking", "assigned_vehicle_id"], source: "record.booking.assigned_vehicle_id" },
+    { path: ["record", "booking", "assignedVehicleId"], source: "record.booking.assignedVehicleId" },
+    { path: ["record", "booking", "vehicle_id"], source: "record.booking.vehicle_id" },
+    { path: ["record", "booking", "vehicleId"], source: "record.booking.vehicleId" },
+    { path: ["payload", "assigned_vehicle_id"], source: "payload.assigned_vehicle_id" },
+    { path: ["payload", "assignedVehicleId"], source: "payload.assignedVehicleId" },
+    { path: ["payload", "vehicle_id"], source: "payload.vehicle_id" },
+    { path: ["payload", "vehicleId"], source: "payload.vehicleId" },
+    { path: ["quote", "assigned_vehicle_id"], source: "quote.assigned_vehicle_id" },
+    { path: ["quote", "assignedVehicleId"], source: "quote.assignedVehicleId" },
+    { path: ["quote", "vehicle_id"], source: "quote.vehicle_id" },
+    { path: ["quote", "vehicleId"], source: "quote.vehicleId" },
+    { path: ["booking_details", "assigned_vehicle_id"], source: "booking_details.assigned_vehicle_id" },
+    { path: ["booking_details", "assignedVehicleId"], source: "booking_details.assignedVehicleId" },
+    { path: ["booking_details", "vehicle_id"], source: "booking_details.vehicle_id" },
+    { path: ["booking_details", "vehicleId"], source: "booking_details.vehicleId" },
+    { path: ["booking", "booking_details", "assigned_vehicle_id"], source: "booking.booking_details.assigned_vehicle_id" },
+    { path: ["booking", "booking_details", "assignedVehicleId"], source: "booking.booking_details.assignedVehicleId" },
+    { path: ["booking", "booking_details", "vehicle_id"], source: "booking.booking_details.vehicle_id" },
+    { path: ["booking", "booking_details", "vehicleId"], source: "booking.booking_details.vehicleId" },
+    { path: ["parent_booking", "assigned_vehicle_id"], source: "parent_booking.assigned_vehicle_id" },
+    { path: ["parent_booking", "assignedVehicleId"], source: "parent_booking.assignedVehicleId" },
+    { path: ["parentBooking", "assigned_vehicle_id"], source: "parentBooking.assigned_vehicle_id" },
+    { path: ["parentBooking", "assignedVehicleId"], source: "parentBooking.assignedVehicleId" },
+    { path: ["root_booking", "assigned_vehicle_id"], source: "root_booking.assigned_vehicle_id" },
+    { path: ["root_booking", "assignedVehicleId"], source: "root_booking.assignedVehicleId" },
+    { path: ["rootBooking", "assigned_vehicle_id"], source: "rootBooking.assigned_vehicle_id" },
+    { path: ["rootBooking", "assignedVehicleId"], source: "rootBooking.assignedVehicleId" },
+  ], 128);
+
+  collectFromNestedIdentityObject("driver", [
+    { path: ["assigned_driver"], source: "assigned_driver" },
+    { path: ["assignedDriver"], source: "assignedDriver" },
+    { path: ["booking", "assigned_driver"], source: "booking.assigned_driver" },
+    { path: ["booking", "assignedDriver"], source: "booking.assignedDriver" },
+    { path: ["record", "booking", "assigned_driver"], source: "record.booking.assigned_driver" },
+    { path: ["record", "booking", "assignedDriver"], source: "record.booking.assignedDriver" },
+    { path: ["payload", "assigned_driver"], source: "payload.assigned_driver" },
+    { path: ["payload", "assignedDriver"], source: "payload.assignedDriver" },
+    { path: ["quote", "assigned_driver"], source: "quote.assigned_driver" },
+    { path: ["quote", "assignedDriver"], source: "quote.assignedDriver" },
+    { path: ["booking_details", "assigned_driver"], source: "booking_details.assigned_driver" },
+    { path: ["booking_details", "assignedDriver"], source: "booking_details.assignedDriver" },
+    { path: ["parent_booking", "assigned_driver"], source: "parent_booking.assigned_driver" },
+    { path: ["parent_booking", "assignedDriver"], source: "parent_booking.assignedDriver" },
+    { path: ["parentBooking", "assigned_driver"], source: "parentBooking.assigned_driver" },
+    { path: ["parentBooking", "assignedDriver"], source: "parentBooking.assignedDriver" },
+    { path: ["root_booking", "assigned_driver"], source: "root_booking.assigned_driver" },
+    { path: ["root_booking", "assignedDriver"], source: "root_booking.assignedDriver" },
+    { path: ["rootBooking", "assigned_driver"], source: "rootBooking.assigned_driver" },
+    { path: ["rootBooking", "assignedDriver"], source: "rootBooking.assignedDriver" },
+  ]);
+
+  collectFromNestedIdentityObject("vehicle", [
+    { path: ["assigned_vehicle"], source: "assigned_vehicle" },
+    { path: ["assignedVehicle"], source: "assignedVehicle" },
+    { path: ["booking", "assigned_vehicle"], source: "booking.assigned_vehicle" },
+    { path: ["booking", "assignedVehicle"], source: "booking.assignedVehicle" },
+    { path: ["record", "booking", "assigned_vehicle"], source: "record.booking.assigned_vehicle" },
+    { path: ["record", "booking", "assignedVehicle"], source: "record.booking.assignedVehicle" },
+    { path: ["payload", "assigned_vehicle"], source: "payload.assigned_vehicle" },
+    { path: ["payload", "assignedVehicle"], source: "payload.assignedVehicle" },
+    { path: ["quote", "assigned_vehicle"], source: "quote.assigned_vehicle" },
+    { path: ["quote", "assignedVehicle"], source: "quote.assignedVehicle" },
+    { path: ["booking_details", "assigned_vehicle"], source: "booking_details.assigned_vehicle" },
+    { path: ["booking_details", "assignedVehicle"], source: "booking_details.assignedVehicle" },
+    { path: ["parent_booking", "assigned_vehicle"], source: "parent_booking.assigned_vehicle" },
+    { path: ["parent_booking", "assignedVehicle"], source: "parent_booking.assignedVehicle" },
+    { path: ["parentBooking", "assigned_vehicle"], source: "parentBooking.assigned_vehicle" },
+    { path: ["parentBooking", "assignedVehicle"], source: "parentBooking.assignedVehicle" },
+    { path: ["root_booking", "assigned_vehicle"], source: "root_booking.assigned_vehicle" },
+    { path: ["root_booking", "assignedVehicle"], source: "root_booking.assignedVehicle" },
+    { path: ["rootBooking", "assigned_vehicle"], source: "rootBooking.assigned_vehicle" },
+    { path: ["rootBooking", "assignedVehicle"], source: "rootBooking.assignedVehicle" },
+  ]);
+
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  for (const leg of legs) {
+    if (!leg || typeof leg !== "object") continue;
+    pushCandidate("driver", leg?.assigned_driver_id, "operational_legs[].assigned_driver_id", 96);
+    pushCandidate("driver", leg?.assignedDriverId, "operational_legs[].assignedDriverId", 96);
+    pushCandidate("driver", leg?.driver_id, "operational_legs[].driver_id", 96);
+    pushCandidate("driver", leg?.driverId, "operational_legs[].driverId", 96);
+    if (leg?.assigned_driver && typeof leg.assigned_driver === "object") {
+      pushCandidate(
+        "driver",
+        leg.assigned_driver.driver_id ?? leg.assigned_driver.driverId ?? leg.assigned_driver.id,
+        "operational_legs[].assigned_driver",
+        96,
+      );
+    }
+    if (leg?.assignedDriver && typeof leg.assignedDriver === "object") {
+      pushCandidate(
+        "driver",
+        leg.assignedDriver.driver_id ?? leg.assignedDriver.driverId ?? leg.assignedDriver.id,
+        "operational_legs[].assignedDriver",
+        96,
+      );
+    }
+    pushCandidate("vehicle", leg?.assigned_vehicle_id, "operational_legs[].assigned_vehicle_id", 128);
+    pushCandidate("vehicle", leg?.assignedVehicleId, "operational_legs[].assignedVehicleId", 128);
+    pushCandidate("vehicle", leg?.vehicle_id, "operational_legs[].vehicle_id", 128);
+    pushCandidate("vehicle", leg?.vehicleId, "operational_legs[].vehicleId", 128);
+    if (leg?.assigned_vehicle && typeof leg.assigned_vehicle === "object") {
+      pushCandidate(
+        "vehicle",
+        leg.assigned_vehicle.vehicle_id ?? leg.assigned_vehicle.vehicleId ?? leg.assigned_vehicle.id,
+        "operational_legs[].assigned_vehicle",
+        128,
+      );
+    }
+    if (leg?.assignedVehicle && typeof leg.assignedVehicle === "object") {
+      pushCandidate(
+        "vehicle",
+        leg.assignedVehicle.vehicle_id ?? leg.assignedVehicle.vehicleId ?? leg.assignedVehicle.id,
+        "operational_legs[].assignedVehicle",
+        128,
+      );
+    }
+  }
+
+  const assignedDriverId = driverCandidates[0]?.value || null;
+  const assignedVehicleId = vehicleCandidates[0]?.value || null;
   return {
     assigned_driver_id: assignedDriverId,
     assigned_vehicle_id: assignedVehicleId,
     has_assignment: !!(assignedDriverId || assignedVehicleId),
+    driver_assignment_present: !!assignedDriverId,
+    vehicle_assignment_present: !!assignedVehicleId,
+    assignment_sources_present: Array.from(sourceSet),
+    assignment_driver_preview: _driverEnRouteAssignmentPreview(assignedDriverId, "driver"),
+    assignment_vehicle_preview: _driverEnRouteAssignmentPreview(assignedVehicleId, "vehicle"),
   };
 }
 
@@ -22248,18 +22515,31 @@ async function _evaluateDriverEnRouteCancellationBlock(
     distance_threshold_km: distanceThresholdKm,
     freshness_seconds: freshnessSeconds,
     eta_not_implemented: true,
+    driver_assignment_present: false,
+    vehicle_assignment_present: false,
+    assignment_sources_present: [],
+    assignment_driver_preview: null,
+    assignment_vehicle_preview: null,
   };
-
-  if (diagnostics.enabled !== true) return diagnostics;
 
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(safeStr(now, 80));
   const normalizedScope = _driverEnRouteScopedTrackingScope(scope);
+  const assignment = _driverEnRouteBookingAssignmentSignals(rec);
+  diagnostics.has_assignment = assignment.has_assignment === true;
+  diagnostics.driver_assignment_present = assignment.driver_assignment_present === true;
+  diagnostics.vehicle_assignment_present = assignment.vehicle_assignment_present === true;
+  diagnostics.assignment_sources_present = Array.isArray(assignment.assignment_sources_present)
+    ? assignment.assignment_sources_present
+    : [];
+  diagnostics.assignment_driver_preview = assignment.assignment_driver_preview || null;
+  diagnostics.assignment_vehicle_preview = assignment.assignment_vehicle_preview || null;
+
+  if (diagnostics.enabled !== true) return diagnostics;
+
   if (!normalizedScope.hasScope) {
     diagnostics.reason = "missing_scope";
     return diagnostics;
   }
-  const assignment = _driverEnRouteAssignmentFromBooking(rec);
-  diagnostics.has_assignment = assignment.has_assignment === true;
   if (!diagnostics.has_assignment) {
     diagnostics.reason = "no_assignment";
     return diagnostics;
