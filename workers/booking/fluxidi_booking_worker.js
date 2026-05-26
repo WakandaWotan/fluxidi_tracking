@@ -22074,6 +22074,44 @@ function _driverEnRouteScopedTrackingPingLastKey(scope, sessionId) {
   return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:ping:${safeSessionId}:last`;
 }
 
+function _driverEnRouteLegacyBookingSessionKey(bookingId) {
+  const safeBookingId = sanitizeTenantString(bookingId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!safeBookingId) return "";
+  return `booking:${safeBookingId}:session`;
+}
+
+function _driverEnRouteLegacySessionKey(sessionId) {
+  const safeSessionId = sanitizeTenantString(sessionId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!safeSessionId) return "";
+  return `session:${safeSessionId}`;
+}
+
+function _driverEnRouteLegacyPingLastKey(sessionId) {
+  const safeSessionId = sanitizeTenantString(sessionId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!safeSessionId) return "";
+  return `ping:${safeSessionId}:last`;
+}
+
+function _driverEnRouteMaskedTrackingKey(key) {
+  const text = safeStr(key, 300) || "";
+  if (!text) return null;
+  const tokens = text.split(":");
+  if (!tokens.length) return null;
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    const label = safeStr(tokens[i], 40).toLowerCase();
+    if (
+      label === "tenant" ||
+      label === "company" ||
+      label === "booking" ||
+      label === "session" ||
+      label === "ping"
+    ) {
+      tokens[i + 1] = _maskPublicDriverLoginValue(tokens[i + 1] || "");
+    }
+  }
+  return tokens.join(":");
+}
+
 async function _driverEnRouteTrackingReadJson(env, key) {
   if (!env?.FLUXIDI_TRACKING || !key) return null;
   try {
@@ -22520,6 +22558,49 @@ async function _evaluateDriverEnRouteCancellationBlock(
     assignment_sources_present: [],
     assignment_driver_preview: null,
     assignment_vehicle_preview: null,
+    session_lookup_source: "missing",
+    session_key_checked: null,
+    booking_session_key_checked: null,
+    ping_last_key_checked: null,
+    session_id_preview: null,
+    session_status: null,
+    session_driver_preview: null,
+    session_vehicle_preview: null,
+    session_booking_preview: null,
+    last_ping_present: false,
+    last_ping_ts: null,
+    last_ping_age_seconds: null,
+    last_ping_lat_present: false,
+    last_ping_lng_present: false,
+    tracking_lookup_error: null,
+  };
+
+  const enforceEnabled = diagnostics.enabled === true;
+  const keepDisabledReason = () => {
+    if (!enforceEnabled) {
+      diagnostics.reason = "disabled";
+      diagnostics.would_block = false;
+    }
+    return diagnostics;
+  };
+  const setTrackingLookupError = (code) => {
+    const normalizedCode = safeStr(code, 80) || "unknown";
+    if (!diagnostics.tracking_lookup_error) diagnostics.tracking_lookup_error = normalizedCode;
+    if (diagnostics.session_lookup_source !== "error") {
+      diagnostics.session_lookup_source = "error";
+    }
+  };
+  const failOrContinue = (reason, trackingCode = "") => {
+    if (trackingCode) {
+      setTrackingLookupError(trackingCode);
+    } else if (reason && !enforceEnabled) {
+      setTrackingLookupError(reason);
+    }
+    if (enforceEnabled) {
+      diagnostics.reason = reason;
+      return diagnostics;
+    }
+    return keepDisabledReason();
   };
 
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(safeStr(now, 80));
@@ -22534,81 +22615,213 @@ async function _evaluateDriverEnRouteCancellationBlock(
   diagnostics.assignment_driver_preview = assignment.assignment_driver_preview || null;
   diagnostics.assignment_vehicle_preview = assignment.assignment_vehicle_preview || null;
 
-  if (diagnostics.enabled !== true) return diagnostics;
-
   if (!normalizedScope.hasScope) {
-    diagnostics.reason = "missing_scope";
-    return diagnostics;
+    return failOrContinue("missing_scope");
   }
-  if (!diagnostics.has_assignment) {
-    diagnostics.reason = "no_assignment";
-    return diagnostics;
-  }
+
   const bookingId = _driverEnRouteResolveBookingIdentity(rec);
   if (!bookingId) {
-    diagnostics.reason = "booking_identity_missing";
-    return diagnostics;
+    return failOrContinue("booking_identity_missing");
   }
   if (!env?.FLUXIDI_TRACKING) {
-    diagnostics.reason = "tracking_unavailable";
-    return diagnostics;
+    return failOrContinue("tracking_unavailable");
   }
 
-  const bookingMapKey = _driverEnRouteScopedTrackingBookingSessionKey(normalizedScope, bookingId);
-  const bookingMap = await _driverEnRouteTrackingReadJson(env, bookingMapKey);
-  const sessionId = safeStr(
-    bookingMap?.session_id ??
-      bookingMap?.sessionId,
-    160,
-  );
+  const bookingMapKeyScoped = _driverEnRouteScopedTrackingBookingSessionKey(normalizedScope, bookingId);
+  diagnostics.booking_session_key_checked = bookingMapKeyScoped
+    ? `scoped:${_driverEnRouteMaskedTrackingKey(bookingMapKeyScoped)}`
+    : null;
+  let bookingMap = null;
+  let bookingMapSource = "missing";
+  try {
+    bookingMap = await _driverEnRouteTrackingReadJson(env, bookingMapKeyScoped);
+    if (bookingMap && typeof bookingMap === "object") {
+      bookingMapSource = "scoped";
+      diagnostics.session_lookup_source = "scoped";
+    }
+  } catch (_) {
+    bookingMap = null;
+    bookingMapSource = "error";
+    setTrackingLookupError("booking_map_read_error");
+  }
+
+  if (!bookingMap) {
+    const legacyBookingKey = _driverEnRouteLegacyBookingSessionKey(bookingId);
+    if (legacyBookingKey) {
+      try {
+        const legacyBookingMap = await _driverEnRouteTrackingReadJson(env, legacyBookingKey);
+        if (legacyBookingMap && typeof legacyBookingMap === "object") {
+          bookingMap = legacyBookingMap;
+          bookingMapSource = "legacy";
+          diagnostics.session_lookup_source = "legacy";
+          diagnostics.booking_session_key_checked =
+            `legacy:${_driverEnRouteMaskedTrackingKey(legacyBookingKey)}`;
+        }
+      } catch (_) {
+        if (bookingMapSource !== "error") {
+          bookingMapSource = "error";
+        }
+        setTrackingLookupError("booking_map_legacy_read_error");
+      }
+    }
+  }
+
+  const sessionId = safeStr(bookingMap?.session_id ?? bookingMap?.sessionId, 160);
+  diagnostics.session_id_preview = _driverEnRouteAssignmentPreview(sessionId, "id");
   if (!sessionId) {
-    diagnostics.reason = "missing_session";
-    return diagnostics;
+    if (bookingMapSource === "error") diagnostics.session_lookup_source = "error";
+    else diagnostics.session_lookup_source = "missing";
+    return failOrContinue("missing_session");
   }
 
-  const sessionKey = _driverEnRouteScopedTrackingSessionKey(normalizedScope, sessionId);
-  const session = await _driverEnRouteTrackingReadJson(env, sessionKey);
-  if (!session || typeof session !== "object") {
-    diagnostics.reason = "missing_session";
-    return diagnostics;
+  const sessionKeyScoped = _driverEnRouteScopedTrackingSessionKey(normalizedScope, sessionId);
+  diagnostics.session_key_checked = sessionKeyScoped
+    ? `scoped:${_driverEnRouteMaskedTrackingKey(sessionKeyScoped)}`
+    : null;
+  let session = null;
+  let sessionSource = "missing";
+  try {
+    session = await _driverEnRouteTrackingReadJson(env, sessionKeyScoped);
+    if (session && typeof session === "object") {
+      sessionSource = "scoped";
+      diagnostics.session_lookup_source = "scoped";
+    }
+  } catch (_) {
+    session = null;
+    sessionSource = "error";
+    setTrackingLookupError("session_read_error");
   }
+
+  if (!session) {
+    const legacySessionKey = _driverEnRouteLegacySessionKey(sessionId);
+    if (legacySessionKey) {
+      try {
+        const legacySession = await _driverEnRouteTrackingReadJson(env, legacySessionKey);
+        if (legacySession && typeof legacySession === "object") {
+          session = legacySession;
+          sessionSource = "legacy";
+          diagnostics.session_lookup_source = "legacy";
+          diagnostics.session_key_checked =
+            `legacy:${_driverEnRouteMaskedTrackingKey(legacySessionKey)}`;
+        }
+      } catch (_) {
+        if (sessionSource !== "error") {
+          sessionSource = "error";
+        }
+        setTrackingLookupError("session_legacy_read_error");
+      }
+    }
+  }
+
+  if (!session || typeof session !== "object") {
+    diagnostics.session_lookup_source = sessionSource === "error" ? "error" : "missing";
+    return failOrContinue("missing_session");
+  }
+
+  diagnostics.session_lookup_source = sessionSource === "legacy" ? "legacy" : "scoped";
+  diagnostics.session_driver_preview = _driverEnRouteAssignmentPreview(
+    session?.owner_driver_id ??
+      session?.ownerDriverId ??
+      session?.driver_id ??
+      session?.driverId,
+    "driver",
+  );
+  diagnostics.session_vehicle_preview = _driverEnRouteAssignmentPreview(
+    session?.owner_vehicle_id ??
+      session?.ownerVehicleId ??
+      session?.vehicle_id ??
+      session?.vehicleId,
+    "vehicle",
+  );
+  diagnostics.session_booking_preview = _driverEnRouteAssignmentPreview(
+    session?.booking_id ??
+      session?.bookingId ??
+      session?.owner_booking_id ??
+      session?.ownerBookingId,
+    "id",
+  );
+
   const sessionStatusToken = _driverEnRouteNormalizeOperationalState(
     session?.status ?? session?.lifecycle_status ?? session?.lifecycleStatus,
   );
-  diagnostics.has_active_session = sessionStatusToken === "active" || sessionStatusToken === "open";
-  if (!diagnostics.has_active_session) {
+  diagnostics.session_status = sessionStatusToken || null;
+  diagnostics.has_active_session = sessionStatusToken === "active";
+  if (enforceEnabled && !diagnostics.has_assignment) {
+    diagnostics.reason = "no_assignment";
+    return diagnostics;
+  }
+
+  diagnostics.assignment_matches = _driverEnRouteSessionAssignmentMatches(assignment, session);
+  if (enforceEnabled && !diagnostics.has_active_session) {
     diagnostics.reason = "session_not_active";
     return diagnostics;
   }
-  diagnostics.assignment_matches = _driverEnRouteSessionAssignmentMatches(assignment, session);
-  if (!diagnostics.assignment_matches) {
+  if (enforceEnabled && !diagnostics.assignment_matches) {
     diagnostics.reason = "assignment_mismatch";
     return diagnostics;
   }
 
-  const pingKey = _driverEnRouteScopedTrackingPingLastKey(normalizedScope, sessionId);
-  const lastPing = await _driverEnRouteTrackingReadJson(env, pingKey);
-  if (!lastPing || typeof lastPing !== "object") {
-    diagnostics.reason = "missing_ping";
-    return diagnostics;
+  const pingKeyScoped = _driverEnRouteScopedTrackingPingLastKey(normalizedScope, sessionId);
+  diagnostics.ping_last_key_checked = pingKeyScoped
+    ? `scoped:${_driverEnRouteMaskedTrackingKey(pingKeyScoped)}`
+    : null;
+  let lastPing = null;
+  try {
+    lastPing = await _driverEnRouteTrackingReadJson(env, pingKeyScoped);
+  } catch (_) {
+    lastPing = null;
+    setTrackingLookupError("ping_read_error");
   }
+  if (!lastPing || typeof lastPing !== "object") {
+    const legacyPingKey = _driverEnRouteLegacyPingLastKey(sessionId);
+    if (legacyPingKey) {
+      try {
+        const legacyPing = await _driverEnRouteTrackingReadJson(env, legacyPingKey);
+        if (legacyPing && typeof legacyPing === "object") {
+          lastPing = legacyPing;
+          diagnostics.ping_last_key_checked =
+            `legacy:${_driverEnRouteMaskedTrackingKey(legacyPingKey)}`;
+        }
+      } catch (_) {
+        setTrackingLookupError("ping_legacy_read_error");
+      }
+    }
+  }
+  diagnostics.last_ping_present = !!(lastPing && typeof lastPing === "object");
+  if (!diagnostics.last_ping_present) {
+    if (enforceEnabled) {
+      diagnostics.reason = "missing_ping";
+      return diagnostics;
+    }
+    return keepDisabledReason();
+  }
+
+  const pingTsText = safeStr(
+    lastPing?.ts ??
+      lastPing?.timestamp ??
+      lastPing?.last_ping_at ??
+      lastPing?.updated_at,
+    80,
+  ) || "";
+  diagnostics.last_ping_ts = pingTsText || null;
+  diagnostics.last_ping_lat_present = lastPing?.lat != null || lastPing?.latitude != null;
+  diagnostics.last_ping_lng_present =
+    lastPing?.lon != null || lastPing?.lng != null || lastPing?.longitude != null;
   const pingTsMs = Date.parse(
-    safeStr(
-      lastPing?.ts ??
-        lastPing?.timestamp ??
-        lastPing?.last_ping_at ??
-        lastPing?.updated_at,
-      80,
-    ),
+    pingTsText,
   );
   if (!Number.isFinite(nowMs) || !Number.isFinite(pingTsMs)) {
-    diagnostics.reason = "missing_ping";
-    return diagnostics;
+    if (enforceEnabled) {
+      diagnostics.reason = "missing_ping";
+      return diagnostics;
+    }
+    return keepDisabledReason();
   }
   const pingAgeSeconds = Math.max(0, Math.round((nowMs - pingTsMs) / 1000));
   diagnostics.ping_age_seconds = pingAgeSeconds;
+  diagnostics.last_ping_age_seconds = pingAgeSeconds;
   diagnostics.has_fresh_ping = pingAgeSeconds <= freshnessSeconds;
-  if (!diagnostics.has_fresh_ping) {
+  if (enforceEnabled && !diagnostics.has_fresh_ping) {
     diagnostics.reason = "stale_ping";
     return diagnostics;
   }
@@ -22641,11 +22854,11 @@ async function _evaluateDriverEnRouteCancellationBlock(
   diagnostics.operational_state_ok = _driverEnRouteOperationalStateAllowed(
     diagnostics.operational_state,
   );
-  if (!diagnostics.operational_state) {
+  if (enforceEnabled && !diagnostics.operational_state) {
     diagnostics.reason = "operational_state_missing";
     return diagnostics;
   }
-  if (!diagnostics.operational_state_ok) {
+  if (enforceEnabled && !diagnostics.operational_state_ok) {
     diagnostics.reason = "operational_state_not_en_route";
     return diagnostics;
   }
@@ -22653,31 +22866,43 @@ async function _evaluateDriverEnRouteCancellationBlock(
   const pingLat = Number(lastPing?.lat ?? lastPing?.latitude);
   const pingLng = Number(lastPing?.lon ?? lastPing?.lng ?? lastPing?.longitude);
   if (!_allocatorIsUsableCoordinatePair(pingLat, pingLng)) {
-    diagnostics.reason = "ping_coordinates_invalid";
-    return diagnostics;
+    if (enforceEnabled) {
+      diagnostics.reason = "ping_coordinates_invalid";
+      return diagnostics;
+    }
+    return keepDisabledReason();
   }
   diagnostics.origin_source = "tracking_ping";
 
   const pickupPoint = _driverEnRouteResolvePickupPoint(rec);
   if (!pickupPoint.usable) {
-    diagnostics.reason = "pickup_coordinates_missing";
-    return diagnostics;
+    if (enforceEnabled) {
+      diagnostics.reason = "pickup_coordinates_missing";
+      return diagnostics;
+    }
+    return keepDisabledReason();
   }
   const distanceKm = _haversineDistanceKm(pingLat, pingLng, pickupPoint.lat, pickupPoint.lng);
   diagnostics.distance_km = Number.isFinite(Number(distanceKm))
     ? Number(Number(distanceKm).toFixed(3))
     : null;
   if (!Number.isFinite(Number(diagnostics.distance_km))) {
-    diagnostics.reason = "distance_unavailable";
-    return diagnostics;
+    if (enforceEnabled) {
+      diagnostics.reason = "distance_unavailable";
+      return diagnostics;
+    }
+    return keepDisabledReason();
   }
-  if (diagnostics.distance_km <= distanceThresholdKm) {
+  if (enforceEnabled && diagnostics.distance_km <= distanceThresholdKm) {
     diagnostics.would_block = true;
     diagnostics.reason = "driver_already_en_route";
     return diagnostics;
   }
-  diagnostics.reason = "outside_threshold";
-  return diagnostics;
+  if (enforceEnabled) {
+    diagnostics.reason = "outside_threshold";
+    return diagnostics;
+  }
+  return keepDisabledReason();
 }
 
 function _isCustomerCancellationStatus(value) {
