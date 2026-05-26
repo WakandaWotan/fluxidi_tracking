@@ -1277,6 +1277,50 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     return _isCustomerBookingTerminalStatus(_view.lifecycleStatus);
   }
 
+  List<String> _cancelBookingIdCandidates(String primaryBookingId) {
+    final candidates = <String>[];
+    void addCandidate(String raw) {
+      final text = raw.trim();
+      if (text.isEmpty) return;
+      if (candidates.contains(text)) return;
+      candidates.add(text);
+    }
+
+    addCandidate(primaryBookingId);
+    addCandidate(_view.bookingId);
+    addCandidate(_view.publicBookingReference);
+    addCandidate(_view.planningReference);
+    addCandidate(_view.receiptReference);
+    final source = <String, dynamic>{
+      ..._view.source,
+      'record': _view.record,
+      'booking': _view.booking,
+    };
+    addCandidate(
+      _cancelScopeFirstNonEmpty(source, const [
+        'booking_id',
+        'bookingId',
+        'public_booking_id',
+        'publicBookingId',
+        'id',
+        'record.booking_id',
+        'record.bookingId',
+        'record.public_booking_id',
+        'record.publicBookingId',
+        'record.id',
+        'record.booking.booking_id',
+        'record.booking.bookingId',
+        'record.booking.public_booking_id',
+        'record.booking.publicBookingId',
+        'booking.booking_id',
+        'booking.bookingId',
+        'booking.public_booking_id',
+        'booking.publicBookingId',
+      ]),
+    );
+    return candidates;
+  }
+
   bool _isCancellationTransportError(Object err) {
     final text = err.toString().toLowerCase();
     return text.contains('clientsoftware caused connection abort') ||
@@ -1414,47 +1458,72 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       fallbackPhone: _view.customerPhone,
       source: _view.source,
     );
-    final payload = <String, dynamic>{
-      'booking_id': bookingId,
-      'status': 'CANCELLED',
-      'tenant_id': scope['tenant_id'],
-      'company_id': scope['company_id'],
-      'tenantId': scope['tenantId'],
-      'companyId': scope['companyId'],
-      'actor_role': 'customer',
-      'actorRole': 'customer',
-      if (proof['customer_email'] != null)
-        'customer_email': proof['customer_email'],
-      if (proof['customer_phone'] != null)
-        'customer_phone': proof['customer_phone'],
-    };
-    final scopedQuery = <String, String>{...scope, ...proof};
-    final uri = Uri.parse(
-      '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(bookingId)}/status',
-    ).replace(queryParameters: scopedQuery);
+    final cancelCandidates = _cancelBookingIdCandidates(bookingId);
     debugPrint(
-      '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)}',
+      '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)} candidates=${cancelCandidates.map(_safeRefPreview).join(",")}',
     );
     try {
-      final res = await http
-          .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
-          .timeout(const Duration(seconds: 15));
-      debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_RES] booking=${_safeRefPreview(bookingId)} code=${res.statusCode}',
-      );
-      dynamic decoded;
-      try {
-        decoded = jsonDecode(utf8.decode(res.bodyBytes));
-      } catch (_) {
-        decoded = null;
+      String? successfulBookingId;
+      String? lastErrorCode;
+      String? lastErrorMessage;
+      for (final candidateId in cancelCandidates) {
+        final payload = <String, dynamic>{
+          'booking_id': candidateId,
+          'status': 'CANCELLED',
+          'tenant_id': scope['tenant_id'],
+          'company_id': scope['company_id'],
+          'tenantId': scope['tenantId'],
+          'companyId': scope['companyId'],
+          'actor_role': 'customer',
+          'actorRole': 'customer',
+          if (proof['customer_email'] != null)
+            'customer_email': proof['customer_email'],
+          if (proof['customer_phone'] != null)
+            'customer_phone': proof['customer_phone'],
+        };
+        final scopedQuery = <String, String>{...scope, ...proof};
+        final uri = Uri.parse(
+          '$kBookingBaseUrl$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/status',
+        ).replace(queryParameters: scopedQuery);
+        final res = await http
+            .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
+            .timeout(const Duration(seconds: 15));
+        dynamic decoded;
+        try {
+          decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        } catch (_) {
+          decoded = null;
+        }
+        final decodedMap = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : const <String, dynamic>{};
+        final ok = decodedMap['ok'] == true;
+        final errorCode = (decodedMap['error'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        final errorMessage = (decodedMap['message'] ?? '').toString().trim();
+        debugPrint(
+          '[CUSTOMER_BOOKING][CANCEL_RES] candidate=${_safeRefPreview(candidateId)} code=${res.statusCode} ok=$ok error=${errorCode.isEmpty ? "-" : errorCode}',
+        );
+        if (res.statusCode >= 200 && res.statusCode < 300 && ok) {
+          successfulBookingId = candidateId;
+          break;
+        }
+        lastErrorCode = errorCode.isEmpty
+            ? 'http_${res.statusCode}'
+            : errorCode;
+        lastErrorMessage = errorMessage.isEmpty ? res.body : errorMessage;
       }
-      final ok = decoded is Map ? decoded['ok'] == true : false;
-      if (res.statusCode != 200 || !ok) {
-        throw Exception('HTTP ${res.statusCode}: ${res.body}');
+      if (successfulBookingId == null) {
+        throw Exception(
+          'cancel_failed code=${lastErrorCode ?? "unknown"} message=${lastErrorMessage ?? "unknown"}',
+        );
       }
+      final bookingIdForRemoval = successfulBookingId;
 
       final aliases = _customerBookingDeleteAliases(
-        bookingId: bookingId,
+        bookingId: bookingIdForRemoval,
         publicBookingReference: _view.publicBookingReference,
         bookingReference: _view.publicBookingReference,
         publicReference: _view.publicBookingReference,
@@ -1463,13 +1532,13 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         source: _view.source,
       );
       final localResult = await _removeLocalCustomerBookingEverywhere(
-        bookingForLog: bookingId,
+        bookingForLog: bookingIdForRemoval,
         aliases: aliases,
       );
       debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_LOCAL_UPDATE] booking=${_safeRefPreview(bookingId)} removed=${localResult.removed} remaining=${localResult.remaining}',
+        '[CUSTOMER_BOOKING][CANCEL_LOCAL_UPDATE] booking=${_safeRefPreview(bookingIdForRemoval)} removed=${localResult.removed} remaining=${localResult.remaining}',
       );
-      if (!context.mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1522,6 +1591,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           });
           return;
         }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1535,15 +1605,31 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           ),
         );
       } else {
+        final errorText = err.toString();
+        String detail = '';
+        final codeMatch = RegExp(
+          r'code=([a-z0-9_:-]+)',
+          caseSensitive: false,
+        ).firstMatch(errorText);
+        if (codeMatch != null) {
+          detail = codeMatch.group(1) ?? '';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _t(
-                nl: 'Annuleren mislukt. Probeer opnieuw.',
-                en: 'Cancellation failed. Please try again.',
-                fr: 'Échec de l’annulation. Réessayez.',
-                es: 'No se pudo cancelar. Inténtalo de nuevo.',
-              ),
+              detail.isEmpty
+                  ? _t(
+                      nl: 'Annuleren mislukt. Probeer opnieuw.',
+                      en: 'Cancellation failed. Please try again.',
+                      fr: 'Échec de l’annulation. Réessayez.',
+                      es: 'No se pudo cancelar. Inténtalo de nuevo.',
+                    )
+                  : _t(
+                      nl: 'Annuleren mislukt ($detail). Probeer opnieuw.',
+                      en: 'Cancellation failed ($detail). Please try again.',
+                      fr: 'Échec de l’annulation ($detail). Réessayez.',
+                      es: 'No se pudo cancelar ($detail). Inténtalo de nuevo.',
+                    ),
             ),
           ),
         );

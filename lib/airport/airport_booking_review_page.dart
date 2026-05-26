@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+
+enum _AirportPaymentChoice { manual, online }
 
 class AirportBookingReviewPage extends StatefulWidget {
   const AirportBookingReviewPage({
@@ -44,6 +47,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   bool _isReturningToCustomerPage = false;
   String? _submitError;
   String? _submittedBookingId;
+  String? _submittedMessage;
+  _AirportPaymentChoice _selectedPaymentChoice = _AirportPaymentChoice.manual;
 
   @override
   void initState() {
@@ -114,6 +119,52 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       default:
         return nl;
     }
+  }
+
+  bool get _isOnlinePaymentChoice =>
+      _selectedPaymentChoice == _AirportPaymentChoice.online;
+
+  String get _selectedPaymentMode =>
+      _isOnlinePaymentChoice ? 'mollie' : 'manual';
+
+  String _paymentChoiceLabel(_AirportPaymentChoice choice) {
+    if (choice == _AirportPaymentChoice.online) {
+      return _t(
+        nl: 'Nu online betalen',
+        en: 'Pay online now',
+        fr: 'Payer en ligne maintenant',
+        es: 'Pagar en línea ahora',
+      );
+    }
+    return _t(
+      nl: 'Betalen in de auto',
+      en: 'Pay in the car',
+      fr: 'Payer dans la voiture',
+      es: 'Pagar en el coche',
+    );
+  }
+
+  String _paymentChoiceDescription(_AirportPaymentChoice choice) {
+    if (choice == _AirportPaymentChoice.online) {
+      return _t(
+        nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
+        en: 'You will be redirected to secure checkout immediately.',
+        fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
+        es: 'Se te redirigirá de inmediato al pago seguro.',
+      );
+    }
+    return _t(
+      nl: 'De rit wordt bevestigd en je betaalt later in de wagen.',
+      en: 'Ride is confirmed and you pay later in the vehicle.',
+      fr: 'Le trajet est confirmé et vous payez plus tard dans le véhicule.',
+      es: 'El trayecto se confirma y pagas después en el vehículo.',
+    );
+  }
+
+  Future<void> _openCheckoutUrl(String checkoutUrl) async {
+    final uri = Uri.tryParse(checkoutUrl.trim());
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   bool _isValidEmail(String value) {
@@ -218,6 +269,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       'booking_source': 'airport_module',
       'booking_type': 'airport_transfer',
       'entry_channel': 'flutter_airport',
+      'payment_mode': _selectedPaymentMode,
+      'paymentMode': _selectedPaymentMode,
+      'payment_provider': _selectedPaymentMode,
+      'paymentProvider': _selectedPaymentMode,
       'customer': <String, dynamic>{
         'name': name,
         'phone': phone,
@@ -269,9 +324,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     return _firstNonEmptyText([
       body['booking_id'],
       body['bookingId'],
+      body['public_booking_id'],
+      body['publicBookingId'],
       body['id'],
       bookingMap['booking_id'],
       bookingMap['bookingId'],
+      bookingMap['public_booking_id'],
+      bookingMap['publicBookingId'],
       bookingMap['id'],
     ]);
   }
@@ -377,6 +436,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     setState(() {
       _isSubmitting = true;
       _submitError = null;
+      _submittedMessage = null;
     });
     try {
       final response = await http
@@ -411,6 +471,124 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         return;
       }
       final bookingId = _readBookingId(body);
+      final bookingMap = body['booking'] is Map
+          ? Map<String, dynamic>.from(body['booking'] as Map)
+          : const <String, dynamic>{};
+      bool boolish(dynamic value) {
+        if (value is bool) return value;
+        final raw = (value ?? '').toString().trim().toLowerCase();
+        return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
+      }
+
+      bool isOnlinePaymentMode(String value) {
+        final normalized = value.trim().toLowerCase();
+        return normalized == 'mollie' ||
+            normalized == 'online' ||
+            normalized == 'online_payment' ||
+            normalized == 'online-payments' ||
+            normalized == 'online_payments';
+      }
+
+      bool isSafeCheckoutUrl(String value) {
+        final raw = value.trim();
+        if (raw.isEmpty) return false;
+        final uri = Uri.tryParse(raw);
+        if (uri == null) return false;
+        final scheme = uri.scheme.toLowerCase();
+        return (scheme == 'https' || scheme == 'http') && uri.host.isNotEmpty;
+      }
+
+      String safeBookingPreview(String value) {
+        final text = value.trim();
+        if (text.isEmpty) return '-';
+        if (text.length <= 6) return text;
+        return '${text.substring(0, 3)}…${text.substring(text.length - 2)}';
+      }
+
+      final responseRequiresPayment =
+          boolish(body['requiresPayment']) ||
+          boolish(body['payment_required']) ||
+          boolish(body['requires_payment']) ||
+          boolish(bookingMap['requiresPayment']) ||
+          boolish(bookingMap['payment_required']) ||
+          boolish(bookingMap['requires_payment']);
+      final responsePaymentMode = _firstNonEmptyText([
+        body['payment_mode'],
+        body['paymentMode'],
+        bookingMap['payment_mode'],
+        bookingMap['paymentMode'],
+      ]).toLowerCase();
+      final responsePaymentProvider = _firstNonEmptyText([
+        body['payment_provider'],
+        body['paymentProvider'],
+        bookingMap['payment_provider'],
+        bookingMap['paymentProvider'],
+      ]).toLowerCase();
+      final requestPaymentMode = _firstNonEmptyText([
+        payload['payment_mode'],
+        payload['paymentMode'],
+        payload['payment_method'],
+        payload['paymentMethod'],
+      ]).toLowerCase();
+      final requestPaymentProvider = _firstNonEmptyText([
+        payload['payment_provider'],
+        payload['paymentProvider'],
+      ]).toLowerCase();
+      final checkoutUrl = _firstNonEmptyText([
+        body['checkout_url'],
+        body['checkoutUrl'],
+        body['payment_url'],
+        body['paymentUrl'],
+        bookingMap['checkout_url'],
+        bookingMap['checkoutUrl'],
+        bookingMap['payment_url'],
+        bookingMap['paymentUrl'],
+      ]);
+      final hasSafeCheckoutUrl = isSafeCheckoutUrl(checkoutUrl);
+      final explicitOnlineRequested =
+          isOnlinePaymentMode(requestPaymentMode) ||
+          requestPaymentProvider == 'mollie';
+      final backendRequiresOnlineCheckout =
+          responseRequiresPayment ||
+          isOnlinePaymentMode(responsePaymentMode) ||
+          responsePaymentProvider == 'mollie';
+      final responseBusinessDetected =
+          boolish(body['business_detected']) ||
+          boolish(body['businessDetected']) ||
+          boolish(bookingMap['business_detected']) ||
+          boolish(bookingMap['businessDetected']);
+      final responseInvoiceRequested =
+          boolish(body['invoice_requested']) ||
+          boolish(body['invoiceRequested']) ||
+          boolish(bookingMap['invoice_requested']) ||
+          boolish(bookingMap['invoiceRequested']);
+      final requestBusinessIntent =
+          boolish(payload['business_detected']) ||
+          boolish(payload['businessDetected']) ||
+          boolish(payload['invoice_requested']) ||
+          boolish(payload['invoiceRequested']) ||
+          companyName.trim().isNotEmpty ||
+          vatNumber.trim().isNotEmpty;
+      final businessInvoiceIntent =
+          responseBusinessDetected ||
+          responseInvoiceRequested ||
+          requestBusinessIntent;
+      if (explicitOnlineRequested &&
+          backendRequiresOnlineCheckout &&
+          !hasSafeCheckoutUrl) {
+        debugPrint(
+          '[AIRPORT_BOOKING][CHECKOUT_MISSING_BLOCKED] booking=${safeBookingPreview(bookingId)} paymentMode=$responsePaymentMode provider=$responsePaymentProvider requiresPayment=$responseRequiresPayment',
+        );
+        setState(() {
+          _submitError = _t(
+            nl: 'Online betaling kon niet worden gestart. Probeer opnieuw.',
+            en: 'Online payment could not be started. Please try again.',
+            fr: "Le paiement en ligne n'a pas pu être démarré. Réessayez.",
+            es: 'No se pudo iniciar el pago online. Inténtalo de nuevo.',
+          );
+        });
+        return;
+      }
       try {
         final localFallback = StoredCustomerBooking.fromBookSuccess(
           response: body,
@@ -434,22 +612,45 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         debugPrint('[AIRPORT_BOOKING][LOCAL_PERSIST][ERROR] $err');
       }
       if (!mounted) return;
+      final manualBusinessFlow =
+          !explicitOnlineRequested &&
+          !hasSafeCheckoutUrl &&
+          businessInvoiceIntent;
+      final manualPrivateFlow =
+          !explicitOnlineRequested &&
+          !hasSafeCheckoutUrl &&
+          !businessInvoiceIntent;
+      final successMessage = manualBusinessFlow
+          ? _t(
+              nl: 'Boeking aangemaakt. Betaling in de wagen. Factuur volgt na betaling.',
+              en: 'Booking created. Payment in the vehicle. Invoice follows after payment.',
+              fr: 'Reservation creee. Paiement dans le vehicule. Facture envoyee apres paiement.',
+              es: 'Reserva creada. Pago en el vehiculo. La factura se enviara despues del pago.',
+            )
+          : manualPrivateFlow
+          ? _t(
+              nl: 'Boeking aangemaakt. Betaling in de wagen.',
+              en: 'Booking created. Payment in the vehicle.',
+              fr: 'Reservation creee. Paiement dans le vehicule.',
+              es: 'Reserva creada. Pago en el vehiculo.',
+            )
+          : _t(
+              nl: 'Luchthavenrit aangemaakt. Rond de online betaling af.',
+              en: 'Airport ride created. Complete the online payment.',
+              fr: 'Transfert aéroport créé. Finalisez le paiement en ligne.',
+              es: 'Traslado al aeropuerto creado. Completa el pago en línea.',
+            );
       setState(() {
         _isSubmitted = true;
         _submittedBookingId = bookingId.isEmpty ? null : bookingId;
+        _submittedMessage = successMessage;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Luchthavenrit aangevraagd.',
-              en: 'Airport ride requested.',
-              fr: 'Trajet aéroport demandé.',
-              es: 'Traslado al aeropuerto solicitado.',
-            ),
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      if (explicitOnlineRequested && hasSafeCheckoutUrl) {
+        await _openCheckoutUrl(checkoutUrl);
+      }
       Future<void>.delayed(const Duration(milliseconds: 1400), () {
         if (!mounted) return;
         _returnToCustomerPage();
@@ -471,6 +672,77 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         });
       }
     }
+  }
+
+  Widget _paymentChoiceOptionTile(_AirportPaymentChoice choice) {
+    final selected = _selectedPaymentChoice == choice;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _isSubmitting || _isSubmitted
+          ? null
+          : () {
+              setState(() {
+                _selectedPaymentChoice = choice;
+              });
+            },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF1A2130)
+              : Colors.black.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? _gold : _gold.withOpacity(0.25),
+            width: selected ? 1.2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              choice == _AirportPaymentChoice.online
+                  ? Icons.language_rounded
+                  : Icons.local_taxi_rounded,
+              color: selected ? _gold : Colors.white.withOpacity(0.8),
+              size: 18,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _paymentChoiceLabel(choice),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.8,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _paymentChoiceDescription(choice),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.68),
+                      fontSize: 11.1,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: selected ? _gold : Colors.white.withOpacity(0.45),
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _summaryRow(String label, String value) {
@@ -1043,6 +1315,51 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             decoration: BoxDecoration(
               color: _panel,
               borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _gold.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Betaalmethode',
+                    en: 'Payment method',
+                    fr: 'Mode de paiement',
+                    es: 'Método de pago',
+                  ),
+                  style: const TextStyle(
+                    color: _gold,
+                    fontSize: 13.3,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  _t(
+                    nl: 'Kies hoe je wilt betalen voor deze rit.',
+                    en: 'Choose how you want to pay for this ride.',
+                    fr: 'Choisissez comment payer ce trajet.',
+                    es: 'Elige cómo quieres pagar este viaje.',
+                  ),
+                  style: TextStyle(
+                    color: _soft.withOpacity(0.95),
+                    fontSize: 11.2,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _paymentChoiceOptionTile(_AirportPaymentChoice.manual),
+                const SizedBox(height: 7),
+                _paymentChoiceOptionTile(_AirportPaymentChoice.online),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: _panel,
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(color: _gold.withOpacity(0.24)),
             ),
             child: Column(
@@ -1159,14 +1476,15 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                 if (_isSubmitted) ...[
                   const SizedBox(height: 8),
                   Text(
-                    _submittedBookingId == null
-                        ? _t(
-                            nl: 'Luchthavenrit aangevraagd.',
-                            en: 'Airport ride requested.',
-                            fr: 'Trajet aéroport demandé.',
-                            es: 'Traslado al aeropuerto solicitado.',
-                          )
-                        : '${_t(nl: "Aangevraagd", en: "Requested", fr: "Demandé", es: "Solicitado")}: $_submittedBookingId',
+                    _submittedMessage ??
+                        (_submittedBookingId == null
+                            ? _t(
+                                nl: 'Luchthavenrit aangevraagd.',
+                                en: 'Airport ride requested.',
+                                fr: 'Trajet aéroport demandé.',
+                                es: 'Traslado al aeropuerto solicitado.',
+                              )
+                            : '${_t(nl: "Aangevraagd", en: "Requested", fr: "Demandé", es: "Solicitado")}: $_submittedBookingId'),
                     style: const TextStyle(
                       color: _gold,
                       fontSize: 12.2,

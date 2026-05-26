@@ -19,23 +19,27 @@ class FluxidiPendingPayment {
     this.publicBookingId,
     this.status = FluxidiPaymentStatus.pending,
     this.lastCheckedAt,
+    this.isChecking = false,
   });
 
   final String paymentBookingId;
   final String? publicBookingId;
   final FluxidiPaymentStatus status;
   final DateTime? lastCheckedAt;
+  final bool isChecking;
 
   FluxidiPendingPayment copyWith({
     FluxidiPaymentStatus? status,
     DateTime? lastCheckedAt,
     String? publicBookingId,
+    bool? isChecking,
   }) {
     return FluxidiPendingPayment(
       paymentBookingId: paymentBookingId,
       publicBookingId: publicBookingId ?? this.publicBookingId,
       status: status ?? this.status,
       lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
+      isChecking: isChecking ?? this.isChecking,
     );
   }
 }
@@ -65,6 +69,17 @@ void setFluxidiPendingPayment({
     publicBookingId: (publicBookingId ?? '').trim().isEmpty
         ? null
         : publicBookingId!.trim(),
+  );
+}
+
+void markFluxidiPendingPaymentChecking({required String paymentBookingId}) {
+  final normalizedId = paymentBookingId.trim();
+  if (normalizedId.isEmpty) return;
+  final pending = fluxidiPendingPaymentNotifier.value;
+  if (pending == null || pending.paymentBookingId != normalizedId) return;
+  fluxidiPendingPaymentNotifier.value = pending.copyWith(
+    isChecking: true,
+    lastCheckedAt: DateTime.now(),
   );
 }
 
@@ -139,6 +154,13 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
             .trim();
     final publicBookingId =
         (params['booking_id'] ?? params['public_booking_id'] ?? '').trim();
+    final statusRaw =
+        (params['status'] ??
+                params['payment_status'] ??
+                params['paymentStatus'] ??
+                '')
+            .trim()
+            .toLowerCase();
     if (paymentBookingId.isEmpty) return;
 
     final existing = fluxidiPendingPaymentNotifier.value;
@@ -147,12 +169,46 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
         paymentBookingId: paymentBookingId,
         publicBookingId: publicBookingId.isNotEmpty ? publicBookingId : null,
       );
+      final created = fluxidiPendingPaymentNotifier.value;
+      if (created != null && created.paymentBookingId == paymentBookingId) {
+        fluxidiPendingPaymentNotifier.value = created.copyWith(
+          isChecking: true,
+        );
+      }
     } else if (publicBookingId.isNotEmpty &&
         (existing.publicBookingId == null ||
             existing.publicBookingId!.isEmpty)) {
       fluxidiPendingPaymentNotifier.value = existing.copyWith(
         publicBookingId: publicBookingId,
+        isChecking: true,
       );
+    } else {
+      fluxidiPendingPaymentNotifier.value = existing.copyWith(isChecking: true);
+    }
+    final afterLink = fluxidiPendingPaymentNotifier.value;
+    if (afterLink != null && afterLink.paymentBookingId == paymentBookingId) {
+      if (statusRaw == 'confirmed') {
+        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
+          status: FluxidiPaymentStatus.confirmed,
+          isChecking: false,
+          lastCheckedAt: DateTime.now(),
+        );
+      } else if (statusRaw == 'paid') {
+        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
+          status: FluxidiPaymentStatus.paid,
+          isChecking: true,
+          lastCheckedAt: DateTime.now(),
+        );
+      } else if (statusRaw == 'failed' ||
+          statusRaw == 'expired' ||
+          statusRaw == 'canceled' ||
+          statusRaw == 'cancelled') {
+        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
+          status: FluxidiPaymentStatus.failed,
+          isChecking: false,
+          lastCheckedAt: DateTime.now(),
+        );
+      }
     }
     unawaited(_reconcilePendingPayment(source: 'DEEP_LINK'));
   }
@@ -171,6 +227,10 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     }
 
     _reconcileInFlight = true;
+    fluxidiPendingPaymentNotifier.value = pending.copyWith(
+      isChecking: true,
+      lastCheckedAt: DateTime.now(),
+    );
 
     try {
       // Up to 6 attempts, 2s apart (~12s) — enough for /pay/status to finalize.
@@ -188,6 +248,14 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('[PAY_RETURN][RECONCILE][ERROR] source=$source error=$e');
     } finally {
+      final current = fluxidiPendingPaymentNotifier.value;
+      if (current != null &&
+          current.paymentBookingId == pending.paymentBookingId) {
+        fluxidiPendingPaymentNotifier.value = current.copyWith(
+          isChecking: false,
+          lastCheckedAt: DateTime.now(),
+        );
+      }
       _reconcileInFlight = false;
     }
   }
@@ -243,6 +311,11 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
           fluxidiPendingPaymentNotifier.value = pending.copyWith(
             status: next,
             lastCheckedAt: DateTime.now(),
+            isChecking: !confirmed,
+          );
+        } else if (pending.isChecking) {
+          fluxidiPendingPaymentNotifier.value = pending.copyWith(
+            lastCheckedAt: DateTime.now(),
           );
         }
       }
@@ -264,6 +337,10 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
         pending.status == FluxidiPaymentStatus.confirmed) {
       return;
     }
+    fluxidiPendingPaymentNotifier.value = pending.copyWith(
+      isChecking: true,
+      lastCheckedAt: DateTime.now(),
+    );
     unawaited(_reconcilePendingPayment(source: 'LIFECYCLE_RESUME'));
   }
 }

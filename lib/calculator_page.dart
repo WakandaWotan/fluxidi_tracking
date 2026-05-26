@@ -2853,6 +2853,8 @@ class _BookingConfirmationPage extends StatefulWidget {
       _BookingConfirmationPageState();
 }
 
+enum _BookingPaymentChoice { manual, online }
+
 class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _phoneCtrl = TextEditingController();
@@ -2869,6 +2871,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   String? _ownPaymentBookingId;
   bool _paymentConfirmed = false;
   bool _postPaymentNavigated = false;
+  _BookingPaymentChoice _selectedPaymentChoice = _BookingPaymentChoice.manual;
   bool get _allowsCustomerSessionLink =>
       widget.entryContext == BookingEntryContext.customer;
   bool get _shouldReturnToOriginAfterSuccess =>
@@ -2923,6 +2926,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final ownId = _ownPaymentBookingId;
     if (ownId == null || ownId.isEmpty) return;
     if (pending == null || pending.paymentBookingId != ownId) return;
+    if (pending.isChecking && !_paymentConfirmed) {
+      setState(() {
+        _submitStateIsError = false;
+        _submitState = _paymentCheckingStatusLabel();
+      });
+      debugPrint(
+        '[PAYMENT_RETURN][NAV_SKIP] reason=still_pending booking=$ownId',
+      );
+    }
     if (pending.status == FluxidiPaymentStatus.confirmed &&
         !_paymentConfirmed) {
       setState(() {
@@ -2942,10 +2954,25 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           paymentBookingId: ownId,
         ),
       );
-      if (!_postPaymentNavigated) {
+      if (_postPaymentNavigated) {
+        debugPrint(
+          '[PAYMENT_RETURN][NAV_SKIP] reason=already_navigated booking=$ownId',
+        );
+      } else if (!_allowsCustomerSessionLink) {
+        debugPrint(
+          '[PAYMENT_RETURN][NAV_SKIP] reason=not_customer_flow booking=$ownId',
+        );
+      } else {
         _postPaymentNavigated = true;
+        debugPrint(
+          '[PAYMENT_RETURN][NAVIGATE_CONFIRMED] booking=$ownId target=customer_area',
+        );
         final messenger = ScaffoldMessenger.maybeOf(context);
-        _goToCustomerStartHome();
+        if (widget.onGoToStartPage != null) {
+          _goToCustomerStartHome();
+        } else if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop(true);
+        }
         final lang = widget.language;
         final confirmation = lang == AppLanguage.en
             ? 'Payment confirmed. Your booking is in My bookings.'
@@ -3001,6 +3028,139 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final n = _toNum(v);
     if (n == null) return '—';
     return '${widget.currencySymbol} ${n.toStringAsFixed(2)}';
+  }
+
+  bool get _isOnlinePaymentChoice =>
+      _selectedPaymentChoice == _BookingPaymentChoice.online;
+
+  String get _selectedPaymentMode =>
+      _isOnlinePaymentChoice ? 'mollie' : 'manual';
+
+  String _paymentChoiceTitle() {
+    return _localizedText(
+      nl: 'Betaalmethode',
+      en: 'Payment method',
+      fr: 'Mode de paiement',
+      es: 'Método de pago',
+    );
+  }
+
+  String _paymentChoiceSubtitle() {
+    return _localizedText(
+      nl: 'Kies hoe je wilt betalen voor deze rit.',
+      en: 'Choose how you want to pay for this ride.',
+      fr: 'Choisissez comment payer ce trajet.',
+      es: 'Elige cómo quieres pagar este viaje.',
+    );
+  }
+
+  String _paymentChoiceLabel(_BookingPaymentChoice choice) {
+    if (choice == _BookingPaymentChoice.online) {
+      return _localizedText(
+        nl: 'Nu online betalen',
+        en: 'Pay online now',
+        fr: 'Payer en ligne maintenant',
+        es: 'Pagar en línea ahora',
+      );
+    }
+    return _localizedText(
+      nl: 'Betalen in de auto',
+      en: 'Pay in the car',
+      fr: 'Payer dans la voiture',
+      es: 'Pagar en el coche',
+    );
+  }
+
+  String _paymentChoiceDescription(_BookingPaymentChoice choice) {
+    if (choice == _BookingPaymentChoice.online) {
+      return _localizedText(
+        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
+        en: 'Open the secure checkout page after confirming.',
+        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
+        es: 'Abre la página de pago segura tras confirmar.',
+      );
+    }
+    return _localizedText(
+      nl: 'Boeking wordt meteen aangemaakt, betaling volgt tijdens de rit.',
+      en: 'Booking is created immediately, payment follows during the ride.',
+      fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
+      es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
+    );
+  }
+
+  Widget _paymentChoiceOption(_BookingPaymentChoice choice) {
+    final selected = _selectedPaymentChoice == choice;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _submitting
+          ? null
+          : () => setState(() {
+              _selectedPaymentChoice = choice;
+            }),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF1B222F)
+              : Colors.black.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFFE5B641)
+                : const Color(0xFFE5B641).withOpacity(0.24),
+            width: selected ? 1.2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              choice == _BookingPaymentChoice.online
+                  ? Icons.language_rounded
+                  : Icons.local_taxi_rounded,
+              color: selected
+                  ? const Color(0xFFE5B641)
+                  : Colors.white.withOpacity(0.76),
+              size: 18,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _paymentChoiceLabel(choice),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.8,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _paymentChoiceDescription(choice),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.68),
+                      fontSize: 11.2,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: selected
+                  ? const Color(0xFFE5B641)
+                  : Colors.white.withOpacity(0.45),
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _fmtVatPercent(dynamic v) {
@@ -3116,6 +3276,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     required bool requiresPayment,
     required String paymentUrl,
     required String? publicRef,
+    String? paymentBookingId,
   }) async {
     final safePaymentUrl = _isCustomerSafeCheckoutUrl(paymentUrl)
         ? paymentUrl.trim()
@@ -3124,58 +3285,116 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final title = requiresPayment
         ? widget.strings.bookingPaymentSuccessTitle.of(widget.language)
         : widget.strings.bookingSuccessCashMessage.of(widget.language);
-    final message = requiresPayment
-        ? widget.strings.bookingPaymentRequiredMessage.of(widget.language)
-        : widget.strings.bookingSuccessCashMessage.of(widget.language);
+    final defaultPaymentMessage = widget.strings.bookingPaymentRequiredMessage
+        .of(widget.language);
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF141B2F),
-          title: Text(title, style: const TextStyle(color: Colors.white)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(message, style: const TextStyle(color: Colors.white70)),
-              if ((publicRef ?? '').trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: ${publicRef!.trim()}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            if (hasPaymentUrl)
-              TextButton(
-                onPressed: () => _copyPaymentLink(safePaymentUrl),
-                child: Text(
-                  widget.strings.bookingCopyPaymentLinkLabel.of(
-                    widget.language,
-                  ),
-                ),
-              ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(widget.strings.bookingCloseLabel.of(widget.language)),
-            ),
-            if (hasPaymentUrl)
-              FilledButton(
-                onPressed: () {
+        return ValueListenableBuilder<FluxidiPendingPayment?>(
+          valueListenable: fluxidiPendingPaymentNotifier,
+          builder: (_, pending, __) {
+            final ownPaymentBookingId = (paymentBookingId ?? '').trim();
+            final isSamePending =
+                ownPaymentBookingId.isNotEmpty &&
+                pending != null &&
+                pending.paymentBookingId == ownPaymentBookingId;
+            final isChecking = isSamePending && pending.isChecking;
+            final isPaidOrConfirmed =
+                isSamePending &&
+                (pending.status == FluxidiPaymentStatus.paid ||
+                    pending.status == FluxidiPaymentStatus.confirmed);
+            final allowPayNow =
+                hasPaymentUrl && !isChecking && !isPaidOrConfirmed;
+            if (requiresPayment && (isChecking || isPaidOrConfirmed)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!dialogContext.mounted) return;
+                final route = ModalRoute.of(dialogContext);
+                if (route?.isCurrent == true) {
                   Navigator.of(dialogContext).pop();
-                  _openPaymentUrl(safePaymentUrl);
-                },
-                child: Text(
-                  widget.strings.bookingPayNowLabel.of(widget.language),
-                ),
+                }
+              });
+            }
+            final message = requiresPayment
+                ? (isChecking
+                      ? _paymentCheckingStatusLabel()
+                      : defaultPaymentMessage)
+                : widget.strings.bookingSuccessCashMessage.of(widget.language);
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF141B2F),
+              title: Text(title, style: const TextStyle(color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (requiresPayment && isChecking) ...[
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Text(
+                          message,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if ((publicRef ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      '${widget.strings.bookingSuccessReferencePrefix.of(widget.language)}: ${publicRef!.trim()}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-          ],
+              actions: [
+                if (allowPayNow)
+                  TextButton(
+                    onPressed: () => _copyPaymentLink(safePaymentUrl),
+                    child: Text(
+                      widget.strings.bookingCopyPaymentLinkLabel.of(
+                        widget.language,
+                      ),
+                    ),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    widget.strings.bookingCloseLabel.of(widget.language),
+                  ),
+                ),
+                if (allowPayNow)
+                  FilledButton(
+                    onPressed: () {
+                      final ownPaymentBookingId = (paymentBookingId ?? '')
+                          .trim();
+                      if (ownPaymentBookingId.isNotEmpty) {
+                        markFluxidiPendingPaymentChecking(
+                          paymentBookingId: ownPaymentBookingId,
+                        );
+                      }
+                      Navigator.of(dialogContext).pop();
+                      _openPaymentUrl(safePaymentUrl);
+                    },
+                    child: Text(
+                      widget.strings.bookingPayNowLabel.of(widget.language),
+                    ),
+                  ),
+              ],
+            );
+          },
         );
       },
     );
@@ -3227,6 +3446,19 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Comprobando la reserva...';
       case AppLanguage.nl:
         return 'Boeking wordt gecontroleerd...';
+    }
+  }
+
+  String _paymentCheckingStatusLabel() {
+    switch (widget.language) {
+      case AppLanguage.en:
+        return 'Checking payment...';
+      case AppLanguage.fr:
+        return 'Vérification du paiement...';
+      case AppLanguage.es:
+        return 'Comprobando el pago...';
+      case AppLanguage.nl:
+        return 'Betaling controleren...';
     }
   }
 
@@ -3328,6 +3560,15 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     required CustomerSession? customerSession,
     required _CalculatorScopeSelection selectedScope,
   }) async {
+    bool isOnlinePaymentMode(String value) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'mollie' ||
+          normalized == 'online' ||
+          normalized == 'online_payment' ||
+          normalized == 'online-payments' ||
+          normalized == 'online_payments';
+    }
+
     bool boolish(dynamic value) {
       if (value is bool) return value;
       final raw = (value ?? '').toString().trim().toLowerCase();
@@ -3342,15 +3583,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       return '';
     }
 
-    final bookingRef =
-        (body['bookingId'] ??
-                body['booking_id'] ??
-                (body['booking'] is Map
-                    ? (body['booking']['bookingId'] ??
-                          body['booking']['booking_id'])
-                    : null) ??
-                '')
-            .toString();
+    final bookingRef = firstNonEmpty([
+      body['bookingId'],
+      body['booking_id'],
+      body['public_booking_id'],
+      body['publicBookingId'],
+      body['id'],
+      body['booking'] is Map ? body['booking']['bookingId'] : null,
+      body['booking'] is Map ? body['booking']['booking_id'] : null,
+      body['booking'] is Map ? body['booking']['public_booking_id'] : null,
+      body['booking'] is Map ? body['booking']['publicBookingId'] : null,
+      body['booking'] is Map ? body['booking']['id'] : null,
+    ]);
     final publicRefRaw =
         (body['public_reference'] ??
                 body['publicReference'] ??
@@ -3401,6 +3645,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       bookingObj['paymentMode'],
       bookingObj['payment_mode'],
     ]).toLowerCase();
+    final paymentProvider = firstNonEmpty([
+      body['payment_provider'],
+      body['paymentProvider'],
+      bookingObj['payment_provider'],
+      bookingObj['paymentProvider'],
+    ]).toLowerCase();
+    final paymentStatusRaw = firstNonEmpty([
+      body['payment_status'],
+      body['paymentStatus'],
+      bookingObj['payment_status'],
+      bookingObj['paymentStatus'],
+    ]).toLowerCase();
     final responseBusinessDetected =
         boolish(body['business_detected']) ||
         boolish(body['businessDetected']) ||
@@ -3420,22 +3676,57 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         boolish(payload['businessDetected']) ||
         boolish(payload['invoice_requested']) ||
         boolish(payload['invoiceRequested']);
-    final checkoutMandatory =
+    final responseBusinessIntent =
+        responseBusinessDetected || responseInvoiceRequested;
+    final requestPaymentMode = firstNonEmpty([
+      payload['paymentMode'],
+      payload['payment_mode'],
+      payload['payment_method'],
+      payload['paymentMethod'],
+      payload['payment_type'],
+      payload['paymentType'],
+      payload['quote'] is Map ? payload['quote']['paymentMode'] : null,
+      payload['quote'] is Map ? payload['quote']['payment_mode'] : null,
+    ]).toLowerCase();
+    final requestPaymentProvider = firstNonEmpty([
+      payload['paymentProvider'],
+      payload['payment_provider'],
+    ]).toLowerCase();
+    final explicitOnlineRequested =
+        isOnlinePaymentMode(requestPaymentMode) ||
+        requestPaymentProvider == 'mollie';
+    final backendRequiresOnlineCheckout =
         requiresPayment ||
-        paymentMode == 'mollie' ||
-        responseBusinessDetected ||
-        responseInvoiceRequested ||
-        requestBusinessIntent;
-    if (checkoutMandatory && safeCheckoutUrl.isEmpty) {
+        isOnlinePaymentMode(paymentMode) ||
+        paymentProvider == 'mollie';
+    final onlineCheckoutRequired =
+        explicitOnlineRequested && backendRequiresOnlineCheckout;
+    if (onlineCheckoutRequired && safeCheckoutUrl.isEmpty) {
       final blockedBooking = bookingRef.isNotEmpty ? bookingRef : publicRef;
       debugPrint(
-        '[BOOK][CHECKOUT_MISSING_BLOCKED] booking=$blockedBooking business=${responseBusinessDetected || requestBusinessIntent} invoice=$responseInvoiceRequested requiresPayment=$requiresPayment',
+        '[BOOK][CHECKOUT_MISSING_BLOCKED] booking=$blockedBooking business=${responseBusinessIntent || requestBusinessIntent} invoice=$responseInvoiceRequested requiresPayment=$requiresPayment explicitOnline=$explicitOnlineRequested paymentMode=$paymentMode provider=$paymentProvider',
       );
       throw Exception(
         'Online betaling kon niet worden gestart. Probeer opnieuw.',
       );
     }
-    final paymentFlow = checkoutMandatory || safeCheckoutUrl.isNotEmpty;
+    final invoiceManualFlow =
+        (responseBusinessIntent || requestBusinessIntent) &&
+        !onlineCheckoutRequired &&
+        safeCheckoutUrl.isEmpty &&
+        (paymentProvider == 'manual' ||
+            paymentProvider == 'invoice' ||
+            paymentProvider == 'cash' ||
+            paymentStatusRaw == 'unpaid' ||
+            paymentStatusRaw == 'pending' ||
+            !backendRequiresOnlineCheckout);
+    final paymentFlow = onlineCheckoutRequired || safeCheckoutUrl.isNotEmpty;
+    final privateManualFlow =
+        !responseBusinessIntent &&
+        !requestBusinessIntent &&
+        !onlineCheckoutRequired &&
+        safeCheckoutUrl.isEmpty &&
+        !paymentFlow;
     final paymentBookingId =
         (body['paymentBookingId'] ??
                 body['payment_booking_id'] ??
@@ -3465,18 +3756,32 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           bookingId: bookingRef.isNotEmpty ? bookingRef : publicRef,
           publicBookingId: publicRef,
           paymentBookingId: paymentBookingId,
-          paymentStatus: paymentFlow
-              ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
-              : 'unpaid',
-          status: paymentFlow ? 'PENDING' : 'CONFIRMED',
+          paymentStatus: firstNonEmpty([
+            body['payment_status'],
+            body['paymentStatus'],
+            bookingObj['payment_status'],
+            bookingObj['paymentStatus'],
+            paymentFlow
+                ? (paymentBookingId.isNotEmpty ? 'pending' : 'unpaid')
+                : (invoiceManualFlow ? 'unpaid' : 'unpaid'),
+          ]),
+          status: firstNonEmpty([
+            body['status'],
+            body['stage'],
+            bookingObj['status'],
+            bookingObj['stage'],
+            paymentFlow ? 'PENDING' : 'CONFIRMED',
+          ]).toUpperCase(),
           companyName: effectiveCompanyName,
           vatNumber: effectiveVatNumber,
           invoiceEmail: effectiveInvoiceEmail,
           invoiceAddress: effectiveInvoiceAddress,
           businessDetected:
+              responseBusinessDetected ||
               businessPayload['business_detected'] == true ||
               businessPayload['businessDetected'] == true,
           invoiceRequested:
+              responseInvoiceRequested ||
               businessPayload['invoice_requested'] == true ||
               businessPayload['invoiceRequested'] == true,
         );
@@ -3529,7 +3834,21 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         : null;
 
     final successMessage = [
-      paymentFlow
+      invoiceManualFlow
+          ? _localizedText(
+              nl: 'Boeking aangemaakt. Betaling in de wagen. Factuur volgt na betaling.',
+              en: 'Booking created. Payment in the vehicle. Invoice follows after payment.',
+              fr: 'Reservation creee. Paiement dans le vehicule. Facture envoyee apres paiement.',
+              es: 'Reserva creada. Pago en el vehiculo. La factura se enviara despues del pago.',
+            )
+          : privateManualFlow
+          ? _localizedText(
+              nl: 'Boeking aangemaakt. Betaling in de wagen.',
+              en: 'Booking created. Payment in the vehicle.',
+              fr: 'Reservation creee. Paiement dans le vehicule.',
+              es: 'Reserva creada. Pago en el vehiculo.',
+            )
+          : paymentFlow
           ? widget.strings.bookingSuccessPaymentRequiredMessage.of(
               widget.language,
             )
@@ -3546,18 +3865,22 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       _finalPricingBookingId = publicRef.isNotEmpty ? publicRef : null;
       _createdBookingId = bookingRef.isNotEmpty ? bookingRef : publicRef;
     });
-    if (checkoutMandatory && safeCheckoutUrl.isNotEmpty) {
+    if (onlineCheckoutRequired && safeCheckoutUrl.isNotEmpty) {
       final openedBooking = bookingRef.isNotEmpty ? bookingRef : publicRef;
       debugPrint(
         '[BOOK][CHECKOUT_OPEN] booking=$openedBooking urlPresent=true',
       );
+      if (paymentBookingId.isNotEmpty) {
+        markFluxidiPendingPaymentChecking(paymentBookingId: paymentBookingId);
+      }
+      if (mounted) {
+        setState(() {
+          _submitStateIsError = false;
+          _submitState = _paymentCheckingStatusLabel();
+        });
+      }
       await _openPaymentUrl(safeCheckoutUrl);
       if (!mounted) return;
-      await _showBookingSuccessDialog(
-        requiresPayment: true,
-        paymentUrl: safeCheckoutUrl,
-        publicRef: publicRef,
-      );
       if (_shouldReturnToOriginAfterSuccess && mounted) {
         Navigator.of(context).pop(true);
       }
@@ -3566,6 +3889,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         requiresPayment: true,
         paymentUrl: safeCheckoutUrl,
         publicRef: publicRef,
+        paymentBookingId: paymentBookingId,
       );
       if (_shouldReturnToOriginAfterSuccess && mounted) {
         Navigator.of(context).pop(true);
@@ -3777,6 +4101,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       // Mollie return-to-app deep link. The Worker uses this to redirect the
       // browser back into the Fluxidi app after a successful payment.
       'return_url': kFluxidiPaymentReturnUrl,
+      'payment_mode': _selectedPaymentMode,
+      'paymentMode': _selectedPaymentMode,
+      'payment_provider': _selectedPaymentMode,
+      'paymentProvider': _selectedPaymentMode,
       'customer': <String, dynamic>{
         'name': name,
         'full_name': name,
@@ -4353,6 +4681,27 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
                     ),
                   ],
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 9),
+          _sectionCard(
+            title: _paymentChoiceTitle(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _paymentChoiceSubtitle(),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 11.5,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _paymentChoiceOption(_BookingPaymentChoice.manual),
+                const SizedBox(height: 7),
+                _paymentChoiceOption(_BookingPaymentChoice.online),
               ],
             ),
           ),

@@ -300,8 +300,14 @@ class StoredCustomerBooking {
     final bookingId = _firstNonEmpty([
       response['booking_id'],
       response['bookingId'],
+      response['public_booking_id'],
+      response['publicBookingId'],
+      response['id'],
       bookingMap['booking_id'],
       bookingMap['bookingId'],
+      bookingMap['public_booking_id'],
+      bookingMap['publicBookingId'],
+      bookingMap['id'],
       response['public_reference'],
       response['publicReference'],
     ]);
