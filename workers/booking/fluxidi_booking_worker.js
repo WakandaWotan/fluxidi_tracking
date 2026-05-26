@@ -19218,6 +19218,89 @@ GET /oauth/callback
         return json(out, out?.ok ? 200 : 400);
       }
 
+      const adminCancellationPolicyEvalMatch = url.pathname.match(
+        /^\/admin\/bookings\/([^/]+)\/cancellation-policy\/evaluate$/,
+      );
+      if (adminCancellationPolicyEvalMatch && request.method === "GET") {
+        _requireAdmin(request, url, env);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const bookingId = decodeURIComponent(
+          adminCancellationPolicyEvalMatch[1] || "",
+        ).trim();
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        let rec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          rec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return json({ ok: false, error: "booking_not_found" }, 404);
+          }
+          throw loadErr;
+        }
+        if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+          return json({ ok: false, error: "forbidden" }, 403);
+        }
+        const now = new Date();
+        const evaluated = _evaluateCustomerCancellationPolicy(rec, now);
+        const publicBookingReference = safeStr(
+          rec?.public_booking_reference ??
+            rec?.publicBookingReference ??
+            rec?.booking_reference ??
+            rec?.bookingReference ??
+            rec?.public_reference ??
+            rec?.publicReference ??
+            rec?.booking?.public_booking_reference ??
+            rec?.booking?.publicBookingReference ??
+            rec?.booking?.booking_reference ??
+            rec?.booking?.bookingReference ??
+            rec?.booking?.public_reference ??
+            rec?.booking?.publicReference,
+          120,
+        );
+        const bookingPublicId = safeStr(
+          rec?.public_booking_id ??
+            rec?.publicBookingId ??
+            rec?.booking?.public_booking_id ??
+            rec?.booking?.publicBookingId,
+          160,
+        );
+        return json(
+          {
+            ok: true,
+            booking_id: bookingId,
+            public_booking_id: bookingPublicId || undefined,
+            public_booking_reference: publicBookingReference || undefined,
+            bucket: evaluated.bucket || "private",
+            payment_class: evaluated.payment_class || "unpaid",
+            pickup_iso: evaluated.pickup_iso || null,
+            parsed_pickup_ms: Number.isFinite(Number(evaluated.parsed_pickup_ms))
+              ? Number(evaluated.parsed_pickup_ms)
+              : null,
+            now_ms: Number.isFinite(Number(evaluated.now_ms))
+              ? Number(evaluated.now_ms)
+              : Number(now.getTime()),
+            minutes_until_pickup: Number.isFinite(Number(evaluated.minutes_until_pickup))
+              ? Number(evaluated.minutes_until_pickup)
+              : null,
+            cutoff_minutes: Number.isFinite(Number(evaluated.cutoff_minutes))
+              ? Number(evaluated.cutoff_minutes)
+              : 0,
+            allowed: evaluated.allowed === true,
+            reason: safeStr(evaluated.reason, 80) || "unknown",
+            pickup_source: safeStr(evaluated.pickup_source, 64) || "none",
+            pickup_candidates_present: Array.isArray(evaluated.pickup_candidates_present)
+              ? evaluated.pickup_candidates_present
+              : [],
+          },
+          200,
+        );
+      }
+
       // Dynamic booking routes:
       // GET  /bookings/:id
       // POST /bookings/:id/status
@@ -19275,19 +19358,60 @@ GET /oauth/callback
           if (actorRole && !new Set(["customer", "driver", "admin", "system"]).has(actorRole)) {
             return json({ ok: false, error: "invalid_actor_role" }, 400);
           }
+          const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
+          const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
+          const shouldEvaluateCustomerCancelPolicy =
+            _isCustomerCancellationStatus(rawRequestedStatus) ||
+            _isCustomerCancellationStatus(normalizedRequestedStatus);
           const adminAuthorized = hasValidAdminToken(request, url, env);
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
-          if (!adminAuthorized) {
-            if (actorRole === "customer") {
-              const proof = _requestCustomerContactProof({ url, body });
-              const ownershipPassed = customerProofMatchesBooking(rec, proof);
+          if (actorRole === "customer" && (shouldEvaluateCustomerCancelPolicy || !adminAuthorized)) {
+            const proof = _requestCustomerContactProof({ url, body });
+            const ownershipPassed = customerProofMatchesBooking(rec, proof);
+            console.log(
+              `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=${ownershipPassed ? "passed" : "failed"}`,
+            );
+            if (!ownershipPassed) {
+              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+            if (!shouldEvaluateCustomerCancelPolicy) {
               console.log(
-                `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=${ownershipPassed ? "passed" : "failed"}`,
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY_SKIP] booking=${_bookingIntentMask(bookingId)} actor_role=customer raw_status=${safeStr(rawRequestedStatus, 40) || "-"} normalized_status=${safeStr(normalizedRequestedStatus, 40) || "-"} reason=status_not_cancellation_like route=bookings_status`,
               );
-              if (!ownershipPassed) {
-                return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            } else {
+              const policyDecision = _evaluateCustomerCancellationPolicy(rec, new Date());
+              const decisionReason = safeStr(
+                policyDecision.reason,
+                80,
+              ) || "cancellation_requires_review";
+              const cutoffMinutesSafe = Number.isFinite(Number(policyDecision.cutoff_minutes))
+                ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes)))
+                : 0;
+              const minutesUntilPickupSafe = Number.isFinite(Number(policyDecision.minutes_until_pickup))
+                ? Math.round(Number(policyDecision.minutes_until_pickup))
+                : null;
+              console.log(
+                `[BOOKING_CANCEL_POLICY][CUSTOMER] booking=${_bookingIntentMask(bookingId)} bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} allowed=${policyDecision.allowed ? "true" : "false"} reason=${decisionReason} cutoff_minutes=${cutoffMinutesSafe} minutes_until_pickup=${minutesUntilPickupSafe == null ? -1 : minutesUntilPickupSafe}`,
+              );
+              if (!policyDecision.allowed) {
+                return json(
+                  {
+                    ok: false,
+                    error: decisionReason,
+                    message: _customerCancellationPolicyMessage(decisionReason),
+                    reason: decisionReason,
+                    bucket: policyDecision.bucket || "private",
+                    payment_class: policyDecision.payment_class || "unpaid",
+                    cutoff_minutes: cutoffMinutesSafe,
+                    minutes_until_pickup: minutesUntilPickupSafe,
+                  },
+                  409,
+                );
               }
-            } else if (actorRole === "driver") {
+            }
+          }
+          if (!adminAuthorized) {
+            if (actorRole === "driver") {
               const ownershipBlock = await enforceDriverOwnershipForMutation({
                 request,
                 url,
@@ -19299,7 +19423,7 @@ GET /oauth/callback
               if (ownershipBlock) {
                 return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
               }
-            } else {
+            } else if (actorRole !== "customer") {
               return json({ ok: false, error: "Unauthorized" }, 401);
             }
           }
@@ -19732,6 +19856,35 @@ GET /oauth/callback
             const proof = _requestCustomerContactProof({ url, body });
             if (!customerProofMatchesBooking(rec, proof)) {
               return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            }
+            const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
+            const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
+            const shouldEvaluatePolicy =
+              _isCustomerCancellationStatus(rawRequestedStatus) ||
+              _isCustomerCancellationStatus(normalizedRequestedStatus);
+            if (!shouldEvaluatePolicy) {
+              console.log(
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY_SKIP] booking=${_bookingIntentMask(bookingId)} actor_role=customer raw_status=${safeStr(rawRequestedStatus, 40) || "-"} normalized_status=${safeStr(normalizedRequestedStatus, 40) || "-"} reason=status_not_cancellation_like route=track_booking_status`,
+              );
+            } else {
+              const policyDecision = _evaluateCustomerCancellationPolicy(rec, new Date());
+              console.log(
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_POLICY] booking=${_bookingIntentMask(bookingId)} route=track_booking_status bucket=${policyDecision.bucket || "-"} payment_class=${policyDecision.payment_class || "-"} pickup_iso=${safeStr(policyDecision.pickup_iso, 40) || "-"} minutes_until_pickup=${Number.isFinite(Number(policyDecision.minutes_until_pickup)) ? Math.round(Number(policyDecision.minutes_until_pickup)) : -1} cutoff_minutes=${Number.isFinite(Number(policyDecision.cutoff_minutes)) ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes))) : 0} decision=${policyDecision.allowed ? "allow" : "deny"} reason=${policyDecision.reason || "-"}`,
+              );
+              if (!policyDecision.allowed) {
+                return json(
+                  {
+                    ok: false,
+                    error: policyDecision.reason || "cancellation_requires_review",
+                    bucket: policyDecision.bucket || "private",
+                    payment_class: policyDecision.payment_class || "unpaid",
+                    cutoff_minutes: Number.isFinite(Number(policyDecision.cutoff_minutes))
+                      ? Math.max(0, Math.round(Number(policyDecision.cutoff_minutes)))
+                      : 0,
+                  },
+                  409,
+                );
+              }
             }
           } else if (actorRole === "driver") {
             const ownershipBlock = await enforceDriverOwnershipForMutation({
@@ -21377,6 +21530,385 @@ function customerProofMatchesBooking(rec, proof) {
     return true;
   }
   return false;
+}
+
+function _normalizeCustomerCancellationPolicyDefaults() {
+  return {
+    private_cancel_cutoff_minutes: 120,
+    business_cancel_cutoff_minutes: 1440,
+    airport_cancel_cutoff_minutes: 1440,
+    paid_cancel_mode: "review_required",
+  };
+}
+
+function _customerCancellationPolicyMessage(reason) {
+  const token = safeStr(reason, 80).toLowerCase();
+  if (token === "cancellation_window_closed") {
+    return "Deze boeking kan niet meer online geannuleerd worden omdat de annulatietermijn verlopen is.";
+  }
+  if (token === "cancellation_refund_required") {
+    return "Deze boeking kan niet direct online geannuleerd worden. Neem contact op voor terugbetaling.";
+  }
+  if (token === "cancellation_requires_review") {
+    return "Deze boeking kan niet direct online geannuleerd worden. Neem contact op met support.";
+  }
+  return "Deze boeking kan momenteel niet online geannuleerd worden.";
+}
+
+function _isCustomerCancellationStatus(value) {
+  const raw = safeStr(value, 80).toLowerCase();
+  if (!raw) return false;
+  if (raw === "cancelled" || raw === "canceled") return true;
+  if (raw === "cancelled_by_customer" || raw === "canceled_by_customer") return true;
+  if (raw === "customer_cancelled" || raw === "customer_canceled") return true;
+  if (raw === "cancel_by_customer" || raw === "cancelledbycustomer") return true;
+  if (raw === "customercancelled" || raw === "customercanceled") return true;
+  const compact = raw.replace(/[^a-z0-9]+/g, "_");
+  return (
+    compact === "cancelled" ||
+    compact === "canceled" ||
+    compact === "cancelled_by_customer" ||
+    compact === "canceled_by_customer" ||
+    compact === "customer_cancelled" ||
+    compact === "customer_canceled"
+  );
+}
+
+function _classifyCustomerCancellationBucket(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
+  const boolish = (value) => {
+    if (value === true) return true;
+    if (value === false || value == null) return false;
+    const raw = safeStr(value, 40).toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  };
+  const textAny = (...values) => {
+    for (const value of values) {
+      const text = safeStr(value, 120);
+      if (text) return text;
+    }
+    return "";
+  };
+  const hasAnyValue = (...values) => values.some((value) => !!safeStr(value, 120));
+
+  const serviceTokens = [
+    safeStr(rec?.service, 64),
+    safeStr(rec?.extra_service, 64),
+    safeStr(rec?.extra_service_key, 64),
+    safeStr(rec?.booking_type, 64),
+    safeStr(rec?.bookingType, 64),
+    safeStr(booking?.service, 64),
+    safeStr(booking?.extra_service, 64),
+    safeStr(booking?.extra_service_key, 64),
+    safeStr(booking?.booking_type, 64),
+    safeStr(booking?.bookingType, 64),
+    safeStr(payload?.service, 64),
+    safeStr(payload?.extra_service, 64),
+    safeStr(payload?.extra_service_key, 64),
+    safeStr(payload?.booking_type, 64),
+    safeStr(payload?.bookingType, 64),
+  ].map((value) => value.toLowerCase()).filter((value) => !!value);
+  const hasAirportToken = serviceTokens.some((token) =>
+    token === "airport" ||
+    token === "airport_transfer" ||
+    token.includes("airport") ||
+    token.includes("luchthaven")
+  );
+  const hasAirportDirection = !!textAny(
+    rec?.airport_direction,
+    rec?.airportDirection,
+    booking?.airport_direction,
+    booking?.airportDirection,
+    payload?.airport_direction,
+    payload?.airportDirection,
+  );
+  const hasFixedFareSignal = boolish(
+    rec?.fixed_fare_applied ??
+      rec?.fixedFareApplied ??
+      booking?.fixed_fare_applied ??
+      booking?.fixedFareApplied,
+  ) || hasAnyValue(
+    rec?.fixed_fare_rule_id,
+    rec?.fixedFareRuleId,
+    booking?.fixed_fare_rule_id,
+    booking?.fixedFareRuleId,
+  );
+  const isAirport = boolish(
+    rec?.airport_transfer ??
+      rec?.airportTransfer ??
+      booking?.airport_transfer ??
+      booking?.airportTransfer ??
+      payload?.airport_transfer ??
+      payload?.airportTransfer,
+  ) || hasAirportDirection || hasAirportToken || hasFixedFareSignal;
+
+  const isBusiness = boolish(
+    rec?.business_detected ??
+      rec?.businessDetected ??
+      rec?.invoice_requested ??
+      rec?.invoiceRequested ??
+      booking?.business_detected ??
+      booking?.businessDetected ??
+      booking?.invoice_requested ??
+      booking?.invoiceRequested,
+  ) || hasAnyValue(
+    rec?.vat_number,
+    rec?.vatNumber,
+    rec?.company_name,
+    rec?.companyName,
+    booking?.vat_number,
+    booking?.vatNumber,
+    booking?.company_name,
+    booking?.companyName,
+    booking?.customer_vat_number,
+    booking?.customerVatNumber,
+    booking?.customer_company_name,
+    booking?.customerCompanyName,
+  );
+
+  const paymentStatus = textAny(
+    rec?.payment_status,
+    rec?.paymentStatus,
+    booking?.payment_status,
+    booking?.paymentStatus,
+  ).toLowerCase();
+  const paymentMode = textAny(
+    rec?.payment_mode,
+    rec?.paymentMode,
+    booking?.payment_mode,
+    booking?.paymentMode,
+  ).toLowerCase();
+  const paymentProvider = textAny(
+    rec?.payment_provider,
+    rec?.paymentProvider,
+    booking?.payment_provider,
+    booking?.paymentProvider,
+  ).toLowerCase();
+  const requiresPayment = boolish(
+    rec?.requiresPayment ??
+      rec?.requires_payment ??
+      rec?.payment_required ??
+      booking?.requiresPayment ??
+      booking?.requires_payment ??
+      booking?.payment_required,
+  );
+  const paidLike = new Set(["paid", "confirmed", "completed", "success", "settled"]);
+  const pendingLike = new Set(["pending", "authorized", "open"]);
+  const isMollieLike =
+    paymentMode === "mollie" ||
+    paymentProvider === "mollie" ||
+    boolish(rec?.mollie) ||
+    boolish(booking?.mollie);
+  const isOnlineLike =
+    paymentMode === "online" ||
+    paymentMode === "online_payment" ||
+    paymentMode === "online-payments" ||
+    paymentMode === "online_payments" ||
+    paymentProvider === "online" ||
+    paymentProvider === "online_payment" ||
+    paymentProvider === "prepaid" ||
+    paymentMode === "prepaid";
+  let paymentClass = "unpaid";
+  if (paidLike.has(paymentStatus)) {
+    paymentClass = "paid";
+  } else if (isMollieLike) {
+    paymentClass = "mollie";
+  } else if (isOnlineLike || (requiresPayment && pendingLike.has(paymentStatus))) {
+    paymentClass = "prepaid";
+  } else if (
+    paymentMode === "manual" ||
+    paymentMode === "cash" ||
+    paymentMode === "invoice" ||
+    paymentProvider === "manual" ||
+    paymentProvider === "cash" ||
+    paymentProvider === "invoice"
+  ) {
+    paymentClass = "manual";
+  }
+
+  const bucket = isAirport ? "airport" : (isBusiness ? "business" : "private");
+  return {
+    bucket,
+    isBusiness,
+    isAirport,
+    paymentClass,
+  };
+}
+
+function _resolveCustomerCancellationPickupDetails(rec) {
+  const candidateValues = [
+    { key: "booking.pickupStartIso", value: rec?.booking?.pickupStartIso },
+    { key: "booking.pickup_iso", value: rec?.booking?.pickup_iso },
+    { key: "quote.pickup_iso", value: rec?.quote?.pickup_iso },
+    { key: "payload.pickup_iso", value: rec?.payload?.pickup_iso },
+    { key: "payload.pickupIso", value: rec?.payload?.pickupIso },
+    { key: "pickupStartIso", value: rec?.pickupStartIso },
+    { key: "pickup_iso", value: rec?.pickup_iso },
+    { key: "booking_details.pickup_iso", value: rec?.booking_details?.pickup_iso },
+    { key: "booking_details.pickupStartIso", value: rec?.booking_details?.pickupStartIso },
+  ];
+  const pickup_candidates_present = candidateValues
+    .filter((entry) => !!safeStr(entry.value, 80))
+    .map((entry) => entry.key);
+  const selected = candidateValues.find((entry) => !!safeStr(entry.value, 80));
+  const pickup_iso = selected ? safeStr(selected.value, 80) : null;
+  return {
+    pickup_iso,
+    pickup_source: selected?.key || "none",
+    pickup_candidates_present,
+  };
+}
+
+function _resolveCustomerCancellationPickupIso(rec) {
+  return _resolveCustomerCancellationPickupDetails(rec).pickup_iso;
+}
+
+function _parseCustomerCancellationPickupMs(pickupIso) {
+  const raw = safeStr(pickupIso, 80);
+  if (!raw) return Number.NaN;
+  const hasExplicitTimezone = /(?:Z|[+\-][0-9]{2}:[0-9]{2})$/i.test(raw);
+  if (hasExplicitTimezone) {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  const localIsoMatch = raw.match(
+    /^([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?(?:\.([0-9]{1,3}))?$/,
+  );
+  if (localIsoMatch) {
+    const year = Number(localIsoMatch[1]);
+    const month = Number(localIsoMatch[2]);
+    const day = Number(localIsoMatch[3]);
+    const hour = Number(localIsoMatch[4]);
+    const minute = Number(localIsoMatch[5]);
+    const second = Number(localIsoMatch[6] || "0");
+    const millisecond = Number((localIsoMatch[7] || "0").padEnd(3, "0"));
+    const wantedDate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const wantedTime = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    for (const offsetMinutes of [60, 120]) {
+      const candidateMs = Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - offsetMinutes * 60 * 1000;
+      const parts = brusselsDateTimePartsFromIso(new Date(candidateMs).toISOString());
+      if (safeStr(parts?.date, 16) === wantedDate && safeStr(parts?.time, 8) === wantedTime) {
+        return candidateMs;
+      }
+    }
+    return Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - 120 * 60 * 1000;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function _evaluateCustomerCancellationPolicy(rec, now = new Date()) {
+  const defaults = _normalizeCustomerCancellationPolicyDefaults();
+  const classification = _classifyCustomerCancellationBucket(rec);
+  const pickupDetails = _resolveCustomerCancellationPickupDetails(rec);
+  const pickupIso = pickupDetails.pickup_iso;
+  const bucket = classification.bucket;
+  const paymentClass = classification.paymentClass;
+  const cutoffMinutes = bucket === "airport"
+    ? defaults.airport_cancel_cutoff_minutes
+    : (bucket === "business"
+      ? defaults.business_cancel_cutoff_minutes
+      : defaults.private_cancel_cutoff_minutes);
+  const paidCancelReason = defaults.paid_cancel_mode === "review_required"
+    ? "cancellation_requires_review"
+    : "cancellation_refund_required";
+
+  if (new Set(["paid", "prepaid", "mollie"]).has(paymentClass)) {
+    return {
+      allowed: false,
+      reason: paidCancelReason,
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: cutoffMinutes,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: null,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: null,
+      now_ms: now instanceof Date ? now.getTime() : null,
+    };
+  }
+
+  if (!pickupIso) {
+    return {
+      allowed: false,
+      reason: "cancellation_requires_review",
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: cutoffMinutes,
+      pickup_iso: null,
+      minutes_until_pickup: null,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: null,
+      now_ms: now instanceof Date ? now.getTime() : null,
+    };
+  }
+
+  const pickupMs = _parseCustomerCancellationPickupMs(pickupIso);
+  if (!Number.isFinite(pickupMs)) {
+    return {
+      allowed: false,
+      reason: "cancellation_requires_review",
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: cutoffMinutes,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: null,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: null,
+      now_ms: now instanceof Date ? now.getTime() : null,
+    };
+  }
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(safeStr(now, 80));
+  if (!Number.isFinite(nowMs)) {
+    return {
+      allowed: false,
+      reason: "cancellation_requires_review",
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: cutoffMinutes,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: null,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: pickupMs,
+      now_ms: null,
+    };
+  }
+
+  const safeCutoffMinutes = Math.max(0, Number(cutoffMinutes) || 0);
+  const minutesUntilPickup = Math.floor((pickupMs - nowMs) / 60000);
+  if (minutesUntilPickup < safeCutoffMinutes) {
+    return {
+      allowed: false,
+      reason: "cancellation_window_closed",
+      bucket,
+      payment_class: paymentClass,
+      cutoff_minutes: safeCutoffMinutes,
+      pickup_iso: pickupIso,
+      minutes_until_pickup: minutesUntilPickup,
+      pickup_source: pickupDetails.pickup_source || "none",
+      pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+      parsed_pickup_ms: pickupMs,
+      now_ms: nowMs,
+    };
+  }
+  return {
+    allowed: true,
+    reason: "allowed",
+    bucket,
+    payment_class: paymentClass,
+    cutoff_minutes: safeCutoffMinutes,
+    pickup_iso: pickupIso,
+    minutes_until_pickup: minutesUntilPickup,
+    pickup_source: pickupDetails.pickup_source || "none",
+    pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+    parsed_pickup_ms: pickupMs,
+    now_ms: nowMs,
+  };
 }
 
 function resolveMutationActorFromRequest(request, url, body = null) {
