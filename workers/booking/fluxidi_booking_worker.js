@@ -1302,6 +1302,10 @@ const DEFAULT_CANCELLATION_POLICY_PROFILE = {
   airport_cutoff_minutes: 1440,
   business_cutoff_minutes: 1440,
   paid_booking_cancellation_mode: "review_required",
+  block_when_driver_en_route: false,
+  driver_en_route_eta_cutoff_minutes: 15,
+  driver_en_route_distance_cutoff_km: 10,
+  driver_location_freshness_seconds: 300,
   updated_at: "",
 };
 
@@ -1619,6 +1623,14 @@ function _customerCancellationPolicyDefaults() {
     business_cutoff_minutes: DEFAULT_CANCELLATION_POLICY_PROFILE.business_cutoff_minutes,
     paid_booking_cancellation_mode:
       DEFAULT_CANCELLATION_POLICY_PROFILE.paid_booking_cancellation_mode,
+    block_when_driver_en_route:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.block_when_driver_en_route === true,
+    driver_en_route_eta_cutoff_minutes:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.driver_en_route_eta_cutoff_minutes,
+    driver_en_route_distance_cutoff_km:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.driver_en_route_distance_cutoff_km,
+    driver_location_freshness_seconds:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.driver_location_freshness_seconds,
     updated_at: "",
   };
 }
@@ -1648,6 +1660,16 @@ function _normalizeCancellationPolicyProfile(raw = {}) {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(0, Math.min(10080, Math.trunc(n)));
+  };
+  const boundedInt = (value, fallback, min, max) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.trunc(n)));
+  };
+  const boundedNumber = (value, fallback, min, max) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
   };
   const paidModeRaw = sanitizeTenantString(
     readAny(
@@ -1718,6 +1740,52 @@ function _normalizeCancellationPolicyProfile(raw = {}) {
       defaults.business_cutoff_minutes,
     ),
     paid_booking_cancellation_mode: paidMode,
+    block_when_driver_en_route: boolish(
+      readAny(
+        [
+          "block_when_driver_en_route",
+          "blockWhenDriverEnRoute",
+        ],
+        defaults.block_when_driver_en_route,
+      ),
+      defaults.block_when_driver_en_route,
+    ),
+    driver_en_route_eta_cutoff_minutes: boundedInt(
+      readAny(
+        [
+          "driver_en_route_eta_cutoff_minutes",
+          "driverEnRouteEtaCutoffMinutes",
+        ],
+        defaults.driver_en_route_eta_cutoff_minutes,
+      ),
+      defaults.driver_en_route_eta_cutoff_minutes,
+      0,
+      240,
+    ),
+    driver_en_route_distance_cutoff_km: boundedNumber(
+      readAny(
+        [
+          "driver_en_route_distance_cutoff_km",
+          "driverEnRouteDistanceCutoffKm",
+        ],
+        defaults.driver_en_route_distance_cutoff_km,
+      ),
+      defaults.driver_en_route_distance_cutoff_km,
+      0,
+      100,
+    ),
+    driver_location_freshness_seconds: boundedInt(
+      readAny(
+        [
+          "driver_location_freshness_seconds",
+          "driverLocationFreshnessSeconds",
+        ],
+        defaults.driver_location_freshness_seconds,
+      ),
+      defaults.driver_location_freshness_seconds,
+      30,
+      3600,
+    ),
     updated_at: updatedAt,
   };
 }
@@ -1738,6 +1806,14 @@ function _validateCancellationPolicyProfile(raw) {
     }
     return undefined;
   };
+  const validateBoolean = (field, keys) => {
+    const value = readAny(keys);
+    if (value == null || (typeof value === "string" && !value.trim())) return;
+    if (typeof value === "boolean") return;
+    const rawText = sanitizeTenantString(value, 32).toLowerCase();
+    if (["true", "false", "1", "0", "yes", "no", "on", "off"].includes(rawText)) return;
+    pushErr(field, "must be a boolean");
+  };
   const validateCutoff = (field, keys) => {
     const value = readAny(keys);
     if (value == null || (typeof value === "string" && !value.trim())) return;
@@ -1748,6 +1824,30 @@ function _validateCancellationPolicyProfile(raw) {
     }
     if (n < 0 || n > 10080) {
       pushErr(field, "must be between 0 and 10080");
+    }
+  };
+  const validateIntRange = (field, keys, min, max) => {
+    const value = readAny(keys);
+    if (value == null || (typeof value === "string" && !value.trim())) return;
+    const n = Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      pushErr(field, "must be an integer");
+      return;
+    }
+    if (n < min || n > max) {
+      pushErr(field, `must be between ${min} and ${max}`);
+    }
+  };
+  const validateNumberRange = (field, keys, min, max) => {
+    const value = readAny(keys);
+    if (value == null || (typeof value === "string" && !value.trim())) return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      pushErr(field, "must be a number");
+      return;
+    }
+    if (n < min || n > max) {
+      pushErr(field, `must be between ${min} and ${max}`);
     }
   };
   validateCutoff("taxi_cutoff_minutes", [
@@ -1768,6 +1868,22 @@ function _validateCancellationPolicyProfile(raw) {
     "business_cancel_cutoff_minutes",
     "businessCancelCutoffMinutes",
   ]);
+  validateBoolean("block_when_driver_en_route", [
+    "block_when_driver_en_route",
+    "blockWhenDriverEnRoute",
+  ]);
+  validateIntRange("driver_en_route_eta_cutoff_minutes", [
+    "driver_en_route_eta_cutoff_minutes",
+    "driverEnRouteEtaCutoffMinutes",
+  ], 0, 240);
+  validateNumberRange("driver_en_route_distance_cutoff_km", [
+    "driver_en_route_distance_cutoff_km",
+    "driverEnRouteDistanceCutoffKm",
+  ], 0, 100);
+  validateIntRange("driver_location_freshness_seconds", [
+    "driver_location_freshness_seconds",
+    "driverLocationFreshnessSeconds",
+  ], 30, 3600);
   const paidModeValue = readAny([
     "paid_booking_cancellation_mode",
     "paidBookingCancellationMode",
@@ -19579,6 +19695,16 @@ GET /oauth/callback
           now,
           cancellationPolicyProfile,
         );
+        const driverEnRouteCheck = await _evaluateDriverEnRouteCancellationBlock(
+          env,
+          tenantScope,
+          rec,
+          cancellationPolicyProfile,
+          now,
+        );
+        console.log(
+          `[BOOKING_CANCEL_POLICY][EN_ROUTE_DEBUG] booking=${_bookingIntentMask(bookingId)} enabled=${driverEnRouteCheck?.enabled === true ? "true" : "false"} would_block=${driverEnRouteCheck?.would_block === true ? "true" : "false"} reason=${safeStr(driverEnRouteCheck?.reason, 80) || "-"} origin=${safeStr(driverEnRouteCheck?.origin_source, 64) || "-"} eta=${Number.isFinite(Number(driverEnRouteCheck?.eta_minutes)) ? Number(driverEnRouteCheck.eta_minutes) : -1} distance=${Number.isFinite(Number(driverEnRouteCheck?.distance_km)) ? Number(driverEnRouteCheck.distance_km) : -1}`,
+        );
         const publicBookingReference = safeStr(
           rec?.public_booking_reference ??
             rec?.publicBookingReference ??
@@ -19628,6 +19754,10 @@ GET /oauth/callback
             pickup_candidates_present: Array.isArray(evaluated.pickup_candidates_present)
               ? evaluated.pickup_candidates_present
               : [],
+            driver_en_route_check:
+              driverEnRouteCheck && typeof driverEnRouteCheck === "object"
+                ? driverEnRouteCheck
+                : null,
           },
           200,
         );
@@ -21886,6 +22016,10 @@ function _normalizeCustomerCancellationPolicyDefaults() {
     airport_cancel_cutoff_minutes: profile.airport_cutoff_minutes,
     paid_cancel_mode: profile.paid_booking_cancellation_mode,
     allow_customer_online_cancellation: profile.allow_customer_online_cancellation,
+    block_when_driver_en_route: profile.block_when_driver_en_route,
+    driver_en_route_eta_cutoff_minutes: profile.driver_en_route_eta_cutoff_minutes,
+    driver_en_route_distance_cutoff_km: profile.driver_en_route_distance_cutoff_km,
+    driver_location_freshness_seconds: profile.driver_location_freshness_seconds,
   };
 }
 
@@ -21903,7 +22037,367 @@ function _customerCancellationPolicyMessage(reason) {
   if (token === "customer_cancellation_disabled") {
     return "Deze boeking kan momenteel niet online geannuleerd worden. Neem contact op met support.";
   }
+  if (token === "driver_already_en_route") {
+    return "De chauffeur is al onderweg naar het ophaaladres. Neem contact op met het taxibedrijf als je hulp nodig hebt.";
+  }
   return "Deze boeking kan momenteel niet online geannuleerd worden.";
+}
+
+function _driverEnRouteScopedTrackingScope(scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: !!(tenantId && companyId),
+  };
+}
+
+function _driverEnRouteScopedTrackingBookingSessionKey(scope, bookingId) {
+  const normalized = _driverEnRouteScopedTrackingScope(scope);
+  const safeBookingId = sanitizeTenantString(bookingId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!normalized.hasScope || !safeBookingId) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:booking:${safeBookingId}:session`;
+}
+
+function _driverEnRouteScopedTrackingSessionKey(scope, sessionId) {
+  const normalized = _driverEnRouteScopedTrackingScope(scope);
+  const safeSessionId = sanitizeTenantString(sessionId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!normalized.hasScope || !safeSessionId) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:session:${safeSessionId}`;
+}
+
+function _driverEnRouteScopedTrackingPingLastKey(scope, sessionId) {
+  const normalized = _driverEnRouteScopedTrackingScope(scope);
+  const safeSessionId = sanitizeTenantString(sessionId, 160).replace(/[:\r\n\t]/g, "_");
+  if (!normalized.hasScope || !safeSessionId) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:ping:${safeSessionId}:last`;
+}
+
+async function _driverEnRouteTrackingReadJson(env, key) {
+  if (!env?.FLUXIDI_TRACKING || !key) return null;
+  try {
+    const asJson = await env.FLUXIDI_TRACKING.get(key, { type: "json" });
+    if (asJson && typeof asJson === "object") return asJson;
+  } catch (_) {
+    // fallback to raw parse
+  }
+  try {
+    const raw = await env.FLUXIDI_TRACKING.get(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _driverEnRouteNormalizeOperationalState(value) {
+  const raw = safeStr(value, 80).toLowerCase();
+  if (!raw) return "";
+  return raw.replace(/[^a-z0-9]+/g, "_");
+}
+
+function _driverEnRouteOperationalStateAllowed(value) {
+  const token = _driverEnRouteNormalizeOperationalState(value);
+  if (!token) return false;
+  return new Set([
+    "accepted",
+    "en_route",
+    "enroute",
+    "heading_to_pickup",
+    "to_pickup",
+    "naar_klant",
+    "on_the_way",
+  ]).has(token);
+}
+
+function _driverEnRouteResolvePickupPoint(rec) {
+  const readPath = (root, paths = []) => {
+    for (const path of paths) {
+      const value = _pick(root, path, null);
+      if (value != null) return value;
+    }
+    return null;
+  };
+  const latCandidates = [
+    readPath(rec, [["booking", "pickup_lat"], ["booking", "pickupLat"]]),
+    readPath(rec, [["booking", "from_lat"], ["booking", "fromLat"]]),
+    readPath(rec, [["payload", "pickup_lat"], ["payload", "pickupLat"]]),
+    readPath(rec, [["payload", "from_lat"], ["payload", "fromLat"]]),
+    readPath(rec, [["quote", "pickup_lat"], ["quote", "pickupLat"]]),
+    readPath(rec, [["quote", "from_lat"], ["quote", "fromLat"]]),
+  ];
+  const lngCandidates = [
+    readPath(rec, [["booking", "pickup_lng"], ["booking", "pickupLng"], ["booking", "pickup_lon"], ["booking", "pickupLon"]]),
+    readPath(rec, [["booking", "from_lng"], ["booking", "fromLng"], ["booking", "from_lon"], ["booking", "fromLon"]]),
+    readPath(rec, [["payload", "pickup_lng"], ["payload", "pickupLng"], ["payload", "pickup_lon"], ["payload", "pickupLon"]]),
+    readPath(rec, [["payload", "from_lng"], ["payload", "fromLng"], ["payload", "from_lon"], ["payload", "fromLon"]]),
+    readPath(rec, [["quote", "pickup_lng"], ["quote", "pickupLng"], ["quote", "pickup_lon"], ["quote", "pickupLon"]]),
+    readPath(rec, [["quote", "from_lng"], ["quote", "fromLng"], ["quote", "from_lon"], ["quote", "fromLon"]]),
+  ];
+  const pickupLat = latCandidates
+    .map((value) => Number(value))
+    .find((value) => Number.isFinite(value));
+  const pickupLng = lngCandidates
+    .map((value) => Number(value))
+    .find((value) => Number.isFinite(value));
+  if (!_allocatorIsUsableCoordinatePair(pickupLat, pickupLng)) {
+    return {
+      lat: null,
+      lng: null,
+      usable: false,
+    };
+  }
+  return {
+    lat: Number(pickupLat),
+    lng: Number(pickupLng),
+    usable: true,
+  };
+}
+
+function _driverEnRouteResolveBookingIdentity(rec, fallbackBookingId = "") {
+  return safeStr(
+    rec?.booking_id ??
+      rec?.bookingId ??
+      rec?.booking?.booking_id ??
+      rec?.booking?.bookingId ??
+      rec?.id ??
+      rec?.booking?.id ??
+      fallbackBookingId,
+    160,
+  ) || "";
+}
+
+function _driverEnRouteAssignmentFromBooking(rec) {
+  const assignedDriverId = safeStr(bookingAssignedDriverId(rec), 96) || null;
+  const assignedVehicleId = safeStr(bookingAssignedVehicleId(rec), 128) || null;
+  return {
+    assigned_driver_id: assignedDriverId,
+    assigned_vehicle_id: assignedVehicleId,
+    has_assignment: !!(assignedDriverId || assignedVehicleId),
+  };
+}
+
+function _driverEnRouteSessionAssignmentMatches(assignment, session) {
+  const assignedDriverId = safeStr(assignment?.assigned_driver_id, 96);
+  const assignedVehicleId = safeStr(assignment?.assigned_vehicle_id, 128);
+  const sessionDriverCandidates = [
+    safeStr(session?.owner_driver_id, 96),
+    safeStr(session?.ownerDriverId, 96),
+    safeStr(session?.driver_id, 96),
+    safeStr(session?.driverId, 96),
+  ].filter(Boolean);
+  const sessionVehicleCandidates = [
+    safeStr(session?.owner_vehicle_id, 128),
+    safeStr(session?.ownerVehicleId, 128),
+    safeStr(session?.vehicle_id, 128),
+    safeStr(session?.vehicleId, 128),
+  ].filter(Boolean);
+  if (!assignedDriverId && !assignedVehicleId) return false;
+  const driverMatch = !!(
+    assignedDriverId &&
+    sessionDriverCandidates.some((candidate) => candidate === assignedDriverId)
+  );
+  const vehicleMatch = !!(
+    assignedVehicleId &&
+    sessionVehicleCandidates.some((candidate) => candidate === assignedVehicleId)
+  );
+  return driverMatch || vehicleMatch;
+}
+
+async function _evaluateDriverEnRouteCancellationBlock(
+  env,
+  scope,
+  rec,
+  policyProfile,
+  now = new Date(),
+) {
+  const normalizedPolicy = _normalizeCancellationPolicyProfile(
+    policyProfile && typeof policyProfile === "object"
+      ? policyProfile
+      : _customerCancellationPolicyDefaults(),
+  );
+  const etaThresholdMinutes = Number.isFinite(Number(normalizedPolicy?.driver_en_route_eta_cutoff_minutes))
+    ? Math.max(0, Math.min(240, Math.trunc(Number(normalizedPolicy.driver_en_route_eta_cutoff_minutes))))
+    : 15;
+  const distanceThresholdKmRaw = Number(normalizedPolicy?.driver_en_route_distance_cutoff_km);
+  const distanceThresholdKm = Number.isFinite(distanceThresholdKmRaw)
+    ? Math.max(0, Math.min(100, distanceThresholdKmRaw))
+    : 10;
+  const freshnessSeconds = Number.isFinite(Number(normalizedPolicy?.driver_location_freshness_seconds))
+    ? Math.max(30, Math.min(3600, Math.trunc(Number(normalizedPolicy.driver_location_freshness_seconds))))
+    : 300;
+
+  const diagnostics = {
+    checked: true,
+    enabled: normalizedPolicy.block_when_driver_en_route === true,
+    would_block: false,
+    reason: "disabled",
+    has_assignment: false,
+    has_active_session: false,
+    assignment_matches: false,
+    has_fresh_ping: false,
+    ping_age_seconds: null,
+    operational_state: null,
+    operational_state_ok: false,
+    origin_source: null,
+    eta_minutes: null,
+    distance_km: null,
+    eta_threshold_minutes: etaThresholdMinutes,
+    distance_threshold_km: distanceThresholdKm,
+    freshness_seconds: freshnessSeconds,
+    eta_not_implemented: true,
+  };
+
+  if (diagnostics.enabled !== true) return diagnostics;
+
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(safeStr(now, 80));
+  const normalizedScope = _driverEnRouteScopedTrackingScope(scope);
+  if (!normalizedScope.hasScope) {
+    diagnostics.reason = "missing_scope";
+    return diagnostics;
+  }
+  const assignment = _driverEnRouteAssignmentFromBooking(rec);
+  diagnostics.has_assignment = assignment.has_assignment === true;
+  if (!diagnostics.has_assignment) {
+    diagnostics.reason = "no_assignment";
+    return diagnostics;
+  }
+  const bookingId = _driverEnRouteResolveBookingIdentity(rec);
+  if (!bookingId) {
+    diagnostics.reason = "booking_identity_missing";
+    return diagnostics;
+  }
+  if (!env?.FLUXIDI_TRACKING) {
+    diagnostics.reason = "tracking_unavailable";
+    return diagnostics;
+  }
+
+  const bookingMapKey = _driverEnRouteScopedTrackingBookingSessionKey(normalizedScope, bookingId);
+  const bookingMap = await _driverEnRouteTrackingReadJson(env, bookingMapKey);
+  const sessionId = safeStr(
+    bookingMap?.session_id ??
+      bookingMap?.sessionId,
+    160,
+  );
+  if (!sessionId) {
+    diagnostics.reason = "missing_session";
+    return diagnostics;
+  }
+
+  const sessionKey = _driverEnRouteScopedTrackingSessionKey(normalizedScope, sessionId);
+  const session = await _driverEnRouteTrackingReadJson(env, sessionKey);
+  if (!session || typeof session !== "object") {
+    diagnostics.reason = "missing_session";
+    return diagnostics;
+  }
+  const sessionStatusToken = _driverEnRouteNormalizeOperationalState(
+    session?.status ?? session?.lifecycle_status ?? session?.lifecycleStatus,
+  );
+  diagnostics.has_active_session = sessionStatusToken === "active" || sessionStatusToken === "open";
+  if (!diagnostics.has_active_session) {
+    diagnostics.reason = "session_not_active";
+    return diagnostics;
+  }
+  diagnostics.assignment_matches = _driverEnRouteSessionAssignmentMatches(assignment, session);
+  if (!diagnostics.assignment_matches) {
+    diagnostics.reason = "assignment_mismatch";
+    return diagnostics;
+  }
+
+  const pingKey = _driverEnRouteScopedTrackingPingLastKey(normalizedScope, sessionId);
+  const lastPing = await _driverEnRouteTrackingReadJson(env, pingKey);
+  if (!lastPing || typeof lastPing !== "object") {
+    diagnostics.reason = "missing_ping";
+    return diagnostics;
+  }
+  const pingTsMs = Date.parse(
+    safeStr(
+      lastPing?.ts ??
+        lastPing?.timestamp ??
+        lastPing?.last_ping_at ??
+        lastPing?.updated_at,
+      80,
+    ),
+  );
+  if (!Number.isFinite(nowMs) || !Number.isFinite(pingTsMs)) {
+    diagnostics.reason = "missing_ping";
+    return diagnostics;
+  }
+  const pingAgeSeconds = Math.max(0, Math.round((nowMs - pingTsMs) / 1000));
+  diagnostics.ping_age_seconds = pingAgeSeconds;
+  diagnostics.has_fresh_ping = pingAgeSeconds <= freshnessSeconds;
+  if (!diagnostics.has_fresh_ping) {
+    diagnostics.reason = "stale_ping";
+    return diagnostics;
+  }
+
+  const operationalCandidates = [
+    session?.operational_state,
+    session?.operationalState,
+    session?.trip_stage,
+    session?.tripStage,
+    session?.state,
+    session?.stage,
+    rec?.dispatch_status,
+    rec?.dispatchStatus,
+    rec?.driver_status,
+    rec?.driverStatus,
+    rec?.booking?.dispatch_status,
+    rec?.booking?.dispatchStatus,
+    rec?.booking?.driver_status,
+    rec?.booking?.driverStatus,
+    rec?.status,
+    rec?.stage,
+    rec?.booking?.status,
+    rec?.booking?.stage,
+  ]
+    .map((value) => safeStr(value, 80))
+    .filter((value) => !!value);
+  diagnostics.operational_state = operationalCandidates.length
+    ? _driverEnRouteNormalizeOperationalState(operationalCandidates[0])
+    : null;
+  diagnostics.operational_state_ok = _driverEnRouteOperationalStateAllowed(
+    diagnostics.operational_state,
+  );
+  if (!diagnostics.operational_state) {
+    diagnostics.reason = "operational_state_missing";
+    return diagnostics;
+  }
+  if (!diagnostics.operational_state_ok) {
+    diagnostics.reason = "operational_state_not_en_route";
+    return diagnostics;
+  }
+
+  const pingLat = Number(lastPing?.lat ?? lastPing?.latitude);
+  const pingLng = Number(lastPing?.lon ?? lastPing?.lng ?? lastPing?.longitude);
+  if (!_allocatorIsUsableCoordinatePair(pingLat, pingLng)) {
+    diagnostics.reason = "ping_coordinates_invalid";
+    return diagnostics;
+  }
+  diagnostics.origin_source = "tracking_ping";
+
+  const pickupPoint = _driverEnRouteResolvePickupPoint(rec);
+  if (!pickupPoint.usable) {
+    diagnostics.reason = "pickup_coordinates_missing";
+    return diagnostics;
+  }
+  const distanceKm = _haversineDistanceKm(pingLat, pingLng, pickupPoint.lat, pickupPoint.lng);
+  diagnostics.distance_km = Number.isFinite(Number(distanceKm))
+    ? Number(Number(distanceKm).toFixed(3))
+    : null;
+  if (!Number.isFinite(Number(diagnostics.distance_km))) {
+    diagnostics.reason = "distance_unavailable";
+    return diagnostics;
+  }
+  if (diagnostics.distance_km <= distanceThresholdKm) {
+    diagnostics.would_block = true;
+    diagnostics.reason = "driver_already_en_route";
+    return diagnostics;
+  }
+  diagnostics.reason = "outside_threshold";
+  return diagnostics;
 }
 
 function _isCustomerCancellationStatus(value) {
