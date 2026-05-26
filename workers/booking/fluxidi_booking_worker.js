@@ -1306,6 +1306,7 @@ const DEFAULT_CANCELLATION_POLICY_PROFILE = {
   driver_en_route_eta_cutoff_minutes: 15,
   driver_en_route_distance_cutoff_km: 10,
   driver_location_freshness_seconds: 300,
+  driver_handoff_buffer_minutes: 15,
   updated_at: "",
 };
 
@@ -1631,6 +1632,8 @@ function _customerCancellationPolicyDefaults() {
       DEFAULT_CANCELLATION_POLICY_PROFILE.driver_en_route_distance_cutoff_km,
     driver_location_freshness_seconds:
       DEFAULT_CANCELLATION_POLICY_PROFILE.driver_location_freshness_seconds,
+    driver_handoff_buffer_minutes:
+      DEFAULT_CANCELLATION_POLICY_PROFILE.driver_handoff_buffer_minutes,
     updated_at: "",
   };
 }
@@ -1786,6 +1789,18 @@ function _normalizeCancellationPolicyProfile(raw = {}) {
       30,
       3600,
     ),
+    driver_handoff_buffer_minutes: boundedInt(
+      readAny(
+        [
+          "driver_handoff_buffer_minutes",
+          "driverHandoffBufferMinutes",
+        ],
+        defaults.driver_handoff_buffer_minutes,
+      ),
+      defaults.driver_handoff_buffer_minutes,
+      0,
+      120,
+    ),
     updated_at: updatedAt,
   };
 }
@@ -1884,6 +1899,10 @@ function _validateCancellationPolicyProfile(raw) {
     "driver_location_freshness_seconds",
     "driverLocationFreshnessSeconds",
   ], 30, 3600);
+  validateIntRange("driver_handoff_buffer_minutes", [
+    "driver_handoff_buffer_minutes",
+    "driverHandoffBufferMinutes",
+  ], 0, 120);
   const paidModeValue = readAny([
     "paid_booking_cancellation_mode",
     "paidBookingCancellationMode",
@@ -19695,13 +19714,14 @@ GET /oauth/callback
           now,
           cancellationPolicyProfile,
         );
-        const driverEnRouteCheck = await _evaluateDriverEnRouteCancellationBlock(
+        const driverEnRouteCheckRaw = await _evaluateDriverEnRouteCancellationBlock(
           env,
           tenantScope,
           rec,
           cancellationPolicyProfile,
           now,
         );
+        const driverEnRouteCheck = _driverEnRouteNormalizeDiagnosticsOutput(driverEnRouteCheckRaw);
         console.log(
           `[BOOKING_CANCEL_POLICY][EN_ROUTE_DEBUG] booking=${_bookingIntentMask(bookingId)} enabled=${driverEnRouteCheck?.enabled === true ? "true" : "false"} would_block=${driverEnRouteCheck?.would_block === true ? "true" : "false"} reason=${safeStr(driverEnRouteCheck?.reason, 80) || "-"} origin=${safeStr(driverEnRouteCheck?.origin_source, 64) || "-"} eta=${Number.isFinite(Number(driverEnRouteCheck?.eta_minutes)) ? Number(driverEnRouteCheck.eta_minutes) : -1} distance=${Number.isFinite(Number(driverEnRouteCheck?.distance_km)) ? Number(driverEnRouteCheck.distance_km) : -1}`,
         );
@@ -22511,6 +22531,672 @@ function _driverEnRouteSessionAssignmentMatches(assignment, session) {
   return driverMatch || vehicleMatch;
 }
 
+function _driverEnRouteRecordAssignmentMatches(assignment, rec) {
+  if (!assignment || !rec || typeof rec !== "object") return false;
+  const expectedDriver = safeStr(assignment?.assigned_driver_id, 96);
+  const expectedVehicle = safeStr(assignment?.assigned_vehicle_id, 128);
+  if (!expectedDriver && !expectedVehicle) return false;
+  const candidate = _driverEnRouteBookingAssignmentSignals(rec);
+  const candidateDriver = safeStr(candidate?.assigned_driver_id, 96);
+  const candidateVehicle = safeStr(candidate?.assigned_vehicle_id, 128);
+  const driverMatch = !!(expectedDriver && candidateDriver && expectedDriver === candidateDriver);
+  const vehicleMatch = !!(expectedVehicle && candidateVehicle && expectedVehicle === candidateVehicle);
+  return driverMatch || vehicleMatch;
+}
+
+function _driverEnRouteResolveLegDropoffPoint(leg) {
+  if (!leg || typeof leg !== "object") return null;
+  const point = _locationPointFromAny({
+    lat:
+      leg?.dropoff_lat ??
+      leg?.dropoffLat ??
+      leg?.to_lat ??
+      leg?.toLat ??
+      leg?.destination_lat ??
+      leg?.destinationLat ??
+      leg?.resolved_to_lat ??
+      leg?.resolvedToLat ??
+      leg?.resolved_to_point?.lat ??
+      leg?.resolved_to_point?.latitude ??
+      leg?.resolvedToPoint?.lat ??
+      leg?.resolvedToPoint?.latitude,
+    lng:
+      leg?.dropoff_lng ??
+      leg?.dropoffLng ??
+      leg?.to_lng ??
+      leg?.toLng ??
+      leg?.dropoff_lon ??
+      leg?.dropoffLon ??
+      leg?.to_lon ??
+      leg?.toLon ??
+      leg?.destination_lng ??
+      leg?.destinationLng ??
+      leg?.destination_lon ??
+      leg?.destinationLon ??
+      leg?.resolved_to_lng ??
+      leg?.resolvedToLng ??
+      leg?.resolved_to_lon ??
+      leg?.resolvedToLon ??
+      leg?.resolved_to_point?.lng ??
+      leg?.resolved_to_point?.lon ??
+      leg?.resolved_to_point?.longitude ??
+      leg?.resolvedToPoint?.lng ??
+      leg?.resolvedToPoint?.lon ??
+      leg?.resolvedToPoint?.longitude,
+    address:
+      leg?.dropoff_address ??
+      leg?.dropoffAddress ??
+      leg?.dropoff_to ??
+      leg?.dropoffTo ??
+      leg?.destination ??
+      leg?.destination_address ??
+      leg?.destinationAddress ??
+      leg?.to ??
+      "",
+  });
+  if (!_isUsableLocationPoint(point)) return null;
+  return point;
+}
+
+function _driverEnRouteResolveDropoffPointFromOperationalLegs(
+  rec,
+  assignment,
+  sourceLabel,
+  options = {},
+) {
+  const legs = _bookingOperationalLegsFromRecord(rec);
+  if (!legs.length) return null;
+  const expectedDriver = safeStr(assignment?.assigned_driver_id, 96);
+  const expectedVehicle = safeStr(assignment?.assigned_vehicle_id, 128);
+  if (!expectedDriver && !expectedVehicle) return null;
+  const targetPickupMs = Number(options?.target_pickup_ms);
+  const sameBookingStrictGuard = options?.same_booking_strict_guard === true;
+  const hasUsableTargetPickup = Number.isFinite(targetPickupMs) && targetPickupMs > 0;
+  if (sameBookingStrictGuard && legs.length < 2) {
+    return null;
+  }
+  const statusRank = (value) => {
+    const token = _driverEnRouteNormalizeOperationalState(value);
+    if (!token) return 0;
+    if (["completed", "stopped", "done", "finished", "closed"].includes(token)) return 3;
+    if (["started", "in_progress", "active", "on_trip", "ongoing"].includes(token)) return 2;
+    return 1;
+  };
+  const withMeta = legs
+    .map((leg) => {
+      const legDriver = safeStr(
+        leg?.assigned_driver_id ??
+          leg?.assignedDriverId ??
+          leg?.driver_id ??
+          leg?.driverId ??
+          leg?.assigned_driver?.driver_id ??
+          leg?.assigned_driver?.driverId ??
+          leg?.assignedDriver?.driver_id ??
+          leg?.assignedDriver?.driverId,
+        96,
+      );
+      const legVehicle = safeStr(
+        leg?.assigned_vehicle_id ??
+          leg?.assignedVehicleId ??
+          leg?.vehicle_id ??
+          leg?.vehicleId ??
+          leg?.assigned_vehicle?.vehicle_id ??
+          leg?.assigned_vehicle?.vehicleId ??
+          leg?.assignedVehicle?.vehicle_id ??
+          leg?.assignedVehicle?.vehicleId,
+        128,
+      );
+      const driverMatch = !!(expectedDriver && legDriver && expectedDriver === legDriver);
+      const vehicleMatch = !!(expectedVehicle && legVehicle && expectedVehicle === legVehicle);
+      if (!driverMatch && !vehicleMatch) return null;
+      const point = _driverEnRouteResolveLegDropoffPoint(leg);
+      if (!_isUsableLocationPoint(point)) return null;
+      const rank = statusRank(leg?.status ?? leg?.lifecycle_status ?? leg?.lifecycleStatus);
+      const pickupMs = _toMsOrZero(leg?.pickup_iso ?? leg?.pickupIso);
+      const dropoffMs = _toMsOrZero(leg?.dropoff_at ?? leg?.dropoffAt);
+      if (sameBookingStrictGuard) {
+        if (!hasUsableTargetPickup) return null;
+        const beforeTarget =
+          (Number.isFinite(pickupMs) && pickupMs > 0 && pickupMs < targetPickupMs) ||
+          (Number.isFinite(dropoffMs) && dropoffMs > 0 && dropoffMs < targetPickupMs);
+        if (!beforeTarget) return null;
+      }
+      const ts = Math.max(
+        dropoffMs,
+        _toMsOrZero(leg?.updated_at ?? leg?.updatedAt),
+        pickupMs,
+      );
+      return { point, rank, ts };
+    })
+    .filter((entry) => !!entry)
+    .sort((a, b) => {
+      if (b.rank !== a.rank) return b.rank - a.rank;
+      return Number(b.ts || 0) - Number(a.ts || 0);
+    });
+  if (!withMeta.length) return null;
+  return {
+    point: withMeta[0].point,
+    source: sourceLabel || "operational_leg_dropoff",
+  };
+}
+
+function _driverEnRouteResolveDropoffPointFromBookingDemand(rec, env, sourceLabel) {
+  if (!rec || typeof rec !== "object") return null;
+  const demand = _bookingDemandFromRecord(rec, env || {});
+  const point = demand?.dropoffPoint;
+  if (!_isUsableLocationPoint(point)) return null;
+  return {
+    point,
+    source: sourceLabel || "booking_demand_dropoff_point",
+  };
+}
+
+function _driverEnRouteBookingIdentitySignals(rec) {
+  const src = rec && typeof rec === "object" ? rec : {};
+  const signals = {
+    booking_ids: new Set(),
+    parent_booking_ids: new Set(),
+    leg_ids: new Set(),
+    public_booking_references: new Set(),
+  };
+  const push = (targetSet, value, maxLen = 160) => {
+    const text = safeStr(value, maxLen);
+    if (!text) return;
+    targetSet.add(text.toLowerCase());
+  };
+  push(signals.booking_ids, src?.booking_id);
+  push(signals.booking_ids, src?.bookingId);
+  push(signals.booking_ids, src?.id);
+  push(signals.booking_ids, src?.booking?.booking_id);
+  push(signals.booking_ids, src?.booking?.bookingId);
+  push(signals.booking_ids, src?.booking?.id);
+
+  push(signals.parent_booking_ids, src?.parent_booking_id);
+  push(signals.parent_booking_ids, src?.parentBookingId);
+  push(signals.parent_booking_ids, src?.booking?.parent_booking_id);
+  push(signals.parent_booking_ids, src?.booking?.parentBookingId);
+
+  push(signals.leg_ids, src?.leg_id);
+  push(signals.leg_ids, src?.legId);
+  push(signals.leg_ids, src?.booking?.leg_id);
+  push(signals.leg_ids, src?.booking?.legId);
+
+  push(signals.public_booking_references, src?.public_booking_reference, 120);
+  push(signals.public_booking_references, src?.publicBookingReference, 120);
+  push(signals.public_booking_references, src?.booking_reference, 120);
+  push(signals.public_booking_references, src?.bookingReference, 120);
+  push(signals.public_booking_references, src?.booking?.public_booking_reference, 120);
+  push(signals.public_booking_references, src?.booking?.publicBookingReference, 120);
+  push(signals.public_booking_references, src?.booking?.booking_reference, 120);
+  push(signals.public_booking_references, src?.booking?.bookingReference, 120);
+  return signals;
+}
+
+function _driverEnRouteIdentitySetOverlaps(aSet, bSet) {
+  if (!(aSet instanceof Set) || !(bSet instanceof Set)) return false;
+  if (!aSet.size || !bSet.size) return false;
+  for (const value of aSet) {
+    if (bSet.has(value)) return true;
+  }
+  return false;
+}
+
+function _driverEnRouteNormalizeDiagnosticsOutput(input) {
+  const source = input && typeof input === "object" ? input : {};
+  const out = { ...source };
+  const ensureBoolean = (key, fallback = false) => {
+    out[key] = typeof out[key] === "boolean" ? out[key] : fallback;
+  };
+  const ensureNullableString = (key, maxLen = 120) => {
+    const text = safeStr(out[key], maxLen);
+    out[key] = text || null;
+  };
+  const ensureNonNegativeInt = (key, fallback = 0) => {
+    const n = Number(out[key]);
+    out[key] = Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : fallback;
+  };
+
+  ensureNullableString("previous_dropoff_candidate_booking_preview", 80);
+  ensureNullableString("previous_dropoff_candidate_parent_preview", 80);
+  ensureNullableString("previous_dropoff_candidate_leg_preview", 80);
+  ensureNullableString("previous_dropoff_candidate_public_ref_preview", 80);
+  ensureNullableString("previous_dropoff_candidate_pickup_iso", 80);
+  ensureNullableString("previous_dropoff_candidate_dropoff_iso", 80);
+  ensureNullableString("previous_dropoff_candidate_status", 64);
+  ensureNullableString("previous_dropoff_candidate_status_reason", 80);
+  ensureNullableString("previous_dropoff_candidate_source", 80);
+  ensureNullableString("previous_dropoff_zero_distance_reason", 80);
+  ensureNullableString("previous_dropoff_lookup_reason", 120);
+
+  ensureBoolean("previous_dropoff_candidate_status_allowed", false);
+  ensureBoolean("previous_dropoff_selected_candidate_rejected", false);
+  ensureBoolean("previous_dropoff_candidate_same_booking_overlap", false);
+  ensureBoolean("previous_dropoff_candidate_same_parent_overlap", false);
+  ensureBoolean("previous_dropoff_candidate_same_leg_overlap", false);
+  ensureBoolean("previous_dropoff_candidate_public_ref_overlap", false);
+  ensureBoolean("previous_dropoff_zero_distance", false);
+
+  ensureNonNegativeInt("previous_dropoff_candidates_checked_count", 0);
+  ensureNonNegativeInt("previous_dropoff_candidates_rejected_count", 0);
+
+  out.previous_dropoff_rejected_reasons_present = Array.isArray(out.previous_dropoff_rejected_reasons_present)
+    ? out.previous_dropoff_rejected_reasons_present
+      .map((value) => safeStr(value, 80))
+      .filter((value) => !!value)
+    : [];
+
+  out.previous_dropoff_eta_not_implemented = out.previous_dropoff_eta_not_implemented !== false;
+  if (out.previous_dropoff_eta_not_implemented) {
+    out.previous_dropoff_eta_minutes = null;
+    out.previous_dropoff_eta_with_buffer_minutes = null;
+  }
+  const hasDistance = Number.isFinite(Number(out.previous_dropoff_distance_km));
+  if (!hasDistance) {
+    out.previous_dropoff_within_threshold = false;
+  } else if (typeof out.previous_dropoff_within_threshold !== "boolean") {
+    out.previous_dropoff_within_threshold = false;
+  }
+  return out;
+}
+
+async function _driverEnRouteResolvePreviousDropoffProjection({
+  env,
+  scope,
+  rec,
+  assignment,
+  bookingId = "",
+  pickupPoint = null,
+  distanceThresholdKm = null,
+  handoffBufferMinutes = null,
+}) {
+  const normalizeStatusToken = (value) => {
+    const raw = safeStr(value, 64);
+    if (!raw) return "";
+    return raw.trim().toLowerCase().replace(/[\s_-]+/g, "_");
+  };
+  const REJECTED_STATUS_TOKENS = new Set([
+    "cancelled",
+    "canceled",
+    "deleted",
+    "failed",
+    "declined",
+    "expired",
+    "archived",
+    "closed",
+  ]);
+  const ACCEPTED_STATUS_TOKENS = new Set(["completed", "done"]);
+  const diag = {
+    previous_dropoff_checked: true,
+    previous_dropoff_origin_present: false,
+    previous_dropoff_origin_source: null,
+    previous_dropoff_origin_lat_present: false,
+    previous_dropoff_origin_lng_present: false,
+    previous_dropoff_distance_km: null,
+    previous_dropoff_eta_minutes: null,
+    previous_dropoff_eta_not_implemented: true,
+    driver_handoff_buffer_minutes: Number.isFinite(Number(handoffBufferMinutes))
+      ? Math.max(0, Math.min(120, Math.trunc(Number(handoffBufferMinutes))))
+      : 15,
+    previous_dropoff_eta_with_buffer_minutes: null,
+    previous_dropoff_within_threshold: false,
+    previous_dropoff_lookup_reason: "not_checked",
+    previous_dropoff_candidate_booking_preview: null,
+    previous_dropoff_candidate_parent_preview: null,
+    previous_dropoff_candidate_leg_preview: null,
+    previous_dropoff_candidate_public_ref_preview: null,
+    previous_dropoff_candidate_pickup_iso: null,
+    previous_dropoff_candidate_dropoff_iso: null,
+    previous_dropoff_candidate_status: null,
+    previous_dropoff_candidate_status_allowed: false,
+    previous_dropoff_candidate_status_reason: null,
+    previous_dropoff_selected_candidate_rejected: false,
+    previous_dropoff_candidate_source: null,
+    previous_dropoff_candidate_same_booking_overlap: false,
+    previous_dropoff_candidate_same_parent_overlap: false,
+    previous_dropoff_candidate_same_leg_overlap: false,
+    previous_dropoff_candidate_public_ref_overlap: false,
+    previous_dropoff_candidates_checked_count: 0,
+    previous_dropoff_candidates_rejected_count: 0,
+    previous_dropoff_rejected_reasons_present: [],
+    previous_dropoff_zero_distance: false,
+    previous_dropoff_zero_distance_reason: null,
+  };
+  if (!assignment?.has_assignment) {
+    diag.previous_dropoff_lookup_reason = "missing_assignment";
+    return diag;
+  }
+  if (!scope?.hasScope) {
+    diag.previous_dropoff_lookup_reason = "missing_scope";
+    return diag;
+  }
+  if (!env?.BOOKING_KV) {
+    diag.previous_dropoff_lookup_reason = "booking_kv_unavailable";
+    return diag;
+  }
+  const targetDemand = _bookingDemandFromRecord(rec, env || {});
+  const targetPickupMs = Number(targetDemand?.pickupAtMs ?? targetDemand?.pickupMs);
+  const targetIdentitySignals = _driverEnRouteBookingIdentitySignals(rec);
+  let sameBookingDropoffIgnored = false;
+  let previousCandidateSameBookingIgnored = false;
+  let previousCandidateNotBeforeTarget = false;
+  const rejectedReasons = new Set();
+  const noteRejected = (reason, countAsCandidateRejection = true) => {
+    const token = safeStr(reason, 80);
+    if (token) rejectedReasons.add(token);
+    if (countAsCandidateRejection) {
+      diag.previous_dropoff_candidates_rejected_count += 1;
+    }
+  };
+  const forceNoSafePreviousDropoff = (selectedCandidateRejected = false) => {
+    diag.previous_dropoff_origin_present = false;
+    diag.previous_dropoff_origin_source = null;
+    diag.previous_dropoff_origin_lat_present = false;
+    diag.previous_dropoff_origin_lng_present = false;
+    diag.previous_dropoff_distance_km = null;
+    diag.previous_dropoff_within_threshold = false;
+    diag.previous_dropoff_lookup_reason = "no_safe_previous_dropoff";
+    diag.previous_dropoff_selected_candidate_rejected = selectedCandidateRejected;
+    diag.previous_dropoff_zero_distance = false;
+    diag.previous_dropoff_zero_distance_reason = null;
+    return diag;
+  };
+  let origin = _driverEnRouteResolveDropoffPointFromOperationalLegs(
+    rec,
+    assignment,
+    "same_booking_previous_leg_dropoff",
+    {
+      same_booking_strict_guard: true,
+      target_pickup_ms: targetPickupMs,
+    },
+  );
+  if (!origin) {
+    sameBookingDropoffIgnored = true;
+    noteRejected("same_booking_dropoff_ignored", false);
+  }
+  if (!origin) {
+    const candidateEntries = new Map();
+    const pushEntries = (items = []) => {
+      for (const item of items) {
+        const id = safeStr(item?.booking_id ?? item?.bookingId, 160);
+        if (!id || id === bookingId) continue;
+        const sortTs = Number.isFinite(Number(item?.sort_ts ?? item?.sortTs))
+          ? Math.max(0, Math.trunc(Number(item?.sort_ts ?? item?.sortTs)))
+          : 0;
+        const existing = candidateEntries.get(id);
+        if (!existing || sortTs > existing.sort_ts) {
+          candidateEntries.set(id, { booking_id: id, sort_ts: sortTs });
+        }
+      }
+    };
+    const driverKey = driverScopedBookingsIndexKey(scope, assignment?.assigned_driver_id);
+    const vehicleKey = vehicleScopedBookingsIndexKey(scope, assignment?.assigned_vehicle_id);
+    if (driverKey) {
+      const readDriver = await readScopedAssignmentBookingIndex(env, driverKey);
+      if (readDriver?.ok && Array.isArray(readDriver?.index?.items)) {
+        pushEntries(readDriver.index.items);
+      }
+    }
+    if (vehicleKey) {
+      const readVehicle = await readScopedAssignmentBookingIndex(env, vehicleKey);
+      if (readVehicle?.ok && Array.isArray(readVehicle?.index?.items)) {
+        pushEntries(readVehicle.index.items);
+      }
+    }
+    const sortedCandidates = Array.from(candidateEntries.values())
+      .sort((a, b) => Number(b?.sort_ts || 0) - Number(a?.sort_ts || 0))
+      .slice(0, 20);
+    for (const candidate of sortedCandidates) {
+      diag.previous_dropoff_candidates_checked_count += 1;
+      const candidateId = safeStr(candidate?.booking_id, 160);
+      if (!candidateId || candidateId === bookingId) continue;
+      const candidateRec = await env.BOOKING_KV.get(`booking:${candidateId}`, { type: "json" });
+      if (!candidateRec || typeof candidateRec !== "object") continue;
+      if (!bookingMatchesRequestedTenantScope(candidateRec, scope)) continue;
+      if (!_driverEnRouteRecordAssignmentMatches(assignment, candidateRec)) continue;
+      const candidateIdentitySignals = _driverEnRouteBookingIdentitySignals(candidateRec);
+      const sameLegOverlap = _driverEnRouteIdentitySetOverlaps(
+        targetIdentitySignals.leg_ids,
+        candidateIdentitySignals.leg_ids,
+      );
+      const samePublicRefOverlap = _driverEnRouteIdentitySetOverlaps(
+        targetIdentitySignals.public_booking_references,
+        candidateIdentitySignals.public_booking_references,
+      );
+      const sameBookingIdentityOverlap =
+        _driverEnRouteIdentitySetOverlaps(
+          targetIdentitySignals.booking_ids,
+          candidateIdentitySignals.booking_ids,
+        ) ||
+        sameLegOverlap ||
+        samePublicRefOverlap;
+      const sameParentOverlap = _driverEnRouteIdentitySetOverlaps(
+        targetIdentitySignals.parent_booking_ids,
+        candidateIdentitySignals.parent_booking_ids,
+      );
+      const candidatePickupIso = safeStr(
+        candidateRec?.booking?.pickup_iso ??
+          candidateRec?.booking?.pickupIso ??
+          candidateRec?.quote?.pickup_iso ??
+          candidateRec?.pickup_iso ??
+          candidateRec?.pickupIso,
+        80,
+      ) || null;
+      const candidateDropoffIso = safeStr(
+        candidateRec?.booking?.dropoff_at ??
+          candidateRec?.booking?.dropoffAt ??
+          candidateRec?.dropoff_at ??
+          candidateRec?.dropoffAt,
+        80,
+      ) || null;
+      const candidateStatus = safeStr(
+        candidateRec?.status ??
+          candidateRec?.stage ??
+          candidateRec?.booking?.status ??
+          candidateRec?.booking?.stage,
+        64,
+      ) || null;
+      const candidateParent = safeStr(
+        candidateRec?.parent_booking_id ??
+          candidateRec?.parentBookingId ??
+          candidateRec?.booking?.parent_booking_id ??
+          candidateRec?.booking?.parentBookingId,
+        160,
+      );
+      const candidateLeg = safeStr(
+        candidateRec?.leg_id ??
+          candidateRec?.legId ??
+          candidateRec?.booking?.leg_id ??
+          candidateRec?.booking?.legId,
+        160,
+      );
+      const candidatePublicRef = safeStr(
+        candidateRec?.public_booking_reference ??
+          candidateRec?.publicBookingReference ??
+          candidateRec?.booking_reference ??
+          candidateRec?.bookingReference ??
+          candidateRec?.booking?.public_booking_reference ??
+          candidateRec?.booking?.publicBookingReference ??
+          candidateRec?.booking?.booking_reference ??
+          candidateRec?.booking?.bookingReference,
+        120,
+      );
+      diag.previous_dropoff_candidate_booking_preview = _driverEnRouteAssignmentPreview(candidateId, "id");
+      diag.previous_dropoff_candidate_parent_preview = _driverEnRouteAssignmentPreview(candidateParent, "id");
+      diag.previous_dropoff_candidate_leg_preview = _driverEnRouteAssignmentPreview(candidateLeg, "id");
+      diag.previous_dropoff_candidate_public_ref_preview = _driverEnRouteAssignmentPreview(
+        candidatePublicRef,
+        "id",
+      );
+      diag.previous_dropoff_candidate_pickup_iso = candidatePickupIso;
+      diag.previous_dropoff_candidate_dropoff_iso = candidateDropoffIso;
+      diag.previous_dropoff_candidate_status = candidateStatus;
+      const candidateDemand = _bookingDemandFromRecord(candidateRec, env || {});
+      const candidateTiming = _demandDropoffTiming(candidateDemand);
+      const hasStrongExecutedMarker =
+        Number.isFinite(Number(candidateTiming?.dropoffAtMs)) &&
+        Number(candidateTiming.dropoffAtMs) > 0 &&
+        (!Number.isFinite(targetPickupMs) || Number(candidateTiming.dropoffAtMs) < Number(targetPickupMs));
+      const statusToken = normalizeStatusToken(candidateStatus);
+      let statusAllowed = false;
+      let statusReason = "previous_candidate_status_unknown";
+      if (statusToken && ACCEPTED_STATUS_TOKENS.has(statusToken)) {
+        statusAllowed = true;
+        statusReason = "previous_candidate_completed_status";
+      } else if (statusToken && REJECTED_STATUS_TOKENS.has(statusToken)) {
+        statusAllowed = false;
+        statusReason = "previous_candidate_not_completed";
+      } else if (hasStrongExecutedMarker) {
+        statusAllowed = true;
+        statusReason = "previous_candidate_executed_marker";
+      }
+      diag.previous_dropoff_candidate_status_allowed = statusAllowed;
+      diag.previous_dropoff_candidate_status_reason = statusReason;
+      diag.previous_dropoff_candidate_source = "assignment_index_candidate_record";
+      diag.previous_dropoff_candidate_same_booking_overlap = sameBookingIdentityOverlap;
+      diag.previous_dropoff_candidate_same_parent_overlap = sameParentOverlap;
+      diag.previous_dropoff_candidate_same_leg_overlap = sameLegOverlap;
+      diag.previous_dropoff_candidate_public_ref_overlap = samePublicRefOverlap;
+      if (!statusAllowed) {
+        diag.previous_dropoff_selected_candidate_rejected = true;
+        noteRejected(statusReason);
+        continue;
+      }
+      diag.previous_dropoff_selected_candidate_rejected = false;
+      if (sameBookingIdentityOverlap) {
+        previousCandidateSameBookingIgnored = true;
+        noteRejected("previous_candidate_same_booking_ignored");
+        continue;
+      }
+
+      if (sameParentOverlap) {
+        origin = _driverEnRouteResolveDropoffPointFromOperationalLegs(
+          candidateRec,
+          assignment,
+          "previous_booking_operational_leg_dropoff",
+          {
+            same_booking_strict_guard: true,
+            target_pickup_ms: targetPickupMs,
+          },
+        );
+        if (!origin) {
+          previousCandidateNotBeforeTarget = true;
+          diag.previous_dropoff_selected_candidate_rejected = true;
+          noteRejected("previous_candidate_not_before_target");
+          continue;
+        }
+      } else {
+        if (
+          Number.isFinite(targetPickupMs) &&
+          targetPickupMs > 0 &&
+          (!Number.isFinite(candidateTiming?.dropoffAtMs) || candidateTiming.dropoffAtMs >= targetPickupMs)
+        ) {
+          previousCandidateNotBeforeTarget = true;
+          diag.previous_dropoff_selected_candidate_rejected = true;
+          noteRejected("previous_candidate_not_before_target");
+          continue;
+        }
+        origin = _driverEnRouteResolveDropoffPointFromOperationalLegs(
+          candidateRec,
+          assignment,
+          "previous_booking_operational_leg_dropoff",
+        );
+        if (!origin) {
+          origin = _driverEnRouteResolveDropoffPointFromBookingDemand(
+            candidateRec,
+            env,
+            "previous_booking_dropoff_point",
+          );
+        }
+      }
+      if (origin) break;
+    }
+  }
+  diag.previous_dropoff_rejected_reasons_present = Array.from(rejectedReasons);
+  const allCheckedCandidatesRejected =
+    diag.previous_dropoff_candidates_checked_count > 0 &&
+    diag.previous_dropoff_candidates_checked_count === diag.previous_dropoff_candidates_rejected_count;
+  if (!origin || !_isUsableLocationPoint(origin?.point)) {
+    if (allCheckedCandidatesRejected) {
+      return forceNoSafePreviousDropoff(true);
+    } else if (previousCandidateSameBookingIgnored) {
+      diag.previous_dropoff_lookup_reason = "previous_candidate_same_booking_ignored";
+    } else if (previousCandidateNotBeforeTarget) {
+      diag.previous_dropoff_lookup_reason = "previous_candidate_not_before_target";
+    } else if (sameBookingDropoffIgnored) {
+      diag.previous_dropoff_lookup_reason = "same_booking_dropoff_ignored";
+    } else {
+      diag.previous_dropoff_lookup_reason = "no_safe_previous_dropoff";
+    }
+    diag.previous_dropoff_origin_present = false;
+    diag.previous_dropoff_origin_source = null;
+    diag.previous_dropoff_distance_km = null;
+    diag.previous_dropoff_within_threshold = false;
+    diag.previous_dropoff_zero_distance = false;
+    diag.previous_dropoff_zero_distance_reason = null;
+    return diag;
+  }
+  if (allCheckedCandidatesRejected) {
+    return forceNoSafePreviousDropoff(true);
+  }
+  const point = origin.point;
+  const originLat = Number(point?.lat);
+  const originLng = Number(point?.lng);
+  diag.previous_dropoff_origin_present = true;
+  diag.previous_dropoff_origin_source = safeStr(origin?.source, 80) || "previous_dropoff_origin";
+  diag.previous_dropoff_origin_lat_present = Number.isFinite(originLat);
+  diag.previous_dropoff_origin_lng_present = Number.isFinite(originLng);
+  if (diag.previous_dropoff_origin_source === "same_booking_previous_leg_dropoff") {
+    diag.previous_dropoff_lookup_reason = "resolved_previous_leg_dropoff";
+  } else if (
+    diag.previous_dropoff_selected_candidate_rejected === false &&
+    diag.previous_dropoff_candidate_status_allowed === true
+  ) {
+    diag.previous_dropoff_lookup_reason = "resolved_previous_booking_dropoff";
+  } else {
+    return forceNoSafePreviousDropoff(true);
+  }
+
+  if (
+    pickupPoint &&
+    pickupPoint.usable === true &&
+    _allocatorIsUsableCoordinatePair(originLat, originLng)
+  ) {
+    const distanceKm = _haversineDistanceKm(originLat, originLng, pickupPoint.lat, pickupPoint.lng);
+    if (Number.isFinite(Number(distanceKm))) {
+      diag.previous_dropoff_distance_km = Number(Number(distanceKm).toFixed(3));
+    }
+  }
+  if (Number.isFinite(Number(diag.previous_dropoff_distance_km))) {
+    const threshold = Number(distanceThresholdKm);
+    if (Number.isFinite(threshold)) {
+      diag.previous_dropoff_within_threshold = Number(diag.previous_dropoff_distance_km) <= threshold;
+    }
+    if (Number(diag.previous_dropoff_distance_km) === 0) {
+      diag.previous_dropoff_zero_distance = true;
+      const sameCoords =
+        pickupPoint &&
+        pickupPoint.usable === true &&
+        _allocatorIsUsableCoordinatePair(originLat, originLng) &&
+        Math.abs(originLat - Number(pickupPoint.lat)) < 0.000001 &&
+        Math.abs(originLng - Number(pickupPoint.lng)) < 0.000001;
+      diag.previous_dropoff_zero_distance_reason = sameCoords
+        ? "exact_coordinate_match"
+        : "unknown";
+      if (diag.previous_dropoff_zero_distance_reason === "unknown") {
+        // Unknown zero-distance should not be treated as trusted proximity.
+        diag.previous_dropoff_within_threshold = false;
+      }
+    }
+  }
+  if (!Number.isFinite(Number(diag.previous_dropoff_distance_km))) {
+    diag.previous_dropoff_within_threshold = false;
+  }
+  diag.previous_dropoff_eta_minutes = null;
+  diag.previous_dropoff_eta_with_buffer_minutes = null;
+  diag.previous_dropoff_eta_not_implemented = true;
+  return diag;
+}
+
 async function _evaluateDriverEnRouteCancellationBlock(
   env,
   scope,
@@ -22533,6 +23219,9 @@ async function _evaluateDriverEnRouteCancellationBlock(
   const freshnessSeconds = Number.isFinite(Number(normalizedPolicy?.driver_location_freshness_seconds))
     ? Math.max(30, Math.min(3600, Math.trunc(Number(normalizedPolicy.driver_location_freshness_seconds))))
     : 300;
+  const handoffBufferMinutes = Number.isFinite(Number(normalizedPolicy?.driver_handoff_buffer_minutes))
+    ? Math.max(0, Math.min(120, Math.trunc(Number(normalizedPolicy.driver_handoff_buffer_minutes))))
+    : 15;
 
   const diagnostics = {
     checked: true,
@@ -22573,6 +23262,38 @@ async function _evaluateDriverEnRouteCancellationBlock(
     last_ping_lat_present: false,
     last_ping_lng_present: false,
     tracking_lookup_error: null,
+    previous_dropoff_checked: false,
+    previous_dropoff_origin_present: false,
+    previous_dropoff_origin_source: null,
+    previous_dropoff_origin_lat_present: false,
+    previous_dropoff_origin_lng_present: false,
+    previous_dropoff_distance_km: null,
+    previous_dropoff_eta_minutes: null,
+    previous_dropoff_eta_not_implemented: true,
+    driver_handoff_buffer_minutes: handoffBufferMinutes,
+    previous_dropoff_eta_with_buffer_minutes: null,
+    previous_dropoff_within_threshold: false,
+    previous_dropoff_lookup_reason: null,
+    previous_dropoff_candidate_booking_preview: null,
+    previous_dropoff_candidate_parent_preview: null,
+    previous_dropoff_candidate_leg_preview: null,
+    previous_dropoff_candidate_public_ref_preview: null,
+    previous_dropoff_candidate_pickup_iso: null,
+    previous_dropoff_candidate_dropoff_iso: null,
+    previous_dropoff_candidate_status: null,
+    previous_dropoff_candidate_status_allowed: false,
+    previous_dropoff_candidate_status_reason: null,
+    previous_dropoff_selected_candidate_rejected: false,
+    previous_dropoff_candidate_source: null,
+    previous_dropoff_candidate_same_booking_overlap: false,
+    previous_dropoff_candidate_same_parent_overlap: false,
+    previous_dropoff_candidate_same_leg_overlap: false,
+    previous_dropoff_candidate_public_ref_overlap: false,
+    previous_dropoff_candidates_checked_count: 0,
+    previous_dropoff_candidates_rejected_count: 0,
+    previous_dropoff_rejected_reasons_present: [],
+    previous_dropoff_zero_distance: false,
+    previous_dropoff_zero_distance_reason: null,
   };
 
   const enforceEnabled = diagnostics.enabled === true;
@@ -22614,12 +23335,148 @@ async function _evaluateDriverEnRouteCancellationBlock(
     : [];
   diagnostics.assignment_driver_preview = assignment.assignment_driver_preview || null;
   diagnostics.assignment_vehicle_preview = assignment.assignment_vehicle_preview || null;
+  const bookingId = _driverEnRouteResolveBookingIdentity(rec);
+  const projectionPickupPoint = _driverEnRouteResolvePickupPoint(rec);
+  try {
+    const previousDropoffProjection = await _driverEnRouteResolvePreviousDropoffProjection({
+      env,
+      scope: normalizedScope,
+      rec,
+      assignment,
+      bookingId,
+      pickupPoint: projectionPickupPoint,
+      distanceThresholdKm,
+      handoffBufferMinutes,
+    });
+    if (previousDropoffProjection && typeof previousDropoffProjection === "object") {
+      diagnostics.previous_dropoff_checked =
+        previousDropoffProjection.previous_dropoff_checked === true;
+      diagnostics.previous_dropoff_origin_present =
+        previousDropoffProjection.previous_dropoff_origin_present === true;
+      diagnostics.previous_dropoff_origin_source =
+        safeStr(previousDropoffProjection.previous_dropoff_origin_source, 80) || null;
+      diagnostics.previous_dropoff_origin_lat_present =
+        previousDropoffProjection.previous_dropoff_origin_lat_present === true;
+      diagnostics.previous_dropoff_origin_lng_present =
+        previousDropoffProjection.previous_dropoff_origin_lng_present === true;
+      diagnostics.previous_dropoff_distance_km = Number.isFinite(
+        Number(previousDropoffProjection.previous_dropoff_distance_km),
+      )
+        ? Number(Number(previousDropoffProjection.previous_dropoff_distance_km).toFixed(3))
+        : null;
+      const previousEtaRaw = previousDropoffProjection.previous_dropoff_eta_minutes;
+      const previousEtaNum = (
+        previousEtaRaw !== null &&
+        previousEtaRaw !== undefined &&
+        !(typeof previousEtaRaw === "string" && !previousEtaRaw.trim())
+      )
+        ? Number(previousEtaRaw)
+        : Number.NaN;
+      diagnostics.previous_dropoff_eta_minutes = Number.isFinite(previousEtaNum)
+        ? Math.max(0, Math.trunc(previousEtaNum))
+        : null;
+      diagnostics.previous_dropoff_eta_not_implemented =
+        previousDropoffProjection.previous_dropoff_eta_not_implemented !== false;
+      diagnostics.driver_handoff_buffer_minutes = Number.isFinite(
+        Number(previousDropoffProjection.driver_handoff_buffer_minutes),
+      )
+        ? Math.max(0, Math.min(120, Math.trunc(Number(previousDropoffProjection.driver_handoff_buffer_minutes))))
+        : handoffBufferMinutes;
+      const previousEtaWithBufferRaw = previousDropoffProjection.previous_dropoff_eta_with_buffer_minutes;
+      const previousEtaWithBufferNum = (
+        previousEtaWithBufferRaw !== null &&
+        previousEtaWithBufferRaw !== undefined &&
+        !(typeof previousEtaWithBufferRaw === "string" && !previousEtaWithBufferRaw.trim())
+      )
+        ? Number(previousEtaWithBufferRaw)
+        : Number.NaN;
+      diagnostics.previous_dropoff_eta_with_buffer_minutes = Number.isFinite(previousEtaWithBufferNum)
+        ? Math.max(0, Math.trunc(previousEtaWithBufferNum))
+        : null;
+      if (diagnostics.previous_dropoff_eta_not_implemented) {
+        diagnostics.previous_dropoff_eta_minutes = null;
+        diagnostics.previous_dropoff_eta_with_buffer_minutes = null;
+      }
+      if (typeof previousDropoffProjection.previous_dropoff_within_threshold === "boolean") {
+        diagnostics.previous_dropoff_within_threshold =
+          previousDropoffProjection.previous_dropoff_within_threshold;
+      } else {
+        diagnostics.previous_dropoff_within_threshold = false;
+      }
+      diagnostics.previous_dropoff_lookup_reason =
+        safeStr(previousDropoffProjection.previous_dropoff_lookup_reason, 120) || null;
+      diagnostics.previous_dropoff_candidate_booking_preview =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_booking_preview, 80) || null;
+      diagnostics.previous_dropoff_candidate_parent_preview =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_parent_preview, 80) || null;
+      diagnostics.previous_dropoff_candidate_leg_preview =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_leg_preview, 80) || null;
+      diagnostics.previous_dropoff_candidate_public_ref_preview =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_public_ref_preview, 80) || null;
+      diagnostics.previous_dropoff_candidate_pickup_iso =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_pickup_iso, 80) || null;
+      diagnostics.previous_dropoff_candidate_dropoff_iso =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_dropoff_iso, 80) || null;
+      diagnostics.previous_dropoff_candidate_status =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_status, 64) || null;
+      diagnostics.previous_dropoff_candidate_status_allowed =
+        previousDropoffProjection.previous_dropoff_candidate_status_allowed === true;
+      diagnostics.previous_dropoff_candidate_status_reason =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_status_reason, 80) || null;
+      diagnostics.previous_dropoff_selected_candidate_rejected =
+        previousDropoffProjection.previous_dropoff_selected_candidate_rejected === true;
+      diagnostics.previous_dropoff_candidate_source =
+        safeStr(previousDropoffProjection.previous_dropoff_candidate_source, 80) || null;
+      diagnostics.previous_dropoff_candidate_same_booking_overlap =
+        previousDropoffProjection.previous_dropoff_candidate_same_booking_overlap === true;
+      diagnostics.previous_dropoff_candidate_same_parent_overlap =
+        previousDropoffProjection.previous_dropoff_candidate_same_parent_overlap === true;
+      diagnostics.previous_dropoff_candidate_same_leg_overlap =
+        previousDropoffProjection.previous_dropoff_candidate_same_leg_overlap === true;
+      diagnostics.previous_dropoff_candidate_public_ref_overlap =
+        previousDropoffProjection.previous_dropoff_candidate_public_ref_overlap === true;
+      diagnostics.previous_dropoff_candidates_checked_count = Number.isFinite(
+        Number(previousDropoffProjection.previous_dropoff_candidates_checked_count),
+      )
+        ? Math.max(0, Math.trunc(Number(previousDropoffProjection.previous_dropoff_candidates_checked_count)))
+        : 0;
+      diagnostics.previous_dropoff_candidates_rejected_count = Number.isFinite(
+        Number(previousDropoffProjection.previous_dropoff_candidates_rejected_count),
+      )
+        ? Math.max(0, Math.trunc(Number(previousDropoffProjection.previous_dropoff_candidates_rejected_count)))
+        : 0;
+      diagnostics.previous_dropoff_rejected_reasons_present = Array.isArray(
+        previousDropoffProjection.previous_dropoff_rejected_reasons_present,
+      )
+        ? previousDropoffProjection.previous_dropoff_rejected_reasons_present
+          .map((value) => safeStr(value, 80))
+          .filter((value) => !!value)
+        : [];
+      diagnostics.previous_dropoff_zero_distance =
+        previousDropoffProjection.previous_dropoff_zero_distance === true;
+      diagnostics.previous_dropoff_zero_distance_reason =
+        safeStr(previousDropoffProjection.previous_dropoff_zero_distance_reason, 80) || null;
+    }
+  } catch (_) {
+    diagnostics.previous_dropoff_checked = true;
+    diagnostics.previous_dropoff_within_threshold = false;
+    diagnostics.previous_dropoff_eta_minutes = null;
+    diagnostics.previous_dropoff_eta_with_buffer_minutes = null;
+    diagnostics.previous_dropoff_eta_not_implemented = true;
+    diagnostics.previous_dropoff_candidates_checked_count = 0;
+    diagnostics.previous_dropoff_candidates_rejected_count = 0;
+    diagnostics.previous_dropoff_rejected_reasons_present = [];
+    diagnostics.previous_dropoff_candidate_status_allowed = false;
+    diagnostics.previous_dropoff_candidate_status_reason = null;
+    diagnostics.previous_dropoff_selected_candidate_rejected = false;
+    diagnostics.previous_dropoff_zero_distance = false;
+    diagnostics.previous_dropoff_zero_distance_reason = null;
+    diagnostics.previous_dropoff_lookup_reason = "projection_error";
+  }
 
   if (!normalizedScope.hasScope) {
     return failOrContinue("missing_scope");
   }
-
-  const bookingId = _driverEnRouteResolveBookingIdentity(rec);
   if (!bookingId) {
     return failOrContinue("booking_identity_missing");
   }
