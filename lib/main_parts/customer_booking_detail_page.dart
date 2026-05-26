@@ -1333,6 +1333,262 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         text.contains('uri=https://');
   }
 
+  String _normalizeCancellationFailureReason(String raw) {
+    final token = raw.trim().toLowerCase().replaceAll('-', '_');
+    if (token.isEmpty) return 'unknown_failure';
+    if (token == 'cancellation_window_closed') return token;
+    if (token == 'booking_not_found') return token;
+    if (token == 'network_error' || token == 'http_0') return 'network_error';
+    return token;
+  }
+
+  int _cancellationFailurePriority(String reason) {
+    switch (_normalizeCancellationFailureReason(reason)) {
+      case 'cancellation_window_closed':
+        return 4;
+      case 'booking_not_found':
+        return 3;
+      case 'network_error':
+        return 2;
+      default:
+        return 1;
+    }
+  }
+
+  String _pickStrongerCancellationFailure(String current, String next) {
+    final currentReason = _normalizeCancellationFailureReason(current);
+    final nextReason = _normalizeCancellationFailureReason(next);
+    return _cancellationFailurePriority(nextReason) >
+            _cancellationFailurePriority(currentReason)
+        ? nextReason
+        : currentReason;
+  }
+
+  bool _looksLikeCancellationWindowClosed({
+    required int statusCode,
+    required String errorCode,
+    required String reasonCode,
+    required String message,
+  }) {
+    if (statusCode == 409) return true;
+    final merged = [
+      errorCode,
+      reasonCode,
+      message,
+    ].join(' ').toLowerCase().replaceAll('-', '_');
+    return merged.contains('cancellation_window_closed') ||
+        merged.contains('annulatietermijn') ||
+        merged.contains('cancellation window') ||
+        merged.contains('window has passed') ||
+        merged.contains('delai d annulation est depasse') ||
+        merged.contains('plazo de cancelacion ha vencido');
+  }
+
+  ({
+    String title,
+    String message,
+    bool allowRefresh,
+    Color accent,
+    IconData icon,
+  })
+  _customerCancellationFailureUi(String reason) {
+    switch (reason) {
+      case 'cancellation_window_closed':
+        return (
+          title: _t(
+            nl: 'Annuleren niet meer mogelijk',
+            en: 'Cancellation no longer possible',
+            fr: 'Annulation impossible',
+            es: 'Cancelacion no disponible',
+          ),
+          message: _t(
+            nl: 'Deze boeking kan niet meer online geannuleerd worden omdat de annulatietermijn verlopen is. Neem contact op met het taxibedrijf als je hulp nodig hebt.',
+            en: 'This booking can no longer be cancelled online because the cancellation window has passed. Please contact the taxi company if you need help.',
+            fr: 'Cette reservation ne peut plus etre annulee en ligne car le delai d annulation est depasse. Contactez la compagnie de taxi si vous avez besoin d aide.',
+            es: 'Esta reserva ya no puede cancelarse en linea porque el plazo de cancelacion ha vencido. Contacta con la empresa de taxi si necesitas ayuda.',
+          ),
+          allowRefresh: false,
+          accent: const Color(0xFFE76F51),
+          icon: Icons.block_rounded,
+        );
+      case 'booking_not_found':
+        return (
+          title: _t(
+            nl: 'Boeking niet gevonden',
+            en: 'Booking not found',
+            fr: 'Reservation introuvable',
+            es: 'Reserva no encontrada',
+          ),
+          message: _t(
+            nl: 'We konden deze boeking niet opnieuw ophalen. Vernieuw de lijst en probeer opnieuw.',
+            en: 'We could not reload this booking. Refresh the list and try again.',
+            fr: 'Nous n avons pas pu recharger cette reservation. Actualisez la liste et reessayez.',
+            es: 'No pudimos volver a cargar esta reserva. Actualiza la lista e intentalo de nuevo.',
+          ),
+          allowRefresh: true,
+          accent: const Color(0xFFF4C95D),
+          icon: Icons.search_off_rounded,
+        );
+      case 'network_error':
+        return (
+          title: _t(
+            nl: 'Geen verbinding',
+            en: 'No connection',
+            fr: 'Pas de connexion',
+            es: 'Sin conexion',
+          ),
+          message: _t(
+            nl: 'Controleer je internetverbinding en probeer opnieuw.',
+            en: 'Check your internet connection and try again.',
+            fr: 'Verifiez votre connexion internet et reessayez.',
+            es: 'Comprueba tu conexion a internet e intentalo de nuevo.',
+          ),
+          allowRefresh: true,
+          accent: const Color(0xFFF4C95D),
+          icon: Icons.wifi_off_rounded,
+        );
+      default:
+        return (
+          title: _t(
+            nl: 'Annuleren mislukt',
+            en: 'Cancellation failed',
+            fr: 'Echec de l annulation',
+            es: 'No se pudo cancelar',
+          ),
+          message: _t(
+            nl: 'We konden deze boeking niet annuleren. Probeer later opnieuw.',
+            en: 'We could not cancel this booking. Please try again later.',
+            fr: 'Nous n avons pas pu annuler cette reservation. Reessayez plus tard.',
+            es: 'No pudimos cancelar esta reserva. Intentalo de nuevo mas tarde.',
+          ),
+          allowRefresh: false,
+          accent: const Color(0xFFE76F51),
+          icon: Icons.error_outline_rounded,
+        );
+    }
+  }
+
+  Future<void> _showCustomerCancellationFailureDialog({
+    required String reason,
+  }) async {
+    if (!mounted) return;
+    final ui = _customerCancellationFailureUi(reason);
+    final shouldRefresh = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF10141E),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: ui.accent.withValues(alpha: 0.55)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.40),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: ui.accent.withValues(alpha: 0.20),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(ui.icon, color: ui.accent, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        ui.title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  ui.message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white.withValues(alpha: 0.90),
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (ui.allowRefresh) ...[
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: Text(
+                          _t(
+                            nl: 'Vernieuwen',
+                            en: 'Refresh',
+                            fr: 'Actualiser',
+                            es: 'Actualizar',
+                          ),
+                          style: TextStyle(
+                            color: const Color(
+                              0xFFF4C95D,
+                            ).withValues(alpha: 0.95),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: ui.accent,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(
+                        _t(
+                          nl: 'Begrepen',
+                          en: 'Understood',
+                          fr: 'Compris',
+                          es: 'Entendido',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (shouldRefresh == true && mounted) {
+      await _refresh();
+    }
+  }
+
   Future<bool> _verifyCancellationServerState({
     required String bookingId,
     required Map<String, String> proof,
@@ -1424,18 +1680,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     if (scope == null) {
       if (mounted) {
         setState(() => _cancelling = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _t(
-                nl: 'Bedrijfscontext ontbreekt. Deze boeking kan niet veilig geannuleerd worden.',
-                en: 'Company context is missing. This booking cannot be cancelled safely.',
-                fr: 'Le contexte entreprise est manquant. Cette réservation ne peut pas être annulée en toute sécurité.',
-                es: 'Falta el contexto de empresa. Esta reserva no se puede cancelar de forma segura.',
-              ),
-            ),
-          ),
-        );
+        await _showCustomerCancellationFailureDialog(reason: 'unknown_failure');
       }
       debugPrint(
         '[CUSTOMER_BOOKING][CANCEL_SCOPE][WARN] reason=missing_strict_scope booking=${_safeRefPreview(bookingId)}',
@@ -1464,8 +1709,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
     try {
       String? successfulBookingId;
-      String? lastErrorCode;
-      String? lastErrorMessage;
+      String strongestFailureReason = 'unknown_failure';
       for (final candidateId in cancelCandidates) {
         final payload = <String, dynamic>{
           'booking_id': candidateId,
@@ -1498,27 +1742,51 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             ? Map<String, dynamic>.from(decoded)
             : const <String, dynamic>{};
         final ok = decodedMap['ok'] == true;
+        final reasonCode = (decodedMap['reason'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
         final errorCode = (decodedMap['error'] ?? '')
             .toString()
             .trim()
             .toLowerCase();
-        final errorMessage = (decodedMap['message'] ?? '').toString().trim();
+        final errorMessage = (decodedMap['message'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
         debugPrint(
-          '[CUSTOMER_BOOKING][CANCEL_RES] candidate=${_safeRefPreview(candidateId)} code=${res.statusCode} ok=$ok error=${errorCode.isEmpty ? "-" : errorCode}',
+          '[CUSTOMER_BOOKING][CANCEL_RES] candidate=${_safeRefPreview(candidateId)} code=${res.statusCode} ok=$ok error=${(reasonCode.isNotEmpty ? reasonCode : errorCode).isEmpty ? "-" : (reasonCode.isNotEmpty ? reasonCode : errorCode)}',
         );
         if (res.statusCode >= 200 && res.statusCode < 300 && ok) {
           successfulBookingId = candidateId;
           break;
         }
-        lastErrorCode = errorCode.isEmpty
-            ? 'http_${res.statusCode}'
-            : errorCode;
-        lastErrorMessage = errorMessage.isEmpty ? res.body : errorMessage;
+        if (_looksLikeCancellationWindowClosed(
+          statusCode: res.statusCode,
+          errorCode: errorCode,
+          reasonCode: reasonCode,
+          message: errorMessage,
+        )) {
+          await _showCustomerCancellationFailureDialog(
+            reason: 'cancellation_window_closed',
+          );
+          return;
+        }
+        final normalizedReason = _normalizeCancellationFailureReason(
+          reasonCode.isNotEmpty
+              ? reasonCode
+              : (errorCode.isNotEmpty ? errorCode : 'http_${res.statusCode}'),
+        );
+        strongestFailureReason = _pickStrongerCancellationFailure(
+          strongestFailureReason,
+          normalizedReason,
+        );
       }
       if (successfulBookingId == null) {
-        throw Exception(
-          'cancel_failed code=${lastErrorCode ?? "unknown"} message=${lastErrorMessage ?? "unknown"}',
+        await _showCustomerCancellationFailureDialog(
+          reason: strongestFailureReason,
         );
+        return;
       }
       final bookingIdForRemoval = successfulBookingId;
 
@@ -1591,48 +1859,20 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           });
           return;
         }
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _t(
-                nl: 'We konden de annulering niet bevestigen. Vernieuw Mijn boekingen of probeer opnieuw.',
-                en: 'We could not confirm the cancellation. Refresh My bookings or try again.',
-                fr: 'Nous n avons pas pu confirmer l annulation. Actualisez Mes reservations ou reessayez.',
-                es: 'No pudimos confirmar la cancelacion. Actualiza Mis reservas o intentalo de nuevo.',
-              ),
-            ),
-          ),
-        );
+        await _showCustomerCancellationFailureDialog(reason: 'network_error');
       } else {
-        final errorText = err.toString();
-        String detail = '';
+        final errorText = err.toString().toLowerCase();
+        String reason = 'unknown_failure';
         final codeMatch = RegExp(
           r'code=([a-z0-9_:-]+)',
           caseSensitive: false,
         ).firstMatch(errorText);
         if (codeMatch != null) {
-          detail = codeMatch.group(1) ?? '';
+          reason = _normalizeCancellationFailureReason(
+            codeMatch.group(1) ?? '',
+          );
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              detail.isEmpty
-                  ? _t(
-                      nl: 'Annuleren mislukt. Probeer opnieuw.',
-                      en: 'Cancellation failed. Please try again.',
-                      fr: 'Échec de l’annulation. Réessayez.',
-                      es: 'No se pudo cancelar. Inténtalo de nuevo.',
-                    )
-                  : _t(
-                      nl: 'Annuleren mislukt ($detail). Probeer opnieuw.',
-                      en: 'Cancellation failed ($detail). Please try again.',
-                      fr: 'Échec de l’annulation ($detail). Réessayez.',
-                      es: 'No se pudo cancelar ($detail). Inténtalo de nuevo.',
-                    ),
-            ),
-          ),
-        );
+        await _showCustomerCancellationFailureDialog(reason: reason);
       }
     } finally {
       if (mounted) {
